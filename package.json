@@ -1,0 +1,9 @@
+{
+  "dependencies": {
+    "@grammyjs/conversations": "^2.1.1",
+    "@grammyjs/runner": "^2.0.3",
+    "dotenv": "^17.2.3",
+    "grammy": "^1.39.3",
+    "qrcode": "^1.5.4"
+  }
+}
