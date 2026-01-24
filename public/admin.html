@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Монитор входа</title>
+    <style>
+      body {
+        font-family: 'Segoe UI', sans-serif;
+        background: #1e1e1e;
+        margin: 0;
+        padding: 20px;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+      }
+
+      /* Сетка карточек */
+      #grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 15px;
+        align-content: flex-start;
+        width: 100%;
+      }
+
+      /* Блок "Ожидание" (по умолчанию) */
+      #empty-state {
+        display: none; /* Скрыт по умолчанию, включается JS-ом */
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 80vh;
+        width: 100%;
+        color: #555;
+        text-align: center;
+      }
+      #empty-state h2 {
+        margin: 0;
+        font-size: 28px;
+        color: #888;
+      }
+      #empty-state p {
+        font-size: 18px;
+      }
+      .pulse {
+        animation: pulse 2s infinite;
+        font-size: 60px;
+        margin-bottom: 20px;
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+          opacity: 0.5;
+        }
+        50% {
+          transform: scale(1.1);
+          opacity: 1;
+        }
+        100% {
+          transform: scale(1);
+          opacity: 0.5;
+        }
+      }
+
+      /* Карточка */
+      .card {
+        width: 280px;
+        padding: 20px;
+        border-radius: 12px;
+        color: white;
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+        animation: slideIn 0.4s ease-out;
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .card.success {
+        background: linear-gradient(135deg, #2e7d32 0%, #43a047 100%);
+        border-left: 5px solid #a5d6a7;
+      }
+
+      .card.error {
+        background: linear-gradient(135deg, #c62828 0%, #e53935 100%);
+        border-left: 5px solid #ef9a9a;
+      }
+
+      .close-btn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.2);
+        border: none;
+        color: white;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-weight: bold;
+        line-height: 22px;
+        text-align: center;
+        padding: 0;
+      }
+      .close-btn:hover {
+        background: rgba(0, 0, 0, 0.4);
+      }
+
+      .name {
+        font-size: 20px;
+        font-weight: bold;
+        line-height: 1.2;
+        margin-right: 20px;
+      }
+      .info {
+        font-size: 15px;
+        opacity: 0.9;
+      }
+      .meta {
+        font-size: 12px;
+        opacity: 0.7;
+        text-align: right;
+      }
+
+      /* Секция ключа */
+      .key-section {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 10px;
+        border-radius: 8px;
+        margin-top: 10px;
+        display: flex;
+        gap: 5px;
+      }
+      .key-input {
+        width: 60px;
+        padding: 5px;
+        border: none;
+        border-radius: 4px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 16px;
+      }
+      .key-btn {
+        flex-grow: 1;
+        border: none;
+        background: #fff;
+        color: #2e7d32;
+        font-weight: bold;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: 0.2s;
+      }
+      .key-btn:hover {
+        background: #e8f5e9;
+      }
+      .key-btn:disabled {
+        background: #ccc;
+        color: #666;
+        cursor: default;
+      }
+
+      /* Если ключ уже выдан, скрываем инпут и делаем кнопку зеленой и широкой */
+      .key-issued .key-input {
+        display: none;
+      }
+      .key-issued .key-btn {
+        background: rgba(255, 255, 255, 0.9);
+        cursor: default;
+      }
+
+      /* Модалка */
+      #modal-overlay {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+      }
+      .modal {
+        background: white;
+        padding: 25px;
+        border-radius: 10px;
+        text-align: center;
+        max-width: 300px;
+      }
+      .modal-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+        margin-top: 20px;
+      }
+      .btn-yes {
+        background: #d32f2f;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      .btn-no {
+        background: #ddd;
+        color: #333;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+
+      @keyframes slideIn {
+        0% {
+          transform: translateY(-20px);
+          opacity: 0;
+        }
+        100% {
+          transform: translateY(0);
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="empty-state">
+      <div class="pulse">📡</div>
+      <h2>Система готова</h2>
+      <p>Ожидание сканирования QR-кода...</p>
+    </div>
+
+    <div id="grid"></div>
+
+    <div id="modal-overlay">
+      <div class="modal">
+        <h3>Удалить карточку?</h3>
+        <p>Действие нельзя отменить.</p>
+        <div class="modal-buttons">
+          <button class="btn-yes" id="confirm-delete">Удалить</button>
+          <button class="btn-no" id="cancel-delete">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+      const socket = io();
+      const grid = document.getElementById('grid');
+      const emptyState = document.getElementById('empty-state');
+
+      // --- STATE MANAGEMENT ---
+      // Загружаем данные из LocalStorage или создаем пустой массив
+      let cardsData = JSON.parse(localStorage.getItem('padel_cards')) || [];
+
+      // Функция сохранения
+      function saveState() {
+        localStorage.setItem('padel_cards', JSON.stringify(cardsData));
+        render(); // Перерисовываем экран после сохранения
+      }
+
+      // Функция отрисовки (Главная магия)
+      function render() {
+        grid.innerHTML = ''; // Очищаем сетку
+
+        // Если пусто - показываем "Ожидание"
+        if (cardsData.length === 0) {
+          emptyState.style.display = 'flex';
+          grid.style.display = 'none';
+          return;
+        }
+
+        // Если есть данные - скрываем "Ожидание" и рисуем карточки
+        emptyState.style.display = 'none';
+        grid.style.display = 'flex';
+
+        cardsData.forEach((card) => {
+          const el = document.createElement('div');
+
+          if (card.success) {
+            el.className = 'card success';
+            // Проверяем, выдан ли уже ключ, чтобы скрыть инпут
+            const keyClass = card.keyIssued
+              ? 'key-section key-issued'
+              : 'key-section';
+            const btnText = card.keyIssued
+              ? `Ключ №${card.keyNumber} выдан`
+              : 'Ключ выдан';
+            const btnDisabled = card.keyIssued ? 'disabled' : '';
+
+            el.innerHTML = `
+                        <button class="close-btn" onclick="askDelete('${
+                          card.id
+                        }')">×</button>
+                        <div class="name">${card.name}</div>
+                        <div class="info">${card.phone}</div>
+                        <div class="info" style="font-size: 13px">Ист: ${
+                          card.source
+                        }</div>
+                        
+                        <div class="${keyClass}">
+                            <input type="text" class="key-input" placeholder="№" id="input-${
+                              card.visitId
+                            }" value="${card.keyNumber || ''}">
+                            <button class="key-btn" ${btnDisabled} onclick="issueKey('${
+              card.visitId
+            }')">${btnText}</button>
+                        </div>
+
+                        <div class="meta">${card.time}</div>
+                    `;
+          } else {
+            el.className = 'card error';
+            el.innerHTML = `
+                        <button class="close-btn" onclick="askDelete('${card.id}')">×</button>
+                        <div class="name">НЕИЗВЕСТНЫЙ</div>
+                        <div class="info">QR: ${card.qrRaw}</div>
+                        <div class="meta">${card.time}</div>
+                    `;
+          }
+          grid.appendChild(el);
+        });
+      }
+
+      // --- SOCKET EVENTS ---
+      socket.on('scan_result', (data) => {
+        const time = new Date().toLocaleTimeString('ru-RU', {
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+
+        // Формируем объект новой карточки
+        const newCard = {
+          id: Date.now().toString(), // Уникальный ID для фронтенда
+          success: data.success,
+          time: data.isRepeated
+            ? `🔄 Повторно в ${time}`
+            : data.success
+            ? `✅ Вход в ${time}`
+            : `❌ Отказ в ${time}`,
+
+          // Данные пользователя (если есть)
+          name: data.user ? data.user.name : '',
+          phone: data.user ? data.user.phone : '',
+          source: data.user ? data.user.source || '-' : '',
+          telegramId: data.user ? data.user.telegramId : null,
+          visitId: data.visitId,
+
+          // Данные ошибки
+          qrRaw: data.id,
+
+          // Состояние ключа
+          keyNumber: '',
+          keyIssued: false,
+        };
+
+        // Если такой юзер уже есть в списке - удаляем старую запись
+        if (newCard.telegramId) {
+          cardsData = cardsData.filter(
+            (c) => c.telegramId !== newCard.telegramId
+          );
+        }
+
+        // Добавляем новую в начало списка
+        cardsData.unshift(newCard);
+        saveState();
+        playSound(data.success ? 'success' : 'error');
+      });
+
+      // --- ЛОГИКА ВЫДАЧИ КЛЮЧА ---
+      async function issueKey(visitId) {
+        const input = document.getElementById(`input-${visitId}`);
+        const keyVal = input.value.trim();
+
+        if (!keyVal) {
+          alert('Введите номер ключа!');
+          return;
+        }
+
+        try {
+          const res = await fetch('/api/key', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ visitId: visitId, keyNumber: keyVal }),
+          });
+
+          if (res.ok) {
+            // Находим карточку в массиве и обновляем её состояние
+            const card = cardsData.find((c) => c.visitId == visitId);
+            if (card) {
+              card.keyNumber = keyVal;
+              card.keyIssued = true;
+              saveState(); // Сохраняем и перерисовываем
+            }
+          } else {
+            alert('Ошибка сервера');
+          }
+        } catch (e) {
+          console.error(e);
+          alert('Ошибка сети');
+        }
+      }
+
+      // --- ЛОГИКА УДАЛЕНИЯ ---
+      const modal = document.getElementById('modal-overlay');
+      let idToDelete = null;
+
+      function askDelete(frontendId) {
+        idToDelete = frontendId;
+        modal.style.display = 'flex';
+      }
+
+      document.getElementById('confirm-delete').onclick = () => {
+        if (idToDelete) {
+          cardsData = cardsData.filter((c) => c.id !== idToDelete);
+          saveState();
+        }
+        modal.style.display = 'none';
+        idToDelete = null;
+      };
+
+      document.getElementById('cancel-delete').onclick = () => {
+        modal.style.display = 'none';
+        idToDelete = null;
+      };
+
+      // --- ЗВУКИ ---
+      function playSound(type) {
+        const audio = new Audio(
+          type === 'success'
+            ? 'https://www.soundjay.com/buttons/sounds/button-3.mp3'
+            : 'https://www.soundjay.com/buttons/sounds/beep-05.mp3'
+        );
+        audio.volume = 0.3;
+        audio.play().catch(() => {});
+      }
+
+      // Первый запуск: отрисовываем то, что было в памяти
+      render();
+    </script>
+  </body>
+</html>

@@ -7,6 +7,95 @@ const {
 const QRCode = require('qrcode');
 const { run } = require('@grammyjs/runner');
 const db = require('./models');
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+
+// 1. НАСТРОЙКА СЕРВЕРА (EXPRESS + SOCKET.IO)
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static('public')); // Раздаем папку с html
+
+app.post('/api/key', async (req, res) => {
+  const { visitId, keyNumber } = req.body;
+  if (!visitId || !keyNumber) return res.status(400).send('No data');
+
+  try {
+    await db.Visit.update({ keyNumber: keyNumber }, { where: { id: visitId } });
+    console.log(`🔑 Ключ ${keyNumber} выдан для визита #${visitId}`);
+    res.json({ status: 'ok' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('Error');
+  }
+});
+
+// API: Сюда будет стучаться скрипт сканера
+app.post('/api/scan', async (req, res) => {
+  const { qr } = req.body;
+  console.log('📡 Сканер:', qr);
+  if (!qr) return res.status(400).send('No QR');
+
+  try {
+    const user = await db.User.findOne({ where: { telegramId: qr } });
+
+    if (user) {
+      // --- ЛОГИКА 5 МИНУТ ---
+      // Ищем последний визит этого пользователя
+      const lastVisit = await db.Visit.findOne({
+        where: { userId: user.id },
+        order: [['createdAt', 'DESC']],
+      });
+
+      let visitId;
+      let isNewVisit = true;
+
+      if (lastVisit) {
+        const now = new Date();
+        const diffMs = now - lastVisit.createdAt;
+        const diffMins = diffMs / 60000;
+
+        if (diffMins < 5) {
+          // Если прошло меньше 5 минут — используем старый визит
+          console.log(
+            `⏱️ Повторный скан (прошло ${diffMins.toFixed(
+              1
+            )} мин). Новая запись не создана.`
+          );
+          visitId = lastVisit.id;
+          isNewVisit = false;
+        }
+      }
+
+      // Если визит старый или его нет — создаем новый
+      if (isNewVisit) {
+        const newVisit = await db.Visit.create({ userId: user.id });
+        visitId = newVisit.id;
+      }
+
+      // Отправляем на фронт (передаем visitId для привязки ключа)
+      io.emit('scan_result', {
+        success: true,
+        user: user,
+        visitId: visitId, // ID визита (нового или того, что был < 5 мин назад)
+        isRepeated: !isNewVisit,
+      });
+
+      res.json({ status: 'ok', found: true });
+    } else {
+      io.emit('scan_result', { success: false, id: qr });
+      res.json({ status: 'ok', found: false });
+    }
+  } catch (e) {
+    console.error('Ошибка:', e);
+    res.status(500).send('Server Error');
+  }
+});
 
 const bot = new Bot(process.env.BOT_TOKEN);
 
@@ -16,7 +105,7 @@ bot.use(
     initial: () => ({
       consents: [false, false, false],
     }),
-  }),
+  })
 );
 
 bot.use(conversations());
@@ -116,7 +205,7 @@ async function registerConversation(conversation, ctx) {
         `👤 ${surname} ${firstname}\n\n` +
           `Шаг 3 из 4. Введите ваш **номер телефона**.\n` +
           `Пример: +79991234567`,
-        { parse_mode: 'Markdown', reply_markup: kb },
+        { parse_mode: 'Markdown', reply_markup: kb }
       );
 
       // Ждем ТЕКСТ (так как ввода контакта больше нет)
@@ -211,19 +300,19 @@ function getConsentKeyboard(consents) {
       consents[0]
         ? '✅ Согласен на обработку ПД'
         : '❌ Согласен на обработку ПД',
-      'toggle_consent_0',
+      'toggle_consent_0'
     )
     .row();
   keyboard
     .text(
       consents[1] ? '✅ Согласен на рассылку' : '❌ Согласен на рассылку',
-      'toggle_consent_1',
+      'toggle_consent_1'
     )
     .row();
   keyboard
     .text(
       consents[2] ? '✅ Ознакомлен с правилами' : '❌ Ознакомлен с правилами',
-      'toggle_consent_2',
+      'toggle_consent_2'
     )
     .row();
 
@@ -313,7 +402,16 @@ async function startApp() {
   try {
     await db.sequelize.authenticate();
     console.log('✅ БД подключена.');
+
+    // Запускаем бота
     run(bot);
+    console.log('🚀 Бот запущен.');
+
+    // Запускаем веб-сервер
+    server.listen(3000, () => {
+      console.log('🌐 Админ-панель: http://localhost:3000/admin.html');
+      console.log('🔌 API для сканера: http://localhost:3000/api/scan');
+    });
   } catch (error) {
     console.error('❌ Ошибка:', error);
   }

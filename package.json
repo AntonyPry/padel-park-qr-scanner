@@ -2,16 +2,23 @@
   "dependencies": {
     "@grammyjs/conversations": "^2.1.1",
     "@grammyjs/runner": "^2.0.3",
+    "axios": "^1.13.2",
+    "cors": "^2.8.6",
     "dotenv": "^17.2.3",
+    "express": "^5.2.1",
     "grammy": "^1.39.3",
     "mysql2": "^3.16.1",
     "qrcode": "^1.5.4",
-    "sequelize": "^6.37.7"
+    "sequelize": "^6.37.7",
+    "serialport": "^13.0.0",
+    "socket.io": "^4.8.3",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "sequelize-cli": "^6.6.5"
   },
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "checkports": "node check_ports.js"
   }
 }
