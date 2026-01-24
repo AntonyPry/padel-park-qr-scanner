@@ -31,7 +31,7 @@
 
 - **Авто-сканер:** Скрипт автоматически находит USB-сканер (по VID/PID) на любом COM-порту.
 - **Учет посещений:** Защита от повторных сканирований (интервал 5 минут).
-- **База данных:** SQLite (хранение пользователей и истории визитов).
+- **База данных:** Mariadb (хранение пользователей и истории визитов).
 - **Экспорт:** Скрипт выгрузки всей истории посещений в Excel (`.xlsx`).
 
 ---
@@ -41,7 +41,7 @@
 - **Runtime:** Node.js
 - **Bot Framework:** [grammY](https://grammy.dev/)
 - **Web Server:** Express + Socket.io
-- **Database:** Sequelize (SQLite dialect)
+- **Database:** Sequelize (Mariadb dialect)
 - **Hardware:** Node SerialPort (чтение данных с USB-сканера в режиме Virtual COM)
 - **Process Manager:** PM2 (для автозапуска на Windows)
 
