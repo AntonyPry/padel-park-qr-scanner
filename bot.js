@@ -11,6 +11,7 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const startScanner = require('./scanner');
 
 // 1. НАСТРОЙКА СЕРВЕРА (EXPRESS + SOCKET.IO)
 const app = express();
@@ -410,7 +411,7 @@ async function startApp() {
     // Запускаем веб-сервер
     server.listen(3000, () => {
       console.log('🌐 Админ-панель: http://localhost:3000/admin.html');
-      console.log('🔌 API для сканера: http://localhost:3000/api/scan');
+      startScanner();
     });
   } catch (error) {
     console.error('❌ Ошибка:', error);
