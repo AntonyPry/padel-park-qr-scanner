@@ -12,6 +12,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const startScanner = require('./scanner');
+const { Op } = require('sequelize');
 
 // 1. НАСТРОЙКА СЕРВЕРА (EXPRESS + SOCKET.IO)
 const app = express();
@@ -21,6 +22,71 @@ const io = new Server(server);
 app.use(cors());
 app.use(express.json());
 app.use(express.static('public')); // Раздаем папку с html
+
+app.get('/api/search', async (req, res) => {
+  const query = req.query.q;
+  if (!query || query.length < 2) return res.json([]);
+
+  try {
+    const users = await db.User.findAll({
+      where: {
+        name: { [Op.like]: `%${query}%` }, // Поиск подстроки
+      },
+      limit: 5, // Не больше 5 результатов
+    });
+    res.json(users);
+  } catch (e) {
+    console.error(e);
+    res.json([]);
+  }
+});
+
+// 2. Ручная регистрация визита
+app.post('/api/manual-visit', async (req, res) => {
+  const { userId } = req.body;
+  if (!userId) return res.status(400).send('No ID');
+
+  try {
+    const user = await db.User.findByPk(userId);
+    if (!user) return res.status(404).send('User not found');
+
+    // --- ЛОГИКА 5 МИНУТ (Копируем логику, чтобы работало и тут) ---
+    const lastVisit = await db.Visit.findOne({
+      where: { userId: user.id },
+      order: [['createdAt', 'DESC']],
+    });
+
+    let visitId;
+    let isNewVisit = true;
+
+    if (lastVisit) {
+      const now = new Date();
+      const diffMins = (now - lastVisit.createdAt) / 60000;
+      if (diffMins < 5) {
+        visitId = lastVisit.id;
+        isNewVisit = false;
+      }
+    }
+
+    if (isNewVisit) {
+      const newVisit = await db.Visit.create({ userId: user.id });
+      visitId = newVisit.id;
+    }
+
+    // Отправляем всем (и себе тоже) через сокет
+    io.emit('scan_result', {
+      success: true,
+      user: user,
+      visitId: visitId,
+      isRepeated: !isNewVisit,
+    });
+
+    res.json({ status: 'ok' });
+  } catch (e) {
+    console.error(e);
+    res.status(500).send('Error');
+  }
+});
 
 app.post('/api/key', async (req, res) => {
   const { visitId, keyNumber } = req.body;
@@ -65,8 +131,8 @@ app.post('/api/scan', async (req, res) => {
           // Если прошло меньше 5 минут — используем старый визит
           console.log(
             `⏱️ Повторный скан (прошло ${diffMins.toFixed(
-              1
-            )} мин). Новая запись не создана.`
+              1,
+            )} мин). Новая запись не создана.`,
           );
           visitId = lastVisit.id;
           isNewVisit = false;
@@ -106,7 +172,7 @@ bot.use(
     initial: () => ({
       consents: [false, false, false],
     }),
-  })
+  }),
 );
 
 bot.use(conversations());
@@ -206,7 +272,7 @@ async function registerConversation(conversation, ctx) {
         `👤 ${surname} ${firstname}\n\n` +
           `Шаг 3 из 4. Введите ваш **номер телефона**.\n` +
           `Пример: +79991234567`,
-        { parse_mode: 'Markdown', reply_markup: kb }
+        { parse_mode: 'Markdown', reply_markup: kb },
       );
 
       // Ждем ТЕКСТ (так как ввода контакта больше нет)
@@ -301,19 +367,19 @@ function getConsentKeyboard(consents) {
       consents[0]
         ? '✅ Согласен на обработку ПД'
         : '❌ Согласен на обработку ПД',
-      'toggle_consent_0'
+      'toggle_consent_0',
     )
     .row();
   keyboard
     .text(
       consents[1] ? '✅ Согласен на рассылку' : '❌ Согласен на рассылку',
-      'toggle_consent_1'
+      'toggle_consent_1',
     )
     .row();
   keyboard
     .text(
       consents[2] ? '✅ Ознакомлен с правилами' : '❌ Ознакомлен с правилами',
-      'toggle_consent_2'
+      'toggle_consent_2',
     )
     .row();
 

@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
   <head>
     <meta charset="UTF-8" />
@@ -14,7 +14,6 @@
         flex-direction: column;
       }
 
-      /* Сетка карточек */
       #grid {
         display: flex;
         flex-wrap: wrap;
@@ -23,49 +22,36 @@
         width: 100%;
       }
 
-      /* Блок "Ожидание" (по умолчанию) */
-      #empty-state {
-        display: none; /* Скрыт по умолчанию, включается JS-ом */
-        flex-direction: column;
-        align-items: center;
+      /* КАРТОЧКА "ДОБАВИТЬ" (+) */
+      .card.add-btn {
+        background: rgba(255, 255, 255, 0.05);
+        border: 2px dashed rgba(255, 255, 255, 0.3);
         justify-content: center;
-        height: 80vh;
-        width: 100%;
-        color: #555;
-        text-align: center;
+        align-items: center;
+        cursor: pointer;
+        transition: 0.2s;
+        color: rgba(255, 255, 255, 0.5);
       }
-      #empty-state h2 {
-        margin: 0;
-        font-size: 28px;
-        color: #888;
+      .card.add-btn:hover {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.6);
+        color: white;
+        transform: translateY(-2px);
       }
-      #empty-state p {
-        font-size: 18px;
-      }
-      .pulse {
-        animation: pulse 2s infinite;
+      .plus-icon {
         font-size: 60px;
-        margin-bottom: 20px;
+        line-height: 0;
+        margin-bottom: 10px;
+      }
+      .add-text {
+        font-size: 18px;
+        font-weight: bold;
       }
 
-      @keyframes pulse {
-        0% {
-          transform: scale(1);
-          opacity: 0.5;
-        }
-        50% {
-          transform: scale(1.1);
-          opacity: 1;
-        }
-        100% {
-          transform: scale(1);
-          opacity: 0.5;
-        }
-      }
-
-      /* Карточка */
+      /* ОБЫЧНАЯ КАРТОЧКА */
       .card {
         width: 280px;
+        min-height: 160px; /* Фикс высота */
         padding: 20px;
         border-radius: 12px;
         color: white;
@@ -76,12 +62,10 @@
         flex-direction: column;
         gap: 8px;
       }
-
       .card.success {
         background: linear-gradient(135deg, #2e7d32 0%, #43a047 100%);
         border-left: 5px solid #a5d6a7;
       }
-
       .card.error {
         background: linear-gradient(135deg, #c62828 0%, #e53935 100%);
         border-left: 5px solid #ef9a9a;
@@ -99,8 +83,6 @@
         border-radius: 50%;
         cursor: pointer;
         font-weight: bold;
-        line-height: 22px;
-        text-align: center;
         padding: 0;
       }
       .close-btn:hover {
@@ -121,9 +103,9 @@
         font-size: 12px;
         opacity: 0.7;
         text-align: right;
+        margin-top: auto;
       }
 
-      /* Секция ключа */
       .key-section {
         background: rgba(255, 255, 255, 0.2);
         padding: 10px;
@@ -160,7 +142,6 @@
         cursor: default;
       }
 
-      /* Если ключ уже выдан, скрываем инпут и делаем кнопку зеленой и широкой */
       .key-issued .key-input {
         display: none;
       }
@@ -169,8 +150,8 @@
         cursor: default;
       }
 
-      /* Модалка */
-      #modal-overlay {
+      /* МОДАЛЬНЫЕ ОКНА */
+      .modal-overlay {
         display: none;
         position: fixed;
         top: 0;
@@ -186,9 +167,49 @@
         background: white;
         padding: 25px;
         border-radius: 10px;
+        width: 100%;
+        max-width: 400px;
         text-align: center;
-        max-width: 300px;
       }
+      .modal h3 {
+        margin-top: 0;
+        color: #333;
+      }
+
+      /* ПОИСК */
+      .search-input {
+        width: 100%;
+        padding: 12px;
+        font-size: 16px;
+        border: 2px solid #ddd;
+        border-radius: 8px;
+        box-sizing: border-box;
+        margin-bottom: 15px;
+      }
+      .search-results {
+        max-height: 200px;
+        overflow-y: auto;
+        text-align: left;
+        border: 1px solid #eee;
+        border-radius: 8px;
+      }
+      .search-item {
+        padding: 10px;
+        border-bottom: 1px solid #eee;
+        cursor: pointer;
+        color: #333;
+      }
+      .search-item:hover {
+        background: #f5f5f5;
+      }
+      .search-item:last-child {
+        border-bottom: none;
+      }
+      .search-phone {
+        font-size: 12px;
+        color: #888;
+      }
+
       .modal-buttons {
         display: flex;
         gap: 10px;
@@ -225,21 +246,31 @@
     </style>
   </head>
   <body>
-    <div id="empty-state">
-      <div class="pulse">📡</div>
-      <h2>Система готова</h2>
-      <p>Ожидание сканирования QR-кода...</p>
-    </div>
-
     <div id="grid"></div>
 
-    <div id="modal-overlay">
+    <div id="modal-delete" class="modal-overlay">
       <div class="modal">
         <h3>Удалить карточку?</h3>
-        <p>Действие нельзя отменить.</p>
         <div class="modal-buttons">
           <button class="btn-yes" id="confirm-delete">Удалить</button>
           <button class="btn-no" id="cancel-delete">Отмена</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-search" class="modal-overlay">
+      <div class="modal">
+        <h3>Ручной ввод</h3>
+        <input
+          type="text"
+          id="user-search"
+          class="search-input"
+          placeholder="Введите имя или фамилию..."
+          autocomplete="off"
+        />
+        <div id="search-results" class="search-results"></div>
+        <div class="modal-buttons">
+          <button class="btn-no" id="close-search">Закрыть</button>
         </div>
       </div>
     </div>
@@ -248,39 +279,35 @@
     <script>
       const socket = io();
       const grid = document.getElementById('grid');
-      const emptyState = document.getElementById('empty-state');
 
-      // --- STATE MANAGEMENT ---
-      // Загружаем данные из LocalStorage или создаем пустой массив
+      // --- STATE ---
       let cardsData = JSON.parse(localStorage.getItem('padel_cards')) || [];
 
-      // Функция сохранения
       function saveState() {
         localStorage.setItem('padel_cards', JSON.stringify(cardsData));
-        render(); // Перерисовываем экран после сохранения
+        render();
       }
 
-      // Функция отрисовки (Главная магия)
+      // --- RENDER ---
       function render() {
-        grid.innerHTML = ''; // Очищаем сетку
+        grid.innerHTML = '';
 
-        // Если пусто - показываем "Ожидание"
-        if (cardsData.length === 0) {
-          emptyState.style.display = 'flex';
-          grid.style.display = 'none';
-          return;
-        }
+        // 1. Рисуем кнопку "+" всегда первой
+        const addBtn = document.createElement('div');
+        addBtn.className = 'card add-btn';
+        addBtn.innerHTML = `
+                <div class="plus-icon">+</div>
+                <div class="add-text">Вручную</div>
+            `;
+        addBtn.onclick = openSearchModal;
+        grid.appendChild(addBtn);
 
-        // Если есть данные - скрываем "Ожидание" и рисуем карточки
-        emptyState.style.display = 'none';
-        grid.style.display = 'flex';
-
+        // 2. Рисуем остальные карточки
         cardsData.forEach((card) => {
           const el = document.createElement('div');
 
           if (card.success) {
             el.className = 'card success';
-            // Проверяем, выдан ли уже ключ, чтобы скрыть инпут
             const keyClass = card.keyIssued
               ? 'key-section key-issued'
               : 'key-section';
@@ -290,24 +317,15 @@
             const btnDisabled = card.keyIssued ? 'disabled' : '';
 
             el.innerHTML = `
-                        <button class="close-btn" onclick="askDelete('${
-                          card.id
-                        }')">×</button>
+                        <button class="close-btn" onclick="askDelete('${card.id}')">×</button>
                         <div class="name">${card.name}</div>
                         <div class="info">${card.phone}</div>
-                        <div class="info" style="font-size: 13px">Ист: ${
-                          card.source
-                        }</div>
+                        <div class="info" style="font-size: 13px">Ист: ${card.source}</div>
                         
                         <div class="${keyClass}">
-                            <input type="text" class="key-input" placeholder="№" id="input-${
-                              card.visitId
-                            }" value="${card.keyNumber || ''}">
-                            <button class="key-btn" ${btnDisabled} onclick="issueKey('${
-              card.visitId
-            }')">${btnText}</button>
+                            <input type="text" class="key-input" placeholder="№" id="input-${card.visitId}" value="${card.keyNumber || ''}">
+                            <button class="key-btn" ${btnDisabled} onclick="issueKey('${card.visitId}')">${btnText}</button>
                         </div>
-
                         <div class="meta">${card.time}</div>
                     `;
           } else {
@@ -323,6 +341,81 @@
         });
       }
 
+      // --- SEARCH LOGIC ---
+      const searchModal = document.getElementById('modal-search');
+      const searchInput = document.getElementById('user-search');
+      const searchResults = document.getElementById('search-results');
+      let searchTimeout;
+
+      function openSearchModal() {
+        searchModal.style.display = 'flex';
+        searchInput.value = '';
+        searchResults.innerHTML =
+          '<div style="padding:10px; color:#999;">Начните вводить имя...</div>';
+        searchInput.focus();
+      }
+
+      document.getElementById('close-search').onclick = () => {
+        searchModal.style.display = 'none';
+      };
+
+      // Живой поиск с задержкой (Debounce)
+      searchInput.oninput = (e) => {
+        clearTimeout(searchTimeout);
+        const val = e.target.value.trim();
+
+        if (val.length < 2) {
+          searchResults.innerHTML = '';
+          return;
+        }
+
+        searchTimeout = setTimeout(async () => {
+          try {
+            const res = await fetch(`/api/search?q=${encodeURIComponent(val)}`);
+            const users = await res.json();
+
+            if (users.length === 0) {
+              searchResults.innerHTML =
+                '<div style="padding:10px;">Ничего не найдено</div>';
+              return;
+            }
+
+            searchResults.innerHTML = users
+              .map(
+                (u) => `
+                        <div class="search-item" onclick="manualRegister(${u.id})">
+                            <b>${u.name}</b>
+                            <div class="search-phone">${u.phone}</div>
+                        </div>
+                    `,
+              )
+              .join('');
+          } catch (e) {
+            console.error(e);
+          }
+        }, 300);
+      };
+
+      // Выбор пользователя из списка
+      async function manualRegister(userId) {
+        try {
+          const res = await fetch('/api/manual-visit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: userId }),
+          });
+
+          if (res.ok) {
+            searchModal.style.display = 'none'; // Закрываем окно
+            // Карточка появится сама, так как сервер пришлет socket-событие
+          } else {
+            alert('Ошибка регистрации');
+          }
+        } catch (e) {
+          alert('Ошибка сети');
+        }
+      }
+
       // --- SOCKET EVENTS ---
       socket.on('scan_result', (data) => {
         const time = new Date().toLocaleTimeString('ru-RU', {
@@ -330,51 +423,41 @@
           minute: '2-digit',
         });
 
-        // Формируем объект новой карточки
         const newCard = {
-          id: Date.now().toString(), // Уникальный ID для фронтенда
+          id: Date.now().toString(),
           success: data.success,
           time: data.isRepeated
             ? `🔄 Повторно в ${time}`
             : data.success
-            ? `✅ Вход в ${time}`
-            : `❌ Отказ в ${time}`,
-
-          // Данные пользователя (если есть)
+              ? `✅ Вход в ${time}`
+              : `❌ Отказ в ${time}`,
           name: data.user ? data.user.name : '',
           phone: data.user ? data.user.phone : '',
           source: data.user ? data.user.source || '-' : '',
           telegramId: data.user ? data.user.telegramId : null,
           visitId: data.visitId,
-
-          // Данные ошибки
           qrRaw: data.id,
-
-          // Состояние ключа
           keyNumber: '',
           keyIssued: false,
         };
 
-        // Если такой юзер уже есть в списке - удаляем старую запись
         if (newCard.telegramId) {
           cardsData = cardsData.filter(
-            (c) => c.telegramId !== newCard.telegramId
+            (c) => c.telegramId !== newCard.telegramId,
           );
         }
 
-        // Добавляем новую в начало списка
-        cardsData.unshift(newCard);
-        saveState();
+        cardsData.unshift(newCard); // Добавляем в начало массива
+        saveState(); // Перерисовываем (кнопка "+" останется на месте, карточка встанет после неё)
         playSound(data.success ? 'success' : 'error');
       });
 
-      // --- ЛОГИКА ВЫДАЧИ КЛЮЧА ---
+      // --- KEYS & DELETE LOGIC (Без изменений) ---
       async function issueKey(visitId) {
         const input = document.getElementById(`input-${visitId}`);
         const keyVal = input.value.trim();
-
         if (!keyVal) {
-          alert('Введите номер ключа!');
+          alert('Введите номер!');
           return;
         }
 
@@ -382,33 +465,25 @@
           const res = await fetch('/api/key', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ visitId: visitId, keyNumber: keyVal }),
+            body: JSON.stringify({ visitId, keyNumber: keyVal }),
           });
-
           if (res.ok) {
-            // Находим карточку в массиве и обновляем её состояние
             const card = cardsData.find((c) => c.visitId == visitId);
             if (card) {
               card.keyNumber = keyVal;
               card.keyIssued = true;
-              saveState(); // Сохраняем и перерисовываем
+              saveState();
             }
-          } else {
-            alert('Ошибка сервера');
           }
-        } catch (e) {
-          console.error(e);
-          alert('Ошибка сети');
-        }
+        } catch (e) {}
       }
 
-      // --- ЛОГИКА УДАЛЕНИЯ ---
-      const modal = document.getElementById('modal-overlay');
+      const deleteModal = document.getElementById('modal-delete');
       let idToDelete = null;
 
       function askDelete(frontendId) {
         idToDelete = frontendId;
-        modal.style.display = 'flex';
+        deleteModal.style.display = 'flex';
       }
 
       document.getElementById('confirm-delete').onclick = () => {
@@ -416,27 +491,23 @@
           cardsData = cardsData.filter((c) => c.id !== idToDelete);
           saveState();
         }
-        modal.style.display = 'none';
-        idToDelete = null;
+        deleteModal.style.display = 'none';
       };
 
       document.getElementById('cancel-delete').onclick = () => {
-        modal.style.display = 'none';
-        idToDelete = null;
+        deleteModal.style.display = 'none';
       };
 
-      // --- ЗВУКИ ---
       function playSound(type) {
         const audio = new Audio(
           type === 'success'
             ? 'https://www.soundjay.com/buttons/sounds/button-3.mp3'
-            : 'https://www.soundjay.com/buttons/sounds/beep-05.mp3'
+            : 'https://www.soundjay.com/buttons/sounds/beep-05.mp3',
         );
         audio.volume = 0.3;
         audio.play().catch(() => {});
       }
 
-      // Первый запуск: отрисовываем то, что было в памяти
       render();
     </script>
   </body>
