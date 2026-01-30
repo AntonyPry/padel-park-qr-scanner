@@ -222,9 +222,9 @@ async function registerConversation(conversation, ctx) {
   let step = 0;
 
   while (step < 4) {
-    // --- ШАГ 0: ФАМИЛИЯ ---
+    // --- ШАГ 0: ИМЯ (ТЕПЕРЬ ПЕРВОЕ) ---
     if (step === 0) {
-      await ctx.reply('📝 Шаг 1 из 4. Введите вашу **Фамилию**:', {
+      await ctx.reply('📝 Шаг 1 из 4. Введите ваше **Имя**:', {
         parse_mode: 'Markdown',
         reply_markup: { remove_keyboard: true },
       });
@@ -232,17 +232,17 @@ async function registerConversation(conversation, ctx) {
       const text = response.message.text.trim();
 
       if (!isValidWord(text)) {
-        await ctx.reply('❌ Фамилия должна состоять только из букв.');
+        await ctx.reply('❌ Имя должно состоять только из букв.');
         continue;
       }
-      surname = text;
+      firstname = text; // Сохраняем имя
       step++;
     }
 
-    // --- ШАГ 1: ИМЯ ---
+    // --- ШАГ 1: ФАМИЛИЯ (ТЕПЕРЬ ВТОРОЕ) ---
     else if (step === 1) {
       const kb = new Keyboard().text('⬅️ Назад').resized().oneTime();
-      await ctx.reply('📝 Шаг 2 из 4. Введите ваше **Имя**:', {
+      await ctx.reply('📝 Шаг 2 из 4. Введите вашу **Фамилию**:', {
         parse_mode: 'Markdown',
         reply_markup: kb,
       });
@@ -255,27 +255,26 @@ async function registerConversation(conversation, ctx) {
         continue;
       }
       if (!isValidWord(text)) {
-        await ctx.reply('❌ Имя должно состоять только из букв.');
+        await ctx.reply('❌ Фамилия должна состоять только из букв.');
         continue;
       }
 
-      firstname = text;
+      surname = text; // Сохраняем фамилию
       step++;
     }
 
     // --- ШАГ 2: ТЕЛЕФОН (РУЧНОЙ ВВОД) ---
     else if (step === 2) {
-      // Кнопка только "Назад", запроса контакта больше нет
       const kb = new Keyboard().text('⬅️ Назад').resized().oneTime();
 
+      // Отображаем "Имя Фамилия" для красоты, раз уж спрашивали в таком порядке
       await ctx.reply(
-        `👤 ${surname} ${firstname}\n\n` +
+        `👤 ${firstname} ${surname}\n\n` +
           `Шаг 3 из 4. Введите ваш **номер телефона**.\n` +
           `Пример: +79991234567`,
         { parse_mode: 'Markdown', reply_markup: kb },
       );
 
-      // Ждем ТЕКСТ (так как ввода контакта больше нет)
       const response = await conversation.waitFor(':text');
       const text = response.message.text.trim();
 
@@ -284,15 +283,13 @@ async function registerConversation(conversation, ctx) {
         continue;
       }
 
-      // Валидация
       const error = getPhoneValidationError(text);
       if (error) {
-        // Сообщаем конкретную ошибку и остаемся на этом шаге
         await ctx.reply(error);
         continue;
       }
 
-      phone = text; // Сохраняем как есть (или можно сохранить digitsOnly)
+      phone = text;
       step++;
     }
 
@@ -325,6 +322,8 @@ async function registerConversation(conversation, ctx) {
 
   // --- СОХРАНЕНИЕ ---
   const telegramId = String(ctx.from.id);
+  // В базу пишем "Фамилия Имя" (для удобства сортировки),
+  // или можешь поменять на `${firstname} ${surname}`, если хочешь наоборот.
   const fullName = `${surname} ${firstname}`;
 
   await conversation.external(async () => {
