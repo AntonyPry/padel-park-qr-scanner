@@ -2,6 +2,8 @@
   "dependencies": {
     "@grammyjs/conversations": "^2.1.1",
     "@grammyjs/runner": "^2.0.3",
+    "@vk-io/scenes": "^1.2.1",
+    "@vk-io/session": "^2.2.1",
     "axios": "^1.13.2",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
@@ -12,6 +14,7 @@
     "sequelize": "^6.37.7",
     "serialport": "^13.0.0",
     "socket.io": "^4.8.3",
+    "vk-io": "^4.10.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

@@ -1,331 +1,503 @@
 require('dotenv').config();
-const { Bot, session, InlineKeyboard, Keyboard, InputFile } = require('grammy');
-const {
-  conversations,
-  createConversation,
-} = require('@grammyjs/conversations');
-const QRCode = require('qrcode');
-const { run } = require('@grammyjs/runner');
 const db = require('./models');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
-const startScanner = require('./scanner');
+const QRCode = require('qrcode');
 const { Op } = require('sequelize');
+const startScanner = require('./scanner');
 
-// 1. НАСТРОЙКА СЕРВЕРА (EXPRESS + SOCKET.IO)
+// --- ИМПОРТЫ TELEGRAM ---
+const {
+  Bot: TgBot,
+  session: tgSession,
+  InlineKeyboard: TgInlineKeyboard,
+  Keyboard: TgKeyboard,
+  InputFile: TgInputFile,
+} = require('grammy');
+const {
+  conversations: tgConversations,
+  createConversation: tgCreateConversation,
+} = require('@grammyjs/conversations');
+const { run: runTg } = require('@grammyjs/runner');
+
+// --- ИМПОРТЫ VK ---
+const { VK, Keyboard: VkKeyboard } = require('vk-io');
+const { SessionManager: VkSessionManager } = require('@vk-io/session');
+const {
+  SceneManager: VkSceneManager,
+  StepScene: VkStepScene,
+} = require('@vk-io/scenes');
+
+// ==========================================
+// 1. ВЕБ-СЕРВЕР И АДМИНКА (Общая часть)
+// ==========================================
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public')); // Раздаем папку с html
+app.use(express.static('public'));
 
 app.get('/api/search', async (req, res) => {
+  /* Твой код поиска без изменений */
   const query = req.query.q;
   if (!query || query.length < 2) return res.json([]);
-
   try {
     const users = await db.User.findAll({
-      where: {
-        name: { [Op.like]: `%${query}%` }, // Поиск подстроки
-      },
-      limit: 5, // Не больше 5 результатов
+      where: { name: { [Op.like]: `%${query}%` } },
+      limit: 5,
     });
     res.json(users);
   } catch (e) {
-    console.error(e);
     res.json([]);
   }
 });
 
-// 2. Ручная регистрация визита
 app.post('/api/manual-visit', async (req, res) => {
+  /* Твой код ручного визита без изменений */
   const { userId } = req.body;
   if (!userId) return res.status(400).send('No ID');
-
   try {
     const user = await db.User.findByPk(userId);
     if (!user) return res.status(404).send('User not found');
-
-    // --- ЛОГИКА 5 МИНУТ (Копируем логику, чтобы работало и тут) ---
     const lastVisit = await db.Visit.findOne({
       where: { userId: user.id },
       order: [['createdAt', 'DESC']],
     });
-
     let visitId;
     let isNewVisit = true;
-
-    if (lastVisit) {
-      const now = new Date();
-      const diffMins = (now - lastVisit.createdAt) / 60000;
-      if (diffMins < 5) {
-        visitId = lastVisit.id;
-        isNewVisit = false;
-      }
+    if (lastVisit && (new Date() - lastVisit.createdAt) / 60000 < 5) {
+      visitId = lastVisit.id;
+      isNewVisit = false;
     }
-
     if (isNewVisit) {
       const newVisit = await db.Visit.create({ userId: user.id });
       visitId = newVisit.id;
     }
-
-    // Отправляем всем (и себе тоже) через сокет
     io.emit('scan_result', {
       success: true,
       user: user,
       visitId: visitId,
       isRepeated: !isNewVisit,
     });
-
     res.json({ status: 'ok' });
   } catch (e) {
-    console.error(e);
     res.status(500).send('Error');
   }
 });
 
 app.post('/api/key', async (req, res) => {
+  /* Твой код ключа без изменений */
   const { visitId, keyNumber } = req.body;
-  if (!visitId || !keyNumber) return res.status(400).send('No data');
-
   try {
-    await db.Visit.update({ keyNumber: keyNumber }, { where: { id: visitId } });
-    console.log(`🔑 Ключ ${keyNumber} выдан для визита #${visitId}`);
+    await db.Visit.update({ keyNumber }, { where: { id: visitId } });
     res.json({ status: 'ok' });
   } catch (e) {
-    console.error(e);
     res.status(500).send('Error');
   }
 });
 
-// API: Сюда будет стучаться скрипт сканера
+// АДАПТИРОВАННЫЙ СКАНЕР ДЛЯ TG И VK
 app.post('/api/scan', async (req, res) => {
   const { qr } = req.body;
   console.log('📡 Сканер:', qr);
   if (!qr) return res.status(400).send('No QR');
 
   try {
-    const user = await db.User.findOne({ where: { telegramId: qr } });
+    let user;
+    // Проверяем, откуда пришел QR: если есть префикс vk_ - ищем в vkId
+    if (qr.startsWith('vk_')) {
+      const vkId = qr.replace('vk_', '');
+      user = await db.User.findOne({ where: { vkId: vkId } });
+    } else {
+      // Иначе считаем, что это Telegram ID
+      user = await db.User.findOne({ where: { telegramId: qr } });
+    }
 
     if (user) {
-      // --- ЛОГИКА 5 МИНУТ ---
-      // Ищем последний визит этого пользователя
       const lastVisit = await db.Visit.findOne({
         where: { userId: user.id },
         order: [['createdAt', 'DESC']],
       });
-
       let visitId;
       let isNewVisit = true;
-
-      if (lastVisit) {
-        const now = new Date();
-        const diffMs = now - lastVisit.createdAt;
-        const diffMins = diffMs / 60000;
-
-        if (diffMins < 5) {
-          // Если прошло меньше 5 минут — используем старый визит
-          console.log(
-            `⏱️ Повторный скан (прошло ${diffMins.toFixed(
-              1,
-            )} мин). Новая запись не создана.`,
-          );
-          visitId = lastVisit.id;
-          isNewVisit = false;
-        }
+      if (lastVisit && (new Date() - lastVisit.createdAt) / 60000 < 5) {
+        console.log('⏱️ Повторный скан. Новая запись не создана.');
+        visitId = lastVisit.id;
+        isNewVisit = false;
       }
-
-      // Если визит старый или его нет — создаем новый
       if (isNewVisit) {
         const newVisit = await db.Visit.create({ userId: user.id });
         visitId = newVisit.id;
       }
-
-      // Отправляем на фронт (передаем visitId для привязки ключа)
       io.emit('scan_result', {
         success: true,
         user: user,
-        visitId: visitId, // ID визита (нового или того, что был < 5 мин назад)
+        visitId: visitId,
         isRepeated: !isNewVisit,
       });
-
       res.json({ status: 'ok', found: true });
     } else {
       io.emit('scan_result', { success: false, id: qr });
       res.json({ status: 'ok', found: false });
     }
   } catch (e) {
-    console.error('Ошибка:', e);
+    console.error(e);
     res.status(500).send('Server Error');
   }
 });
 
-const bot = new Bot(process.env.BOT_TOKEN);
+// ==========================================
+// 2. ОБЩИЕ ФУНКЦИИ И ТЕКСТЫ
+// ==========================================
+function isValidWord(text) {
+  return text && /^[а-яА-Яa-zA-ZёЁ\-]+$/.test(text.trim());
+}
+function getPhoneValidationError(text) {
+  if (!text) return 'Пустой ввод.';
+  if (!/^[0-9\+\-\s\(\)]+$/.test(text)) return '❌ Используйте только цифры.';
+  const digitsOnly = text.replace(/\D/g, '');
+  if (digitsOnly.length < 10) return '❌ Слишком короткий номер.';
+  if (digitsOnly.length > 15) return '❌ Слишком длинный номер.';
+  return null;
+}
 
-// Храним состояние галочек в сессии
-bot.use(
-  session({
-    initial: () => ({
-      consents: [false, false, false],
-    }),
-  }),
-);
+const CONSENT_TEXT = `Просим вас ознакомиться с правилами клуба и дать согласие ☺️\n
+• Публичная оферта и правила клуба\nhttps://padelpark.pro/rules\n
+• Политика конфиденциальности\nhttps://padelpark.pro/privacy\n
+• Согласие на получение рекламных рассылок\nhttps://padelpark.pro/adv\n
+Нажмите на пункты ниже, чтобы отметить их галочками.`;
 
-bot.use(conversations());
+// ==========================================
+// 3. БОТ ВКОНТАКТЕ (VK-IO)
+// ==========================================
+const vk = new VK({ token: process.env.VK_TOKEN });
+const vkSessionManager = new VkSessionManager();
+const vkSceneManager = new VkSceneManager();
 
-// --- ГЛАВНОЕ МЕНЮ (НИЖНЕЕ) ---
-const mainMenu = new Keyboard()
+vk.updates.on('message_new', vkSessionManager.middleware);
+vk.updates.on('message_new', vkSceneManager.middleware);
+vk.updates.on('message_new', vkSceneManager.middlewareIntercept);
+
+// Главное меню ВК
+const vkMainMenu = VkKeyboard.builder()
+  .textButton({
+    label: '🔄 Сгенерировать QR заново',
+    payload: { command: 'get_qr' },
+    color: VkKeyboard.PRIMARY_COLOR,
+  })
+  .row()
+  .textButton({
+    label: '✏️ Изменить данные',
+    payload: { command: 'edit_profile' },
+    color: VkKeyboard.SECONDARY_COLOR,
+  });
+
+// Клавиатура галочек для ВК
+function getVkConsentKeyboard(consents) {
+  const kb = VkKeyboard.builder()
+    .textButton({
+      label: consents[0]
+        ? '✅ С правилами ознакомлен'
+        : '❌ С правилами ознакомлен',
+      payload: { consent: 0 },
+    })
+    .row()
+    .textButton({
+      label: consents[1]
+        ? '✅ Согласен с политикой'
+        : '❌ Согласен с политикой',
+      payload: { consent: 1 },
+    })
+    .row()
+    .textButton({
+      label: consents[2] ? '✅ Даю согласие' : '❌ Даю согласие',
+      payload: { consent: 2 },
+    })
+    .row();
+  if (consents.every((c) => c === true)) {
+    kb.textButton({
+      label: '➡️ ДАЛЕЕ',
+      payload: { command: 'start_register' },
+      color: VkKeyboard.POSITIVE_COLOR,
+    });
+  }
+  return kb.inline();
+}
+
+// Сцена регистрации ВК
+const vkRegisterScene = new VkStepScene('register', [
+  async (ctx) => {
+    if (ctx.scene.step.firstTime) {
+      await ctx.send('📝 Шаг 1 из 4. Введите ваше Имя:');
+      return;
+    }
+    if (!isValidWord(ctx.text)) {
+      await ctx.send('❌ Имя должно состоять только из букв.');
+      return;
+    }
+    ctx.scene.state.firstname = ctx.text.trim();
+    await ctx.scene.step.next();
+  },
+  async (ctx) => {
+    if (ctx.scene.step.firstTime) {
+      await ctx.send('📝 Шаг 2 из 4. Введите вашу Фамилию:');
+      return;
+    }
+    if (!isValidWord(ctx.text)) {
+      await ctx.send('❌ Фамилия должна состоять только из букв.');
+      return;
+    }
+    ctx.scene.state.surname = ctx.text.trim();
+    await ctx.scene.step.next();
+  },
+  async (ctx) => {
+    if (ctx.scene.step.firstTime) {
+      await ctx.send(
+        `👤 ${ctx.scene.state.firstname} ${ctx.scene.state.surname}\n\nШаг 3 из 4. Введите ваш номер телефона.\nПример: +79991234567`,
+      );
+      return;
+    }
+    const error = getPhoneValidationError(ctx.text);
+    if (error) {
+      await ctx.send(error);
+      return;
+    }
+    ctx.scene.state.phone = ctx.text.trim();
+    await ctx.scene.step.next();
+  },
+  async (ctx) => {
+    if (ctx.scene.step.firstTime) {
+      const kb = VkKeyboard.builder()
+        .textButton({ label: 'Вк' })
+        .textButton({ label: 'Тг' })
+        .textButton({ label: 'Радио' })
+        .row()
+        .textButton({ label: 'Хоккей' })
+        .textButton({ label: 'Сайт' })
+        .textButton({ label: 'Инст' })
+        .row()
+        .textButton({ label: 'Рекомендация друзей' })
+        .textButton({ label: 'Увидел в тц' })
+        .row()
+        .textButton({ label: 'Другое' })
+        .oneTime();
+      await ctx.send('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
+        keyboard: kb,
+      });
+      return;
+    }
+    ctx.scene.state.source = ctx.text.trim();
+
+    // Сохранение в БД
+    const vkId = String(ctx.peerId);
+    const fullName = `${ctx.scene.state.surname} ${ctx.scene.state.firstname}`;
+
+    try {
+      await db.User.upsert({
+        vkId: vkId,
+        name: fullName,
+        phone: ctx.scene.state.phone,
+        source: ctx.scene.state.source,
+      });
+      await ctx.send('✅ Регистрация завершена!');
+      await sendVkQrCode(ctx, vkId);
+    } catch (e) {
+      console.error('Ошибка БД ВК:', e);
+      await ctx.send('❌ Произошла ошибка при сохранении.');
+    }
+
+    await ctx.scene.leave();
+  },
+]);
+vkSceneManager.addScenes([vkRegisterScene]);
+
+// Обработчик сообщений ВК (Защита от случайных сообщений - админ может чатиться)
+vk.updates.on('message_new', async (ctx, next) => {
+  // Если клиент уже в процессе регистрации - пропускаем его к сцене
+  if (ctx.scene.current) return next();
+
+  // Если это просто текст без кнопок/команд (живое общение) - ИГНОРИРУЕМ
+  if (
+    !ctx.messagePayload &&
+    !['Начать', 'начать', '/start'].includes(ctx.text)
+  ) {
+    return;
+  }
+
+  const payload = ctx.messagePayload || {};
+  const vkId = String(ctx.peerId);
+
+  // Команда старта
+  if (['Начать', 'начать', '/start'].includes(ctx.text)) {
+    const user = await db.User.findOne({ where: { vkId } });
+    if (user) {
+      return ctx.send(`С возвращением, ${user.name}!`, {
+        keyboard: vkMainMenu,
+      });
+    }
+    ctx.session.consents = [false, false, false];
+    return ctx.send(CONSENT_TEXT, {
+      keyboard: getVkConsentKeyboard(ctx.session.consents),
+      dont_parse_links: true,
+    });
+  }
+
+  // Обработка галочек согласия
+  if (payload.consent !== undefined) {
+    ctx.session.consents[payload.consent] =
+      !ctx.session.consents[payload.consent];
+    return ctx.send('Обновил выбор:', {
+      keyboard: getVkConsentKeyboard(ctx.session.consents),
+    });
+  }
+
+  // Кнопка Далее
+  if (payload.command === 'start_register') {
+    await ctx.send('✅ Согласия получены. Начинаем...');
+    return ctx.scene.enter('register');
+  }
+
+  // Главное меню
+  if (payload.command === 'get_qr' || ctx.text === '🔄 Сгенерировать QR заново')
+    return sendVkQrCode(ctx, vkId);
+  if (payload.command === 'edit_profile' || ctx.text === '✏️ Изменить данные')
+    return ctx.scene.enter('register');
+
+  await next();
+});
+
+async function sendVkQrCode(ctx, vkId) {
+  try {
+    const qrBuffer = await QRCode.toBuffer(`vk_${vkId}`, {
+      scale: 10,
+      margin: 1,
+      color: { dark: '#000000', light: '#FFFFFF' },
+    });
+    // В ВК картинку нужно сначала загрузить на сервер
+    const attachment = await vk.upload.messagePhoto({
+      source: { value: qrBuffer },
+      peer_id: ctx.peerId,
+    });
+    await ctx.send({
+      message: 'Ваш пропуск:',
+      attachment,
+      keyboard: vkMainMenu,
+    });
+  } catch (e) {
+    console.error('Ошибка QR ВК:', e);
+    ctx.send('Ошибка генерации QR.');
+  }
+}
+
+// ==========================================
+// 4. БОТ TELEGRAM (GRAMMY)
+// ==========================================
+const tgBot = new TgBot(process.env.BOT_TOKEN);
+tgBot.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
+tgBot.use(tgConversations());
+
+const tgMainMenu = new TgKeyboard()
   .text('🔄 Сгенерировать QR заново')
   .row()
   .text('✏️ Изменить данные')
   .resized();
 
-// --- ВАЛИДАЦИЯ ---
-function isValidWord(text) {
-  if (!text) return false;
-  const regex = /^[а-яА-Яa-zA-ZёЁ\-]+$/;
-  return regex.test(text.trim());
+function getTgConsentKeyboard(consents) {
+  const kb = new TgInlineKeyboard();
+  kb.text(
+    consents[0] ? '✅ С правилами ознакомлен' : '❌ С правилами ознакомлен',
+    'toggle_consent_0',
+  ).row();
+  kb.text(
+    consents[1] ? '✅ Согласен с политикой' : '❌ Согласен с политикой',
+    'toggle_consent_1',
+  ).row();
+  kb.text(
+    consents[2] ? '✅ Даю согласие' : '❌ Даю согласие',
+    'toggle_consent_2',
+  ).row();
+  if (consents.every((c) => c === true)) kb.text('➡️ ДАЛЕЕ', 'consent_next');
+  else kb.text('🔒 Отметьте все пункты выше', 'consent_locked');
+  return kb;
 }
 
-// Валидация телефона (возвращает текст ошибки или null если всё ок)
-function getPhoneValidationError(text) {
-  if (!text) return 'Пустой ввод.';
-
-  // Проверка на недопустимые символы (буквы и спецсимволы, кроме допустимых)
-  // Разрешаем: цифры, +, пробел, дефис, скобки
-  const validCharsRegex = /^[0-9\+\-\s\(\)]+$/;
-  if (!validCharsRegex.test(text)) {
-    return '❌ В номере обнаружены недопустимые символы (буквы). Используйте только цифры.';
-  }
-
-  // Считаем количество чистых цифр
-  const digitsOnly = text.replace(/\D/g, ''); // Удаляем всё, кроме цифр
-
-  if (digitsOnly.length < 10) {
-    return '❌ Слишком короткий номер. Введите номер полностью (минимум 10 цифр).';
-  }
-
-  if (digitsOnly.length > 15) {
-    return '❌ Слишком длинный номер. Проверьте правильность ввода.';
-  }
-
-  return null; // Ошибок нет
-}
-
-// --- ДИАЛОГ РЕГИСТРАЦИИ ---
-async function registerConversation(conversation, ctx) {
+async function tgRegisterConversation(conversation, ctx) {
   let surname, firstname, phone, source;
   let step = 0;
-
   while (step < 4) {
-    // --- ШАГ 0: ИМЯ (ТЕПЕРЬ ПЕРВОЕ) ---
     if (step === 0) {
       await ctx.reply('📝 Шаг 1 из 4. Введите ваше **Имя**:', {
         parse_mode: 'Markdown',
         reply_markup: { remove_keyboard: true },
       });
-      const response = await conversation.waitFor(':text');
-      const text = response.message.text.trim();
-
-      if (!isValidWord(text)) {
+      const msg = await conversation.waitFor(':text');
+      if (!isValidWord(msg.message.text)) {
         await ctx.reply('❌ Имя должно состоять только из букв.');
         continue;
       }
-      firstname = text; // Сохраняем имя
+      firstname = msg.message.text.trim();
       step++;
-    }
-
-    // --- ШАГ 1: ФАМИЛИЯ (ТЕПЕРЬ ВТОРОЕ) ---
-    else if (step === 1) {
-      const kb = new Keyboard().text('⬅️ Назад').resized().oneTime();
+    } else if (step === 1) {
+      const kb = new TgKeyboard().text('⬅️ Назад').resized().oneTime();
       await ctx.reply('📝 Шаг 2 из 4. Введите вашу **Фамилию**:', {
         parse_mode: 'Markdown',
         reply_markup: kb,
       });
-
-      const response = await conversation.waitFor(':text');
-      const text = response.message.text.trim();
-
-      if (text === '⬅️ Назад') {
+      const msg = await conversation.waitFor(':text');
+      if (msg.message.text === '⬅️ Назад') {
         step--;
         continue;
       }
-      if (!isValidWord(text)) {
+      if (!isValidWord(msg.message.text)) {
         await ctx.reply('❌ Фамилия должна состоять только из букв.');
         continue;
       }
-
-      surname = text; // Сохраняем фамилию
+      surname = msg.message.text.trim();
       step++;
-    }
-
-    // --- ШАГ 2: ТЕЛЕФОН (РУЧНОЙ ВВОД) ---
-    else if (step === 2) {
-      const kb = new Keyboard().text('⬅️ Назад').resized().oneTime();
-
-      // Отображаем "Имя Фамилия" для красоты, раз уж спрашивали в таком порядке
+    } else if (step === 2) {
+      const kb = new TgKeyboard().text('⬅️ Назад').resized().oneTime();
       await ctx.reply(
-        `👤 ${firstname} ${surname}\n\n` +
-          `Шаг 3 из 4. Введите ваш **номер телефона**.\n` +
-          `Пример: +79991234567`,
+        `👤 ${firstname} ${surname}\n\nШаг 3 из 4. Введите ваш **номер телефона**.\nПример: +79991234567`,
         { parse_mode: 'Markdown', reply_markup: kb },
       );
-
-      const response = await conversation.waitFor(':text');
-      const text = response.message.text.trim();
-
-      if (text === '⬅️ Назад') {
+      const msg = await conversation.waitFor(':text');
+      if (msg.message.text === '⬅️ Назад') {
         step--;
         continue;
       }
-
-      const error = getPhoneValidationError(text);
+      const error = getPhoneValidationError(msg.message.text);
       if (error) {
         await ctx.reply(error);
         continue;
       }
-
-      phone = text;
+      phone = msg.message.text.trim();
       step++;
-    }
-
-    // --- ШАГ 3: ОТКУДА УЗНАЛИ ---
-    else if (step === 3) {
+    } else if (step === 3) {
       const sources = [
         ['Вк', 'Тг', 'Радио'],
         ['Хоккей', 'Сайт', 'Инст'],
         ['Рекомендация друзей', 'Увидел в тц'],
         ['Другое', '⬅️ Назад'],
       ];
-      const kb = Keyboard.from(sources).resized().oneTime();
-
+      const kb = TgKeyboard.from(sources).resized().oneTime();
       await ctx.reply('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
         reply_markup: kb,
       });
-
-      const response = await conversation.waitFor(':text');
-      const text = response.message.text.trim();
-
-      if (text === '⬅️ Назад') {
+      const msg = await conversation.waitFor(':text');
+      if (msg.message.text === '⬅️ Назад') {
         step--;
         continue;
       }
-
-      source = text;
+      source = msg.message.text.trim();
       step++;
     }
   }
-
-  // --- СОХРАНЕНИЕ ---
   const telegramId = String(ctx.from.id);
-  // В базу пишем "Фамилия Имя" (для удобства сортировки),
-  // или можешь поменять на `${firstname} ${surname}`, если хочешь наоборот.
   const fullName = `${surname} ${firstname}`;
-
   await conversation.external(async () => {
     await db.User.upsert({
       telegramId: telegramId,
@@ -334,159 +506,94 @@ async function registerConversation(conversation, ctx) {
       source: source,
     });
   });
-
   await ctx.reply(`✅ Регистрация завершена!`, {
     reply_markup: { remove_keyboard: true },
   });
-
   await ctx.reply('Ваш пропуск:');
-
-  return sendQrCode(ctx, telegramId);
+  return sendTgQrCode(ctx, telegramId);
 }
+tgBot.use(tgCreateConversation(tgRegisterConversation, 'register'));
 
-bot.use(createConversation(registerConversation, 'register'));
+tgBot.command('start', async (ctx) => {
+  const telegramId = String(ctx.from.id);
+  const user = await db.User.findOne({ where: { telegramId } });
+  if (user)
+    return ctx.reply(`С возвращением, ${user.name}!`, {
+      reply_markup: tgMainMenu,
+    });
+  ctx.session.consents = [false, false, false];
+  await ctx.reply(CONSENT_TEXT, {
+    link_preview_options: { is_disabled: true },
+    reply_markup: getTgConsentKeyboard(ctx.session.consents),
+  });
+});
 
-// --- ЭКРАН СОГЛАСИЯ ---
-
-const CONSENT_TEXT = `Просим вас ознакомиться с правилами клуба и дать согласие ☺️
-
-• Публичная оферта и правила клуба
-https://padelpark.pro/rules
-
-• Политика конфиденциальности
-https://padelpark.pro/privacy
-
-• Согласие на получение рекламных рассылок
-https://padelpark.pro/adv
-
-_Нажмите на пункты ниже, чтобы отметить их галочками._`;
-
-function getConsentKeyboard(consents) {
-  const keyboard = new InlineKeyboard();
-
-  // 1. Правила (соответствует первой ссылке)
-  keyboard
-    .text(
-      consents[0] ? '✅ С правилами ознакомлен' : '❌ С правилами ознакомлен',
-      'toggle_consent_0',
-    )
-    .row();
-
-  // 2. Политика конфиденциальности (соответствует второй ссылке)
-  keyboard
-    .text(
-      consents[1] ? '✅ Согласен с политикой' : '❌ Согласен с политикой',
-      'toggle_consent_1',
-    )
-    .row();
-
-  // 3. Рассылка (соответствует третьей ссылке)
-  keyboard
-    .text(
-      consents[2] ? '✅ Согласен на рассылку' : '❌ Согласен на рассылку',
-      'toggle_consent_2',
-    )
-    .row();
-
-  const allChecked = consents.every((c) => c === true);
-
-  if (allChecked) {
-    keyboard.text('➡️ ДАЛЕЕ', 'consent_next');
-  } else {
-    keyboard.text('🔒 Отметьте все пункты выше', 'consent_locked');
-  }
-
-  return keyboard;
-}
-
-bot.callbackQuery(/toggle_consent_(\d)/, async (ctx) => {
-  const index = parseInt(ctx.match[1]);
-  ctx.session.consents[index] = !ctx.session.consents[index];
+tgBot.callbackQuery(/toggle_consent_(\d)/, async (ctx) => {
+  const idx = parseInt(ctx.match[1]);
+  ctx.session.consents[idx] = !ctx.session.consents[idx];
   try {
     await ctx.editMessageReplyMarkup({
-      reply_markup: getConsentKeyboard(ctx.session.consents),
+      reply_markup: getTgConsentKeyboard(ctx.session.consents),
     });
   } catch (e) {}
   await ctx.answerCallbackQuery();
 });
-
-bot.callbackQuery('consent_locked', async (ctx) => {
+tgBot.callbackQuery('consent_locked', async (ctx) => {
   await ctx.answerCallbackQuery({
-    text: 'Пожалуйста, отметьте все пункты галочками!',
+    text: 'Отметьте все пункты галочками!',
     show_alert: true,
   });
 });
-
-bot.callbackQuery('consent_next', async (ctx) => {
+tgBot.callbackQuery('consent_next', async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.editMessageText('✅ Согласия получены. Начинаем регистрацию...');
   await ctx.conversation.enter('register');
 });
 
-// --- КОМАНДЫ И МЕНЮ ---
+tgBot.hears(
+  '🔄 Сгенерировать QR заново',
+  async (ctx) => await sendTgQrCode(ctx, String(ctx.from.id)),
+);
+tgBot.hears(
+  '✏️ Изменить данные',
+  async (ctx) => await ctx.conversation.enter('register'),
+);
 
-bot.command('start', async (ctx) => {
-  const telegramId = String(ctx.from.id);
-  const user = await db.User.findOne({ where: { telegramId } });
-
-  if (user) {
-    await ctx.reply(`С возвращением, ${user.name}!`, {
-      reply_markup: mainMenu,
-    });
-    return;
-  }
-
-  ctx.session.consents = [false, false, false];
-  await ctx.reply(CONSENT_TEXT, {
-    parse_mode: 'Markdown',
-    link_preview_options: { is_disabled: true },
-    reply_markup: getConsentKeyboard(ctx.session.consents),
-  });
-});
-
-bot.hears('🔄 Сгенерировать QR заново', async (ctx) => {
-  await sendQrCode(ctx, String(ctx.from.id));
-});
-
-bot.hears('✏️ Изменить данные', async (ctx) => {
-  await ctx.conversation.enter('register');
-});
-
-// --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-
-async function sendQrCode(ctx, qrData) {
+async function sendTgQrCode(ctx, tgId) {
   try {
-    const qrBuffer = await QRCode.toBuffer(qrData, {
-      scale: 10,
-      margin: 1,
-      color: { dark: '#000000', light: '#FFFFFF' },
-    });
-
-    await ctx.replyWithPhoto(new InputFile(qrBuffer), {
-      reply_markup: mainMenu,
+    const qrBuffer = await QRCode.toBuffer(tgId, { scale: 10, margin: 1 });
+    await ctx.replyWithPhoto(new TgInputFile(qrBuffer), {
+      reply_markup: tgMainMenu,
     });
   } catch (error) {
     console.error(error);
-    await ctx.reply('Ошибка генерации QR.');
+    ctx.reply('Ошибка генерации QR.');
   }
 }
 
+// ==========================================
+// 5. ЗАПУСК ВСЕЙ СИСТЕМЫ
+// ==========================================
 async function startApp() {
   try {
     await db.sequelize.authenticate();
     console.log('✅ БД подключена.');
 
-    // Запускаем бота
-    run(bot);
-    console.log('🚀 Бот запущен.');
+    // Запуск Telegram
+    runTg(tgBot);
+    console.log('✈️ Telegram Бот запущен.');
 
-    // Запускаем веб-сервер
+    // Запуск VK (Polling)
+    await vk.updates.start();
+    console.log('🟦 ВКонтакте Бот запущен.');
+
+    // Запуск Веб-сервера и Сканера
     server.listen(3000, () => {
       console.log('🌐 Админ-панель: http://localhost:3000/admin.html');
       startScanner();
     });
   } catch (error) {
-    console.error('❌ Ошибка:', error);
+    console.error('❌ Ошибка старта:', error);
   }
 }
 

@@ -15,6 +15,11 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         unique: true,
       },
+      vkId: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true,
+      },
       name: {
         type: DataTypes.STRING,
         allowNull: false,
@@ -31,7 +36,7 @@ module.exports = (sequelize, DataTypes) => {
     {
       sequelize,
       modelName: 'User',
-    }
+    },
   );
 
   return User;
