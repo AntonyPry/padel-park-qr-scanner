@@ -379,7 +379,7 @@ async function sendVkQrCode(ctx, vkId) {
     });
     // В ВК картинку нужно сначала загрузить на сервер
     const attachment = await vk.upload.messagePhoto({
-      source: { value: qrBuffer },
+      source: { value: qrBuffer, filename: 'qr.png' },
       peer_id: ctx.peerId,
     });
     await ctx.send({
