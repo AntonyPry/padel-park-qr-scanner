@@ -398,10 +398,12 @@ async function sendVkQrCode(ctx, vkId) {
 // 4. БОТ TELEGRAM (GRAMMY)
 // ==========================================
 
-// Создаем агента из переменной окружения
-const agent = new SocksProxyAgent(process.env.TG_PROXY_CREDS);
+// Передаем настройки игнорирования сертификатов (для разных версий библиотеки)
+const agent = new SocksProxyAgent(process.env.TG_PROXY_CREDS, {
+  rejectUnauthorized: false, // Для старых версий socks-proxy-agent
+  tls: { rejectUnauthorized: false }, // Для новых версий (v8+)
+});
 
-// Передаем агента в настройки grammy
 const tgBot = new TgBot(process.env.BOT_TOKEN, {
   client: {
     baseFetchConfig: {
