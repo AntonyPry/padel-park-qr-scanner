@@ -7,6 +7,7 @@ const cors = require('cors');
 const QRCode = require('qrcode');
 const { Op } = require('sequelize');
 const startScanner = require('./scanner');
+const { SocksProxyAgent } = require('socks-proxy-agent');
 
 // --- ИМПОРТЫ TELEGRAM ---
 const {
@@ -396,7 +397,18 @@ async function sendVkQrCode(ctx, vkId) {
 // ==========================================
 // 4. БОТ TELEGRAM (GRAMMY)
 // ==========================================
-const tgBot = new TgBot(process.env.BOT_TOKEN);
+
+// Создаем агента из переменной окружения
+const agent = new SocksProxyAgent(process.env.TG_PROXY_CREDS);
+
+// Передаем агента в настройки grammy
+const tgBot = new TgBot(process.env.BOT_TOKEN, {
+  client: {
+    baseFetchConfig: {
+      agent: agent,
+    },
+  },
+});
 tgBot.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
 tgBot.use(tgConversations());
 
