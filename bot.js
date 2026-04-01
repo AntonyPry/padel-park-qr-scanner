@@ -1,3 +1,4 @@
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 require('dotenv').config();
 const db = require('./models');
 const express = require('express');
@@ -406,9 +407,10 @@ const agent = new SocksProxyAgent(process.env.TG_PROXY_CREDS, {
 
 const tgBot = new TgBot(process.env.BOT_TOKEN, {
   client: {
-    baseFetchConfig: {
+    buildFetchConfig: (init) => ({
+      ...init,
       agent: agent,
-    },
+    }),
   },
 });
 tgBot.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
