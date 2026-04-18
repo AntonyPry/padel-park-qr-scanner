@@ -162,7 +162,6 @@ export default function AdminPage() {
 
       // Настраиваем чтение потока
       const textDecoder = new TextDecoderStream();
-      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
       const reader = textDecoder.readable.getReader();
 
       let buffer = '';
