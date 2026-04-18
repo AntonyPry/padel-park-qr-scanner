@@ -148,49 +148,44 @@ export default function AdminPage() {
     }
 
     try {
-      // Запрашиваем доступ у пользователя (отфильтровано по твоему сканеру)
       const port = await (navigator as any).serial.requestPort({
-        filters: [
-          { usbVendorId: 0x067b, usbProductId: 0x2303 }, // Твои TARGET_VENDOR_ID и TARGET_PRODUCT_ID в hex
-        ],
+        filters: [{ usbVendorId: 0x067b, usbProductId: 0x2303 }],
       });
 
-      // Открываем порт со скоростью 9600
       await port.open({ baudRate: 9600 });
       setScannerStatus('connected');
       console.log('✅ Сканер подключен!');
 
-      // Настраиваем чтение потока
       const textDecoder = new TextDecoderStream();
+      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
       const reader = textDecoder.readable.getReader();
 
       let buffer = '';
 
-      // Бесконечный цикл чтения
       while (true) {
         const { value, done } = await reader.read();
+
         if (done) {
           reader.releaseLock();
           break;
         }
 
         if (value) {
+          // Отличный способ дебага: раскомментируй строку ниже, чтобы видеть, приходят ли вообще сигналы от USB
+          // console.log('Сырой чанк:', JSON.stringify(value));
+
           buffer += value;
-          // Ищем разделитель (в твоем старом коде это был \r)
-          if (buffer.includes('\r') || buffer.includes('\n')) {
-            // Разбиваем на части, если пришло несколько строк
-            const parts = buffer.split(/\r|\n/);
 
-            // Первая часть - это наш полный QR код
-            const qrCode = parts[0].trim();
-
-            // Остаток записываем обратно в буфер (обычно пустая строка)
-            buffer = parts.slice(1).join('').trim();
+          // Ищем индекс первого попавшегося переноса строки (\r или \n)
+          let newlineIndex;
+          while ((newlineIndex = buffer.search(/[\r\n]/)) !== -1) {
+            // Вытаскиваем строку до переноса
+            const qrCode = buffer.slice(0, newlineIndex).trim();
+            // Отрезаем обработанную часть вместе с символом переноса
+            buffer = buffer.slice(newlineIndex + 1);
 
             if (qrCode) {
               console.log(`📡 Считано: ${qrCode}`);
-
-              // Отправляем на наш сервер
               try {
                 await fetch('http://localhost:3000/api/scan', {
                   method: 'POST',
@@ -198,14 +193,14 @@ export default function AdminPage() {
                   body: JSON.stringify({ qr: qrCode }),
                 });
               } catch (e) {
-                console.error('Ошибка отправки скана на сервер:', e);
+                console.error('❌ Ошибка отправки на сервер:', e);
               }
             }
           }
         }
       }
     } catch (error) {
-      console.error('Ошибка подключения сканера:', error);
+      console.error('❌ Ошибка сканера:', error);
       setScannerStatus('disconnected');
     }
   };
