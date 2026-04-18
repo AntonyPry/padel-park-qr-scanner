@@ -12,10 +12,15 @@ module.exports = (sequelize, DataTypes) => {
     {
       telegramId: {
         type: DataTypes.STRING,
-        allowNull: false,
+        allowNull: true,
         unique: true,
       },
       vkId: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        unique: true,
+      },
+      webId: {
         type: DataTypes.STRING,
         allowNull: true,
         unique: true,
