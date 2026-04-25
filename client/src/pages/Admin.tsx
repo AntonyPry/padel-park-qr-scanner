@@ -30,8 +30,9 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
+import { API_URL } from '@/config';
 
-const socket = io('http://localhost:3000');
+const socket = io(API_URL);
 
 interface VisitCard {
   id: string;
@@ -81,7 +82,7 @@ export default function AdminPage() {
 
   const fetchHistory = async () => {
     try {
-      const res = await fetch('http://localhost:3000/api/visits');
+      const res = await fetch(`${API_URL}/api/visits`);
       if (res.ok) {
         const history = await res.json();
         setCards(history);
@@ -187,7 +188,7 @@ export default function AdminPage() {
             if (qrCode) {
               console.log(`📡 Считано: ${qrCode}`);
               try {
-                await fetch('http://localhost:3000/api/scan', {
+                await fetch(`${API_URL}/api/scan`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ qr: qrCode }),
@@ -226,7 +227,7 @@ export default function AdminPage() {
     searchTimeout.current = setTimeout(async () => {
       try {
         const res = await fetch(
-          `http://localhost:3000/api/search?q=${encodeURIComponent(searchQuery)}`,
+          `${API_URL}/api/search?q=${encodeURIComponent(searchQuery)}`,
         );
         const data = await res.json();
         setSearchResults(data);
@@ -238,7 +239,7 @@ export default function AdminPage() {
 
   const handleManualVisit = async (userId: number) => {
     try {
-      const res = await fetch('http://localhost:3000/api/manual-visit', {
+      const res = await fetch(`${API_URL}/api/manual-visit`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
@@ -285,7 +286,7 @@ export default function AdminPage() {
     setRegError('');
 
     try {
-      const regRes = await fetch('http://localhost:3000/api/register', {
+      const regRes = await fetch(`${API_URL}/api/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(regForm),
@@ -294,7 +295,7 @@ export default function AdminPage() {
       const regData = await regRes.json();
 
       if (regRes.ok && regData.user) {
-        await fetch('http://localhost:3000/api/manual-visit', {
+        await fetch(`${API_URL}/api/manual-visit`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: regData.user.id }),
@@ -318,7 +319,7 @@ export default function AdminPage() {
   ) => {
     if (!visitId || !keyNumber.trim()) return;
     try {
-      const res = await fetch('http://localhost:3000/api/key', {
+      const res = await fetch(`${API_URL}/api/key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitId, keyNumber }),

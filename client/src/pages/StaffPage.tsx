@@ -35,6 +35,7 @@ import {
   CheckCircle2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { API_URL } from '@/config';
 
 interface AdminStat {
   name: string;
@@ -89,7 +90,7 @@ export default function StaffPage() {
 
     try {
       const res = await fetch(
-        `http://localhost:3000/api/payroll?from=${fromStr}&to=${toStr}`,
+        `${API_URL}api/payroll?from=${fromStr}&to=${toStr}`,
       );
       if (res.ok) {
         const data = await res.json();
@@ -119,7 +120,7 @@ export default function StaffPage() {
         hours: Number(form.hours) || 0,
       };
 
-      const res = await fetch('http://localhost:3000/api/shifts', {
+      const res = await fetch(`${API_URL}api/shifts`, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -137,7 +138,7 @@ export default function StaffPage() {
     if (String(id).startsWith('draft-')) return;
     if (!confirm('Точно удалить смену?')) return;
     try {
-      await fetch('http://localhost:3000/api/shifts', {
+      await fetch(`${API_URL}api/shifts`, {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id }),

@@ -50,6 +50,7 @@ import { format, startOfMonth, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
+import { API_URL } from '@/config';
 
 const CAP_15 = 15 * 5; // 75 часов (5 кортов 2х2 по 15 часов)
 const CAP_6 = 15; // 15 часов (1 корт 1х1)
@@ -79,7 +80,7 @@ export default function UtilizationPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:3000/api/utilization');
+      const res = await fetch(`${API_URL}/api/utilization`);
       if (res.ok) setData(await res.json());
     } catch (e) {
       console.error(e);
@@ -120,7 +121,7 @@ export default function UtilizationPage() {
     let payload = addMode === 'single' ? [form] : parseBatchData(batchText);
     if (!payload.length) return alert('Не удалось распознать данные.');
 
-    const res = await fetch('http://localhost:3000/api/utilization', {
+    const res = await fetch(`${API_URL}/api/utilization`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

@@ -34,6 +34,7 @@ import { format, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
+import { API_URL } from '@/config';
 
 const COLORS = [
   '#00c64c',
@@ -64,7 +65,7 @@ export default function VisitsAnalyticsPage() {
 
     try {
       const res = await fetch(
-        `http://localhost:3000/api/analytics/visits?from=${fromStr}&to=${toStr}`,
+        `${API_URL}/api/analytics/visits?from=${fromStr}&to=${toStr}`,
       );
       if (res.ok) {
         setData(await res.json());

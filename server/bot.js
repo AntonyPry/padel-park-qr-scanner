@@ -31,6 +31,8 @@ const {
   StepScene: VkStepScene,
 } = require('@vk-io/scenes');
 
+const PORT = process.env.PORT || 3000;
+
 // ==========================================
 // 1. ВЕБ-СЕРВЕР И АДМИНКА (Общая часть)
 // ==========================================
@@ -1381,18 +1383,14 @@ async function startApp() {
     await db.sequelize.authenticate();
     console.log('✅ БД подключена.');
 
-    // // Запуск Telegram
-    // runTg(tgBot);
-    // console.log('✈️ Telegram Бот запущен.');
+    runTg(tgBot);
+    console.log('✈️ Telegram Бот запущен.');
 
-    // Запуск VK (Polling)
-    // await vk.updates.start();
-    // console.log('🟦 ВКонтакте Бот запущен.');
+    await vk.updates.start();
+    console.log('🟦 ВКонтакте Бот запущен.');
 
-    // Запуск Веб-сервера и Сканера
-    server.listen(3000, () => {
-      console.log('🌐 Админ-панель: http://localhost:3000/admin.html');
-    });
+    // Запуск Веб-сервера
+    server.listen(PORT);
   } catch (error) {
     console.error('❌ Ошибка старта:', error);
   }

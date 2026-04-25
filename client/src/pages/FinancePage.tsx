@@ -52,6 +52,7 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
+import { API_URL } from '@/config';
 
 const MANUAL_CATEGORIES = [
   { type: 'income', value: 'corp', label: 'Корп. выручка (вне кассы)' },
@@ -177,7 +178,7 @@ export default function FinancePage() {
   const fetchFinances = async () => {
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:3000/api/finance');
+      const res = await fetch(`${API_URL}api/finance`);
       if (res.ok) setRecords(await res.json());
     } catch (e) {
       console.error(e);
@@ -193,7 +194,7 @@ export default function FinancePage() {
   const handleAddManual = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch('http://localhost:3000/api/finance', {
+      const res = await fetch(`${API_URL}api/finance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
