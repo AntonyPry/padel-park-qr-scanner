@@ -98,20 +98,18 @@ export default function VisitsAnalyticsPage() {
     const finalSources: any[] = [];
 
     data.sources.forEach((sourceItem: any) => {
-      // Нормализуем название для проверки (убираем лишние пробелы, приводим к нижнему регистру для гибкости, если нужно)
+      // Нормализуем название для проверки
       const isKnown = KNOWN_SOURCES.some(
         (known) => known.toLowerCase() === sourceItem.name.toLowerCase(),
       );
 
       if (isKnown) {
-        // Если это "Другое", которое пришло из базы, просто прибавляем к общему счетчику Other
         if (sourceItem.name.toLowerCase() === 'другое') {
           otherCount += sourceItem.value;
         } else {
           finalSources.push(sourceItem);
         }
       } else {
-        // Всякий мусор летит в "Другое"
         otherCount += sourceItem.value;
       }
     });
@@ -120,21 +118,21 @@ export default function VisitsAnalyticsPage() {
       finalSources.push({ name: 'Другое', value: otherCount });
     }
 
-    // Сортируем по убыванию
     return finalSources.sort((a, b) => b.value - a.value);
   }, [data]);
 
-  // Новая цветная тепловая карта (от синего к красному)
+  // Расширенная тепловая карта с отображением ноля
   const getHeatMapColor = (count: number) => {
     if (count === 0)
-      return 'bg-slate-100 text-transparent dark:bg-slate-800/50'; // Пусто
+      return 'bg-slate-100 text-slate-400 dark:bg-slate-800/50 dark:text-slate-500'; // Ноль: серый фон, серый текст
     if (count <= 2)
-      return 'bg-sky-200 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200'; // Низкая (Синий)
+      return 'bg-sky-200 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200';
     if (count <= 5)
-      return 'bg-emerald-300 text-emerald-950 dark:bg-emerald-800 dark:text-emerald-100'; // Средняя (Зеленый)
+      return 'bg-emerald-300 text-emerald-950 dark:bg-emerald-800 dark:text-emerald-100';
     if (count <= 9)
-      return 'bg-amber-400 text-amber-950 dark:bg-amber-600 dark:text-amber-50'; // Высокая (Желтый/Оранжевый)
-    return 'bg-red-500 text-white font-bold shadow-sm'; // Пик (Красный)
+      return 'bg-amber-400 text-amber-950 dark:bg-amber-600 dark:text-amber-50';
+    if (count <= 14) return 'bg-orange-500 text-white shadow-sm';
+    return 'bg-red-600 text-white font-bold shadow-md ring-1 ring-red-700'; // Ультра-пик
   };
 
   return (
@@ -222,7 +220,7 @@ export default function VisitsAnalyticsPage() {
             <Card>
               <CardHeader className="pb-2 flex flex-row items-center justify-between">
                 <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Возвращаемость
+                  Индекс возвращаемости
                 </CardTitle>
                 <TrendingUp className="h-4 w-4 text-green-500" />
               </CardHeader>
@@ -255,7 +253,7 @@ export default function VisitsAnalyticsPage() {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* ИСТОЧНИКИ (Кольцевая диаграмма без легенды) */}
+            {/* ИСТОЧНИКИ */}
             <Card className="col-span-1 flex flex-col">
               <CardHeader>
                 <CardTitle className="text-lg">Откуда о нас узнают</CardTitle>
@@ -284,7 +282,6 @@ export default function VisitsAnalyticsPage() {
                           />
                         ))}
                       </Pie>
-                      {/* Оставляем только Тултип, убираем Легенду */}
                       <Tooltip
                         formatter={(value, name) => [`${value} визитов`, name]}
                         contentStyle={{
@@ -345,13 +342,16 @@ export default function VisitsAnalyticsPage() {
             <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center justify-between">
                 <span>Плотность визитов (по часам выдачи ключей)</span>
-                {/* Легенда тепловой карты */}
                 <div className="flex items-center gap-1 text-[10px] font-normal opacity-70">
                   <span>Меньше</span>
+                  <div className="w-3 h-3 rounded-sm bg-slate-100 dark:bg-slate-800/50 flex items-center justify-center text-[8px] text-slate-400">
+                    0
+                  </div>
                   <div className="w-3 h-3 rounded-sm bg-sky-200 dark:bg-sky-900/50"></div>
                   <div className="w-3 h-3 rounded-sm bg-emerald-300 dark:bg-emerald-800"></div>
                   <div className="w-3 h-3 rounded-sm bg-amber-400 dark:bg-amber-600"></div>
-                  <div className="w-3 h-3 rounded-sm bg-red-500"></div>
+                  <div className="w-3 h-3 rounded-sm bg-orange-500"></div>
+                  <div className="w-3 h-3 rounded-sm bg-red-600"></div>
                   <span>Больше</span>
                 </div>
               </CardTitle>
@@ -391,7 +391,7 @@ export default function VisitsAnalyticsPage() {
                                   )}
                                   title={`${dayName}, ${h}:00 — Визитов: ${count}`}
                                 >
-                                  {count > 0 ? count : ''}
+                                  {count}
                                 </div>
                               </div>
                             );
