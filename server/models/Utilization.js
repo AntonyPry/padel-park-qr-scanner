@@ -25,5 +25,5 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 0,
     },
   });
-  return Utilization;
+  return Utilizations;
 };
