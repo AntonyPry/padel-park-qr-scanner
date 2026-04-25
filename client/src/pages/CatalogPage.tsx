@@ -35,8 +35,8 @@ export default function CatalogPage() {
 
   const fetchData = async () => {
     const [unmappedRes, rulesRes] = await Promise.all([
-      fetch(`${API_URL}api/catalog/unmapped`),
-      fetch(`${API_URL}api/catalog/rules`),
+      fetch(`${API_URL}/api/catalog/unmapped`),
+      fetch(`${API_URL}/api/catalog/rules`),
     ]);
     setUnmapped(await unmappedRes.json());
     setRules(await rulesRes.json());
@@ -50,7 +50,7 @@ export default function CatalogPage() {
     const category = selections[itemName];
     if (!category) return;
 
-    await fetch(`${API_URL}api/catalog/rules`, {
+    await fetch(`${API_URL}/api/catalog/rules`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ itemName, category }),
@@ -66,7 +66,7 @@ export default function CatalogPage() {
   };
 
   const handleDeleteRule = async (id: number) => {
-    await fetch(`${API_URL}api/catalog/rules/${id}`, {
+    await fetch(`${API_URL}/api/catalog/rules/${id}`, {
       method: 'DELETE',
     });
     fetchData();

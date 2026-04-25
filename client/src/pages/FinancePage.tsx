@@ -178,7 +178,7 @@ export default function FinancePage() {
   const fetchFinances = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}api/finance`);
+      const res = await fetch(`${API_URL}/api/finance`);
       if (res.ok) setRecords(await res.json());
     } catch (e) {
       console.error(e);
@@ -194,7 +194,7 @@ export default function FinancePage() {
   const handleAddManual = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_URL}api/finance`, {
+      const res = await fetch(`${API_URL}/api/finance`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
