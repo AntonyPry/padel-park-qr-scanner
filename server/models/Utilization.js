@@ -1,5 +1,5 @@
 module.exports = (sequelize, DataTypes) => {
-  const Utilization = sequelize.define('utilization', {
+  const Utilization = sequelize.define('Utilizations', {
     date: {
       type: DataTypes.DATEONLY,
       primaryKey: true,
