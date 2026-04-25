@@ -821,7 +821,7 @@ app.get('/api/analytics/visits', async (req, res) => {
 
 app.get('/api/utilization', async (req, res) => {
   try {
-    const data = await db.utilization.findAll({ order: [['date', 'ASC']] });
+    const data = await db.Utilizations.findAll({ order: [['date', 'ASC']] });
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -837,7 +837,7 @@ app.post('/api/utilization', async (req, res) => {
       recordsToProcess.map(async (item) => {
         const { date, booked1, booked2, sessions1, sessions2 } = item;
 
-        const [record] = await db.utilization.upsert({
+        const [record] = await db.Utilizations.upsert({
           date,
           booked1: Number(booked1) || 0,
           booked2: Number(booked2) || 0,
