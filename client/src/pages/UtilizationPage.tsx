@@ -24,7 +24,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import {
-  BarChart,
   Bar,
   XAxis,
   YAxis,
@@ -36,7 +35,6 @@ import {
   ComposedChart,
 } from 'recharts';
 import {
-  Activity,
   Plus,
   Calendar as CalendarIcon,
   RefreshCw,

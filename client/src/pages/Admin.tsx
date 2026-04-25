@@ -158,7 +158,6 @@ export default function AdminPage() {
       console.log('✅ Сканер подключен!');
 
       const textDecoder = new TextDecoderStream();
-      const readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
       const reader = textDecoder.readable.getReader();
 
       let buffer = '';

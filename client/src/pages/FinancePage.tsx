@@ -805,7 +805,7 @@ export default function FinancePage() {
                   ))}
                 </Pie>
                 <RechartsTooltip
-                  formatter={(val: number) => `${val.toLocaleString()} ₽`}
+                  formatter={(val: any) => `${val.toLocaleString()} ₽`}
                 />
                 <Legend />
               </PieChart>
@@ -848,7 +848,7 @@ export default function FinancePage() {
                   ))}
                 </Pie>
                 <RechartsTooltip
-                  formatter={(val: number) => `${val.toLocaleString()} ₽`}
+                  formatter={(val: any) => `${val.toLocaleString()} ₽`}
                 />
                 <Legend />
               </PieChart>

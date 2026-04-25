@@ -29,7 +29,7 @@ function Calendar({
     <DayPicker
       showOutsideDays={showOutsideDays}
       className={cn(
-        'group/calendar p-3 [--cell-size:--spacing(8)]',
+        'group/calendar p-3 [--cell-size:2rem]',
         disablePopoverTransparency
           ? 'bg-background rounded-md border shadow-md'
           : '*:bg-background',
