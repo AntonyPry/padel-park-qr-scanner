@@ -108,41 +108,54 @@ app.post('/api/key', async (req, res) => {
   }
 });
 
-// АДАПТИРОВАННЫЙ СКАНЕР ДЛЯ TG И VK
 app.post('/api/scan', async (req, res) => {
-  const { qr } = req.body;
-  console.log('📡 Сканер:', qr);
+  let { qr } = req.body;
+  console.log('📡 Сканер прислал:', JSON.stringify(qr));
   if (!qr) return res.status(400).send('No QR');
+
+  // ЖЕСТКАЯ ОЧИСТКА: убираем ВСЕ пробелы, переносы строк и символ "@"
+  qr = String(qr).replace(/[\s@\r\n]/g, '');
+  console.log('🧹 После очистки ищем:', qr);
 
   try {
     let user;
-    // Проверяем, откуда пришел QR: если есть префикс vk_ - ищем в vkId
+
     if (qr.startsWith('vk_')) {
       const vkId = qr.replace('vk_', '');
       user = await db.User.findOne({ where: { vkId: vkId } });
     } else if (qr.startsWith('web_')) {
-      // Ищем по нашей новой колонке webId
       user = await db.User.findOne({ where: { webId: qr } });
     } else {
-      // Иначе считаем, что это Telegram ID
-      user = await db.User.findOne({ where: { telegramId: qr } });
+      // ИЩЕМ ПО TELEGRAM ID
+      // Используем Op.or, чтобы найти ID, даже если в базе он почему-то записан с собакой
+      user = await db.User.findOne({
+        where: {
+          [Op.or]: [{ telegramId: qr }, { telegramId: `@${qr}` }],
+        },
+      });
     }
+
     if (user) {
+      console.log(`✅ Найден гость: ${user.name}`);
       const lastVisit = await db.Visit.findOne({
         where: { userId: user.id },
         order: [['createdAt', 'DESC']],
       });
+
       let visitId;
       let isNewVisit = true;
+
       if (lastVisit && (new Date() - lastVisit.createdAt) / 60000 < 5) {
-        console.log('⏱️ Повторный скан. Новая запись не создана.');
+        console.log('⏱️ Повторный скан (прошло менее 5 мин).');
         visitId = lastVisit.id;
         isNewVisit = false;
       }
+
       if (isNewVisit) {
         const newVisit = await db.Visit.create({ userId: user.id });
         visitId = newVisit.id;
       }
+
       io.emit('scan_result', {
         success: true,
         user: user,
@@ -151,11 +164,12 @@ app.post('/api/scan', async (req, res) => {
       });
       res.json({ status: 'ok', found: true });
     } else {
+      console.log(`❌ Гость с ID ${qr} НЕ НАЙДЕН в базе.`);
       io.emit('scan_result', { success: false, id: qr });
       res.json({ status: 'ok', found: false });
     }
   } catch (e) {
-    console.error(e);
+    console.error('Ошибка при сканировании:', e);
     res.status(500).send('Server Error');
   }
 });
