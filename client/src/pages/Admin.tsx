@@ -151,7 +151,7 @@ export default function AdminPage() {
     try {
       const port = await (navigator as any).serial.requestPort();
 
-      await port.open({ baudRate: 115200 });
+      await port.open({ baudRate: 9600 });
       setScannerStatus('connected');
       console.log('✅ Сканер подключен!');
 
