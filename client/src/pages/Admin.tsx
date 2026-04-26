@@ -149,9 +149,7 @@ export default function AdminPage() {
     }
 
     try {
-      const port = await (navigator as any).serial.requestPort({
-        filters: [{ usbVendorId: 0x067b, usbProductId: 0x2303 }],
-      });
+      const port = await (navigator as any).serial.requestPort();
 
       await port.open({ baudRate: 9600 });
       setScannerStatus('connected');
