@@ -156,11 +156,9 @@ export default function AdminPage() {
       const port = await (navigator as any).serial.requestPort();
       console.log('✅ [СКАЙНЕР] 3. Порт выбран пользователем');
 
-      console.log(
-        '🔍 [СКАЙНЕР] 4. Пытаемся открыть порт (baudRate: 115200)...',
-      );
+      console.log('🔍 [СКАЙНЕР] 4. Пытаемся открыть порт (baudRate: 9600)...');
       // Попробуй 115200, если будут кракозябры - верни 9600
-      await port.open({ baudRate: 115200 });
+      await port.open({ baudRate: 9600 });
       setScannerStatus('connected');
       console.log('✅ [СКАЙНЕР] 5. Порт успешно ОТКРЫТ!');
 
