@@ -141,7 +141,10 @@ export default function AdminPage() {
   // --- ЛОГИКА ---
 
   const connectScanner = async () => {
+    console.log('🔍 [СКАЙНЕР] 1. Старт функции connectScanner');
+
     if (!('serial' in navigator)) {
+      console.error('❌ [СКАЙНЕР] Web Serial API не поддерживается!');
       alert(
         'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.',
       );
@@ -149,56 +152,94 @@ export default function AdminPage() {
     }
 
     try {
+      console.log('🔍 [СКАЙНЕР] 2. Запрашиваем порт у пользователя...');
       const port = await (navigator as any).serial.requestPort();
+      console.log('✅ [СКАЙНЕР] 3. Порт выбран пользователем');
 
-      await port.open({ baudRate: 9600 });
+      console.log(
+        '🔍 [СКАЙНЕР] 4. Пытаемся открыть порт (baudRate: 115200)...',
+      );
+      // Попробуй 115200, если будут кракозябры - верни 9600
+      await port.open({ baudRate: 115200 });
       setScannerStatus('connected');
-      console.log('✅ Сканер подключен!');
+      console.log('✅ [СКАЙНЕР] 5. Порт успешно ОТКРЫТ!');
 
+      // ВАЖНО: Подключаем порт к декодеру текста (без pipeTo ничего работать не будет!)
+      console.log('🔍 [СКАЙНЕР] 6. Настраиваем потоки чтения...');
       const textDecoder = new TextDecoderStream();
+      port.readable.pipeTo(textDecoder.writable); // <-- ЭТО КРИТИЧНАЯ СТРОКА
       const reader = textDecoder.readable.getReader();
+
+      console.log('✅ [СКАЙНЕР] 7. Ридер запущен, начинаем слушать данные');
 
       let buffer = '';
 
       while (true) {
+        console.log('⏳ [СКАЙНЕР] 8. Ждем пика (вызван reader.read)...');
         const { value, done } = await reader.read();
 
         if (done) {
+          console.log(
+            '🛑 [СКАЙНЕР] Поток закрыт (done = true)! Выходим из цикла.',
+          );
           reader.releaseLock();
           break;
         }
 
         if (value) {
-          // Отличный способ дебага: раскомментируй строку ниже, чтобы видеть, приходят ли вообще сигналы от USB
-          console.log('Сырой чанк:', JSON.stringify(value));
+          console.log(`📦 [СКАЙНЕР] 9. ПРИШЛИ ДАННЫЕ! Длина: ${value.length}`);
+          console.log(`📝 [СКАЙНЕР] Сырой текст:`, JSON.stringify(value));
 
           buffer += value;
+          console.log(
+            `🪣 [СКАЙНЕР] 10. Текущий буфер:`,
+            JSON.stringify(buffer),
+          );
 
           // Ищем индекс первого попавшегося переноса строки (\r или \n)
           let newlineIndex;
           while ((newlineIndex = buffer.search(/[\r\n]/)) !== -1) {
+            console.log(
+              `✂️ [СКАЙНЕР] 11. Найден перенос строки на индексе: ${newlineIndex}`,
+            );
+
             // Вытаскиваем строку до переноса
             const qrCode = buffer.slice(0, newlineIndex).trim();
+            console.log(`🎯 [СКАЙНЕР] 12. Вырезанный код: "${qrCode}"`);
+
             // Отрезаем обработанную часть вместе с символом переноса
             buffer = buffer.slice(newlineIndex + 1);
+            console.log(
+              `🪣 [СКАЙНЕР] 13. Буфер после обрезки:`,
+              JSON.stringify(buffer),
+            );
 
             if (qrCode) {
-              console.log(`📡 Считано: ${qrCode}`);
+              console.log(
+                `🚀 [СКАЙНЕР] 14. Отправляем fetch на сервер: ${qrCode}`,
+              );
               try {
-                await fetch(`${API_URL}/api/scan`, {
+                const response = await fetch(`${API_URL}/api/scan`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ qr: qrCode }),
                 });
+                console.log(
+                  `📥 [СКАЙНЕР] 15. Ответ сервера: Статус ${response.status}`,
+                );
               } catch (e) {
-                console.error('❌ Ошибка отправки на сервер:', e);
+                console.error('❌ [СКАЙНЕР] Ошибка отправки fetch:', e);
               }
+            } else {
+              console.log(
+                '⚠️ [СКАЙНЕР] Пустая строка после обрезки, игнорируем.',
+              );
             }
           }
         }
       }
     } catch (error) {
-      console.error('❌ Ошибка сканера:', error);
+      console.error('❌ [СКАЙНЕР] КРИТИЧЕСКАЯ ОШИБКА:', error);
       setScannerStatus('disconnected');
     }
   };
