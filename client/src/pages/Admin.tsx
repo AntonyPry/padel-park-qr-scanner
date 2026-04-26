@@ -151,7 +151,7 @@ export default function AdminPage() {
     try {
       const port = await (navigator as any).serial.requestPort();
 
-      await port.open({ baudRate: 9600 });
+      await port.open({ baudRate: 115200 });
       setScannerStatus('connected');
       console.log('✅ Сканер подключен!');
 
@@ -170,7 +170,7 @@ export default function AdminPage() {
 
         if (value) {
           // Отличный способ дебага: раскомментируй строку ниже, чтобы видеть, приходят ли вообще сигналы от USB
-          // console.log('Сырой чанк:', JSON.stringify(value));
+          console.log('Сырой чанк:', JSON.stringify(value));
 
           buffer += value;
 
