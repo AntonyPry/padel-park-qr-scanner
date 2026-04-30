@@ -36,13 +36,6 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'; // <-- ДОБАВИЛИ ИМПОРТЫ SELECT
 import { API_URL } from '@/config';
 
 const socket = io(API_URL);

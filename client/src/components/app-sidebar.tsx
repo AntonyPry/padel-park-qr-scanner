@@ -4,7 +4,6 @@ import {
   Database,
   LayoutDashboard,
   LineChart,
-  Target,
   Users,
   Wallet,
 } from 'lucide-react';

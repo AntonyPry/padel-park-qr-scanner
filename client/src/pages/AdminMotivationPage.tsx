@@ -17,7 +17,6 @@ import {
   Target,
   Wallet,
   Clock,
-  ArrowUpRight,
 } from 'lucide-react';
 import { API_URL } from '@/config';
 import { format } from 'date-fns';
