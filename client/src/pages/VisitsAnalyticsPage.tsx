@@ -21,6 +21,7 @@ import {
   Target,
   TrendingUp,
   Calendar as CalendarIcon,
+  Download,
 } from 'lucide-react';
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, subDays } from 'date-fns';
@@ -29,7 +30,6 @@ import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { API_URL } from '@/config';
 
-// Основные категории. Все остальное пойдет в "Другое"
 const KNOWN_SOURCES = [
   'Рекомендация друзей',
   'Увидел в тц',
@@ -42,17 +42,30 @@ const KNOWN_SOURCES = [
   'Сайт',
 ];
 
-// Палитра для кольцевой диаграммы
+// Палитра для кольца Источников
 const COLORS = [
-  '#3b82f6', // Blue
-  '#10b981', // Emerald
-  '#f59e0b', // Amber
-  '#6366f1', // Indigo
-  '#ef4444', // Red
-  '#14b8a6', // Teal
-  '#ec4899', // Pink
-  '#8b5cf6', // Purple
-  '#64748b', // Slate (для "Другое")
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#6366f1',
+  '#ef4444',
+  '#14b8a6',
+  '#ec4899',
+  '#8b5cf6',
+  '#64748b',
+];
+
+// Палитра для кольца Целей визита
+const CATEGORY_COLORS = [
+  '#8b5cf6',
+  '#ec4899',
+  '#f43f5e',
+  '#f97316',
+  '#eab308',
+  '#84cc16',
+  '#10b981',
+  '#06b6d4',
+  '#3b82f6',
 ];
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
@@ -90,19 +103,26 @@ export default function VisitsAnalyticsPage() {
     fetchData();
   }, [dateRange]);
 
-  // Агрегируем данные для графика (оставляем только основные, остальное в "Другое")
+  // ЭКСПОРТ В EXCEL
+  const handleExport = () => {
+    const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
+    const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
+    window.open(
+      `${API_URL}/api/export/visits?from=${fromStr}&to=${toStr}`,
+      '_blank',
+    );
+  };
+
+  // Агрегируем источники
   const aggregatedSources = useMemo(() => {
     if (!data?.sources) return [];
-
     let otherCount = 0;
     const finalSources: any[] = [];
 
     data.sources.forEach((sourceItem: any) => {
-      // Нормализуем название для проверки
       const isKnown = KNOWN_SOURCES.some(
         (known) => known.toLowerCase() === sourceItem.name.toLowerCase(),
       );
-
       if (isKnown) {
         if (sourceItem.name.toLowerCase() === 'другое') {
           otherCount += sourceItem.value;
@@ -117,14 +137,12 @@ export default function VisitsAnalyticsPage() {
     if (otherCount > 0) {
       finalSources.push({ name: 'Другое', value: otherCount });
     }
-
     return finalSources.sort((a, b) => b.value - a.value);
   }, [data]);
 
-  // Расширенная тепловая карта с отображением ноля
   const getHeatMapColor = (count: number) => {
     if (count === 0)
-      return 'bg-slate-100 text-slate-400 dark:bg-slate-800/50 dark:text-slate-500'; // Ноль: серый фон, серый текст
+      return 'bg-slate-100 text-slate-400 dark:bg-slate-800/50 dark:text-slate-500';
     if (count <= 2)
       return 'bg-sky-200 text-sky-900 dark:bg-sky-900/50 dark:text-sky-200';
     if (count <= 5)
@@ -132,11 +150,11 @@ export default function VisitsAnalyticsPage() {
     if (count <= 9)
       return 'bg-amber-400 text-amber-950 dark:bg-amber-600 dark:text-amber-50';
     if (count <= 14) return 'bg-orange-500 text-white shadow-sm';
-    return 'bg-red-600 text-white font-bold shadow-md ring-1 ring-red-700'; // Ультра-пик
+    return 'bg-red-600 text-white font-bold shadow-md ring-1 ring-red-700';
   };
 
   return (
-    <div className="p-6 md:p-8 space-y-6">
+    <div className="p-6 md:p-8 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h1 className="text-3xl font-bold tracking-tight">
@@ -147,7 +165,7 @@ export default function VisitsAnalyticsPage() {
           </p>
         </div>
 
-        <div className="flex w-full sm:w-auto">
+        <div className="flex flex-wrap gap-3 w-full sm:w-auto">
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -184,6 +202,15 @@ export default function VisitsAnalyticsPage() {
               />
             </PopoverContent>
           </Popover>
+
+          <Button
+            onClick={handleExport}
+            variant="default"
+            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Экспорт в Excel
+          </Button>
         </div>
       </div>
 
@@ -252,13 +279,16 @@ export default function VisitsAnalyticsPage() {
             </Card>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* ГРАФИКИ И ТОП (3 КОЛОНКИ НА БОЛЬШИХ ЭКРАНАХ) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
             {/* ИСТОЧНИКИ */}
             <Card className="col-span-1 flex flex-col">
               <CardHeader>
-                <CardTitle className="text-lg">Откуда о нас узнают</CardTitle>
+                <CardTitle className="text-lg text-center">
+                  Откуда о нас узнают
+                </CardTitle>
               </CardHeader>
-              <CardContent className="flex-1 min-h-[300px]">
+              <CardContent className="flex-1 min-h-[280px]">
                 {aggregatedSources.length === 0 ? (
                   <div className="flex h-full items-center justify-center text-muted-foreground">
                     Нет данных
@@ -270,8 +300,8 @@ export default function VisitsAnalyticsPage() {
                         data={aggregatedSources}
                         cx="50%"
                         cy="50%"
-                        innerRadius={70}
-                        outerRadius={100}
+                        innerRadius={65}
+                        outerRadius={95}
                         paddingAngle={2}
                         dataKey="value"
                       >
@@ -296,19 +326,65 @@ export default function VisitsAnalyticsPage() {
               </CardContent>
             </Card>
 
-            {/* ТОП ГОСТЕЙ */}
-            <Card className="col-span-1 lg:col-span-2 overflow-hidden">
+            {/* ЦЕЛИ ВИЗИТОВ */}
+            <Card className="col-span-1 flex flex-col">
               <CardHeader>
-                <CardTitle className="text-lg">
-                  ТОП-10 самых частых гостей
+                <CardTitle className="text-lg text-center">
+                  Цели визитов (Категории)
                 </CardTitle>
               </CardHeader>
-              <div className="overflow-x-auto">
+              <CardContent className="flex-1 min-h-[280px]">
+                {!data?.categories || data.categories.length === 0 ? (
+                  <div className="flex h-full items-center justify-center text-muted-foreground">
+                    Нет данных
+                  </div>
+                ) : (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={data.categories}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={65}
+                        outerRadius={95}
+                        paddingAngle={2}
+                        dataKey="value"
+                      >
+                        {data.categories.map((_entry: any, index: number) => (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={
+                              CATEGORY_COLORS[index % CATEGORY_COLORS.length]
+                            }
+                          />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value, name) => [`${value} визитов`, name]}
+                        contentStyle={{
+                          borderRadius: '8px',
+                          border: 'none',
+                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
+                        }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* ТОП ГОСТЕЙ */}
+            <Card className="col-span-1 md:col-span-2 xl:col-span-1 overflow-hidden flex flex-col">
+              <CardHeader>
+                <CardTitle className="text-lg text-center">
+                  ТОП-10 частых гостей
+                </CardTitle>
+              </CardHeader>
+              <div className="overflow-auto flex-1 max-h-[300px]">
                 <Table>
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 bg-card z-10">
                     <TableRow>
                       <TableHead>Имя</TableHead>
-                      <TableHead>Телефон</TableHead>
                       <TableHead className="text-right">Визитов</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -317,14 +393,13 @@ export default function VisitsAnalyticsPage() {
                       <TableRow key={idx}>
                         <TableCell className="font-medium">
                           {idx < 3 && (
-                            <span className="mr-2 text-xl">
+                            <span className="mr-2 text-base">
                               {idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉'}
                             </span>
                           )}
-                          {guest.name}
-                        </TableCell>
-                        <TableCell className="text-muted-foreground">
-                          {guest.phone}
+                          <span className="truncate inline-block max-w-[150px] align-bottom">
+                            {guest.name}
+                          </span>
                         </TableCell>
                         <TableCell className="text-right font-bold text-primary">
                           {guest.visits}

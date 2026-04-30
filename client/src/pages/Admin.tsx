@@ -10,10 +10,16 @@ import {
   RefreshCcw,
   Usb,
   Unplug,
+  Check,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Table,
   TableBody,
@@ -30,9 +36,33 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'; // <-- ДОБАВИЛИ ИМПОРТЫ SELECT
 import { API_URL } from '@/config';
 
 const socket = io(API_URL);
+
+// Список категорий визита
+const VISIT_CATEGORIES = [
+  'Первый раз',
+  'Мастер класс',
+  'Групповая тренировка',
+  'Индивидуальная тренировка',
+  'Первый турнир',
+  'Турнир',
+  'Игра на сингл',
+  'Игра 2х2',
+  'Настольный теннис',
+  'Вип раздевалка',
+  'Аренда ракетки',
+  'Ракетка шефа',
+  'Тубус',
+];
 
 interface VisitCard {
   id: string;
@@ -49,6 +79,7 @@ interface VisitCard {
   keyNumber: string;
   keyIssued: boolean;
   isRepeated?: boolean;
+  category?: string;
 }
 
 interface SearchUser {
@@ -118,6 +149,7 @@ export default function AdminPage() {
         qrRaw: data.id,
         keyNumber: '',
         keyIssued: false,
+        category: '',
       };
 
       playSound(data.success ? 'success' : 'error');
@@ -138,13 +170,9 @@ export default function AdminPage() {
     };
   }, []);
 
-  // --- ЛОГИКА ---
-
+  // --- ЛОГИКА СКАНЕРА ---
   const connectScanner = async () => {
-    console.log('🔍 [СКАЙНЕР] 1. Старт функции connectScanner');
-
     if (!('serial' in navigator)) {
-      console.error('❌ [СКАЙНЕР] Web Serial API не поддерживается!');
       alert(
         'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.',
       );
@@ -152,92 +180,46 @@ export default function AdminPage() {
     }
 
     try {
-      console.log('🔍 [СКАЙНЕР] 2. Запрашиваем порт у пользователя...');
       const port = await (navigator as any).serial.requestPort();
-      console.log('✅ [СКАЙНЕР] 3. Порт выбран пользователем');
-
-      console.log('🔍 [СКАЙНЕР] 4. Пытаемся открыть порт (baudRate: 9600)...');
-      // Попробуй 115200, если будут кракозябры - верни 9600
       await port.open({ baudRate: 9600 });
       setScannerStatus('connected');
-      console.log('✅ [СКАЙНЕР] 5. Порт успешно ОТКРЫТ!');
 
-      // ВАЖНО: Подключаем порт к декодеру текста (без pipeTo ничего работать не будет!)
-      console.log('🔍 [СКАЙНЕР] 6. Настраиваем потоки чтения...');
       const textDecoder = new TextDecoderStream();
-      port.readable.pipeTo(textDecoder.writable); // <-- ЭТО КРИТИЧНАЯ СТРОКА
+      port.readable.pipeTo(textDecoder.writable);
       const reader = textDecoder.readable.getReader();
-
-      console.log('✅ [СКАЙНЕР] 7. Ридер запущен, начинаем слушать данные');
 
       let buffer = '';
 
       while (true) {
-        console.log('⏳ [СКАЙНЕР] 8. Ждем пика (вызван reader.read)...');
         const { value, done } = await reader.read();
-
         if (done) {
-          console.log(
-            '🛑 [СКАЙНЕР] Поток закрыт (done = true)! Выходим из цикла.',
-          );
           reader.releaseLock();
           break;
         }
 
         if (value) {
-          console.log(`📦 [СКАЙНЕР] 9. ПРИШЛИ ДАННЫЕ! Длина: ${value.length}`);
-          console.log(`📝 [СКАЙНЕР] Сырой текст:`, JSON.stringify(value));
-
           buffer += value;
-          console.log(
-            `🪣 [СКАЙНЕР] 10. Текущий буфер:`,
-            JSON.stringify(buffer),
-          );
-
-          // Ищем индекс первого попавшегося переноса строки (\r или \n)
           let newlineIndex;
           while ((newlineIndex = buffer.search(/[\r\n]/)) !== -1) {
-            console.log(
-              `✂️ [СКАЙНЕР] 11. Найден перенос строки на индексе: ${newlineIndex}`,
-            );
-
-            // Вытаскиваем строку до переноса
             const qrCode = buffer.slice(0, newlineIndex).trim();
-            console.log(`🎯 [СКАЙНЕР] 12. Вырезанный код: "${qrCode}"`);
-
-            // Отрезаем обработанную часть вместе с символом переноса
             buffer = buffer.slice(newlineIndex + 1);
-            console.log(
-              `🪣 [СКАЙНЕР] 13. Буфер после обрезки:`,
-              JSON.stringify(buffer),
-            );
 
             if (qrCode) {
-              console.log(
-                `🚀 [СКАЙНЕР] 14. Отправляем fetch на сервер: ${qrCode}`,
-              );
               try {
-                const response = await fetch(`${API_URL}/api/scan`, {
+                await fetch(`${API_URL}/api/scan`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ qr: qrCode }),
                 });
-                console.log(
-                  `📥 [СКАЙНЕР] 15. Ответ сервера: Статус ${response.status}`,
-                );
               } catch (e) {
-                console.error('❌ [СКАЙНЕР] Ошибка отправки fetch:', e);
+                console.error('Ошибка сканера:', e);
               }
-            } else {
-              console.log(
-                '⚠️ [СКАЙНЕР] Пустая строка после обрезки, игнорируем.',
-              );
             }
           }
         }
       }
     } catch (error) {
-      console.error('❌ [СКАЙНЕР] КРИТИЧЕСКАЯ ОШИБКА:', error);
+      console.error('Ошибка порта:', error);
       setScannerStatus('disconnected');
     }
   };
@@ -372,6 +354,28 @@ export default function AdminPage() {
     }
   };
 
+  const handleCategoryChange = async (
+    cardId: string,
+    visitId: number | undefined,
+    category: string,
+  ) => {
+    if (!visitId) return;
+
+    setCards((prev) =>
+      prev.map((c) => (c.id === cardId ? { ...c, category } : c)),
+    );
+
+    try {
+      await fetch(`${API_URL}/api/visit/category`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitId, category }),
+      });
+    } catch (e) {
+      console.error('Ошибка сохранения категории:', e);
+    }
+  };
+
   const handleDelete = () => {
     if (cardToDelete) {
       setCards((prev) => prev.filter((c) => c.id !== cardToDelete));
@@ -381,7 +385,7 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen p-6 font-sans">
-      <div className="max-w-6xl mx-auto space-y-6">
+      <div className="max-w-[1400px] mx-auto space-y-6">
         {/* ШАПКА И КНОПКИ */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
@@ -389,12 +393,11 @@ export default function AdminPage() {
               Монитор входов
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Управление гостями и выдача ключей
+              Управление гостями, выдача ключей и пометки
             </p>
           </div>
 
           <div className="flex flex-wrap gap-3 w-full sm:w-auto">
-            {/* НОВАЯ КНОПКА СКАНЕРА */}
             <Button
               variant={scannerStatus === 'connected' ? 'default' : 'outline'}
               className={
@@ -436,23 +439,24 @@ export default function AdminPage() {
         </div>
 
         {/* ТАБЛИЦА */}
-        <div className="border rounded-md bg-card shadow-sm">
-          <Table>
+        <div className="border rounded-md bg-card shadow-sm overflow-x-auto">
+          <Table className="min-w-[900px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-[100px]">Статус</TableHead>
-                <TableHead>Гость</TableHead>
-                <TableHead>Контакты / ID</TableHead>
-                <TableHead>Время</TableHead>
-                <TableHead className="w-[250px]">Ключ</TableHead>
-                <TableHead className="w-[70px] text-right"></TableHead>
+                <TableHead className="w-[80px]">Статус</TableHead>
+                <TableHead className="min-w-[150px]">Гость</TableHead>
+                <TableHead className="min-w-[130px]">Контакты</TableHead>
+                <TableHead className="w-[120px]">Время</TableHead>
+                <TableHead className="w-[200px]">Цель визита</TableHead>
+                <TableHead className="w-[180px]">Ключ</TableHead>
+                <TableHead className="w-[50px] text-right"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {cards.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="h-24 text-center text-muted-foreground"
                   >
                     Ожидание сканирований...
@@ -471,22 +475,20 @@ export default function AdminPage() {
                         {card.success ? (
                           <div className="flex items-center gap-2 text-primary font-medium">
                             <CheckCircle2 className="w-5 h-5" />
-                            <span className="hidden sm:inline">ОК</span>
                           </div>
                         ) : (
                           <div className="flex items-center gap-2 text-muted-foreground font-medium">
                             <XCircle className="w-5 h-5" />
-                            <span className="hidden sm:inline">Отказ</span>
                           </div>
                         )}
                       </TableCell>
 
                       <TableCell>
-                        <div className="font-semibold text-foreground">
+                        <div className="font-semibold text-foreground truncate max-w-[200px]">
                           {card.success ? card.name : 'НЕИЗВЕСТНЫЙ'}
                         </div>
                         {card.success && (
-                          <div className="text-xs text-muted-foreground mt-0.5">
+                          <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[200px]">
                             Источник: {card.source}
                           </div>
                         )}
@@ -503,24 +505,109 @@ export default function AdminPage() {
                       </TableCell>
 
                       <TableCell className="text-muted-foreground font-medium text-sm">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           {card.isRepeated || card.time.includes('🔄') ? (
                             <>
-                              <RefreshCcw className="w-4 h-4" />
-                              <span>Повторно в {cleanTime}</span>
+                              <RefreshCcw className="w-3.5 h-3.5" />
+                              <span>{cleanTime}</span>
                             </>
                           ) : card.success ? (
                             <>
-                              <LogIn className="w-4 h-4 text-primary" />
-                              <span>Вход в {cleanTime}</span>
+                              <LogIn className="w-3.5 h-3.5 text-primary" />
+                              <span>{cleanTime}</span>
                             </>
                           ) : (
                             <>
-                              <XCircle className="w-4 h-4 text-destructive" />
-                              <span>Отказ в {cleanTime}</span>
+                              <XCircle className="w-3.5 h-3.5 text-destructive" />
+                              <span>{cleanTime}</span>
                             </>
                           )}
                         </div>
+                      </TableCell>
+
+                      {/* НОВАЯ КОЛОНКА: ЦЕЛЬ ВИЗИТА (МУЛЬТИ-СЕЛЕКТ) */}
+                      <TableCell>
+                        {card.success ? (
+                          <Popover>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                className="h-auto min-h-[32px] w-full min-w-[160px] justify-start text-left text-xs font-medium border-transparent bg-secondary/50 hover:bg-secondary px-3 py-1.5 shadow-none"
+                              >
+                                {card.category ? (
+                                  <div className="flex flex-col items-start gap-1 w-full">
+                                    {card.category
+                                      .split(', ')
+                                      .map((cat, idx) => (
+                                        <span
+                                          key={idx}
+                                          className="bg-background/60 px-1.5 py-0.5 rounded border border-border/30 whitespace-normal break-words text-left"
+                                        >
+                                          {cat}
+                                        </span>
+                                      ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">
+                                    Указать цели...
+                                  </span>
+                                )}
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-56 p-1" align="start">
+                              <div className="max-h-[300px] overflow-y-auto space-y-1 p-1">
+                                {VISIT_CATEGORIES.map((cat) => {
+                                  // Превращаем текущую строку в массив, чтобы понять, выбрана ли категория
+                                  const currentCategories = card.category
+                                    ? card.category.split(', ')
+                                    : [];
+                                  const isSelected =
+                                    currentCategories.includes(cat);
+
+                                  return (
+                                    <div
+                                      key={cat}
+                                      onClick={() => {
+                                        let newCats = [...currentCategories];
+                                        if (isSelected) {
+                                          newCats = newCats.filter(
+                                            (c) => c !== cat,
+                                          ); // Убираем
+                                        } else {
+                                          newCats.push(cat); // Добавляем
+                                        }
+                                        // Сохраняем обратно как строку
+                                        handleCategoryChange(
+                                          card.id,
+                                          card.visitId,
+                                          newCats.join(', '),
+                                        );
+                                      }}
+                                      className="flex items-center space-x-2 rounded-sm px-2 py-1.5 cursor-pointer hover:bg-secondary/80"
+                                    >
+                                      <div
+                                        className={`flex h-4 w-4 items-center justify-center rounded border ${
+                                          isSelected
+                                            ? 'bg-primary border-primary'
+                                            : 'border-primary/50'
+                                        }`}
+                                      >
+                                        {isSelected && (
+                                          <Check className="h-3 w-3 text-primary-foreground" />
+                                        )}
+                                      </div>
+                                      <span className="text-xs">{cat}</span>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">
+                            -
+                          </span>
+                        )}
                       </TableCell>
 
                       <TableCell>
@@ -529,7 +616,7 @@ export default function AdminPage() {
                             <div className="flex gap-2 items-center">
                               <Input
                                 placeholder="№"
-                                className="w-16 h-8 text-center"
+                                className="w-14 h-9 text-center"
                                 value={card.keyNumber}
                                 onChange={(e) =>
                                   handleKeyInput(card.id, e.target.value)
@@ -538,7 +625,7 @@ export default function AdminPage() {
                               <Button
                                 size="sm"
                                 variant="secondary"
-                                className="h-8 text-primary hover:text-primary/80 hover:bg-primary/10 transition-colors"
+                                className="h-9 text-primary hover:text-primary/80 hover:bg-primary/10 transition-colors px-3"
                                 onClick={() =>
                                   handleIssueKey(
                                     card.visitId,
@@ -551,8 +638,8 @@ export default function AdminPage() {
                               </Button>
                             </div>
                           ) : (
-                            <div className="inline-flex items-center px-2.5 py-1 rounded-md bg-primary/10 text-primary text-sm font-medium border border-primary/20">
-                              Ключ №{card.keyNumber} выдан
+                            <div className="inline-flex items-center px-2.5 py-1.5 rounded-md bg-primary/10 text-primary text-sm font-medium border border-primary/20">
+                              Выдан №{card.keyNumber}
                             </div>
                           )
                         ) : (

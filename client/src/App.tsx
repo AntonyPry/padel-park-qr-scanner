@@ -7,6 +7,7 @@ import FinancePage from './pages/FinancePage';
 import VisitsAnalyticsPage from './pages/VisitsAnalyticsPage';
 import UtilizationPage from './pages/UtilizationPage';
 import CatalogPage from './pages/CatalogPage';
+import AdminMotivationPage from './pages/AdminMotivationPage';
 
 function App() {
   return (
@@ -24,6 +25,7 @@ function App() {
             />
             <Route path="/admin/utilization" element={<UtilizationPage />} />
             <Route path="/admin/catalog" element={<CatalogPage />} />
+            <Route path="/admin/motivation" element={<AdminMotivationPage />} />
           </Route>
         </Routes>
       </TooltipProvider>

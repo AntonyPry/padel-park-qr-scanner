@@ -209,6 +209,13 @@ export default function FinancePage() {
     }
   };
 
+  const ADMIN_MOTIVATION = {
+    baseRatePerDay: 2500, // Считаем 1 смену в день
+    barPercent: 5,
+    courtPercent: 2,
+    otherPercent: 3,
+  };
+
   const stats = useMemo(() => {
     const start = dateRange?.from ? dateRange.from : new Date();
     const end = dateRange?.to ? dateRange.to : start;
@@ -232,7 +239,10 @@ export default function FinancePage() {
     const prevStartTime = startTime - periodLength - 1;
     const prevEndTime = startTime - 1;
 
-    const buildState = (sTime: number, eTime: number) => {
+    // Вычисляем количество дней в периоде (для базовой ставки админов)
+    const daysInPeriod = Math.ceil(periodLength / (1000 * 60 * 60 * 24));
+
+    const buildState = (sTime: number, eTime: number, days: number) => {
       const filtered = records.filter((r) => {
         const dTime = new Date(r.date).getTime();
         return dTime >= sTime && dTime <= eTime;
@@ -251,6 +261,9 @@ export default function FinancePage() {
         cashless = 0,
         cash = 0;
 
+      // Переменные для автоматической мотивации
+      let adminAutoBonus = 0;
+
       const posCats: Record<string, number> = {};
       const opexRows: any[] = [];
       const cogsRows: any[] = [];
@@ -263,6 +276,15 @@ export default function FinancePage() {
           posRev += val;
           posCats[r.category] = (posCats[r.category] || 0) + val;
           if (r.rawCashless) cashless += Number(r.rawCashless);
+
+          // Считаем автоматический бонус админов с каждой кассовой операции
+          if (r.category === 'Бар / Кафе') {
+            adminAutoBonus += val * (ADMIN_MOTIVATION.barPercent / 100);
+          } else if (r.category === 'Аренда кортов') {
+            adminAutoBonus += val * (ADMIN_MOTIVATION.courtPercent / 100);
+          } else {
+            adminAutoBonus += val * (ADMIN_MOTIVATION.otherPercent / 100);
+          }
         } else if (r.type === 'income' && r.source === 'manual') {
           if (r.category === 'corp') extCorp += val;
           else if (
@@ -272,6 +294,7 @@ export default function FinancePage() {
             extLunda += val;
           else if (r.category === 'aladdin') extAladdin += val;
           else extOther += val;
+
           extRows.push({
             ...r,
             val,
@@ -304,6 +327,20 @@ export default function FinancePage() {
           }
         }
       });
+
+      // Добавляем расчетную ЗП админов в OPEX автоматически
+      const adminAutoBase = days * ADMIN_MOTIVATION.baseRatePerDay;
+      const totalAdminPayroll = adminAutoBase + adminAutoBonus;
+
+      if (totalAdminPayroll > 0) {
+        opex += totalAdminPayroll;
+        opexRows.push({
+          category: 'payroll_auto',
+          catLabel: 'ЗП Админов (Авторасчет: фикс + %)',
+          val: totalAdminPayroll,
+          date: 'Авто',
+        });
+      }
 
       const extTotal = extCorp + extLunda + extAladdin + extOther;
       const revenue = posRev + extTotal;
@@ -341,13 +378,15 @@ export default function FinancePage() {
         records: filtered,
         cashless,
         cash,
+        totalAdminPayroll, // прокидываем для отображения
       };
     };
 
-    const cur = buildState(startTime, endTime);
-    const prev = buildState(prevStartTime, prevEndTime);
+    const cur = buildState(startTime, endTime, daysInPeriod);
+    const prev = buildState(prevStartTime, prevEndTime, daysInPeriod);
 
     // --- ПОДГОТОВКА ДАННЫХ ДЛЯ ДИАГРАММ ---
+    // (Код пирогов оставляем без изменений, он подхватит обновленный OPEX автоматом)
     const incomePieData = [
       { name: 'Касса', value: cur.posRev },
       { name: 'Корп.', value: cur.extCorp },
@@ -364,7 +403,6 @@ export default function FinancePage() {
       },
     ];
 
-    // Группируем OPEX, отрезая приставку "OPEX — " для красоты графика
     const opexGrouped = cur.opexRows.reduce((acc: any, r) => {
       const name = (r.catLabel || r.category).replace('OPEX — ', '');
       acc[name] = (acc[name] || 0) + r.val;
@@ -380,12 +418,18 @@ export default function FinancePage() {
     // --------------------------------------
 
     const insights = [];
+    insights.push({
+      title: 'Авторасчет ЗП включен',
+      text: 'ФОТ админов (фикс + % с продаж) уже учтен в OPEX. Не дублируйте его ручными записями.',
+      type: 'success',
+    });
     if (cur.margin < 0)
       insights.push({
         title: 'Убыток в периоде',
         text: 'Кликните “Структура расходов” чтобы проанализировать OPEX.',
         type: 'danger',
       });
+
     const food = cur.posCats['Бар / Кафе'] || 0;
     const courts = cur.posCats['Аренда кортов'] || 0;
     if (courts > 0 && food / courts < 0.06)
@@ -393,12 +437,6 @@ export default function FinancePage() {
         title: 'Еда/напитки низко',
         text: `Сейчас ${((food / courts) * 100).toFixed(1)}% от выручки кортов. Цель 6–10%.`,
         type: 'warning',
-      });
-    if (insights.length === 0)
-      insights.push({
-        title: 'Ок',
-        text: 'Показатели в норме. Провалитесь в статьи для проверки.',
-        type: 'success',
       });
 
     return {
@@ -1005,6 +1043,14 @@ export default function FinancePage() {
                   </TableCell>
                   <TableCell className="text-right font-bold text-destructive">
                     -{cur.opex.toLocaleString('ru-RU')} ₽
+                  </TableCell>
+                </TableRow>
+                <TableRow className="bg-muted/10">
+                  <TableCell className="pl-6 text-muted-foreground">
+                    в т.ч. ЗП Админов (Авторасчет)
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    -{cur.totalAdminPayroll.toLocaleString('ru-RU')} ₽
                   </TableCell>
                 </TableRow>
                 <TableRow

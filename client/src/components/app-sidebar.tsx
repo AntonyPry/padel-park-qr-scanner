@@ -1,8 +1,10 @@
 import {
   Activity,
+  BicepsFlexed,
   Database,
   LayoutDashboard,
   LineChart,
+  Target,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -39,6 +41,11 @@ const items = [
     title: 'Персонал',
     url: '/admin/staff',
     icon: Users,
+  },
+  {
+    title: 'Мотивацию поднимаем',
+    url: '/admin/motivation',
+    icon: BicepsFlexed,
   },
   {
     title: 'Утилизация кортов',
