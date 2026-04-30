@@ -8,6 +8,7 @@ const cors = require('cors');
 const QRCode = require('qrcode');
 const { Op } = require('sequelize');
 const { SocksProxyAgent } = require('socks-proxy-agent');
+const XLSX = require('xlsx');
 
 // --- ИМПОРТЫ TELEGRAM ---
 const {
@@ -250,11 +251,23 @@ app.get('/api/visits', async (req, res) => {
       visitId: v.id,
       keyNumber: v.keyNumber || '',
       keyIssued: !!v.keyNumber,
+      category: v.category || '',
     }));
 
     res.json(formattedVisits);
   } catch (e) {
     console.error(e);
+    res.status(500).send('Error');
+  }
+});
+
+app.post('/api/visit/category', async (req, res) => {
+  const { visitId, category } = req.body;
+  try {
+    await db.Visit.update({ category }, { where: { id: visitId } });
+    res.json({ status: 'ok' });
+  } catch (e) {
+    console.error('Ошибка сохранения категории:', e);
     res.status(500).send('Error');
   }
 });
@@ -783,6 +796,7 @@ app.get('/api/analytics/visits', async (req, res) => {
     const sourcesMap = {};
     const topGuestsMap = {};
     const heatMapMap = {};
+    const categoriesMap = {};
 
     visits.forEach((v) => {
       const user = v.User || {
@@ -794,6 +808,16 @@ app.get('/api/analytics/visits', async (req, res) => {
 
       const source = user.source || 'Не указан';
       sourcesMap[source] = (sourcesMap[source] || 0) + 1;
+
+      const categoryRaw = v.category || 'Не указана';
+      const categoriesArray = categoryRaw
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+
+      categoriesArray.forEach((cat) => {
+        categoriesMap[cat] = (categoriesMap[cat] || 0) + 1;
+      });
 
       if (!topGuestsMap[user.name]) {
         topGuestsMap[user.name] = {
@@ -816,6 +840,10 @@ app.get('/api/analytics/visits', async (req, res) => {
       .map((k) => ({ name: k, value: sourcesMap[k] }))
       .sort((a, b) => b.value - a.value);
 
+    const categories = Object.keys(categoriesMap)
+      .map((k) => ({ name: k, value: categoriesMap[k] }))
+      .sort((a, b) => b.value - a.value);
+
     const topGuests = Object.values(topGuestsMap)
       .sort((a, b) => b.visits - a.visits)
       .slice(0, 10);
@@ -824,12 +852,76 @@ app.get('/api/analytics/visits', async (req, res) => {
       totalVisits,
       uniqueGuests: uniqueUsers.size,
       sources,
+      categories,
       topGuests,
       heatMap: heatMapMap,
     });
   } catch (error) {
     console.error('Ошибка аналитики визитов:', error);
     res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.get('/api/export/visits', async (req, res) => {
+  try {
+    const { from, to } = req.query;
+    const whereClause = {};
+
+    if (from || to) {
+      whereClause.createdAt = {};
+      if (from) whereClause.createdAt[Op.gte] = new Date(from);
+      if (to) {
+        const toDate = new Date(to);
+        toDate.setHours(23, 59, 59, 999);
+        whereClause.createdAt[Op.lte] = toDate;
+      }
+    }
+
+    const visits = await db.Visit.findAll({
+      where: whereClause,
+      include: [{ model: db.User }],
+      order: [['createdAt', 'DESC']],
+    });
+
+    const exportData = visits.map((v) => ({
+      'ID визита': v.id,
+      'Дата и Время': new Date(v.createdAt).toLocaleString('ru-RU'),
+      Гость: v.User?.name || 'Неизвестный',
+      Телефон: v.User?.phone || '',
+      Источник: v.User?.source || 'Не указан',
+      'Цель визита': v.category || 'Не указана',
+      'Номер ключа': v.keyNumber || '-',
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(exportData);
+
+    // Делаем колонки красивой ширины
+    ws['!cols'] = [
+      { wch: 10 },
+      { wch: 20 },
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 25 },
+      { wch: 15 },
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Визиты');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename="visits_export.xlsx"',
+    );
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
+    res.send(buffer);
+  } catch (error) {
+    console.error('Ошибка экспорта визитов:', error);
+    res.status(500).send('Export error');
   }
 });
 
@@ -1207,16 +1299,23 @@ const agent = new SocksProxyAgent(process.env.TG_PROXY_CREDS, {
   tls: { rejectUnauthorized: false }, // Для новых версий (v8+)
 });
 
-const tgBot = new TgBot(process.env.BOT_TOKEN, {
-  client: {
-    buildFetchConfig: (init) => ({
-      ...init,
-      agent: agent,
-    }),
-  },
-});
-tgBot.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
-tgBot.use(tgConversations());
+let tgBot;
+
+try {
+  const tgBot = new TgBot(process.env.BOT_TOKEN, {
+    client: {
+      buildFetchConfig: (init) => ({
+        ...init,
+        agent: agent,
+      }),
+    },
+  });
+} catch (error) {
+  console.log('Ошибка создания бота tg:', error);
+}
+
+tgBot?.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
+tgBot?.use(tgConversations());
 
 const tgMainMenu = new TgKeyboard()
   .text('🔄 Сгенерировать QR заново')
@@ -1330,9 +1429,9 @@ async function tgRegisterConversation(conversation, ctx) {
   await ctx.reply('Ваш пропуск:');
   return sendTgQrCode(ctx, telegramId);
 }
-tgBot.use(tgCreateConversation(tgRegisterConversation, 'register'));
+tgBot?.use(tgCreateConversation(tgRegisterConversation, 'register'));
 
-tgBot.command('start', async (ctx) => {
+tgBot?.command('start', async (ctx) => {
   const telegramId = String(ctx.from.id);
   const user = await db.User.findOne({ where: { telegramId } });
   if (user)
@@ -1346,7 +1445,7 @@ tgBot.command('start', async (ctx) => {
   });
 });
 
-tgBot.callbackQuery(/toggle_consent_(\d)/, async (ctx) => {
+tgBot?.callbackQuery(/toggle_consent_(\d)/, async (ctx) => {
   const idx = parseInt(ctx.match[1]);
   ctx.session.consents[idx] = !ctx.session.consents[idx];
   try {
@@ -1356,23 +1455,23 @@ tgBot.callbackQuery(/toggle_consent_(\d)/, async (ctx) => {
   } catch (e) {}
   await ctx.answerCallbackQuery();
 });
-tgBot.callbackQuery('consent_locked', async (ctx) => {
+tgBot?.callbackQuery('consent_locked', async (ctx) => {
   await ctx.answerCallbackQuery({
     text: 'Отметьте все пункты галочками!',
     show_alert: true,
   });
 });
-tgBot.callbackQuery('consent_next', async (ctx) => {
+tgBot?.callbackQuery('consent_next', async (ctx) => {
   await ctx.answerCallbackQuery();
   await ctx.editMessageText('✅ Согласия получены. Начинаем регистрацию...');
   await ctx.conversation.enter('register');
 });
 
-tgBot.hears(
+tgBot?.hears(
   '🔄 Сгенерировать QR заново',
   async (ctx) => await sendTgQrCode(ctx, String(ctx.from.id)),
 );
-tgBot.hears(
+tgBot?.hears(
   '✏️ Изменить данные',
   async (ctx) => await ctx.conversation.enter('register'),
 );
@@ -1396,15 +1495,27 @@ async function startApp() {
   try {
     await db.sequelize.authenticate();
     console.log('✅ БД подключена.');
-
-    runTg(tgBot);
-    console.log('✈️ Telegram Бот запущен.');
-
+  } catch (error) {
+    console.error('❌ Ошибка старта БД:', error);
+  }
+  try {
+    if (tgBot) {
+      runTg(tgBot);
+      console.log('✈️ Telegram Бот запущен.');
+    }
+  } catch (error) {
+    console.error('❌ Ошибка старта Tg:', error);
+  }
+  try {
     await vk.updates.start();
     console.log('🟦 ВКонтакте Бот запущен.');
-
+  } catch (error) {
+    console.error('❌ Ошибка старта VK:', error);
+  }
+  try {
     // Запуск Веб-сервера
     server.listen(PORT);
+    console.log('Сервер запущен на порту', PORT);
   } catch (error) {
     console.error('❌ Ошибка старта:', error);
   }
