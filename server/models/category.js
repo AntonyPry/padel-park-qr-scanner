@@ -6,18 +6,32 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
     },
     type: {
-      type: DataTypes.STRING, // 'income' или 'expense'
+      type: DataTypes.STRING,
       allowNull: false,
+    },
+    group: {
+      type: DataTypes.STRING,
+      allowNull: false,
+      defaultValue: 'OPEX',
+    },
+    commissionPercent: {
+      type: DataTypes.DECIMAL(5, 2),
+      allowNull: false,
+      defaultValue: 0,
     },
     isActive: {
       type: DataTypes.BOOLEAN,
       defaultValue: true,
     },
+    isSystem: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false,
+    },
+    parentId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
   });
-
-  Category.associate = (models) => {
-    // В будущем тут можно связать ReceiptItem с Category напрямую
-  };
 
   return Category;
 };

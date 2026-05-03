@@ -6,6 +6,7 @@ const catalogController = require('../controllers/catalog.controller');
 router.get('/categories', catalogController.getCategories);
 router.post('/categories', catalogController.createCategory);
 router.delete('/categories/:id', catalogController.deleteCategory);
+router.put('/categories/:id', catalogController.updateCategory);
 
 // Маппинг товаров
 router.get('/unmapped', catalogController.getUnmapped);

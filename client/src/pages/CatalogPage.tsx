@@ -16,20 +16,49 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
-import { AlertCircle, CheckCircle2, Trash2, Plus, Tag } from 'lucide-react';
+import {
+  AlertCircle,
+  CheckCircle2,
+  Trash2,
+  Plus,
+  Tag,
+  Percent,
+  AlertTriangle,
+} from 'lucide-react';
 import { API_URL } from '@/config';
+
+const PNL_GROUPS = [
+  { value: 'REVENUE_POS', label: 'Касса (Эвотор)', type: 'income' },
+  { value: 'REVENUE_EXT', label: 'Выручка вне кассы', type: 'income' },
+  { value: 'COGS', label: 'Себестоимость (Закупы)', type: 'expense' },
+  { value: 'FEES', label: 'Комиссии и Эквайринг', type: 'expense' },
+  { value: 'OPEX', label: 'Операционные расходы (OPEX)', type: 'expense' },
+];
 
 export default function CatalogPage() {
   const [unmapped, setUnmapped] = useState<string[]>([]);
   const [rules, setRules] = useState<any[]>([]);
   const [categories, setCategories] = useState<any[]>([]);
+  const [newCatParentId, setNewCatParentId] = useState<string>('none');
 
   const [activeTab, setActiveTab] = useState<
     'unmapped' | 'rules' | 'categories'
   >('unmapped');
   const [selections, setSelections] = useState<Record<string, string>>({});
+
   const [newCatName, setNewCatName] = useState('');
+  const [newCatGroup, setNewCatGroup] = useState('OPEX');
+  const [newCatPercent, setNewCatPercent] = useState('');
+
+  // СТЕЙТ ДЛЯ МОДАЛКИ ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ
+  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
   const fetchData = async () => {
     try {
@@ -50,7 +79,6 @@ export default function CatalogPage() {
     fetchData();
   }, []);
 
-  // --- УПРАВЛЕНИЕ ПРАВИЛАМИ МАППИНГА ---
   const handleSaveRule = async (itemName: string) => {
     const category = selections[itemName];
     if (!category) return;
@@ -74,25 +102,100 @@ export default function CatalogPage() {
     fetchData();
   };
 
-  // --- УПРАВЛЕНИЕ КАТЕГОРИЯМИ ---
+  const handleParentChange = (val: string) => {
+    setNewCatParentId(val);
+    if (val !== 'none') {
+      const parentCat = categories.find((c) => String(c.id) === val);
+      if (parentCat) setNewCatGroup(parentCat.group);
+    }
+  };
+
   const handleAddCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCatName.trim()) return;
 
+    const selectedGroupDef = PNL_GROUPS.find((g) => g.value === newCatGroup);
+    const type = selectedGroupDef ? selectedGroupDef.type : 'expense';
+
     await fetch(`${API_URL}/api/catalog/categories`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: newCatName.trim(), type: 'income' }), // По умолчанию income
+      body: JSON.stringify({
+        name: newCatName.trim(),
+        type: type,
+        group: newCatGroup,
+        commissionPercent: newCatPercent ? Number(newCatPercent) : 0,
+        parentId: newCatParentId === 'none' ? null : Number(newCatParentId),
+      }),
     });
+
     setNewCatName('');
+    setNewCatPercent('');
+    setNewCatGroup('OPEX');
+    setNewCatParentId('none');
     fetchData();
   };
 
-  const handleDeleteCategory = async (id: number) => {
-    await fetch(`${API_URL}/api/catalog/categories/${id}`, {
+  // ФАКТИЧЕСКОЕ УДАЛЕНИЕ (ВЫЗЫВАЕТСЯ ИЗ МОДАЛКИ)
+  const confirmDeleteCategory = async () => {
+    if (!deleteConfirmId) return;
+
+    await fetch(`${API_URL}/api/catalog/categories/${deleteConfirmId}`, {
       method: 'DELETE',
     });
+
+    setDeleteConfirmId(null);
     fetchData();
+  };
+
+  const getGroupLabel = (groupVal: string) => {
+    return PNL_GROUPS.find((g) => g.value === groupVal)?.label || groupVal;
+  };
+
+  const getParentName = (parentId: number | null) => {
+    if (!parentId) return '-';
+    const parent = categories.find((c) => c.id === parentId);
+    return parent ? parent.name : 'Неизвестно';
+  };
+
+  // ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ РОДИТЕЛЯ ИЗ ТАБЛИЦЫ
+  const handleUpdateParent = async (
+    categoryId: number,
+    newParentId: string,
+  ) => {
+    try {
+      const res = await fetch(
+        `${API_URL}/api/catalog/categories/${categoryId}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            parentId: newParentId === 'none' ? null : Number(newParentId),
+          }),
+        },
+      );
+      if (res.ok) fetchData();
+    } catch (e) {
+      console.error('Update error:', e);
+    }
+  };
+
+  // ФУНКЦИИ ЗАЩИТЫ ОТ ЦИКЛОВ НА КЛИЕНТЕ
+  // Проверяет, является ли potentialChild потомком категории categoryId
+  const isDescendant = (potentialChildId: number, categoryId: number) => {
+    let current = categories.find((c) => c.id === potentialChildId);
+    while (current) {
+      if (current.parentId === categoryId) return true;
+      current = categories.find((c) => c.id === current.parentId);
+    }
+    return false;
+  };
+
+  // Получает список доступных родителей (исключая саму себя и всех своих потомков)
+  const getAvailableParents = (catId: number) => {
+    return categories.filter(
+      (c) => c.id !== catId && !isDescendant(c.id, catId),
+    );
   };
 
   return (
@@ -136,6 +239,46 @@ export default function CatalogPage() {
         </div>
       </div>
 
+      {/* Модальное окно подтверждения удаления */}
+      <Dialog
+        open={deleteConfirmId !== null}
+        onOpenChange={(open) => !open && setDeleteConfirmId(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" /> Внимание
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <p className="text-sm text-muted-foreground">
+              Вы уверены, что хотите удалить эту категорию?
+            </p>
+            <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
+              <li>
+                Если у категории есть подкатегории, они также будут удалены.
+              </li>
+              <li>
+                Все товары из чеков, привязанные к этим категориям, вернутся во
+                вкладку «Неразобранные».
+              </li>
+            </ul>
+            <div className="flex justify-end gap-3 pt-4">
+              <Button
+                variant="outline"
+                onClick={() => setDeleteConfirmId(null)}
+              >
+                Отмена
+              </Button>
+              <Button variant="destructive" onClick={confirmDeleteCategory}>
+                Удалить категорию
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ОСТАЛЬНАЯ ЧАСТЬ ИНТЕРФЕЙСА */}
       {activeTab === 'unmapped' && (
         <Card
           className={
@@ -249,19 +392,85 @@ export default function CatalogPage() {
       {activeTab === 'categories' && (
         <Card>
           <CardHeader>
-            <CardTitle>Управление категориями</CardTitle>
+            <CardTitle>Управление категориями P&L</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            <form onSubmit={handleAddCategory} className="flex gap-4 items-end">
-              <div className="flex-1 space-y-2">
-                <label className="text-sm font-medium">Новая категория</label>
+            <form
+              onSubmit={handleAddCategory}
+              className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"
+            >
+              <div className="space-y-2">
+                <label className="text-sm font-medium">
+                  Название категории
+                </label>
                 <Input
-                  placeholder="Например: Спонсорские деньги"
+                  placeholder="Например: Лунда"
                   value={newCatName}
                   onChange={(e) => setNewCatName(e.target.value)}
+                  required
                 />
               </div>
-              <Button type="submit">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Группа в отчете</label>
+                <Select
+                  value={newCatGroup}
+                  onValueChange={setNewCatGroup}
+                  disabled={newCatParentId !== 'none'}
+                >
+                  <SelectTrigger
+                    className={newCatParentId !== 'none' ? 'bg-muted' : ''}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PNL_GROUPS.map((g) => (
+                      <SelectItem key={g.value} value={g.value}>
+                        {g.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {newCatParentId !== 'none' && (
+                  <p className="text-[10px] text-muted-foreground absolute mt-0.5">
+                    Наследуется от родителя
+                  </p>
+                )}
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Авто-комиссия (%)</label>
+                <div className="relative">
+                  <Input
+                    type="number"
+                    step="0.1"
+                    min="0"
+                    max="100"
+                    placeholder="0"
+                    value={newCatPercent}
+                    onChange={(e) => setNewCatPercent(e.target.value)}
+                  />
+                  <Percent className="w-4 h-4 text-muted-foreground absolute right-3 top-3" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Родитель</label>
+                <Select
+                  value={newCatParentId}
+                  onValueChange={handleParentChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Нет (Корневая)</SelectItem>
+                    {categories.map((c) => (
+                      <SelectItem key={c.id} value={String(c.id)}>
+                        {c.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button type="submit" className="w-full">
                 <Plus className="w-4 h-4 mr-2" /> Добавить
               </Button>
             </form>
@@ -270,7 +479,10 @@ export default function CatalogPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Название категории</TableHead>
+                    <TableHead>Название</TableHead>
+                    <TableHead>Группа отчета</TableHead>
+                    <TableHead>Авто-комиссия</TableHead>
+                    <TableHead>Родитель</TableHead>
                     <TableHead className="w-[50px]"></TableHead>
                   </TableRow>
                 </TableHeader>
@@ -281,21 +493,62 @@ export default function CatalogPage() {
                         <Tag className="w-4 h-4 text-muted-foreground" />{' '}
                         {cat.name}
                       </TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {getGroupLabel(cat.group)}
+                      </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleDeleteCategory(cat.id)}
+                        {Number(cat.commissionPercent) > 0 ? (
+                          <span className="bg-destructive/10 text-destructive px-2 py-1 rounded-md text-sm font-medium">
+                            {cat.commissionPercent}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
+                      {/* ЖИВОЙ ВЫБОР РОДИТЕЛЯ ПРЯМО В ТАБЛИЦЕ */}
+                      <TableCell>
+                        <Select
+                          value={cat.parentId ? String(cat.parentId) : 'none'}
+                          onValueChange={(val) =>
+                            handleUpdateParent(cat.id, val)
+                          }
                         >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
+                          <SelectTrigger className="w-[180px] bg-transparent border-dashed">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem
+                              value="none"
+                              className="text-muted-foreground"
+                            >
+                              Нет (Корневая)
+                            </SelectItem>
+                            {getAvailableParents(cat.id).map((c) => (
+                              <SelectItem key={c.id} value={String(c.id)}>
+                                {c.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </TableCell>
+                      <TableCell>
+                        {!cat.isSystem && (
+                          // ВЫЗЫВАЕМ МОДАЛКУ ВМЕСТО ПРЯМОГО УДАЛЕНИЯ
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => setDeleteConfirmId(cat.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))}
                   {categories.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={2}
+                        colSpan={5}
                         className="text-center py-6 text-muted-foreground"
                       >
                         Нет созданных категорий

@@ -3,8 +3,9 @@ const financeService = require('../services/finance.service');
 class FinanceController {
   async getFinanceRecords(req, res) {
     try {
-      const records = await financeService.buildFinanceRecords();
-      res.json(records);
+      const { from, to } = req.query;
+      const report = await financeService.getFinanceReport(from, to);
+      res.json(report);
     } catch (error) {
       console.error('❌ Ошибка P&L:', error);
       res.status(500).json({ error: 'Ошибка сервера' });

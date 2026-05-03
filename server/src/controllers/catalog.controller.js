@@ -11,6 +11,17 @@ class CatalogController {
   async deleteCategory(req, res) {
     res.json(await catalogService.deleteCategory(req.params.id));
   }
+  async updateCategory(req, res) {
+    try {
+      const updated = await catalogService.updateCategory(
+        req.params.id,
+        req.body,
+      );
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: error.message });
+    }
+  }
 
   // Правила (Маппинг)
   async getUnmapped(req, res) {

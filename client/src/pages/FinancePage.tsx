@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Table,
   TableBody,
@@ -31,15 +31,14 @@ import {
 } from '@/components/ui/popover';
 import { Calendar } from '@/components/ui/calendar';
 import {
-  TrendingUp,
-  AlertCircle,
-  Lightbulb,
-  Activity,
   Calendar as CalendarIcon,
   RefreshCw,
   Plus,
+  ChevronRight,
+  LayoutList,
+  ChevronDown,
+  List,
 } from 'lucide-react';
-// Добавлены импорты для круговых диаграмм
 import {
   PieChart,
   Pie,
@@ -53,89 +52,8 @@ import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { API_URL } from '@/config';
+import { Badge } from '@/components/ui/badge';
 
-const MANUAL_CATEGORIES = [
-  { type: 'income', value: 'corp', label: 'Корп. выручка (вне кассы)' },
-  {
-    type: 'income',
-    value: 'lunda_courts',
-    label: 'Лунда — бронь кортов (вне кассы)',
-  },
-  {
-    type: 'income',
-    value: 'lunda_tournaments',
-    label: 'Лунда — турниры (вне кассы)',
-  },
-  {
-    type: 'income',
-    value: 'aladdin',
-    label: 'Алладин сертификаты (вне кассы)',
-  },
-  { type: 'income', value: 'other_income', label: 'Прочая выручка вне кассы' },
-  {
-    type: 'expense',
-    value: 'cogs_food',
-    label: 'COGS — закуп еды/напитков',
-    group: 'COGS еда/напитки',
-  },
-  {
-    type: 'expense',
-    value: 'cogs_goods',
-    label: 'COGS — закуп товаров/инвентаря',
-    group: 'COGS товары',
-  },
-  { type: 'expense', value: 'rent', label: 'OPEX — аренда', group: 'Аренда' },
-  {
-    type: 'expense',
-    value: 'utilities',
-    label: 'OPEX — коммунальные',
-    group: 'Коммунальные',
-  },
-  {
-    type: 'expense',
-    value: 'payroll',
-    label: 'OPEX — зарплаты',
-    group: 'Зарплаты (штат)',
-  },
-  {
-    type: 'expense',
-    value: 'marketing',
-    label: 'OPEX — маркетинг',
-    group: 'Маркетинг',
-  },
-  {
-    type: 'expense',
-    value: 'services',
-    label: 'OPEX — услуги',
-    group: 'Услуги',
-  },
-  {
-    type: 'expense',
-    value: 'events',
-    label: 'OPEX — мероприятия',
-    group: 'Мероприятия (OPEX)',
-  },
-  {
-    type: 'expense',
-    value: 'subs',
-    label: 'OPEX — подписки/сервисы',
-    group: 'Подписки',
-  },
-  {
-    type: 'expense',
-    value: 'phone',
-    label: 'OPEX — связь и интернет',
-    group: 'Связь и интернет',
-  },
-  {
-    type: 'expense',
-    value: 'other_opex',
-    label: 'OPEX — прочее',
-    group: 'OPEX прочее',
-  },
-];
-
-// Палитра для диаграмм
 const PIE_COLORS = [
   '#3b82f6',
   '#10b981',
@@ -147,10 +65,11 @@ const PIE_COLORS = [
 ];
 
 export default function FinancePage() {
-  const [records, setRecords] = useState<any[]>([]);
+  const [report, setReport] = useState<any>(null);
+  const [categories, setCategories] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [detailsModalCat, setDetailsModalCat] = useState<string | null>(null);
 
-  // Настройка дефолтного периода (с 1 числа текущего месяца по сегодня)
   const now = new Date();
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: new Date(now.getFullYear(), now.getMonth(), 1),
@@ -158,14 +77,6 @@ export default function FinancePage() {
   });
 
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [detailModal, setDetailModal] = useState<{
-    isOpen: boolean;
-    type: 'list' | 'formula';
-    title: string;
-    subtitle: string;
-    items: any[];
-  }>({ isOpen: false, type: 'list', title: '', subtitle: '', items: [] });
-
   const todayStr = now.toISOString().split('T')[0];
   const [form, setForm] = useState({
     date: todayStr,
@@ -178,8 +89,19 @@ export default function FinancePage() {
   const fetchFinances = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/finance`);
-      if (res.ok) setRecords(await res.json());
+      // Передаем даты на бэкенд, чтобы он сам всё отфильтровал
+      const fromStr = dateRange?.from
+        ? format(dateRange.from, 'yyyy-MM-dd')
+        : '';
+      const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : '';
+
+      const [finRes, catRes] = await Promise.all([
+        fetch(`${API_URL}/api/finance?from=${fromStr}&to=${toStr}`),
+        fetch(`${API_URL}/api/catalog/categories`),
+      ]);
+
+      if (finRes.ok) setReport(await finRes.json());
+      if (catRes.ok) setCategories(await catRes.json());
     } catch (e) {
       console.error(e);
     } finally {
@@ -189,7 +111,7 @@ export default function FinancePage() {
 
   useEffect(() => {
     fetchFinances();
-  }, []);
+  }, [dateRange]); // Автоматически перезапрашиваем при смене дат
 
   const handleAddManual = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,371 +131,130 @@ export default function FinancePage() {
     }
   };
 
-  const ADMIN_MOTIVATION = {
-    baseRatePerDay: 2500, // Считаем 1 смену в день
-    barPercent: 5,
-    courtPercent: 2,
-    otherPercent: 3,
-  };
+  if (!report) return null; // Ждем загрузки отчета
 
-  const stats = useMemo(() => {
-    const start = dateRange?.from ? dateRange.from : new Date();
-    const end = dateRange?.to ? dateRange.to : start;
+  const { summary, sections } = report;
 
-    const startTime = new Date(
-      start.getFullYear(),
-      start.getMonth(),
-      start.getDate(),
-    ).getTime();
-    const endTime = new Date(
-      end.getFullYear(),
-      end.getMonth(),
-      end.getDate(),
-      23,
-      59,
-      59,
-      999,
-    ).getTime();
+  // Подготовка данных для графиков напрямую из секций бэкенда
+  const incomePieData = [
+    ...(sections.REVENUE_POS || []),
+    ...(sections.REVENUE_EXT || []),
+  ]
+    .filter((i) => i.sum > 0)
+    .map((i) => ({ name: i.name, value: i.sum }));
 
-    const periodLength = endTime - startTime;
-    const prevStartTime = startTime - periodLength - 1;
-    const prevEndTime = startTime - 1;
+  const expensePieData = [
+    ...(sections.COGS || []),
+    ...(sections.FEES || []),
+    ...(sections.OPEX || []),
+  ]
+    .filter((i) => i.sum > 0)
+    .map((i) => ({ name: i.name, value: i.sum }))
+    .sort((a, b) => b.value - a.value);
 
-    // Вычисляем количество дней в периоде (для базовой ставки админов)
-    const daysInPeriod = Math.ceil(periodLength / (1000 * 60 * 60 * 24));
+  const ExpandableRow = ({
+    item,
+    isExpense,
+    depth = 0,
+  }: {
+    item: any;
+    isExpense: boolean;
+    depth?: number;
+  }) => {
+    const [expanded, setExpanded] = useState(false);
+    const hasSubItems = item.subItems && item.subItems.length > 0;
+    const paddingLeft = `${2.5 + depth * 1.5}rem`;
 
-    const buildState = (sTime: number, eTime: number, days: number) => {
-      const filtered = records.filter((r) => {
-        const dTime = new Date(r.date).getTime();
-        return dTime >= sTime && dTime <= eTime;
-      });
-
-      let posRev = 0,
-        extCorp = 0,
-        extLunda = 0,
-        extAladdin = 0,
-        extOther = 0;
-      let cogsItems = 0,
-        acqFee = 0,
-        lundaFee = 0,
-        aladdinFee = 0;
-      let opex = 0,
-        cashless = 0,
-        cash = 0;
-
-      // Переменные для автоматической мотивации
-      let adminAutoBonus = 0;
-
-      const posCats: Record<string, number> = {};
-      const opexRows: any[] = [];
-      const cogsRows: any[] = [];
-      const extRows: any[] = [];
-
-      filtered.forEach((r) => {
-        const val = Math.abs(Number(r.amount));
-
-        if (r.type === 'income' && r.source === 'evotor') {
-          posRev += val;
-          posCats[r.category] = (posCats[r.category] || 0) + val;
-          if (r.rawCashless) cashless += Number(r.rawCashless);
-
-          // Считаем автоматический бонус админов с каждой кассовой операции
-          if (r.category === 'Бар / Кафе') {
-            adminAutoBonus += val * (ADMIN_MOTIVATION.barPercent / 100);
-          } else if (r.category === 'Аренда кортов') {
-            adminAutoBonus += val * (ADMIN_MOTIVATION.courtPercent / 100);
-          } else {
-            adminAutoBonus += val * (ADMIN_MOTIVATION.otherPercent / 100);
-          }
-        } else if (r.type === 'income' && r.source === 'manual') {
-          if (r.category === 'corp') extCorp += val;
-          else if (
-            r.category === 'lunda_courts' ||
-            r.category === 'lunda_tournaments'
-          )
-            extLunda += val;
-          else if (r.category === 'aladdin') extAladdin += val;
-          else extOther += val;
-
-          extRows.push({
-            ...r,
-            val,
-            catLabel:
-              MANUAL_CATEGORIES.find((c) => c.value === r.category)?.label ||
-              r.category,
-          });
-        } else if (r.type === 'expense') {
-          if (r.category === 'Эквайринг') acqFee += val;
-          else if (r.category === 'Комиссия Лунда') lundaFee += val;
-          else if (r.category === 'Комиссия Алладин') aladdinFee += val;
-          else if (r.category.includes('cogs')) {
-            cogsItems += val;
-            cogsRows.push({
-              ...r,
-              val,
-              catLabel:
-                MANUAL_CATEGORIES.find((c) => c.value === r.category)?.label ||
-                r.category,
-            });
-          } else {
-            opex += val;
-            opexRows.push({
-              ...r,
-              val,
-              catLabel:
-                MANUAL_CATEGORIES.find((c) => c.value === r.category)?.label ||
-                r.category,
-            });
-          }
-        }
-      });
-
-      // Добавляем расчетную ЗП админов в OPEX автоматически
-      const adminAutoBase = days * ADMIN_MOTIVATION.baseRatePerDay;
-      const totalAdminPayroll = adminAutoBase + adminAutoBonus;
-
-      if (totalAdminPayroll > 0) {
-        opex += totalAdminPayroll;
-        opexRows.push({
-          category: 'payroll_auto',
-          catLabel: 'ЗП Админов (Авторасчет: фикс + %)',
-          val: totalAdminPayroll,
-          date: 'Авто',
-        });
-      }
-
-      const extTotal = extCorp + extLunda + extAladdin + extOther;
-      const revenue = posRev + extTotal;
-      const cogsTotal = cogsItems + acqFee + lundaFee + aladdinFee;
-      const gross = revenue - cogsTotal;
-      const net = gross - opex;
-      const margin = revenue > 0 ? (net / revenue) * 100 : 0;
-
-      const alloc2 = extLunda > 0 ? extLunda * 0.71 : 0;
-      const alloc1 = extLunda > 0 ? extLunda - alloc2 : 0;
-
-      return {
-        revenue,
-        posRev,
-        extTotal,
-        extCorp,
-        extLunda,
-        alloc2,
-        alloc1,
-        extAladdin,
-        extOther,
-        cogsItems,
-        acqFee,
-        lundaFee,
-        aladdinFee,
-        cogsTotal,
-        gross,
-        opex,
-        net,
-        margin,
-        posCats,
-        extRows,
-        cogsRows,
-        opexRows,
-        records: filtered,
-        cashless,
-        cash,
-        totalAdminPayroll, // прокидываем для отображения
-      };
-    };
-
-    const cur = buildState(startTime, endTime, daysInPeriod);
-    const prev = buildState(prevStartTime, prevEndTime, daysInPeriod);
-
-    // --- ПОДГОТОВКА ДАННЫХ ДЛЯ ДИАГРАММ ---
-    // (Код пирогов оставляем без изменений, он подхватит обновленный OPEX автоматом)
-    const incomePieData = [
-      { name: 'Касса', value: cur.posRev },
-      { name: 'Корп.', value: cur.extCorp },
-      { name: 'Лунда', value: cur.extLunda },
-      { name: 'Алладин', value: cur.extAladdin },
-      { name: 'Прочее', value: cur.extOther },
-    ].filter((i) => i.value > 0);
-
-    const expensePieData = [
-      { name: 'Себестоимость (COGS)', value: cur.cogsItems },
-      {
-        name: 'Комиссии и Эквайринг',
-        value: cur.acqFee + cur.lundaFee + cur.aladdinFee,
-      },
-    ];
-
-    const opexGrouped = cur.opexRows.reduce((acc: any, r) => {
-      const name = (r.catLabel || r.category).replace('OPEX — ', '');
-      acc[name] = (acc[name] || 0) + r.val;
-      return acc;
-    }, {});
-    Object.entries(opexGrouped).forEach(([name, val]) => {
-      expensePieData.push({ name, value: val as number });
-    });
-
-    const finalExpensePieData = expensePieData
-      .filter((i) => i.value > 0)
-      .sort((a, b) => b.value - a.value);
-    // --------------------------------------
-
-    const insights = [];
-    insights.push({
-      title: 'Авторасчет ЗП включен',
-      text: 'ФОТ админов (фикс + % с продаж) уже учтен в OPEX. Не дублируйте его ручными записями.',
-      type: 'success',
-    });
-    if (cur.margin < 0)
-      insights.push({
-        title: 'Убыток в периоде',
-        text: 'Кликните “Структура расходов” чтобы проанализировать OPEX.',
-        type: 'danger',
-      });
-
-    const food = cur.posCats['Бар / Кафе'] || 0;
-    const courts = cur.posCats['Аренда кортов'] || 0;
-    if (courts > 0 && food / courts < 0.06)
-      insights.push({
-        title: 'Еда/напитки низко',
-        text: `Сейчас ${((food / courts) * 100).toFixed(1)}% от выручки кортов. Цель 6–10%.`,
-        type: 'warning',
-      });
-
-    return {
-      cur,
-      prev,
-      insights,
-      start,
-      end,
-      incomePieData,
-      finalExpensePieData,
-    };
-  }, [records, dateRange]);
-
-  const {
-    cur,
-    prev,
-    insights,
-    start,
-    end,
-    incomePieData,
-    finalExpensePieData,
-  } = stats;
-  const periodLabel = `${format(start, 'dd.MM.yyyy')} — ${format(end, 'dd.MM.yyyy')}`;
-
-  const formatDiff = (curV: number, prevV: number) => {
-    if (prevV === 0) return null;
-    const diff = curV - prevV;
-    const color = diff >= 0 ? 'text-green-500' : 'text-destructive';
     return (
-      <span className={`text-xs ml-2 font-medium ${color}`}>
-        {diff >= 0 ? '↑' : '↓'} {Math.abs(diff).toLocaleString('ru-RU')} ₽
-      </span>
+      <>
+        <TableRow
+          className={`bg-transparent hover:bg-muted/50 ${hasSubItems ? 'cursor-pointer' : ''} group`}
+          onClick={() => hasSubItems && setExpanded(!expanded)}
+        >
+          <TableCell
+            className="border-b-0 flex items-center gap-2"
+            style={{ paddingLeft }}
+          >
+            {hasSubItems ? (
+              expanded ? (
+                <ChevronDown className="w-4 h-4 text-primary shrink-0" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+              )
+            ) : (
+              <span className="w-4 h-4 inline-block shrink-0" />
+            )}
+            <span
+              className={
+                hasSubItems
+                  ? depth === 0
+                    ? 'font-bold text-foreground'
+                    : 'font-medium text-foreground'
+                  : 'text-muted-foreground'
+              }
+            >
+              {item.name}
+            </span>
+          </TableCell>
+
+          <TableCell
+            className={`text-right border-b-0 ${hasSubItems ? (depth === 0 ? 'font-bold text-foreground' : 'font-medium text-foreground') : 'text-muted-foreground'} ${isExpense ? 'text-destructive/80' : ''}`}
+          >
+            <div className="flex items-center justify-end gap-3">
+              <span>
+                {isExpense ? '-' : ''}
+                {item.sum.toLocaleString('ru-RU')} ₽
+              </span>
+              {/* КНОПКА ОТКРЫТИЯ ДЕТАЛИЗАЦИИ */}
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setDetailsModalCat(item.name);
+                }}
+              >
+                <List className="h-4 w-4 text-muted-foreground" />
+              </Button>
+            </div>
+          </TableCell>
+        </TableRow>
+
+        {expanded &&
+          hasSubItems &&
+          item.subItems.map((subItem: any, idx: number) => (
+            <ExpandableRow
+              key={idx}
+              item={subItem}
+              isExpense={isExpense}
+              depth={depth + 1}
+            />
+          ))}
+      </>
     );
   };
 
-  const openDetail = (id: string) => {
-    let title = '',
-      items: any[] = [],
-      type: 'list' | 'formula' = 'list';
-
-    if (id === 'rev_pos') {
-      title = 'Выручка — касса';
-      items = Object.entries(cur.posCats).map(([name, sum]) => ({
-        name,
-        sum,
-        comment: 'Сводка по категориям Эвотор',
-      }));
-    } else if (id === 'rev_ext') {
-      title = 'Выручка — вне кассы';
-      items = cur.extRows.map((r) => ({
-        name: r.catLabel,
-        sum: r.val,
-        comment: r.comment || r.date,
-      }));
-    } else if (id === 'rev_corp') {
-      title = 'Корп. выручка (вне кассы)';
-      items = cur.extRows
-        .filter((r) => r.category === 'corp')
-        .map((r) => ({
-          name: r.catLabel,
-          sum: r.val,
-          comment: r.comment || r.date,
-        }));
-    } else if (id === 'rev_lunda') {
-      title = 'Лунда (вне кассы)';
-      items = cur.extRows
-        .filter(
-          (r) =>
-            r.category === 'lunda_courts' || r.category === 'lunda_tournaments',
-        )
-        .map((r) => ({
-          name: r.catLabel,
-          sum: r.val,
-          comment: r.comment || r.date,
-        }));
-    } else if (id === 'rev_aladdin') {
-      title = 'Алладин сертификаты (вне кассы)';
-      items = cur.extRows
-        .filter((r) => r.category === 'aladdin')
-        .map((r) => ({
-          name: r.catLabel,
-          sum: r.val,
-          comment: r.comment || r.date,
-        }));
-    } else if (id === 'cogs_items') {
-      title = 'Себестоимость (закупы)';
-      items = cur.cogsRows.map((r) => ({
-        name: r.catLabel,
-        sum: r.val,
-        comment: r.comment || r.date,
-      }));
-    } else if (id === 'opex' || id === 'opex_struct') {
-      title = 'Структура расходов периода';
-      const grouped = cur.opexRows.reduce((acc: any, r) => {
-        acc[r.catLabel] = (acc[r.catLabel] || 0) + r.val;
-        return acc;
-      }, {});
-      items = Object.entries(grouped).map(([name, sum]) => ({
-        name,
-        sum,
-        comment: 'Сгруппировано',
-      }));
-    } else if (id === 'fee_acq') {
-      title = 'Эквайринг';
-      type = 'formula';
-      items = [
-        { name: 'Безнал кассы', sum: cur.cashless, comment: '' },
-        { name: 'Итого (1%)', sum: cur.acqFee, comment: '', isTotal: true },
-      ];
-    } else if (id === 'fee_lunda') {
-      title = 'Комиссия Лунда';
-      type = 'formula';
-      items = [
-        { name: 'Лунда — бронь кортов', sum: cur.extLunda, comment: '' },
-        { name: 'Итого (1.5%)', sum: cur.lundaFee, comment: '', isTotal: true },
-      ];
-    } else if (id === 'fee_aladdin') {
-      title = 'Комиссия Алладин';
-      type = 'formula';
-      items = [
-        { name: 'Алладин сертификаты', sum: cur.extAladdin, comment: '' },
-        {
-          name: 'Итого (17%)',
-          sum: cur.aladdinFee,
-          comment: '',
-          isTotal: true,
-        },
-      ];
-    }
-
-    setDetailModal({
-      isOpen: true,
-      type,
-      title,
-      subtitle: `Период: ${periodLabel}`,
-      items: type === 'list' ? items.sort((a, b) => b.sum - a.sum) : items,
-    });
+  const SubRows = ({
+    items,
+    isExpense = false,
+  }: {
+    items: any[];
+    isExpense?: boolean;
+  }) => {
+    if (!items || items.length === 0) return null;
+    return (
+      <>
+        {items.map((item, idx) => (
+          <ExpandableRow
+            key={idx}
+            item={item}
+            isExpense={isExpense}
+            depth={0}
+          />
+        ))}
+      </>
+    );
   };
 
   return (
@@ -590,8 +271,7 @@ export default function FinancePage() {
           <Popover>
             <PopoverTrigger asChild>
               <Button
-                id="date"
-                variant={'outline'}
+                variant="outline"
                 className={cn(
                   'w-full sm:w-[260px] justify-start text-left font-normal bg-card',
                   !dateRange && 'text-muted-foreground',
@@ -681,24 +361,32 @@ export default function FinancePage() {
                   onChange={(e) => setForm({ ...form, date: e.target.value })}
                   required
                 />
+
                 <Select
                   value={form.category}
                   onValueChange={(val) => setForm({ ...form, category: val })}
                   required
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Выберите категорию" />
+                    <SelectValue placeholder="Выберите категорию из базы" />
                   </SelectTrigger>
                   <SelectContent>
-                    {MANUAL_CATEGORIES.filter((c) => c.type === form.type).map(
-                      (c) => (
-                        <SelectItem key={c.value} value={c.value}>
-                          {c.label}
+                    {categories
+                      .filter((c) => c.type === form.type)
+                      .map((c) => (
+                        <SelectItem key={c.id} value={c.name}>
+                          {c.name}
                         </SelectItem>
-                      ),
+                      ))}
+                    {categories.filter((c) => c.type === form.type).length ===
+                      0 && (
+                      <SelectItem value="empty" disabled>
+                        Нет созданных категорий
+                      </SelectItem>
                     )}
                   </SelectContent>
                 </Select>
+
                 <Input
                   type="number"
                   placeholder="Сумма"
@@ -722,7 +410,7 @@ export default function FinancePage() {
         </div>
       </div>
 
-      {/* KPI */}
+      {/* KPI карточки (берем прямо из summary) */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>
           <CardContent className="pt-6">
@@ -730,25 +418,7 @@ export default function FinancePage() {
               Выручка
             </div>
             <div className="text-2xl font-bold mt-1">
-              {cur.revenue.toLocaleString('ru-RU')} ₽{' '}
-              {formatDiff(cur.revenue, prev.revenue)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Касса: {cur.posRev.toLocaleString()} • Вне кассы:{' '}
-              {cur.extTotal.toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground font-medium">
-              Выручка прошлого периода
-            </div>
-            <div className="text-2xl font-bold mt-1 text-muted-foreground">
-              {prev.revenue.toLocaleString('ru-RU')} ₽
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Тот же сдвиг по дням назад
+              {summary.revenue.toLocaleString('ru-RU')} ₽
             </div>
           </CardContent>
         </Card>
@@ -758,11 +428,7 @@ export default function FinancePage() {
               Валовая прибыль (Gross)
             </div>
             <div className="text-2xl font-bold mt-1">
-              {cur.gross.toLocaleString('ru-RU')} ₽{' '}
-              {formatDiff(cur.gross, prev.gross)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              COGS+комиссии: -{cur.cogsTotal.toLocaleString()}
+              {summary.gross.toLocaleString('ru-RU')} ₽
             </div>
           </CardContent>
         </Card>
@@ -772,17 +438,13 @@ export default function FinancePage() {
               OPEX (Расходы)
             </div>
             <div className="text-2xl font-bold mt-1">
-              {cur.opex.toLocaleString('ru-RU')} ₽{' '}
-              {formatDiff(cur.opex, prev.opex)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Аренда/ФОТ/маркетинг/прочее
+              {summary.opex.toLocaleString('ru-RU')} ₽
             </div>
           </CardContent>
         </Card>
         <Card
           className={
-            cur.net >= 0
+            summary.net >= 0
               ? 'border-green-500/50 bg-green-500/5'
               : 'border-destructive/50 bg-destructive/5'
           }
@@ -792,11 +454,7 @@ export default function FinancePage() {
               Чистая прибыль (Net)
             </div>
             <div className="text-2xl font-bold mt-1">
-              {cur.net.toLocaleString('ru-RU')} ₽{' '}
-              {formatDiff(cur.net, prev.net)}
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              Без налогов
+              {summary.net.toLocaleString('ru-RU')} ₽
             </div>
           </CardContent>
         </Card>
@@ -806,16 +464,13 @@ export default function FinancePage() {
               Рентабельность (Margin)
             </div>
             <div className="text-2xl font-bold mt-1">
-              {cur.margin.toFixed(1)} %
-            </div>
-            <div className="text-xs text-muted-foreground mt-1">
-              {cur.net >= 0 ? 'Плюс' : 'Минус'} к выручке
+              {summary.margin.toFixed(1)} %
             </div>
           </CardContent>
         </Card>
       </div>
 
-      {/* НОВЫЙ БЛОК: ДИАГРАММЫ ДОХОДОВ И РАСХОДОВ */}
+      {/* Диаграммы */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
         <Card>
           <CardHeader>
@@ -824,33 +479,38 @@ export default function FinancePage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="h-[250px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={incomePieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {incomePieData.map((_, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={PIE_COLORS[index % PIE_COLORS.length]}
-                    />
-                  ))}
-                </Pie>
-                <RechartsTooltip
-                  formatter={(val: any) => `${val.toLocaleString()} ₽`}
-                />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            {incomePieData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={incomePieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {incomePieData.map((_, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={PIE_COLORS[index % PIE_COLORS.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip
+                    formatter={(val: any) => `${val.toLocaleString()} ₽`}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Нет данных
+              </div>
+            )}
           </CardContent>
         </Card>
-
         <Card>
           <CardHeader>
             <CardTitle className="text-base font-semibold">
@@ -858,47 +518,52 @@ export default function FinancePage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="h-[250px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie
-                  data={finalExpensePieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={2}
-                  dataKey="value"
-                >
-                  {finalExpensePieData.map((_, index) => (
-                    <Cell
-                      key={`cell-${index}`}
-                      fill={
-                        [
-                          '#ef4444',
-                          '#f97316',
-                          '#f59e0b',
-                          '#84cc16',
-                          '#06b6d4',
-                          '#6366f1',
-                        ][index % 6]
-                      }
-                    />
-                  ))}
-                </Pie>
-                <RechartsTooltip
-                  formatter={(val: any) => `${val.toLocaleString()} ₽`}
-                />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            {expensePieData.length > 0 ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={expensePieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {expensePieData.map((_, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={
+                          [
+                            '#ef4444',
+                            '#f97316',
+                            '#f59e0b',
+                            '#84cc16',
+                            '#06b6d4',
+                            '#6366f1',
+                          ][index % 6]
+                        }
+                      />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip
+                    formatter={(val: any) => `${val.toLocaleString()} ₽`}
+                  />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Нет данных
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* ОСНОВНОЙ КОНТЕНТ */}
+      {/* ДИНАМИЧЕСКАЯ ТАБЛИЦА P&L */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
         <div className="col-span-2 space-y-6">
-          {/* ГЛАВНАЯ ТАБЛИЦА P&L (17 строк как в оригинале) */}
           <div className="border rounded-md bg-card">
             <Table>
               <TableHeader>
@@ -908,332 +573,198 @@ export default function FinancePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {/* БЛОК ДОХОДОВ */}
                 <TableRow className="bg-muted/30">
                   <TableCell className="font-bold">Выручка (итого)</TableCell>
                   <TableCell className="text-right font-bold">
-                    {cur.revenue.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('rev_pos')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">Выручка — касса</TableCell>
-                  <TableCell className="text-right">
-                    {cur.posRev.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('rev_ext')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">Выручка — вне кассы</TableCell>
-                  <TableCell className="text-right">
-                    {cur.extTotal.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('rev_corp')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-12 text-muted-foreground">
-                    Корп. выручка (вне кассы)
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {cur.extCorp.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('rev_lunda')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-12 text-muted-foreground">
-                    Лунда — бронь кортов (вне кассы)
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {cur.extLunda.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="pl-16 text-xs text-muted-foreground">
-                    ...2x2 (по доле выручки кортов)
-                  </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">
-                    {cur.alloc2.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell className="pl-16 text-xs text-muted-foreground">
-                    ...1x1 (по доле выручки кортов)
-                  </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">
-                    {cur.alloc1.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('rev_aladdin')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-12 text-muted-foreground">
-                    Алладин сертификаты (вне кассы)
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {cur.extAladdin.toLocaleString('ru-RU')} ₽
+                    {summary.revenue.toLocaleString('ru-RU')} ₽
                   </TableCell>
                 </TableRow>
 
+                <TableRow className="bg-muted/10">
+                  <TableCell className="font-semibold pl-6">
+                    <LayoutList className="inline w-4 h-4 mr-2" />
+                    Касса (Эвотор)
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {summary.posRev.toLocaleString('ru-RU')} ₽
+                  </TableCell>
+                </TableRow>
+                <SubRows items={sections.REVENUE_POS} />
+
+                <TableRow className="bg-muted/10">
+                  <TableCell className="font-semibold pl-6">
+                    <LayoutList className="inline w-4 h-4 mr-2" />
+                    Вне кассы (Ручные/Корп)
+                  </TableCell>
+                  <TableCell className="text-right font-medium">
+                    {summary.extTotal.toLocaleString('ru-RU')} ₽
+                  </TableCell>
+                </TableRow>
+                <SubRows items={sections.REVENUE_EXT} />
+
+                {/* БЛОК СЕБЕСТОИМОСТИ И КОМИССИЙ */}
                 <TableRow className="bg-muted/30 mt-4">
                   <TableCell className="font-bold">COGS + комиссии</TableCell>
                   <TableCell className="text-right font-bold text-destructive">
-                    -{cur.cogsTotal.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('fee_acq')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">
-                    Эквайринг (1% от безнала кассы)
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    -{cur.acqFee.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('fee_lunda')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">Комиссия Лунда (1.5%)</TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    -{cur.lundaFee.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('fee_aladdin')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">Комиссия Алладин (17%)</TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    -{cur.aladdinFee.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('cogs_items')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">Себестоимость (закупы)</TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    -{cur.cogsItems.toLocaleString('ru-RU')} ₽
+                    -{summary.cogsTotal.toLocaleString('ru-RU')} ₽
                   </TableCell>
                 </TableRow>
 
-                <TableRow className="bg-primary/5">
-                  <TableCell className="font-bold">Валовая прибыль</TableCell>
-                  <TableCell className="text-right font-bold text-primary">
-                    {cur.gross.toLocaleString('ru-RU')} ₽
+                <TableRow className="bg-muted/10">
+                  <TableCell className="font-semibold pl-6">
+                    <LayoutList className="inline w-4 h-4 mr-2" />
+                    Закупы (Себестоимость)
+                  </TableCell>
+                  <TableCell></TableCell>
+                </TableRow>
+                <SubRows items={sections.COGS} isExpense={true} />
+
+                <TableRow className="bg-muted/10">
+                  <TableCell className="font-semibold pl-6">
+                    <LayoutList className="inline w-4 h-4 mr-2" />
+                    Комиссии сервисов и Эквайринг
+                  </TableCell>
+                  <TableCell></TableCell>
+                </TableRow>
+                <SubRows items={sections.FEES} isExpense={true} />
+
+                {/* ВАЛОВАЯ ПРИБЫЛЬ */}
+                <TableRow className="bg-primary/5 border-y-2 border-primary/20">
+                  <TableCell className="font-bold text-lg">
+                    Валовая прибыль (Gross)
+                  </TableCell>
+                  <TableCell className="text-right font-bold text-lg text-primary">
+                    {summary.gross.toLocaleString('ru-RU')} ₽
                   </TableCell>
                 </TableRow>
 
-                <TableRow
-                  onClick={() => openDetail('opex')}
-                  className="bg-muted/30 cursor-pointer hover:bg-muted/50"
-                >
+                {/* БЛОК OPEX */}
+                <TableRow className="bg-muted/30">
                   <TableCell className="font-bold">
                     OPEX (операционные расходы)
                   </TableCell>
                   <TableCell className="text-right font-bold text-destructive">
-                    -{cur.opex.toLocaleString('ru-RU')} ₽
+                    -{summary.opex.toLocaleString('ru-RU')} ₽
                   </TableCell>
                 </TableRow>
-                <TableRow className="bg-muted/10">
-                  <TableCell className="pl-6 text-muted-foreground">
-                    в т.ч. ЗП Админов (Авторасчет)
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    -{cur.totalAdminPayroll.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow
-                  onClick={() => openDetail('opex_struct')}
-                  className="cursor-pointer hover:bg-muted/50"
-                >
-                  <TableCell className="pl-6">
-                    Структура расходов периода
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    -{cur.opex.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
+                <SubRows items={sections.OPEX} isExpense={true} />
 
+                {/* ЧИСТАЯ ПРИБЫЛЬ */}
                 <TableRow
                   className={
-                    cur.net >= 0 ? 'bg-green-500/10' : 'bg-destructive/10'
+                    summary.net >= 0 ? 'bg-green-500/10' : 'bg-destructive/10'
                   }
                 >
-                  <TableCell className="font-bold text-lg">
+                  <TableCell className="font-bold text-xl">
                     Чистая прибыль
                   </TableCell>
                   <TableCell
-                    className={`text-right font-bold text-lg ${cur.net >= 0 ? 'text-green-500' : 'text-destructive'}`}
+                    className={`text-right font-bold text-xl ${summary.net >= 0 ? 'text-green-500' : 'text-destructive'}`}
                   >
-                    {cur.net.toLocaleString('ru-RU')} ₽
+                    {summary.net.toLocaleString('ru-RU')} ₽
                   </TableCell>
                 </TableRow>
               </TableBody>
             </Table>
           </div>
-
-          {/* ВТОРАЯ ТАБЛИЦА: ДАННЫЕ ДЛЯ РАСЧЕТОВ */}
-          <div className="border rounded-md bg-card">
-            <div className="p-4 border-b font-semibold">
-              Данные для расчётов
-            </div>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>База</TableHead>
-                  <TableHead className="text-right">Значение</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                <TableRow>
-                  <TableCell>Безнал кассы</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {cur.cashless.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>Нал кассы</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {cur.cash.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>Лунда — бронь кортов</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {cur.extLunda.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>Алладин сертификаты</TableCell>
-                  <TableCell className="text-right font-medium">
-                    {cur.extAladdin.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-              </TableBody>
-            </Table>
-          </div>
-        </div>
-
-        {/* ПРАВАЯ КОЛОНКА (Инсайты) */}
-        <div className="space-y-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base flex items-center gap-2">
-                <Lightbulb className="w-4 h-4 text-orange-500" />{' '}
-                Action-insights
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {insights.map((ins, i) => (
-                <div key={i} className="flex gap-3">
-                  <div className="mt-0.5">
-                    {ins.type === 'danger' ? (
-                      <AlertCircle className="w-4 h-4 text-destructive" />
-                    ) : ins.type === 'warning' ? (
-                      <Activity className="w-4 h-4 text-orange-500" />
-                    ) : (
-                      <TrendingUp className="w-4 h-4 text-green-500" />
-                    )}
-                  </div>
-                  <div>
-                    <div className="font-semibold text-sm">{ins.title}</div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      {ins.text}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
         </div>
       </div>
-
-      {/* МОДАЛКА ДЕТАЛИЗАЦИИ */}
+      {/* МОДАЛЬНОЕ ОКНО ДЕТАЛИЗАЦИИ */}
       <Dialog
-        open={detailModal.isOpen}
-        onOpenChange={(val) =>
-          setDetailModal((prev) => ({ ...prev, isOpen: val }))
-        }
+        open={!!detailsModalCat}
+        onOpenChange={(open) => !open && setDetailsModalCat(null)}
       >
-        <DialogContent className="max-w-3xl sm:max-w-4xl max-h-[90vh] overflow-hidden flex flex-col p-0">
-          <div className="px-6 py-4 border-b bg-muted/30">
-            <DialogTitle className="text-2xl font-bold">
-              {detailModal.title}
-            </DialogTitle>
-            <div className="text-sm text-muted-foreground mt-1">
-              {detailModal.subtitle}
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+        <DialogContent className="max-w-[95vw] md:max-w-[85vw] lg:max-w-6xl max-h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Детализация: {detailsModalCat}</DialogTitle>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-auto mt-4 border rounded-md">
             <Table>
-              <TableHeader>
+              <TableHeader className="bg-muted/50 sticky top-0">
                 <TableRow>
-                  <TableHead>
-                    {detailModal.type === 'formula' ? 'База' : 'Статья'}
-                  </TableHead>
-                  <TableHead className="text-right">
-                    {detailModal.type === 'formula' ? 'Значение' : 'Сумма'}
-                  </TableHead>
+                  <TableHead>Дата</TableHead>
+                  <TableHead>Источник</TableHead>
+                  <TableHead>Позиция / Комментарий</TableHead>
+                  <TableHead className="text-right">Сумма</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {detailModal.items.length === 0 && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={2}
-                      className="text-center text-muted-foreground py-12"
-                    >
-                      Нет данных за этот период
-                    </TableCell>
-                  </TableRow>
-                )}
-                {detailModal.items.map((item, idx) => (
-                  <TableRow
-                    key={idx}
-                    className={item.isTotal ? 'bg-muted/30' : ''}
-                  >
-                    <TableCell>
-                      <div
-                        className={`text-base ${item.isTotal ? 'font-bold' : 'font-medium'}`}
+                {report?.details
+                  // Магия фильтрации: показываем операцию, если выбранная категория есть в её "пути"
+                  ?.filter(
+                    (d: any) =>
+                      d.path?.includes(detailsModalCat) ||
+                      d.category === detailsModalCat,
+                  )
+                  // Сортируем по дате от новых к старым
+                  ?.sort(
+                    (a: any, b: any) =>
+                      new Date(b.date).getTime() - new Date(a.date).getTime(),
+                  )
+                  .map((detail: any, idx: number) => (
+                    <TableRow key={idx}>
+                      <TableCell className="whitespace-nowrap">
+                        {detail.date
+                          ? format(new Date(detail.date), 'dd.MM.yyyy HH:mm')
+                          : '—'}
+                      </TableCell>
+                      <TableCell>
+                        {detail.source === 'evotor' && (
+                          <Badge
+                            variant="outline"
+                            className="bg-blue-500/10 text-blue-500"
+                          >
+                            Касса
+                          </Badge>
+                        )}
+                        {detail.source === 'manual' && (
+                          <Badge
+                            variant="outline"
+                            className="bg-orange-500/10 text-orange-500"
+                          >
+                            Ручная
+                          </Badge>
+                        )}
+                        {detail.source === 'fee' && (
+                          <Badge
+                            variant="outline"
+                            className="bg-red-500/10 text-red-500"
+                          >
+                            Комиссия
+                          </Badge>
+                        )}
+                        {detail.source === 'system' && (
+                          <Badge
+                            variant="outline"
+                            className="bg-purple-500/10 text-purple-500"
+                          >
+                            Система
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className="font-medium">
+                          {detail.comment || detail.category}
+                        </span>
+                        {/* Если кликнули на родителя, покажем к какой конкретно подкатегории относится этот чек */}
+                        {detail.category !== detailsModalCat && (
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            ({detail.category})
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right font-medium ${detail.type === 'expense' ? 'text-destructive' : 'text-green-500'}`}
                       >
-                        {item.name}
-                      </div>
-                      {item.comment && (
-                        <div className="text-sm text-muted-foreground mt-0.5">
-                          {item.comment}
-                        </div>
-                      )}
-                    </TableCell>
-                    <TableCell
-                      className={`text-right text-lg ${item.isTotal ? 'font-bold' : 'font-medium'}`}
-                    >
-                      {item.sum.toLocaleString('ru-RU')} ₽
-                    </TableCell>
-                  </TableRow>
-                ))}
+                        {detail.type === 'expense' ? '-' : '+'}
+                        {detail.amount.toLocaleString('ru-RU')} ₽
+                      </TableCell>
+                    </TableRow>
+                  ))}
               </TableBody>
             </Table>
-          </div>
-          <div className="p-4 border-t flex justify-end bg-card">
-            <Button
-              variant="outline"
-              onClick={() =>
-                setDetailModal((prev) => ({ ...prev, isOpen: false }))
-              }
-            >
-              Закрыть
-            </Button>
           </div>
         </DialogContent>
       </Dialog>
