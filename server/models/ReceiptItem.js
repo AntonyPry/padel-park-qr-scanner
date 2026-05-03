@@ -5,7 +5,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
     },
     quantity: {
-      type: DataTypes.DECIMAL(10, 3), // 10.3 чтобы поддерживать весовые товары, если будут
+      type: DataTypes.DECIMAL(10, 3),
       allowNull: false,
     },
     price: {
@@ -16,10 +16,38 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DECIMAL(10, 2),
       allowNull: false,
     },
+    // --- НОВЫЕ ПОЛЯ ИЗ ЭВОТОРА ---
+    itemType: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    measureName: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    costPrice: {
+      type: DataTypes.DECIMAL(10, 2),
+      defaultValue: 0,
+    },
+    sumPrice: {
+      type: DataTypes.DECIMAL(10, 2), // Итоговая сумма с учетом скидок
+      defaultValue: 0,
+    },
+    tax: {
+      type: DataTypes.DECIMAL(10, 2),
+      defaultValue: 0,
+    },
+    taxPercent: {
+      type: DataTypes.DECIMAL(10, 2),
+      defaultValue: 0,
+    },
+    discount: {
+      type: DataTypes.DECIMAL(10, 2), // Скидка на позицию
+      defaultValue: 0,
+    },
   });
 
   ReceiptItem.associate = (models) => {
-    // Позиция принадлежит конкретному чеку
     ReceiptItem.belongsTo(models.Receipt, { foreignKey: 'receiptId' });
   };
 
