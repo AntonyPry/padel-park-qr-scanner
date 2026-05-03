@@ -152,12 +152,6 @@ export default function CatalogPage() {
     return PNL_GROUPS.find((g) => g.value === groupVal)?.label || groupVal;
   };
 
-  const getParentName = (parentId: number | null) => {
-    if (!parentId) return '-';
-    const parent = categories.find((c) => c.id === parentId);
-    return parent ? parent.name : 'Неизвестно';
-  };
-
   // ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ РОДИТЕЛЯ ИЗ ТАБЛИЦЫ
   const handleUpdateParent = async (
     categoryId: number,
