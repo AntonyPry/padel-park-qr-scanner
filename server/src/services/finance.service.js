@@ -195,45 +195,89 @@ class FinanceService {
       const dStr = new Date(receipt.dateTime).toISOString().split('T')[0];
       if (!salesByDate[dStr]) salesByDate[dStr] = { revenue: 0, items: [] };
 
-      if (Number(receipt.cashless) > 0) {
-        const acqFee = Number(receipt.cashless) * 0.01;
-        // Передаем дату: receipt.dateTime
+      // Берем сумму по модулю и применяем свой знак
+      const rCashless = Math.abs(Number(receipt.cashless)) * multiplier;
+      const rCash = Math.abs(Number(receipt.cash)) * multiplier;
+
+      if (rCashless !== 0) {
+        const acqFee = Math.abs(Number(receipt.cashless)) * 0.01 * multiplier;
         addRecord(
           'FEES',
           'Эквайринг (1%)',
-          acqFee * multiplier,
+          acqFee, // Передаем отрицательную комиссию, если это возврат
           isPayback ? 'income' : 'expense',
           'Безнал кассы',
           'fee',
           receipt.dateTime,
         );
-        report.summary.cashless += Number(receipt.cashless) * multiplier;
+        report.summary.cashless += rCashless;
       }
-      if (Number(receipt.cash) > 0)
-        report.summary.cash += Number(receipt.cash) * multiplier;
+      if (rCash !== 0) {
+        report.summary.cash += rCash;
+      }
+
+      let itemsSum = 0;
 
       for (const item of receipt.items) {
-        const amount = Number(item.sumPrice || item.sum) * multiplier;
-        if (amount === 0) continue;
+        // 🔥 ВОТ ГЛАВНОЕ ИСПРАВЛЕНИЕ:
+        // 1. Берем сумму товара по модулю (Math.abs), чтобы снять возможные минусы из БД.
+        // 2. Умножаем на наш multiplier (-1 для возвратов, 1 для продаж).
+        const rawAmount = Number(
+          item.sumPrice !== undefined && item.sumPrice !== null
+            ? item.sumPrice
+            : item.sum,
+        );
+        const finalAmount = Math.abs(rawAmount) * multiplier;
+
+        if (finalAmount === 0) continue;
+
+        itemsSum += Math.abs(rawAmount);
 
         const catName = await this.getCategoryName(item.name, rulesMap);
-        // Передаем дату: receipt.dateTime
         addRecord(
           'REVENUE_POS',
           catName,
-          amount,
+          finalAmount, // Передаем правильную сумму со знаком
           isPayback ? 'expense' : 'income',
           `${item.name} (${item.quantity} шт)`,
           'evotor',
           receipt.dateTime,
         );
 
-        salesByDate[dStr].revenue += amount;
+        salesByDate[dStr].revenue += finalAmount;
         salesByDate[dStr].items.push({
           name: item.name,
           category: catName,
-          sum: amount,
+          sum: finalAmount,
           qty: Number(item.quantity) * multiplier,
+        });
+      }
+
+      // Защита от пустых чеков тоже использует модуль
+      const receiptTotal = Math.abs(Number(receipt.totalAmount) || 0);
+      const diff = receiptTotal - itemsSum;
+
+      if (diff > 1) {
+        const finalDiffAmount = diff * multiplier;
+
+        addRecord(
+          'REVENUE_POS',
+          'Неразобранное',
+          finalDiffAmount,
+          isPayback ? 'expense' : 'income',
+          isPayback
+            ? 'Возврат (позиции отсутствуют в БД)'
+            : 'Продажа (позиции отсутствуют в БД)',
+          'evotor',
+          receipt.dateTime,
+        );
+
+        salesByDate[dStr].revenue += finalDiffAmount;
+        salesByDate[dStr].items.push({
+          name: 'Неизвестная позиция',
+          category: 'Неразобранное',
+          sum: finalDiffAmount,
+          qty: 1 * multiplier,
         });
       }
     }
