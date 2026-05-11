@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Table,
   TableBody,
@@ -51,8 +51,10 @@ import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
-import { API_URL } from '@/config';
 import { Badge } from '@/components/ui/badge';
+import { apiFetch } from '@/lib/api';
+import { canManageFinance } from '@/lib/permissions';
+import { useAuth } from '@/lib/useAuth';
 
 const PIE_COLORS = [
   '#3b82f6',
@@ -64,9 +66,69 @@ const PIE_COLORS = [
   '#64748b',
 ];
 
+interface CatalogCategory {
+  id: number;
+  name: string;
+  type: 'income' | 'expense' | string;
+}
+
+interface PnlSummary {
+  revenue: number;
+  posRev: number;
+  extTotal: number;
+  cogsTotal: number;
+  gross: number;
+  opex: number;
+  net: number;
+  margin: number;
+}
+
+interface PnlSectionItem {
+  name: string;
+  sum: number;
+  subItems: PnlSectionItem[];
+}
+
+interface PnlDetail {
+  category: string;
+  path?: string[];
+  amount: number;
+  type: 'income' | 'expense' | string;
+  comment?: string;
+  source: 'evotor' | 'manual' | 'fee' | 'system' | string;
+  date?: string;
+}
+
+interface FinanceReport {
+  summary: PnlSummary;
+  sections: {
+    REVENUE_POS: PnlSectionItem[];
+    REVENUE_EXT: PnlSectionItem[];
+    COGS: PnlSectionItem[];
+    FEES: PnlSectionItem[];
+    OPEX: PnlSectionItem[];
+  };
+  details: PnlDetail[];
+}
+
+interface ManualFinanceForm {
+  date: string;
+  category: string;
+  amount: string;
+  type: 'income' | 'expense';
+  comment: string;
+}
+
+const formatCurrencyValue = (val: unknown) => {
+  const rawValue = Array.isArray(val) ? val[0] : val;
+  return `${Number(rawValue ?? 0).toLocaleString()} ₽`;
+};
+
 export default function FinancePage() {
-  const [report, setReport] = useState<any>(null);
-  const [categories, setCategories] = useState<any[]>([]);
+  const { account } = useAuth();
+  const canEditFinance = canManageFinance(account?.role);
+  const [report, setReport] = useState<FinanceReport | null>(null);
+  const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailsModalCat, setDetailsModalCat] = useState<string | null>(null);
 
@@ -78,7 +140,7 @@ export default function FinancePage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const todayStr = now.toISOString().split('T')[0];
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<ManualFinanceForm>({
     date: todayStr,
     category: '',
     amount: '',
@@ -86,7 +148,7 @@ export default function FinancePage() {
     comment: '',
   });
 
-  const fetchFinances = async () => {
+  const fetchFinances = useCallback(async () => {
     setLoading(true);
     try {
       // Передаем даты на бэкенд, чтобы он сам всё отфильтровал
@@ -96,27 +158,27 @@ export default function FinancePage() {
       const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : '';
 
       const [finRes, catRes] = await Promise.all([
-        fetch(`${API_URL}/api/finance?from=${fromStr}&to=${toStr}`),
-        fetch(`${API_URL}/api/catalog/categories`),
+        apiFetch(`/api/finance?from=${fromStr}&to=${toStr}`),
+        apiFetch('/api/catalog/categories'),
       ]);
 
-      if (finRes.ok) setReport(await finRes.json());
-      if (catRes.ok) setCategories(await catRes.json());
+      if (finRes.ok) setReport((await finRes.json()) as FinanceReport);
+      if (catRes.ok) setCategories((await catRes.json()) as CatalogCategory[]);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateRange]);
 
   useEffect(() => {
-    fetchFinances();
-  }, [dateRange]); // Автоматически перезапрашиваем при смене дат
+    void fetchFinances();
+  }, [fetchFinances]); // Автоматически перезапрашиваем при смене дат
 
   const handleAddManual = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const res = await fetch(`${API_URL}/api/finance`, {
+      const res = await apiFetch('/api/finance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -124,7 +186,7 @@ export default function FinancePage() {
       if (res.ok) {
         setIsModalOpen(false);
         setForm({ ...form, category: '', amount: '', comment: '' });
-        fetchFinances();
+        void fetchFinances();
       }
     } catch (e) {
       console.error(e);
@@ -157,7 +219,7 @@ export default function FinancePage() {
     isExpense,
     depth = 0,
   }: {
-    item: any;
+    item: PnlSectionItem;
     isExpense: boolean;
     depth?: number;
   }) => {
@@ -223,7 +285,7 @@ export default function FinancePage() {
 
         {expanded &&
           hasSubItems &&
-          item.subItems.map((subItem: any, idx: number) => (
+          item.subItems.map((subItem, idx) => (
             <ExpandableRow
               key={idx}
               item={subItem}
@@ -239,7 +301,7 @@ export default function FinancePage() {
     items,
     isExpense = false,
   }: {
-    items: any[];
+    items: PnlSectionItem[];
     isExpense?: boolean;
   }) => {
     if (!items || items.length === 0) return null;
@@ -315,11 +377,13 @@ export default function FinancePage() {
           </Button>
 
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" /> Добавить
-              </Button>
-            </DialogTrigger>
+            {canEditFinance && (
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="w-4 h-4 mr-2" /> Добавить
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Новая запись</DialogTitle>
@@ -499,7 +563,7 @@ export default function FinancePage() {
                     ))}
                   </Pie>
                   <RechartsTooltip
-                    formatter={(val: any) => `${val.toLocaleString()} ₽`}
+                    formatter={formatCurrencyValue}
                   />
                   <Legend />
                 </PieChart>
@@ -547,7 +611,7 @@ export default function FinancePage() {
                     ))}
                   </Pie>
                   <RechartsTooltip
-                    formatter={(val: any) => `${val.toLocaleString()} ₽`}
+                    formatter={formatCurrencyValue}
                   />
                   <Legend />
                 </PieChart>
@@ -691,19 +755,21 @@ export default function FinancePage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {report?.details
+                {[...(report?.details || [])]
                   // Магия фильтрации: показываем операцию, если выбранная категория есть в её "пути"
                   ?.filter(
-                    (d: any) =>
-                      d.path?.includes(detailsModalCat) ||
+                    (d) =>
+                      (detailsModalCat !== null &&
+                        d.path?.includes(detailsModalCat)) ||
                       d.category === detailsModalCat,
                   )
                   // Сортируем по дате от новых к старым
                   ?.sort(
-                    (a: any, b: any) =>
-                      new Date(b.date).getTime() - new Date(a.date).getTime(),
+                    (a, b) =>
+                      new Date(b.date || 0).getTime() -
+                      new Date(a.date || 0).getTime(),
                   )
-                  .map((detail: any, idx: number) => (
+                  .map((detail, idx) => (
                     <TableRow key={idx}>
                       <TableCell className="whitespace-nowrap">
                         {detail.date

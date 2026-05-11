@@ -1,6 +1,7 @@
 // src/services/finance.service.js
 const { Op } = require('sequelize');
 const db = require('../../models');
+const motivationService = require('./motivation.service');
 
 class FinanceService {
   // 1. Определение категории
@@ -47,6 +48,8 @@ class FinanceService {
     rules.forEach((r) => {
       rulesMap[r.itemName.toLowerCase()] = r.category;
     });
+    const motivationRules = await motivationService.getRulesMap();
+    const motivationBonusRules = await motivationService.getBonusRules();
 
     const report = {
       summary: {
@@ -283,18 +286,24 @@ class FinanceService {
     }
 
     // --- ЗП АДМИНОВ (АВТОРАСЧЕТ) ---
-    const shifts = await db.Shift.findAll({ where: dateFilter });
+    const shifts = await db.Shift.findAll({
+      where: dateFilter,
+      include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+    });
     shifts.forEach((shift) => {
-      if (!shift.adminName || !shift.hours) return;
+      const adminName = shift.Staff?.name || shift.adminName;
+      if (!adminName || !shift.hours) return;
       const hrs = Number(shift.hours);
+      if (!Number.isFinite(hrs) || hrs <= 0) return;
       const todaySales = salesByDate[shift.date] || { revenue: 0, items: [] };
       let shiftBonus = 0;
 
-      todaySales.items.forEach((item) => {
-        if (item.category === 'Бар / Кафе') shiftBonus += item.sum * 0.05;
-      });
+      shiftBonus = motivationService.calculateShiftBonus(
+        todaySales.items,
+        motivationBonusRules,
+      ).total;
 
-      const base = Math.min(hrs, 12) * 250 + Math.max(0, hrs - 12) * 300;
+      const base = motivationService.calculateBasePay(hrs, motivationRules);
       const total = base + shiftBonus + (Number(shift.manualAdjustment) || 0);
 
       if (total > 0) {
@@ -304,7 +313,7 @@ class FinanceService {
           'ЗП Админов (Авторасчет)',
           total,
           'expense',
-          `Смена ${shift.adminName}`,
+          `Смена ${adminName}`,
           'system',
           shift.date,
         );
@@ -336,7 +345,9 @@ class FinanceService {
   }
 
   async calculatePayroll(from, to) {
-    const shiftsDb = await db.Shift.findAll();
+    const shiftsDb = await db.Shift.findAll({
+      include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+    });
     const receipts = await db.Receipt.findAll({
       include: [{ model: db.ReceiptItem, as: 'items' }],
     });
@@ -346,6 +357,8 @@ class FinanceService {
     rulesList.forEach((r) => {
       rulesMap[r.itemName.toLowerCase()] = r.category;
     });
+    const motivationRules = await motivationService.getRulesMap();
+    const motivationBonusRules = await motivationService.getBonusRules();
 
     const salesByDate = {};
     for (const r of receipts) {
@@ -357,9 +370,14 @@ class FinanceService {
 
       const multiplier = r.type === 'PAYBACK' ? -1 : 1;
       for (const item of r.items) {
-        const category = await this.getCategory(item.name, rulesMap);
-        const sum = Number(item.sum) * multiplier;
-        const qty = Number(item.quantity) * multiplier;
+        const category = await this.getCategoryName(item.name, rulesMap);
+        const rawAmount = Number(
+          item.sumPrice !== undefined && item.sumPrice !== null
+            ? item.sumPrice
+            : item.sum,
+        );
+        const sum = Math.abs(rawAmount) * multiplier;
+        const qty = Math.abs(Number(item.quantity)) * multiplier;
         salesByDate[dStr].revenue += sum;
         salesByDate[dStr].items.push({ name: item.name, category, sum, qty });
       }
@@ -377,71 +395,33 @@ class FinanceService {
 
     validShifts.forEach((shift) => {
       processedDates.add(shift.date);
-      const admin = shift.adminName;
-      const hrs = Number(shift.hours);
+      const admin = shift.Staff?.name || shift.adminName;
+      const staffId = shift.staffId || shift.Staff?.id || null;
+      const rawHours = Number(shift.actualHours ?? shift.hours);
+      const hrs = Number.isFinite(rawHours) && rawHours > 0 ? rawHours : 0;
       const todaySales = salesByDate[shift.date] || { revenue: 0, items: [] };
 
-      let shiftBonus = 0;
-      let foodSales = 0,
-        storeSales = 0,
-        vipSales = 0,
-        chefSum = 0,
-        chefQty = 0,
-        tubesSum = 0,
-        tubesQty = 0;
-
-      const detailedItems = todaySales.items.map((item) => {
-        let bucket = '';
-        if (item.category === 'Бар / Кафе') {
-          foodSales += item.sum;
-          bucket = 'food';
-        }
-        if (
-          item.category === 'Магазин (Товары)' &&
-          !item.name.toLowerCase().includes('аренда')
-        ) {
-          storeSales += item.sum;
-          bucket = 'store';
-        }
-        if (
-          item.category === 'Прокат инвентаря / VIP' ||
-          item.category === 'Доп. услуги'
-        ) {
-          if (
-            item.name.toLowerCase().includes('vip') ||
-            item.name.toLowerCase().includes('вип')
-          ) {
-            vipSales += item.sum;
-            bucket = 'vip';
-          }
-          if (item.name.toLowerCase().includes('ракетка шефа')) {
-            chefSum += item.sum;
-            chefQty += item.qty;
-            bucket = 'chef';
-          }
-          if (item.name.toLowerCase().includes('тубус')) {
-            tubesSum += item.sum;
-            tubesQty += item.qty;
-            bucket = 'tube';
-          }
-        }
-        return { ...item, bucket };
-      });
-
-      if (foodSales > 4000) shiftBonus += foodSales * 0.05;
-      if (storeSales > 3000) shiftBonus += storeSales * 0.03;
-      if (vipSales > 0) shiftBonus += vipSales * 0.1;
-      if (chefQty > 8) shiftBonus += chefSum * 0.05;
-      if (tubesQty > 5) shiftBonus += tubesSum * 0.1;
-
-      const shiftBasePay =
-        Math.min(hrs, 12) * 250 + Math.max(0, hrs - 12) * 300;
+      const bonusResult = motivationService.calculateShiftBonus(
+        todaySales.items,
+        motivationBonusRules,
+      );
+      const shiftBonus = bonusResult.total;
+      const detailedItems = bonusResult.detailedItems;
+      const shiftBasePay = motivationService.calculateBasePay(
+        hrs,
+        motivationRules,
+      );
       const manualAdj = Number(shift.manualAdjustment) || 0;
       const totalPay = shiftBasePay + shiftBonus + manualAdj;
 
-      if (admin) {
-        if (!payrollByAdmin[admin])
-          payrollByAdmin[admin] = {
+      if (admin && hrs > 0) {
+        const adminKey = staffId
+          ? `staff:${staffId}`
+          : `name:${admin.toLowerCase()}`;
+
+        if (!payrollByAdmin[adminKey])
+          payrollByAdmin[adminKey] = {
+            staffId,
             name: admin,
             totalShifts: 0,
             totalHours: 0,
@@ -449,17 +429,18 @@ class FinanceService {
             bonusPay: 0,
             totalPay: 0,
           };
-        payrollByAdmin[admin].totalShifts += 1;
-        payrollByAdmin[admin].totalHours += hrs;
-        payrollByAdmin[admin].basePay += shiftBasePay;
-        payrollByAdmin[admin].bonusPay += shiftBonus + manualAdj;
-        payrollByAdmin[admin].totalPay += totalPay;
+        payrollByAdmin[adminKey].totalShifts += 1;
+        payrollByAdmin[adminKey].totalHours += hrs;
+        payrollByAdmin[adminKey].basePay += shiftBasePay;
+        payrollByAdmin[adminKey].bonusPay += shiftBonus + manualAdj;
+        payrollByAdmin[adminKey].totalPay += totalPay;
       }
 
       shiftsHistory.push({
         id: shift.id,
         isDraft: false,
         date: shift.date,
+        staffId,
         adminName: admin,
         hours: hrs,
         dailyRevenue: todaySales.revenue,
@@ -473,20 +454,16 @@ class FinanceService {
     Object.keys(salesByDate).forEach((date) => {
       if (!processedDates.has(date)) {
         const todaySales = salesByDate[date];
-        const detailedItems = todaySales.items.map((item) => {
-          let bucket = '';
-          if (item.category === 'Бар / Кафе') bucket = 'food';
-          if (item.category === 'Магазин (Товары)') bucket = 'store';
-          if (item.name.toLowerCase().includes('vip')) bucket = 'vip';
-          if (item.name.toLowerCase().includes('ракетка шефа')) bucket = 'chef';
-          if (item.name.toLowerCase().includes('тубус')) bucket = 'tube';
-          return { ...item, bucket };
-        });
+        const detailedItems = motivationService.calculateShiftBonus(
+          todaySales.items,
+          motivationBonusRules,
+        ).detailedItems;
 
         shiftsHistory.push({
           id: `draft-${date}`,
           isDraft: true,
           date: date,
+          staffId: null,
           adminName: null,
           hours: 0,
           dailyRevenue: todaySales.revenue,

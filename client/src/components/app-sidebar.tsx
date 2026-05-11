@@ -19,6 +19,8 @@ import {
   SidebarHeader,
 } from '@/components/ui/sidebar';
 import { Link, useLocation } from 'react-router-dom';
+import { ROUTE_ACCESS, hasRoleAccess } from '@/lib/permissions';
+import { useAuth } from '@/lib/useAuth';
 
 const items = [
   {
@@ -60,6 +62,10 @@ const items = [
 
 export function AppSidebar() {
   const location = useLocation();
+  const { account } = useAuth();
+  const availableItems = items.filter((item) =>
+    hasRoleAccess(account?.role, ROUTE_ACCESS[item.url] || []),
+  );
 
   return (
     <Sidebar collapsible="icon">
@@ -77,7 +83,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Администрирование</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {availableItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton
                     asChild

@@ -4,19 +4,35 @@ import {
   SidebarTrigger,
   SidebarInset,
 } from '@/components/ui/sidebar';
+import { Button } from '@/components/ui/button';
+import { LogOut } from 'lucide-react';
 import { AppSidebar } from './app-sidebar';
+import { useAuth } from '@/lib/useAuth';
+import { getAccountRoleLabel } from '@/lib/roles';
 
 export const Layout = () => {
+  const { account, logout } = useAuth();
+  const displayName = account?.Staff?.name || account?.email;
+
   return (
     <SidebarProvider>
       <AppSidebar />
 
       <SidebarInset>
-        {/* ЕСЛИ ЭТОТ БЛОК НЕ ПОЯВИТСЯ - ПРОБЛЕМА В РОУТЕРЕ (App.tsx) */}
         <header className="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-card px-6">
-          {/* Вот эта самая кнопка [ | ] */}
           <SidebarTrigger className="h-10 w-10 border bg-background" />
           <span className="font-bold text-primary">Панель управления</span>
+          <div className="ml-auto flex items-center gap-3">
+            {displayName && (
+              <span className="hidden sm:inline text-sm text-muted-foreground">
+                {displayName} · {getAccountRoleLabel(account?.role)}
+              </span>
+            )}
+            <Button variant="ghost" size="sm" onClick={logout}>
+              <LogOut className="h-4 w-4" />
+              Выйти
+            </Button>
+          </div>
         </header>
 
         <main className="flex-1 overflow-auto">

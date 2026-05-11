@@ -1,6 +1,10 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
+import { HomeRedirect, RequireRoles } from './components/RequireRoles';
+import { ROUTE_ACCESS } from './lib/permissions';
+import { AuthProvider } from './lib/auth';
 import AdminPage from './pages/Admin';
 import StaffPage from './pages/StaffPage';
 import FinancePage from './pages/FinancePage';
@@ -12,23 +16,76 @@ import AdminMotivationPage from './pages/AdminMotivationPage';
 function App() {
   return (
     <BrowserRouter>
-      <TooltipProvider delayDuration={0}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route path="/" element={<Navigate to="/admin" replace />} />
-            <Route path="/admin" element={<AdminPage />} />
-            <Route path="/admin/staff" element={<StaffPage />} />
-            <Route path="/admin/finances" element={<FinancePage />} />
-            <Route
-              path="/admin/visits-analytics"
-              element={<VisitsAnalyticsPage />}
-            />
-            <Route path="/admin/utilization" element={<UtilizationPage />} />
-            <Route path="/admin/catalog" element={<CatalogPage />} />
-            <Route path="/admin/motivation" element={<AdminMotivationPage />} />
-          </Route>
-        </Routes>
-      </TooltipProvider>
+      <AuthProvider>
+        <TooltipProvider delayDuration={0}>
+          <AuthGate>
+            <Routes>
+              <Route element={<Layout />}>
+                <Route path="/" element={<HomeRedirect />} />
+                <Route
+                  path="/admin"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin']}>
+                      <AdminPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/staff"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/staff']}>
+                      <StaffPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/finances"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/finances']}>
+                      <FinancePage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/visits-analytics"
+                  element={
+                    <RequireRoles
+                      roles={ROUTE_ACCESS['/admin/visits-analytics']}
+                    >
+                      <VisitsAnalyticsPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/utilization"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/utilization']}>
+                      <UtilizationPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/catalog"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/catalog']}>
+                      <CatalogPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/motivation"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/motivation']}>
+                      <AdminMotivationPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Route>
+            </Routes>
+          </AuthGate>
+        </TooltipProvider>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

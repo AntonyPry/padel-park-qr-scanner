@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/dialog';
 import { Card, CardContent } from '@/components/ui/card';
 import { API_URL } from '@/config';
+import { apiFetch } from '@/lib/api';
 
 const socket = io(API_URL);
 
@@ -81,6 +82,17 @@ interface SearchUser {
   phone: string;
 }
 
+interface SerialPortLike {
+  open: (options: { baudRate: number }) => Promise<void>;
+  readable: ReadableStream<BufferSource>;
+}
+
+interface NavigatorWithSerial extends Navigator {
+  serial?: {
+    requestPort: () => Promise<SerialPortLike>;
+  };
+}
+
 export default function AdminPage() {
   const [cards, setCards] = useState<VisitCard[]>([]);
 
@@ -106,7 +118,7 @@ export default function AdminPage() {
 
   const fetchHistory = async () => {
     try {
-      const res = await fetch(`${API_URL}/api/visits`);
+      const res = await apiFetch('/api/visits');
       if (res.ok) {
         const history = await res.json();
         setCards(history);
@@ -165,7 +177,9 @@ export default function AdminPage() {
 
   // --- ЛОГИКА СКАНЕРА ---
   const connectScanner = async () => {
-    if (!('serial' in navigator)) {
+    const serial = (navigator as NavigatorWithSerial).serial;
+
+    if (!serial) {
       alert(
         'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.',
       );
@@ -173,7 +187,7 @@ export default function AdminPage() {
     }
 
     try {
-      const port = await (navigator as any).serial.requestPort();
+      const port = await serial.requestPort();
       await port.open({ baudRate: 9600 });
       setScannerStatus('connected');
 
@@ -199,7 +213,7 @@ export default function AdminPage() {
 
             if (qrCode) {
               try {
-                await fetch(`${API_URL}/api/scan`, {
+                await apiFetch('/api/scan', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ qr: qrCode }),
@@ -237,8 +251,8 @@ export default function AdminPage() {
     }
     searchTimeout.current = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `${API_URL}/api/search?q=${encodeURIComponent(searchQuery)}`,
+        const res = await apiFetch(
+          `/api/search?q=${encodeURIComponent(searchQuery)}`,
         );
         const data = await res.json();
         setSearchResults(data);
@@ -250,7 +264,7 @@ export default function AdminPage() {
 
   const handleManualVisit = async (userId: number) => {
     try {
-      const res = await fetch(`${API_URL}/api/manual-visit`, {
+      const res = await apiFetch('/api/manual-visit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId }),
@@ -265,7 +279,7 @@ export default function AdminPage() {
   };
 
   const handlePhoneInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.replace(/[^\d\+\-\(\)\s]/g, '');
+    const val = e.target.value.replace(/[^\d+()\s-]/g, '');
     setRegForm({ ...regForm, phone: val });
   };
 
@@ -297,7 +311,7 @@ export default function AdminPage() {
     setRegError('');
 
     try {
-      const regRes = await fetch(`${API_URL}/api/register`, {
+      const regRes = await apiFetch('/api/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(regForm),
@@ -306,7 +320,7 @@ export default function AdminPage() {
       const regData = await regRes.json();
 
       if (regRes.ok && regData.user) {
-        await fetch(`${API_URL}/api/manual-visit`, {
+        await apiFetch('/api/manual-visit', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ userId: regData.user.id }),
@@ -316,7 +330,7 @@ export default function AdminPage() {
       } else {
         setRegError(regData.error || 'Ошибка регистрации');
       }
-    } catch (err) {
+    } catch {
       setRegError('Ошибка сервера');
     } finally {
       setRegLoading(false);
@@ -330,7 +344,7 @@ export default function AdminPage() {
   ) => {
     if (!visitId || !keyNumber.trim()) return;
     try {
-      const res = await fetch(`${API_URL}/api/key`, {
+      const res = await apiFetch('/api/key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitId, keyNumber }),
@@ -359,7 +373,7 @@ export default function AdminPage() {
     );
 
     try {
-      await fetch(`${API_URL}/api/visit/category`, {
+      await apiFetch('/api/visit/category', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitId, category }),

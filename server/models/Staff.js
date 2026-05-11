@@ -17,5 +17,10 @@ module.exports = (sequelize, DataTypes) => {
     },
   });
 
+  Staff.associate = (models) => {
+    Staff.hasOne(models.Account, { foreignKey: 'staffId' });
+    Staff.hasMany(models.Shift, { foreignKey: 'staffId' });
+  };
+
   return Staff;
 };

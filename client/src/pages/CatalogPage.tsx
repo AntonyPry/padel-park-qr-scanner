@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -32,7 +32,7 @@ import {
   Percent,
   AlertTriangle,
 } from 'lucide-react';
-import { API_URL } from '@/config';
+import { apiFetch } from '@/lib/api';
 
 const PNL_GROUPS = [
   { value: 'REVENUE_POS', label: 'Касса (Эвотор)', type: 'income' },
@@ -42,10 +42,26 @@ const PNL_GROUPS = [
   { value: 'OPEX', label: 'Операционные расходы (OPEX)', type: 'expense' },
 ];
 
+interface Category {
+  id: number;
+  name: string;
+  type: 'income' | 'expense' | string;
+  group: string;
+  commissionPercent: number | string;
+  parentId: number | null;
+  isSystem?: boolean;
+}
+
+interface CatalogRule {
+  id: number;
+  itemName: string;
+  category: string;
+}
+
 export default function CatalogPage() {
   const [unmapped, setUnmapped] = useState<string[]>([]);
-  const [rules, setRules] = useState<any[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
+  const [rules, setRules] = useState<CatalogRule[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [newCatParentId, setNewCatParentId] = useState<string>('none');
 
   const [activeTab, setActiveTab] = useState<
@@ -60,12 +76,12 @@ export default function CatalogPage() {
   // СТЕЙТ ДЛЯ МОДАЛКИ ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       const [unmappedRes, rulesRes, catRes] = await Promise.all([
-        fetch(`${API_URL}/api/catalog/unmapped`),
-        fetch(`${API_URL}/api/catalog/rules`),
-        fetch(`${API_URL}/api/catalog/categories`),
+        apiFetch('/api/catalog/unmapped'),
+        apiFetch('/api/catalog/rules'),
+        apiFetch('/api/catalog/categories'),
       ]);
       setUnmapped(await unmappedRes.json());
       setRules(await rulesRes.json());
@@ -73,17 +89,18 @@ export default function CatalogPage() {
     } catch (e) {
       console.error('Fetch error:', e);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchData();
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchData();
+  }, [fetchData]);
 
   const handleSaveRule = async (itemName: string) => {
     const category = selections[itemName];
     if (!category) return;
 
-    await fetch(`${API_URL}/api/catalog/rules`, {
+    await apiFetch('/api/catalog/rules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ itemName, category }),
@@ -98,7 +115,7 @@ export default function CatalogPage() {
   };
 
   const handleDeleteRule = async (id: number) => {
-    await fetch(`${API_URL}/api/catalog/rules/${id}`, { method: 'DELETE' });
+    await apiFetch(`/api/catalog/rules/${id}`, { method: 'DELETE' });
     fetchData();
   };
 
@@ -117,7 +134,7 @@ export default function CatalogPage() {
     const selectedGroupDef = PNL_GROUPS.find((g) => g.value === newCatGroup);
     const type = selectedGroupDef ? selectedGroupDef.type : 'expense';
 
-    await fetch(`${API_URL}/api/catalog/categories`, {
+    await apiFetch('/api/catalog/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -140,7 +157,7 @@ export default function CatalogPage() {
   const confirmDeleteCategory = async () => {
     if (!deleteConfirmId) return;
 
-    await fetch(`${API_URL}/api/catalog/categories/${deleteConfirmId}`, {
+    await apiFetch(`/api/catalog/categories/${deleteConfirmId}`, {
       method: 'DELETE',
     });
 
@@ -158,16 +175,13 @@ export default function CatalogPage() {
     newParentId: string,
   ) => {
     try {
-      const res = await fetch(
-        `${API_URL}/api/catalog/categories/${categoryId}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            parentId: newParentId === 'none' ? null : Number(newParentId),
-          }),
-        },
-      );
+      const res = await apiFetch(`/api/catalog/categories/${categoryId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parentId: newParentId === 'none' ? null : Number(newParentId),
+        }),
+      });
       if (res.ok) fetchData();
     } catch (e) {
       console.error('Update error:', e);
@@ -180,7 +194,9 @@ export default function CatalogPage() {
     let current = categories.find((c) => c.id === potentialChildId);
     while (current) {
       if (current.parentId === categoryId) return true;
-      current = categories.find((c) => c.id === current.parentId);
+      const parentId = current.parentId;
+      if (!parentId) return false;
+      current = categories.find((c) => c.id === parentId);
     }
     return false;
   };

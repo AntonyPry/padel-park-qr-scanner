@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -28,19 +28,7 @@ import { format, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
-import { API_URL } from '@/config';
-
-const KNOWN_SOURCES = [
-  'Рекомендация друзей',
-  'Увидел в тц',
-  'Вк',
-  'Другое',
-  'Тг',
-  'Инст',
-  'Радио',
-  'Хоккей',
-  'Сайт',
-];
+import { apiFetch } from '@/lib/api';
 
 // Палитра для кольца Источников
 const COLORS = [
@@ -71,8 +59,28 @@ const CATEGORY_COLORS = [
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
 
+interface ChartDatum {
+  name: string;
+  value: number;
+}
+
+interface TopGuest {
+  name: string;
+  phone?: string;
+  visits: number;
+}
+
+interface VisitsAnalytics {
+  totalVisits: number;
+  uniqueGuests: number;
+  sources: ChartDatum[];
+  categories: ChartDatum[];
+  topGuests: TopGuest[];
+  heatMap: Record<string, number>;
+}
+
 export default function VisitsAnalyticsPage() {
-  const [data, setData] = useState<any>(null);
+  const [data, setData] = useState<VisitsAnalytics | null>(null);
   const [loading, setLoading] = useState(true);
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
@@ -80,64 +88,66 @@ export default function VisitsAnalyticsPage() {
     to: new Date(),
   });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
 
     try {
-      const res = await fetch(
-        `${API_URL}/api/analytics/visits?from=${fromStr}&to=${toStr}`,
+      const res = await apiFetch(
+        `/api/analytics/visits?from=${fromStr}&to=${toStr}`,
       );
       if (res.ok) {
-        setData(await res.json());
+        setData((await res.json()) as VisitsAnalytics);
       }
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchData();
   }, [dateRange]);
 
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
   // ЭКСПОРТ В EXCEL
-  const handleExport = () => {
+  const handleExport = async () => {
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
-    window.open(
-      `${API_URL}/api/export/visits?from=${fromStr}&to=${toStr}`,
-      '_blank',
+    const response = await apiFetch(
+      `/api/export/visits?from=${fromStr}&to=${toStr}`,
     );
+
+    if (!response.ok) return;
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `visits-${fromStr || 'all'}-${toStr || 'all'}.xlsx`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   // Агрегируем источники
   const aggregatedSources = useMemo(() => {
     if (!data?.sources) return [];
-    let otherCount = 0;
-    const finalSources: any[] = [];
+    const sourcesMap = new Map<string, ChartDatum>();
 
-    data.sources.forEach((sourceItem: any) => {
-      const isKnown = KNOWN_SOURCES.some(
-        (known) => known.toLowerCase() === sourceItem.name.toLowerCase(),
-      );
-      if (isKnown) {
-        if (sourceItem.name.toLowerCase() === 'другое') {
-          otherCount += sourceItem.value;
-        } else {
-          finalSources.push(sourceItem);
-        }
-      } else {
-        otherCount += sourceItem.value;
-      }
+    data.sources.forEach(({ name, value }) => {
+      const normalizedName = name.trim() || 'Не указан';
+      const key = normalizedName.toLowerCase();
+      const existing = sourcesMap.get(key);
+      sourcesMap.set(key, {
+        name: existing?.name || normalizedName,
+        value: (existing?.value || 0) + value,
+      });
     });
 
-    if (otherCount > 0) {
-      finalSources.push({ name: 'Другое', value: otherCount });
-    }
-    return finalSources.sort((a, b) => b.value - a.value);
+    return Array.from(sourcesMap.values()).sort((a, b) => b.value - a.value);
   }, [data]);
 
   const getHeatMapColor = (count: number) => {
@@ -305,7 +315,7 @@ export default function VisitsAnalyticsPage() {
                         paddingAngle={2}
                         dataKey="value"
                       >
-                        {aggregatedSources.map((_entry: any, index: number) => (
+                        {aggregatedSources.map((_entry, index) => (
                           <Cell
                             key={`cell-${index}`}
                             fill={COLORS[index % COLORS.length]}
@@ -350,7 +360,7 @@ export default function VisitsAnalyticsPage() {
                         paddingAngle={2}
                         dataKey="value"
                       >
-                        {data.categories.map((_entry: any, index: number) => (
+                        {data.categories.map((_entry, index) => (
                           <Cell
                             key={`cell-${index}`}
                             fill={
@@ -389,7 +399,7 @@ export default function VisitsAnalyticsPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {data.topGuests.map((guest: any, idx: number) => (
+                    {data.topGuests.map((guest, idx) => (
                       <TableRow key={idx}>
                         <TableCell className="font-medium">
                           {idx < 3 && (

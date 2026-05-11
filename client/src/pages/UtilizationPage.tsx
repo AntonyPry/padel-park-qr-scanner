@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -48,17 +48,36 @@ import { format, startOfMonth, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
-import { API_URL } from '@/config';
+import { apiFetch } from '@/lib/api';
+import { canManageUtilization } from '@/lib/permissions';
+import { useAuth } from '@/lib/useAuth';
 
 const CAP_15 = 15 * 5; // 75 часов (5 кортов 2х2 по 15 часов)
 const CAP_6 = 15; // 15 часов (1 корт 1х1)
 const TOTAL_CAPACITY = CAP_15 + CAP_6;
 
+interface UtilizationRecord {
+  date: string;
+  booked1: number | string;
+  booked2: number | string;
+  sessions1?: number | string;
+  sessions2?: number | string;
+}
+
+interface WeekdayStat {
+  name: string;
+  val: number;
+}
+
+type CourtFilter = 'all' | '2x2' | '1x1';
+
 export default function UtilizationPage() {
-  const [data, setData] = useState<any[]>([]);
+  const { account } = useAuth();
+  const canEditUtilization = canManageUtilization(account?.role);
+  const [data, setData] = useState<UtilizationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
-  const [courtFilter, setCourtFilter] = useState<'all' | '2x2' | '1x1'>('all');
+  const [courtFilter, setCourtFilter] = useState<CourtFilter>('all');
 
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
@@ -75,25 +94,25 @@ export default function UtilizationPage() {
     sessions1: '',
   });
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/api/utilization`);
-      if (res.ok) setData(await res.json());
+      const res = await apiFetch('/api/utilization');
+      if (res.ok) setData((await res.json()) as UtilizationRecord[]);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchData();
   }, []);
 
-  const parseBatchData = (text: string) => {
+  useEffect(() => {
+    void fetchData();
+  }, [fetchData]);
+
+  const parseBatchData = (text: string): UtilizationRecord[] => {
     const year = new Date().getFullYear();
-    return text
+    const parsed: Array<UtilizationRecord | null> = text
       .split('\n')
       .map((line) => {
         const trimmed = line.trim();
@@ -110,16 +129,17 @@ export default function UtilizationPage() {
           booked1: Number(booked1) || 0,
           sessions1: Number(sessions1) || 0,
         };
-      })
-      .filter(Boolean);
+      });
+
+    return parsed.filter((item): item is UtilizationRecord => item !== null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    let payload = addMode === 'single' ? [form] : parseBatchData(batchText);
+    const payload = addMode === 'single' ? [form] : parseBatchData(batchText);
     if (!payload.length) return alert('Не удалось распознать данные.');
 
-    const res = await fetch(`${API_URL}/api/utilization`, {
+    const res = await apiFetch('/api/utilization', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -134,7 +154,7 @@ export default function UtilizationPage() {
         booked1: '',
         sessions1: '',
       });
-      fetchData();
+      void fetchData();
     }
   };
 
@@ -176,7 +196,7 @@ export default function UtilizationPage() {
     const avgSession1 =
       totalSessions1 > 0 ? (totalHours1 / totalSessions1).toFixed(1) : '0';
 
-    const getDayUtil = (d: any) => {
+    const getDayUtil = (d: UtilizationRecord) => {
       if (courtFilter === '2x2') return (Number(d.booked2) / CAP_15) * 100;
       if (courtFilter === '1x1') return (Number(d.booked1) / CAP_6) * 100;
       return ((Number(d.booked2) + Number(d.booked1)) / TOTAL_CAPACITY) * 100;
@@ -186,7 +206,8 @@ export default function UtilizationPage() {
       (a, b) => getDayUtil(b) - getDayUtil(a),
     );
 
-    const weekdayMap: any = {};
+    const weekdayMap: Record<string, { name: string; sum: number; count: number }> =
+      {};
     const daysRu = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
     periodData.forEach((d) => {
       const dayName = daysRu[new Date(d.date).getDay()];
@@ -196,7 +217,7 @@ export default function UtilizationPage() {
       weekdayMap[dayName].count++;
     });
     const weekdays = Object.values(weekdayMap)
-      .map((w: any) => ({
+      .map((w): WeekdayStat => ({
         name: w.name,
         val: Math.round((w.sum / w.count) * 100),
       }))
@@ -295,11 +316,13 @@ export default function UtilizationPage() {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" /> Внести данные
-              </Button>
-            </DialogTrigger>
+            {canEditUtilization && (
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="w-4 h-4 mr-2" /> Внести данные
+                </Button>
+              </DialogTrigger>
+            )}
             <DialogContent className="sm:max-w-[425px]">
               <DialogHeader>
                 <DialogTitle>Загрузка за день</DialogTitle>
@@ -611,7 +634,7 @@ export default function UtilizationPage() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex flex-wrap gap-2">
-                    {stats.periodData.map((d: any) => {
+                    {stats.periodData.map((d) => {
                       const util = Math.round(stats.getDayUtil(d));
                       return (
                         <div
@@ -649,7 +672,7 @@ export default function UtilizationPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {stats.weekdays.map((w: any) => (
+                      {stats.weekdays.map((w) => (
                         <TableRow key={w.name}>
                           <TableCell className="font-medium">
                             {w.name}

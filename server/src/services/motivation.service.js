@@ -1,0 +1,526 @@
+const db = require('../../models');
+const { DEFAULT_MOTIVATION_RULES } = require('../constants/motivation-rules');
+const { DEFAULT_BONUS_RULES } = require('../constants/motivation-bonus-rules');
+
+const DEFAULT_BASE_RULES = DEFAULT_MOTIVATION_RULES.filter(
+  (rule) => rule.group === 'base',
+);
+const THRESHOLD_TYPES = new Set(['none', 'revenue', 'quantity']);
+
+function normalizeRule(rule) {
+  const raw = rule.toJSON ? rule.toJSON() : rule;
+  return {
+    ...raw,
+    value: Number(raw.value),
+  };
+}
+
+function defaultsMap() {
+  return DEFAULT_BASE_RULES.reduce((acc, rule) => {
+    acc[rule.key] = Number(rule.value);
+    return acc;
+  }, {});
+}
+
+async function ensureDefaultRules() {
+  for (const rule of DEFAULT_BASE_RULES) {
+    await db.MotivationRule.findOrCreate({
+      where: { key: rule.key },
+      defaults: {
+        ...rule,
+        isActive: true,
+      },
+    });
+  }
+}
+
+async function getRules() {
+  await ensureDefaultRules();
+
+  const rules = await db.MotivationRule.findAll({
+    where: { group: 'base' },
+    order: [
+      ['sortOrder', 'ASC'],
+      ['id', 'ASC'],
+    ],
+  });
+
+  return rules.map(normalizeRule);
+}
+
+async function getRulesMap() {
+  await ensureDefaultRules();
+
+  const rules = await db.MotivationRule.findAll({
+    where: { group: 'base' },
+  });
+
+  return rules.reduce((acc, rule) => {
+    if (rule.isActive) acc[rule.key] = Number(rule.value);
+    return acc;
+  }, defaultsMap());
+}
+
+async function updateRule(key, data) {
+  const rule = await db.MotivationRule.findOne({
+    where: { key, group: 'base' },
+  });
+  if (!rule) {
+    const error = new Error('Правило мотивации не найдено');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const value = Number(data.value);
+  if (!Number.isFinite(value) || value < 0) {
+    const error = new Error('Значение правила должно быть неотрицательным числом');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  await rule.update({ value });
+  return normalizeRule(rule);
+}
+
+function normalizeCategory(category) {
+  const raw = category.toJSON ? category.toJSON() : category;
+  return {
+    id: raw.id,
+    name: raw.name,
+    type: raw.type,
+    group: raw.group,
+    parentId: raw.parentId,
+  };
+}
+
+function normalizeBonusRule(rule) {
+  const raw = rule.toJSON ? rule.toJSON() : rule;
+  const categories = (raw.categories || []).map(normalizeCategory);
+
+  return {
+    ...raw,
+    bonusPercent: Number(raw.bonusPercent),
+    thresholdValue: Number(raw.thresholdValue),
+    categories,
+    categoryIds: categories.map((category) => category.id),
+  };
+}
+
+async function getStoredRuleValueMap() {
+  const rules = await db.MotivationRule.findAll();
+  const values = DEFAULT_MOTIVATION_RULES.reduce((acc, rule) => {
+    acc[rule.key] = Number(rule.value);
+    return acc;
+  }, {});
+
+  rules.forEach((rule) => {
+    values[rule.key] = Number(rule.value);
+  });
+
+  return values;
+}
+
+async function ensureDefaultBonusRules() {
+  const count = await db.MotivationBonusRule.count();
+  if (count > 0) return;
+
+  const values = await getStoredRuleValueMap();
+  const categoryNames = Array.from(
+    new Set(DEFAULT_BONUS_RULES.flatMap((rule) => rule.categoryNames)),
+  );
+  const categories = categoryNames.length
+    ? await db.Category.findAll({
+        where: {
+          name: {
+            [db.Sequelize.Op.in]: categoryNames,
+          },
+        },
+      })
+    : [];
+  const categoryByName = new Map(
+    categories.map((category) => [category.name, category]),
+  );
+
+  for (const rule of DEFAULT_BONUS_RULES) {
+    const bonusRule = await db.MotivationBonusRule.create({
+      name: rule.name,
+      description: rule.description,
+      bonusPercent: Number(values[rule.bonusPercentKey]) || 0,
+      thresholdType: rule.thresholdType,
+      thresholdValue: rule.thresholdValueKey
+        ? Number(values[rule.thresholdValueKey]) || 0
+        : 0,
+      sortOrder: rule.sortOrder,
+      isActive: rule.isActive,
+    });
+    const linkedCategories = rule.categoryNames
+      .map((categoryName) => categoryByName.get(categoryName))
+      .filter(Boolean);
+
+    if (linkedCategories.length > 0) {
+      await bonusRule.setCategories(linkedCategories);
+    }
+  }
+}
+
+async function getAvailableCategories() {
+  const categories = await db.Category.findAll({
+    where: {
+      isActive: true,
+      type: 'income',
+    },
+    order: [['name', 'ASC']],
+  });
+
+  return categories.map(normalizeCategory);
+}
+
+async function getBonusRules() {
+  await ensureDefaultBonusRules();
+
+  const rules = await db.MotivationBonusRule.findAll({
+    include: [
+      {
+        model: db.Category,
+        as: 'categories',
+        through: { attributes: [] },
+      },
+    ],
+    order: [
+      ['sortOrder', 'ASC'],
+      ['id', 'ASC'],
+    ],
+  });
+
+  return rules.map(normalizeBonusRule);
+}
+
+function validationError(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+function normalizeBonusRulePayload(data) {
+  const name = String(data.name || '').trim();
+  if (!name) throw validationError('Название правила обязательно');
+
+  const bonusPercent = Number(data.bonusPercent);
+  if (!Number.isFinite(bonusPercent) || bonusPercent < 0) {
+    throw validationError('Процент бонуса должен быть неотрицательным числом');
+  }
+
+  const thresholdType = data.thresholdType || 'none';
+  if (!THRESHOLD_TYPES.has(thresholdType)) {
+    throw validationError('Некорректный тип порога');
+  }
+
+  const thresholdValue =
+    thresholdType === 'none' ? 0 : Number(data.thresholdValue);
+  if (!Number.isFinite(thresholdValue) || thresholdValue < 0) {
+    throw validationError('Порог должен быть неотрицательным числом');
+  }
+
+  return {
+    name,
+    description: data.description || null,
+    bonusPercent,
+    thresholdType,
+    thresholdValue,
+    sortOrder: Number.isFinite(Number(data.sortOrder))
+      ? Number(data.sortOrder)
+      : 0,
+    isActive: data.isActive !== false,
+  };
+}
+
+async function normalizeCategoryIds(categoryIds = []) {
+  const rawIds = categoryIds.map((id) => Number(id));
+
+  if (rawIds.some((id) => !Number.isInteger(id))) {
+    throw validationError('Переданы некорректные категории');
+  }
+
+  const normalizedIds = Array.from(new Set(rawIds));
+
+  if (normalizedIds.length === 0) return [];
+
+  const categories = await db.Category.findAll({
+    where: {
+      id: {
+        [db.Sequelize.Op.in]: normalizedIds,
+      },
+      isActive: true,
+      type: 'income',
+    },
+  });
+
+  if (categories.length !== normalizedIds.length) {
+    throw validationError('Одна или несколько категорий не найдены');
+  }
+
+  return normalizedIds;
+}
+
+async function getBonusRuleOrFail(id) {
+  const rule = await db.MotivationBonusRule.findByPk(id);
+  if (!rule) {
+    const error = new Error('Бонусное правило не найдено');
+    error.statusCode = 404;
+    throw error;
+  }
+  return rule;
+}
+
+async function findBonusRuleWithCategories(id) {
+  const rule = await db.MotivationBonusRule.findByPk(id, {
+    include: [
+      {
+        model: db.Category,
+        as: 'categories',
+        through: { attributes: [] },
+      },
+    ],
+  });
+
+  return normalizeBonusRule(rule);
+}
+
+async function createBonusRule(data) {
+  const payload = normalizeBonusRulePayload(data);
+  const categoryIds = await normalizeCategoryIds(data.categoryIds || []);
+  const maxSortOrder = await db.MotivationBonusRule.max('sortOrder');
+
+  const rule = await db.MotivationBonusRule.create({
+    ...payload,
+    sortOrder:
+      Number.isFinite(Number(data.sortOrder)) && Number(data.sortOrder) > 0
+        ? Number(data.sortOrder)
+        : (Number(maxSortOrder) || 0) + 10,
+  });
+  await rule.setCategories(categoryIds);
+
+  return findBonusRuleWithCategories(rule.id);
+}
+
+async function updateBonusRule(id, data) {
+  const rule = await getBonusRuleOrFail(id);
+  const payload = normalizeBonusRulePayload({
+    ...rule.toJSON(),
+    ...data,
+  });
+
+  await rule.update(payload);
+
+  if (Array.isArray(data.categoryIds)) {
+    const categoryIds = await normalizeCategoryIds(data.categoryIds);
+    await rule.setCategories(categoryIds);
+  }
+
+  return findBonusRuleWithCategories(rule.id);
+}
+
+async function deleteBonusRule(id) {
+  const rule = await getBonusRuleOrFail(id);
+  await rule.destroy();
+  return { success: true };
+}
+
+async function getCurrentShiftSales() {
+  const activeShift = await db.Shift.findOne({
+    where: { status: 'active' },
+    order: [['startedAt', 'DESC']],
+  });
+
+  if (!activeShift?.startedAt) return [];
+
+  const rules = await db.CatalogRule.findAll();
+  const rulesMap = {};
+  rules.forEach((rule) => {
+    rulesMap[rule.itemName.toLowerCase()] = rule.category;
+  });
+  const categories = await db.Category.findAll();
+  const categoryByName = new Map(
+    categories.map((category) => [
+      String(category.name).toLowerCase(),
+      category,
+    ]),
+  );
+
+  const receipts = await db.Receipt.findAll({
+    where: {
+      dateTime: {
+        [db.Sequelize.Op.gte]: activeShift.startedAt,
+      },
+    },
+    include: [{ model: db.ReceiptItem, as: 'items' }],
+    order: [['dateTime', 'DESC']],
+  });
+
+  const records = [];
+
+  for (const receipt of receipts) {
+    const isPayback = receipt.type === 'PAYBACK';
+    const multiplier = isPayback ? -1 : 1;
+
+    for (const item of receipt.items) {
+      const rawAmount = Number(
+        item.sumPrice !== undefined && item.sumPrice !== null
+          ? item.sumPrice
+          : item.sum,
+      );
+      const amount = Math.abs(rawAmount) * multiplier;
+      if (amount === 0) continue;
+
+      const category =
+        rulesMap[String(item.name).toLowerCase().trim()] || 'Неразобранное';
+      const catalogCategory = categoryByName.get(
+        String(category).toLowerCase(),
+      );
+
+      records.push({
+        categoryId: catalogCategory?.id || null,
+        category,
+        amount,
+        type: isPayback ? 'expense' : 'income',
+        source: 'evotor',
+        date: receipt.dateTime,
+        comment: `${item.name} (${item.quantity} шт)`,
+      });
+    }
+  }
+
+  return records;
+}
+
+function calculateBasePay(hours, rules) {
+  const normalizedHours = Math.max(0, Number(hours) || 0);
+  const overtimeAfterHours = Number(rules.overtime_after_hours) || 12;
+  const baseRate = Number(rules.base_hour_rate) || 0;
+  const overtimeRate = Number(rules.overtime_hour_rate) || baseRate;
+
+  return (
+    Math.min(normalizedHours, overtimeAfterHours) * baseRate +
+    Math.max(0, normalizedHours - overtimeAfterHours) * overtimeRate
+  );
+}
+
+function getItemCategoryKey(item) {
+  return String(item.category || '').toLowerCase().trim();
+}
+
+function ruleThresholdPassed(rule, totals) {
+  if (rule.thresholdType === 'none') return true;
+  if (rule.thresholdType === 'quantity') {
+    return totals.quantity >= Number(rule.thresholdValue);
+  }
+
+  return totals.revenue >= Number(rule.thresholdValue);
+}
+
+function calculateShiftBonus(items, bonusRules = []) {
+  const activeRules = bonusRules
+    .filter((rule) => rule.isActive)
+    .map(normalizeBonusRule);
+  const rulesByCategory = new Map();
+  const totalsByRuleId = new Map();
+
+  activeRules.forEach((rule) => {
+    totalsByRuleId.set(rule.id, {
+      ruleId: rule.id,
+      ruleName: rule.name,
+      bonusPercent: Number(rule.bonusPercent),
+      thresholdType: rule.thresholdType,
+      thresholdValue: Number(rule.thresholdValue),
+      revenue: 0,
+      quantity: 0,
+      bonus: 0,
+      thresholdPassed: false,
+      categories: rule.categories,
+    });
+
+    rule.categories.forEach((category) => {
+      const key = String(category.name).toLowerCase().trim();
+      const rules = rulesByCategory.get(key) || [];
+      rules.push(rule);
+      rulesByCategory.set(key, rules);
+    });
+  });
+
+  items.forEach((item) => {
+    const matchedRules = rulesByCategory.get(getItemCategoryKey(item)) || [];
+    const revenue = Number(item.sum) || 0;
+    const quantity = Number(item.qty) || 0;
+
+    matchedRules.forEach((rule) => {
+      const totals = totalsByRuleId.get(rule.id);
+      if (!totals) return;
+
+      totals.revenue += revenue;
+      totals.quantity += quantity;
+    });
+  });
+
+  totalsByRuleId.forEach((totals) => {
+    totals.thresholdPassed = ruleThresholdPassed(totals, totals);
+    totals.bonus = totals.thresholdPassed
+      ? totals.revenue * (totals.bonusPercent / 100)
+      : 0;
+  });
+
+  const detailedItems = items.map((item) => {
+    const matchedRules = rulesByCategory.get(getItemCategoryKey(item)) || [];
+    const sum = Number(item.sum) || 0;
+    const bonuses = matchedRules
+      .map((rule) => {
+        const totals = totalsByRuleId.get(rule.id);
+        if (!totals?.thresholdPassed) return null;
+
+        return {
+          ruleId: rule.id,
+          ruleName: rule.name,
+          bonusPercent: Number(rule.bonusPercent),
+          earned: sum * (Number(rule.bonusPercent) / 100),
+        };
+      })
+      .filter(Boolean);
+    const earned = bonuses.reduce((acc, bonus) => acc + bonus.earned, 0);
+
+    return {
+      ...item,
+      bonusRuleIds: bonuses.map((bonus) => bonus.ruleId),
+      bonusRuleNames: bonuses.map((bonus) => bonus.ruleName),
+      bonusPercent: bonuses.reduce(
+        (acc, bonus) => acc + Number(bonus.bonusPercent),
+        0,
+      ),
+      bonus: earned,
+      bucket: bonuses.length ? 'bonus' : '',
+      bonuses,
+    };
+  });
+
+  const breakdown = Array.from(totalsByRuleId.values()).sort(
+    (a, b) => b.bonus - a.bonus,
+  );
+
+  return {
+    total: breakdown.reduce((acc, rule) => acc + rule.bonus, 0),
+    detailedItems,
+    breakdown,
+  };
+}
+
+module.exports = {
+  calculateBasePay,
+  calculateShiftBonus,
+  createBonusRule,
+  deleteBonusRule,
+  getAvailableCategories,
+  getBonusRules,
+  getCurrentShiftSales,
+  getRules,
+  getRulesMap,
+  updateBonusRule,
+  updateRule,
+};
