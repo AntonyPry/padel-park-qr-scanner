@@ -3,7 +3,7 @@ const router = express.Router();
 const catalogController = require('../controllers/catalog.controller');
 const { requireRole } = require('../middleware/auth');
 
-const viewCatalog = requireRole('owner', 'accountant', 'viewer');
+const viewCatalog = requireRole('owner', 'manager', 'accountant', 'viewer');
 const manageCatalog = requireRole('owner', 'accountant');
 
 // Управление категориями P&L

@@ -23,6 +23,11 @@ router.put(
   manageMotivation,
   motivationController.updateRule,
 );
+router.put(
+  '/motivation/categories/:categoryId/rule',
+  manageMotivation,
+  motivationController.assignCategoryToBonusRule,
+);
 router.post(
   '/motivation/bonus-rules',
   manageMotivation,

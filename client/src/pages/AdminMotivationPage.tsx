@@ -4,8 +4,10 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  Pencil,
   Percent,
   Play,
+  Plus,
   Save,
   Square,
   Tags,
@@ -16,6 +18,13 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -227,6 +236,9 @@ function buildBonusPayload(draft: BonusRuleDraft) {
   if (!Number.isFinite(thresholdValue) || thresholdValue < 0) {
     throw new Error('Порог должен быть неотрицательным числом');
   }
+  if (draft.categoryIds.length === 0) {
+    throw new Error('Выберите хотя бы одну категорию');
+  }
 
   return {
     name: draft.name.trim(),
@@ -239,42 +251,149 @@ function buildBonusPayload(draft: BonusRuleDraft) {
   };
 }
 
+function getRuleProgress(rule: RuleBreakdown) {
+  if (rule.thresholdType === 'none') return 100;
+  if (rule.thresholdValue <= 0) return 100;
+
+  const current =
+    rule.thresholdType === 'quantity' ? rule.quantity : rule.revenue;
+  return Math.min(100, Math.max(0, (current / rule.thresholdValue) * 100));
+}
+
+function getRuleConditionText(rule: RuleBreakdown) {
+  if (rule.thresholdType === 'none') return 'Бонус включен с первой продажи.';
+  if (rule.thresholdPassed) return 'Условие выполнено, бонус уже начисляется.';
+
+  const remaining = Math.max(
+    0,
+    rule.thresholdValue -
+      (rule.thresholdType === 'quantity' ? rule.quantity : rule.revenue),
+  );
+
+  if (rule.thresholdType === 'quantity') {
+    return `До включения осталось продать ${remaining.toLocaleString('ru-RU')} шт.`;
+  }
+
+  return `До включения осталось продать на ${formatMoney(remaining)}.`;
+}
+
+function getPotentialBonus(rule: RuleBreakdown) {
+  return rule.revenue * (rule.bonusPercent / 100);
+}
+
 function CategoryPicker({
+  assignedRuleByCategoryId,
   categories,
+  currentRuleId,
+  error,
   selectedIds,
   onChange,
 }: {
+  assignedRuleByCategoryId?: Map<number, MotivationBonusRule>;
   categories: MotivationCategory[];
+  currentRuleId?: number | null;
+  error?: string;
   selectedIds: number[];
   onChange: (ids: number[]) => void;
 }) {
+  const [search, setSearch] = useState('');
+  const normalizedSearch = search.trim().toLowerCase();
+  const visibleCategories = normalizedSearch
+    ? categories.filter((category) =>
+        category.name.toLowerCase().includes(normalizedSearch),
+      )
+    : categories;
+
+  if (error) {
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+        {error}
+      </div>
+    );
+  }
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-44 overflow-y-auto rounded-md border p-3">
-      {categories.map((category) => (
-        <label
-          key={category.id}
-          className="flex min-w-0 items-center gap-2 rounded-md px-2 py-1 text-sm hover:bg-muted"
-        >
-          <input
-            type="checkbox"
-            checked={selectedIds.includes(category.id)}
-            onChange={() => onChange(toggleCategory(selectedIds, category.id))}
-            className="h-4 w-4 shrink-0"
-          />
-          <span className="truncate">{category.name}</span>
-        </label>
-      ))}
-      {categories.length === 0 && (
-        <div className="text-sm text-muted-foreground">
-          Сначала создайте доходные категории в справочнике товаров.
+    <div className="space-y-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="text-xs font-medium text-muted-foreground">
+            Категории
+          </div>
+          <div className="text-xs text-muted-foreground">
+            Выбрано: {selectedIds.length}
+          </div>
         </div>
-      )}
+        {categories.length > 8 && (
+          <Input
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Найти категорию"
+            className="sm:max-w-[280px]"
+          />
+        )}
+      </div>
+      <div className="max-h-[320px] overflow-y-auto rounded-md border">
+        <div className="divide-y">
+          {visibleCategories.map((category) => {
+            const assignedRule = assignedRuleByCategoryId?.get(category.id);
+            const isLocked = Boolean(
+              assignedRule && assignedRule.id !== currentRuleId,
+            );
+
+            return (
+              <label
+                key={category.id}
+                title={
+                  isLocked && assignedRule
+                    ? `Уже в мотивации «${assignedRule.name}»`
+                    : category.name
+                }
+                className={`flex min-w-0 items-center justify-between gap-3 px-3 py-2 text-sm hover:bg-muted ${
+                  isLocked ? 'opacity-60' : ''
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(category.id)}
+                    disabled={isLocked}
+                    onChange={() =>
+                      !isLocked &&
+                      onChange(toggleCategory(selectedIds, category.id))
+                    }
+                    className="h-4 w-4 shrink-0"
+                  />
+                  <span className="truncate">{category.name}</span>
+                </span>
+                {isLocked && assignedRule && (
+                  <Badge variant="outline" className="shrink-0">
+                    {assignedRule.name}
+                  </Badge>
+                )}
+              </label>
+            );
+          })}
+          {categories.length === 0 && (
+            <div className="p-3 text-sm text-muted-foreground">
+              Сначала создайте доходные категории в справочнике товаров.
+            </div>
+          )}
+          {categories.length > 0 && visibleCategories.length === 0 && (
+            <div className="p-3 text-sm text-muted-foreground">
+              Ничего не найдено.
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
 function BonusRuleForm({
+  assignedRuleByCategoryId,
   categories,
+  categoriesError,
+  currentRuleId,
   draft,
   onChange,
   onDelete,
@@ -282,7 +401,10 @@ function BonusRuleForm({
   saveLabel,
   title,
 }: {
+  assignedRuleByCategoryId?: Map<number, MotivationBonusRule>;
   categories: MotivationCategory[];
+  categoriesError?: string;
+  currentRuleId?: number | null;
   draft: BonusRuleDraft;
   onChange: (draft: BonusRuleDraft) => void;
   onDelete?: () => void;
@@ -290,8 +412,10 @@ function BonusRuleForm({
   saveLabel: string;
   title: string;
 }) {
+  const canSave = draft.name.trim().length > 0 && draft.categoryIds.length > 0;
+
   return (
-    <div className="rounded-md border p-4 space-y-4">
+    <div className="rounded-md border p-4 sm:p-5 space-y-5">
       <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="font-semibold">{title}</div>
@@ -313,7 +437,7 @@ function BonusRuleForm({
         </label>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">
             Название
@@ -398,18 +522,27 @@ function BonusRuleForm({
       </div>
 
       <CategoryPicker
+        assignedRuleByCategoryId={assignedRuleByCategoryId}
         categories={categories}
+        currentRuleId={currentRuleId}
+        error={categoriesError}
         selectedIds={draft.categoryIds}
         onChange={(categoryIds) => onChange({ ...draft, categoryIds })}
       />
 
-      <div className="flex flex-col sm:flex-row justify-end gap-2">
+      {draft.categoryIds.length === 0 && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+          Выберите категории, иначе правило не сможет начислять бонусы.
+        </div>
+      )}
+
+      <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-col gap-2 border-t bg-popover/95 p-4 backdrop-blur sm:-mx-5 sm:-mb-5 sm:flex-row sm:justify-end">
         {onDelete && (
           <Button type="button" variant="outline" onClick={onDelete}>
             <Trash2 className="h-4 w-4 mr-2" /> Удалить
           </Button>
         )}
-        <Button type="button" onClick={onSave}>
+        <Button type="button" onClick={onSave} disabled={!canSave}>
           <Save className="h-4 w-4 mr-2" /> {saveLabel}
         </Button>
       </div>
@@ -427,12 +560,19 @@ export default function AdminMotivationPage() {
   const [bonusRules, setBonusRules] = useState<MotivationBonusRule[]>([]);
   const [categories, setCategories] = useState<MotivationCategory[]>([]);
   const [ruleDrafts, setRuleDrafts] = useState<Record<string, string>>({});
+  const [settingsError, setSettingsError] = useState('');
   const [bonusDrafts, setBonusDrafts] = useState<Record<number, BonusRuleDraft>>(
     {},
   );
   const [newBonusDraft, setNewBonusDraft] = useState<BonusRuleDraft>({
     ...emptyBonusDraft,
   });
+  const [bonusModalMode, setBonusModalMode] = useState<
+    'create' | 'edit' | null
+  >(null);
+  const [editingBonusRuleId, setEditingBonusRuleId] = useState<number | null>(
+    null,
+  );
   const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
   const [shiftReport, setShiftReport] = useState('');
   const [reportCopied, setReportCopied] = useState(false);
@@ -441,6 +581,19 @@ export default function AdminMotivationPage() {
   const [now, setNow] = useState(Date.now());
 
   const rulesMap = useMemo(() => rulesToMap(rules), [rules]);
+  const assignedRuleByCategoryId = useMemo(() => {
+    const map = new Map<number, MotivationBonusRule>();
+    bonusRules.forEach((rule) => {
+      rule.categories.forEach((category) => {
+        map.set(category.id, rule);
+      });
+    });
+    return map;
+  }, [bonusRules]);
+  const editingBonusRule = useMemo(
+    () => bonusRules.find((rule) => rule.id === editingBonusRuleId) || null,
+    [bonusRules, editingBonusRuleId],
+  );
   const isShiftActive = activeShift?.status === 'active';
   const shiftStart = activeShift?.startedAt
     ? new Date(activeShift.startedAt).getTime()
@@ -474,6 +627,7 @@ export default function AdminMotivationPage() {
 
   const fetchMotivationSettings = useCallback(async () => {
     setRulesLoading(true);
+    setSettingsError('');
     try {
       const [rulesRes, bonusRulesRes, categoriesRes] = await Promise.all([
         apiFetch('/api/motivation/rules'),
@@ -501,10 +655,24 @@ export default function AdminMotivationPage() {
             return acc;
           }, {}),
         );
+      } else {
+        setSettingsError(
+          await readError(
+            bonusRulesRes,
+            'Не удалось загрузить бонусные правила. Проверьте, что backend перезапущен после обновления.',
+          ),
+        );
       }
 
       if (categoriesRes.ok) {
         setCategories((await categoriesRes.json()) as MotivationCategory[]);
+      } else {
+        setSettingsError(
+          await readError(
+            categoriesRes,
+            'Не удалось загрузить категории мотивации. Проверьте, что backend перезапущен после обновления.',
+          ),
+        );
       }
     } catch (e) {
       console.error(e);
@@ -744,6 +912,23 @@ export default function AdminMotivationPage() {
     );
   };
 
+  const openCreateBonusRule = () => {
+    setNewBonusDraft({ ...emptyBonusDraft });
+    setEditingBonusRuleId(null);
+    setBonusModalMode('create');
+  };
+
+  const openEditBonusRule = (rule: MotivationBonusRule) => {
+    setBonusDrafts((prev) => ({ ...prev, [rule.id]: toBonusDraft(rule) }));
+    setEditingBonusRuleId(rule.id);
+    setBonusModalMode('edit');
+  };
+
+  const closeBonusModal = () => {
+    setBonusModalMode(null);
+    setEditingBonusRuleId(null);
+  };
+
   const handleCreateBonusRule = async (event?: FormEvent) => {
     event?.preventDefault();
     let payload: ReturnType<typeof buildBonusPayload>;
@@ -768,6 +953,7 @@ export default function AdminMotivationPage() {
     setBonusRules((prev) => [...prev, created]);
     setBonusDrafts((prev) => ({ ...prev, [created.id]: toBonusDraft(created) }));
     setNewBonusDraft({ ...emptyBonusDraft });
+    closeBonusModal();
   };
 
   const handleSaveBonusRule = async (rule: MotivationBonusRule) => {
@@ -797,6 +983,7 @@ export default function AdminMotivationPage() {
       prev.map((item) => (item.id === updated.id ? updated : item)),
     );
     setBonusDrafts((prev) => ({ ...prev, [updated.id]: toBonusDraft(updated) }));
+    closeBonusModal();
   };
 
   const handleDeleteBonusRule = async (rule: MotivationBonusRule) => {
@@ -940,17 +1127,130 @@ export default function AdminMotivationPage() {
           </Card>
 
           <Card>
-            <CardHeader className="pb-2 border-b">
-              <CardTitle className="text-lg">Бонусные правила</CardTitle>
-              <p className="text-sm text-muted-foreground mt-1">
-                Каждое правило состоит из выбранных категорий каталога и своих
-                параметров начисления.
-              </p>
+            <CardHeader className="flex flex-row items-start justify-between gap-4 pb-2 border-b">
+              <div>
+                <CardTitle className="text-lg">Бонусные правила</CardTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Каждое правило состоит из выбранных категорий каталога и своих
+                  параметров начисления.
+                </p>
+              </div>
+              <Button onClick={openCreateBonusRule}>
+                <Plus className="h-4 w-4 mr-2" /> Создать
+              </Button>
             </CardHeader>
-            <CardContent className="pt-4 space-y-4">
+            <CardContent className="pt-4">
+              {settingsError && (
+                <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                  {settingsError}
+                </div>
+              )}
+
+              {bonusRules.length === 0 ? (
+                <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+                  Бонусные правила еще не созданы.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {bonusRules.map((rule) => (
+                    <div key={rule.id} className="rounded-md border p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-semibold text-lg truncate">
+                              {rule.name}
+                            </h3>
+                            <Badge variant={rule.isActive ? 'default' : 'outline'}>
+                              {rule.isActive ? 'Активно' : 'Выключено'}
+                            </Badge>
+                          </div>
+                          {rule.description && (
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {rule.description}
+                            </p>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEditBonusRule(rule)}
+                          >
+                            <Pencil className="h-4 w-4 mr-2" /> Изменить
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => void handleDeleteBonusRule(rule)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" /> Удалить
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4">
+                        <div>
+                          <div className="text-xs text-muted-foreground">
+                            Процент
+                          </div>
+                          <div className="font-semibold">
+                            {Number(rule.bonusPercent).toLocaleString('ru-RU')}%
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">
+                            Порог
+                          </div>
+                          <div className="font-semibold">
+                            {formatThreshold(rule)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">
+                            Категории
+                          </div>
+                          <div className="font-semibold">
+                            {rule.categories.length}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {rule.categories.map((category) => (
+                          <Badge key={category.id} variant="outline">
+                            {category.name}
+                          </Badge>
+                        ))}
+                        {rule.categories.length === 0 && (
+                          <span className="text-sm text-muted-foreground">
+                            Категории не выбраны
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Dialog
+            open={bonusModalMode === 'create'}
+            onOpenChange={(open) => !open && closeBonusModal()}
+          >
+            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-[1040px] sm:p-6">
+              <DialogHeader>
+                <DialogTitle className="text-2xl">Создать мотивацию</DialogTitle>
+                <DialogDescription>
+                  Выберите категории, задайте процент и условие включения
+                  бонуса.
+                </DialogDescription>
+              </DialogHeader>
               <form onSubmit={(event) => void handleCreateBonusRule(event)}>
                 <BonusRuleForm
+                  assignedRuleByCategoryId={assignedRuleByCategoryId}
                   categories={categories}
+                  categoriesError={settingsError}
                   draft={newBonusDraft}
                   onChange={setNewBonusDraft}
                   onSave={() => void handleCreateBonusRule()}
@@ -958,38 +1258,42 @@ export default function AdminMotivationPage() {
                   title="Новое правило"
                 />
               </form>
+            </DialogContent>
+          </Dialog>
 
-              <div className="space-y-4">
-                {bonusRules.map((rule) => {
-                  const draft = bonusDrafts[rule.id];
-                  if (!draft) return null;
-
-                  return (
-                    <BonusRuleForm
-                      key={rule.id}
-                      categories={categories}
-                      draft={draft}
-                      onChange={(nextDraft) =>
-                        setBonusDrafts((prev) => ({
-                          ...prev,
-                          [rule.id]: nextDraft,
-                        }))
-                      }
-                      onDelete={() => void handleDeleteBonusRule(rule)}
-                      onSave={() => void handleSaveBonusRule(rule)}
-                      saveLabel="Сохранить"
-                      title={rule.name}
-                    />
-                  );
-                })}
-                {bonusRules.length === 0 && (
-                  <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
-                    Бонусные правила еще не созданы.
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+          <Dialog
+            open={bonusModalMode === 'edit' && Boolean(editingBonusRule)}
+            onOpenChange={(open) => !open && closeBonusModal()}
+          >
+            <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-[1040px] sm:p-6">
+              <DialogHeader>
+                <DialogTitle className="text-2xl">
+                  Редактировать мотивацию
+                </DialogTitle>
+                <DialogDescription>
+                  Измените категории, процент или порог начисления.
+                </DialogDescription>
+              </DialogHeader>
+              {editingBonusRule && bonusDrafts[editingBonusRule.id] && (
+                <BonusRuleForm
+                  assignedRuleByCategoryId={assignedRuleByCategoryId}
+                  categories={categories}
+                  categoriesError={settingsError}
+                  currentRuleId={editingBonusRule.id}
+                  draft={bonusDrafts[editingBonusRule.id]}
+                  onChange={(nextDraft) =>
+                    setBonusDrafts((prev) => ({
+                      ...prev,
+                      [editingBonusRule.id]: nextDraft,
+                    }))
+                  }
+                  onSave={() => void handleSaveBonusRule(editingBonusRule)}
+                  saveLabel="Сохранить"
+                  title={editingBonusRule.name}
+                />
+              )}
+            </DialogContent>
+          </Dialog>
         </>
       )}
 
@@ -1082,7 +1386,7 @@ export default function AdminMotivationPage() {
                   {bonusRules.filter((rule) => rule.isActive).length}
                 </div>
                 <div className="text-xs text-blue-500 mt-1">
-                  Категории задаются владельцем
+                  Настройки бонусов
                 </div>
               </CardContent>
             </Card>
@@ -1090,7 +1394,156 @@ export default function AdminMotivationPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-              <CardTitle className="text-lg">За что начислены бонусы</CardTitle>
+              <div>
+                <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Что уже продано, какой бонус начислится и что осталось сделать
+                  до включения порога.
+                </p>
+              </div>
+              <div className="text-sm text-muted-foreground">
+                {loading && <span className="animate-pulse">Обновление...</span>}
+              </div>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-4">
+              {shiftStats?.ruleBreakdown.length === 0 ? (
+                <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+                  Активные мотивации не настроены.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                  {shiftStats?.ruleBreakdown.map((rule) => {
+                    const progress = getRuleProgress(rule);
+                    const potentialBonus = getPotentialBonus(rule);
+
+                    return (
+                      <div key={rule.ruleId} className="rounded-md border p-4">
+                        <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="font-semibold text-lg">
+                                {rule.ruleName}
+                              </h3>
+                              <Badge
+                                variant={
+                                  rule.thresholdPassed ? 'default' : 'outline'
+                                }
+                              >
+                                {rule.thresholdPassed ? 'Начисляется' : 'Ждет порог'}
+                              </Badge>
+                            </div>
+                            <div className="text-sm text-muted-foreground mt-1">
+                              {rule.categoryNames.length > 0
+                                ? rule.categoryNames.join(', ')
+                                : 'Категории не выбраны'}
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-xs text-muted-foreground">
+                              Бонус сейчас
+                            </div>
+                            <div className="text-xl font-bold text-green-600">
+                              {formatMoney(rule.bonus)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
+                          <div>
+                            <div className="text-xs text-muted-foreground">
+                              Продано
+                            </div>
+                            <div className="font-semibold">
+                              {formatMoney(rule.revenue)}
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">
+                              Кол-во
+                            </div>
+                            <div className="font-semibold">
+                              {rule.quantity.toLocaleString('ru-RU')} шт
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">
+                              Ставка
+                            </div>
+                            <div className="font-semibold">
+                              {rule.bonusPercent}%
+                            </div>
+                          </div>
+                          <div>
+                            <div className="text-xs text-muted-foreground">
+                              При пороге
+                            </div>
+                            <div className="font-semibold">
+                              {formatMoney(potentialBonus)}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+                          <div className="flex items-center justify-between gap-3 text-sm">
+                            <span className="text-muted-foreground">
+                              {getRuleConditionText(rule)}
+                            </span>
+                            <span className="shrink-0 font-medium">
+                              {Math.round(progress)}%
+                            </span>
+                          </div>
+                          <div className="h-2 rounded-full bg-muted overflow-hidden">
+                            <div
+                              className="h-full rounded-full bg-primary"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {shiftStats && shiftStats.categoryStats.length > 0 && (
+                <div className="rounded-md border">
+                  <div className="px-4 py-3 border-b font-medium">
+                    Продажи по категориям
+                  </div>
+                  <div className="divide-y">
+                    {shiftStats.categoryStats.map((category) => (
+                      <div
+                        key={category.category}
+                        className="grid grid-cols-2 md:grid-cols-4 gap-3 px-4 py-3 text-sm"
+                      >
+                        <div className="col-span-2 md:col-span-1 font-medium">
+                          {category.category}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {category.count} поз.
+                        </div>
+                        <div>{formatMoney(category.revenue)}</div>
+                        <div
+                          className={
+                            category.bonus > 0
+                              ? 'font-medium text-green-600'
+                              : 'text-muted-foreground'
+                          }
+                        >
+                          {category.bonus > 0 ? '+' : ''}
+                          {formatMoney(category.bonus)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
+              <CardTitle className="text-lg">Операции смены</CardTitle>
               <div className="text-sm text-muted-foreground">
                 {loading && (
                   <span className="animate-pulse">Обновление...</span>
@@ -1139,13 +1592,20 @@ export default function AdminMotivationPage() {
                           <TableCell className="text-right">
                             {formatMoney(Math.abs(Number(sale.amount)))}
                           </TableCell>
-                          <TableCell className="text-right font-bold text-green-500">
+                          <TableCell
+                            className={`text-right font-bold ${
+                              sale.earned > 0
+                                ? 'text-green-500'
+                                : 'text-muted-foreground'
+                            }`}
+                          >
                             {sale.rate > 0 && (
                               <span className="text-xs bg-green-500/10 text-green-600 px-1.5 py-0.5 rounded mr-2">
                                 {sale.rate}%
                               </span>
                             )}
-                            +{formatMoney(sale.earned)}
+                            {sale.earned > 0 ? '+' : ''}
+                            {formatMoney(sale.earned)}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1156,72 +1616,6 @@ export default function AdminMotivationPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-2 border-b">
-              <CardTitle className="text-lg">Сводка правил</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0 px-0">
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Правило</TableHead>
-                      <TableHead>Категории</TableHead>
-                      <TableHead>Порог</TableHead>
-                      <TableHead className="text-right">Продажи</TableHead>
-                      <TableHead className="text-right">Кол-во</TableHead>
-                      <TableHead className="text-right">Бонус</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {shiftStats?.ruleBreakdown.map((rule) => (
-                      <TableRow key={rule.ruleId}>
-                        <TableCell className="font-medium">
-                          {rule.ruleName}
-                          <div className="text-xs text-muted-foreground">
-                            {rule.bonusPercent}%
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {rule.categoryNames.length > 0
-                            ? rule.categoryNames.join(', ')
-                            : 'Категории не выбраны'}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              rule.thresholdPassed ? 'default' : 'outline'
-                            }
-                          >
-                            {formatThreshold({
-                              id: rule.ruleId,
-                              name: rule.ruleName,
-                              bonusPercent: rule.bonusPercent,
-                              thresholdType: rule.thresholdType,
-                              thresholdValue: rule.thresholdValue,
-                              sortOrder: 0,
-                              isActive: true,
-                              categories: [],
-                              categoryIds: [],
-                            })}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatMoney(rule.revenue)}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {rule.quantity.toLocaleString('ru-RU')}
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          {formatMoney(rule.bonus)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </CardContent>
-          </Card>
         </>
       )}
     </div>

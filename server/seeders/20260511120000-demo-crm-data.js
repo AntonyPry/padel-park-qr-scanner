@@ -15,6 +15,53 @@ function dateAt(day, hour, minute = 0) {
   return new Date(`2026-05-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+03:00`);
 }
 
+const DEMO_CATALOG_RULES = [
+  ['Аренда корта 90 минут', 'Аренда кортов'],
+  ['Аренда корта 60 минут', 'Аренда кортов'],
+  ['Групповая тренировка', 'Аренда кортов'],
+  ['Вода 0.5', 'Напитки'],
+  ['Капучино', 'Кофе'],
+  ['Батончик протеиновый', 'Снеки'],
+  ['Молочный коктейль ванильный', 'Молочные коктейли'],
+  ['Пиво безалкогольное', 'Пивко'],
+  ['Мячи Head Pro', 'Мячи и тубусы'],
+  ['Овергрип Wilson', 'Аксессуары магазина'],
+  ['VIP раздевалка', 'VIP-услуги'],
+  ['VIP Ракетка Шефа', 'Прокат инвентаря'],
+  ['Ракетка шефа', 'Прокат инвентаря'],
+  ['Тубус мячей', 'Мячи и тубусы'],
+];
+
+const DEMO_MOTIVATION_RULES = [
+  {
+    name: 'Бар',
+    description: 'Демо: кофе, напитки, коктейли, снеки и пиво.',
+    bonusPercent: 5,
+    thresholdType: 'revenue',
+    thresholdValue: 4000,
+    categories: ['Кофе', 'Напитки', 'Молочные коктейли', 'Пивко', 'Снеки'],
+    sortOrder: 10,
+  },
+  {
+    name: 'Магазин',
+    description: 'Демо: аксессуары, мячи и тубусы из магазина.',
+    bonusPercent: 3,
+    thresholdType: 'revenue',
+    thresholdValue: 3000,
+    categories: ['Аксессуары магазина', 'Мячи и тубусы'],
+    sortOrder: 20,
+  },
+  {
+    name: 'VIP и прокат',
+    description: 'Демо: VIP-услуги и платный прокат инвентаря.',
+    bonusPercent: 10,
+    thresholdType: 'none',
+    thresholdValue: 0,
+    categories: ['VIP-услуги', 'Прокат инвентаря'],
+    sortOrder: 30,
+  },
+];
+
 module.exports = {
   async up(queryInterface, Sequelize) {
     const now = new Date();
@@ -47,6 +94,17 @@ module.exports = {
     await queryInterface.bulkDelete('Utilizations', {
       date: { [Sequelize.Op.between]: ['2026-05-01', '2026-05-14'] },
     });
+    await queryInterface.sequelize.query(
+      'DELETE FROM MotivationBonusRuleCategories WHERE bonusRuleId IN (SELECT id FROM MotivationBonusRules WHERE description LIKE "Демо:%")',
+    );
+    await queryInterface.bulkDelete('MotivationBonusRules', {
+      description: { [Sequelize.Op.like]: 'Демо:%' },
+    });
+    await queryInterface.bulkDelete('CatalogRules', {
+      itemName: {
+        [Sequelize.Op.in]: DEMO_CATALOG_RULES.map(([itemName]) => itemName),
+      },
+    });
 
     await queryInterface.bulkInsert(
       'Categories',
@@ -56,6 +114,15 @@ module.exports = {
         ['Магазин (Товары)', 'income', 'REVENUE_POS', 0, true],
         ['Прокат инвентаря / VIP', 'income', 'REVENUE_POS', 0, true],
         ['Доп. услуги', 'income', 'REVENUE_POS', 0, true],
+        ['Кофе', 'income', 'REVENUE_POS', 0, false],
+        ['Напитки', 'income', 'REVENUE_POS', 0, false],
+        ['Снеки', 'income', 'REVENUE_POS', 0, false],
+        ['Молочные коктейли', 'income', 'REVENUE_POS', 0, false],
+        ['Пивко', 'income', 'REVENUE_POS', 0, false],
+        ['Мячи и тубусы', 'income', 'REVENUE_POS', 0, false],
+        ['Аксессуары магазина', 'income', 'REVENUE_POS', 0, false],
+        ['VIP-услуги', 'income', 'REVENUE_POS', 0, false],
+        ['Прокат инвентаря', 'income', 'REVENUE_POS', 0, false],
         ['Корпоративные мероприятия', 'income', 'REVENUE_EXT', 3, false],
         ['Закупка бара', 'expense', 'COGS', 0, false],
         ['Маркетинг', 'expense', 'OPEX', 0, false],
@@ -75,20 +142,7 @@ module.exports = {
 
     await queryInterface.bulkInsert(
       'CatalogRules',
-      [
-        ['Аренда корта 90 минут', 'Аренда кортов'],
-        ['Аренда корта 60 минут', 'Аренда кортов'],
-        ['Групповая тренировка', 'Аренда кортов'],
-        ['Вода 0.5', 'Бар / Кафе'],
-        ['Капучино', 'Бар / Кафе'],
-        ['Батончик протеиновый', 'Бар / Кафе'],
-        ['Мячи Head Pro', 'Магазин (Товары)'],
-        ['Овергрип Wilson', 'Магазин (Товары)'],
-        ['VIP раздевалка', 'Прокат инвентаря / VIP'],
-        ['VIP Ракетка Шефа', 'Прокат инвентаря / VIP'],
-        ['Ракетка шефа', 'Прокат инвентаря / VIP'],
-        ['Тубус мячей', 'Доп. услуги'],
-      ].map(([itemName, category]) => ({
+      DEMO_CATALOG_RULES.map(([itemName, category]) => ({
         itemName,
         category,
         createdAt: now,
@@ -96,6 +150,59 @@ module.exports = {
       })),
       { ignoreDuplicates: true },
     );
+
+    await queryInterface.bulkInsert(
+      'MotivationBonusRules',
+      DEMO_MOTIVATION_RULES.map((rule) => ({
+        name: rule.name,
+        description: rule.description,
+        bonusPercent: rule.bonusPercent,
+        thresholdType: rule.thresholdType,
+        thresholdValue: rule.thresholdValue,
+        sortOrder: rule.sortOrder,
+        isActive: true,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
+
+    const [categoryRows] = await queryInterface.sequelize.query(
+      'SELECT id, name FROM Categories',
+    );
+    const [bonusRuleRows] = await queryInterface.sequelize.query(
+      'SELECT id, name FROM MotivationBonusRules WHERE description LIKE "Демо:%"',
+    );
+    const categoryByName = Object.fromEntries(
+      categoryRows.map((category) => [category.name, category.id]),
+    );
+    const bonusRuleByName = Object.fromEntries(
+      bonusRuleRows.map((rule) => [rule.name, rule.id]),
+    );
+    const bonusRuleLinks = DEMO_MOTIVATION_RULES.flatMap((rule) => {
+      const bonusRuleId = bonusRuleByName[rule.name];
+      if (!bonusRuleId) return [];
+
+      return rule.categories
+        .map((categoryName) => {
+          const categoryId = categoryByName[categoryName];
+          if (!categoryId) return null;
+
+          return {
+            bonusRuleId,
+            categoryId,
+            createdAt: now,
+            updatedAt: now,
+          };
+        })
+        .filter(Boolean);
+    });
+
+    if (bonusRuleLinks.length > 0) {
+      await queryInterface.bulkInsert(
+        'MotivationBonusRuleCategories',
+        bonusRuleLinks,
+      );
+    }
 
     await queryInterface.bulkInsert('Staffs', [
       {
@@ -242,6 +349,8 @@ module.exports = {
       ['Вода 0.5', 180, 'COMMODITY'],
       ['Капучино', 280, 'COMMODITY'],
       ['Батончик протеиновый', 240, 'COMMODITY'],
+      ['Молочный коктейль ванильный', 360, 'COMMODITY'],
+      ['Пиво безалкогольное', 320, 'COMMODITY'],
       ['Мячи Head Pro', 1450, 'COMMODITY'],
       ['Овергрип Wilson', 450, 'COMMODITY'],
       ['VIP раздевалка', 1200, 'SERVICE'],
@@ -413,6 +522,17 @@ module.exports = {
     });
     await queryInterface.bulkDelete('Utilizations', {
       date: { [Sequelize.Op.between]: ['2026-05-01', '2026-05-14'] },
+    });
+    await queryInterface.sequelize.query(
+      'DELETE FROM MotivationBonusRuleCategories WHERE bonusRuleId IN (SELECT id FROM MotivationBonusRules WHERE description LIKE "Демо:%")',
+    );
+    await queryInterface.bulkDelete('MotivationBonusRules', {
+      description: { [Sequelize.Op.like]: 'Демо:%' },
+    });
+    await queryInterface.bulkDelete('CatalogRules', {
+      itemName: {
+        [Sequelize.Op.in]: DEMO_CATALOG_RULES.map(([itemName]) => itemName),
+      },
     });
   },
 };

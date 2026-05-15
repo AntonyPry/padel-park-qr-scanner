@@ -73,6 +73,20 @@ class MotivationController {
     }
   }
 
+  async assignCategoryToBonusRule(req, res) {
+    try {
+      const rules = await motivationService.assignCategoryToBonusRule(
+        req.params.categoryId,
+        req.body.bonusRuleId,
+      );
+      res.json(rules);
+    } catch (error) {
+      res
+        .status(error.statusCode || 500)
+        .json({ error: error.message || 'Ошибка обновления мотивации категории' });
+    }
+  }
+
   async deleteBonusRule(req, res) {
     try {
       res.json(await motivationService.deleteBonusRule(req.params.id));

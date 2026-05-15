@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -33,6 +33,8 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import type { MotivationBonusRule } from '@/lib/motivation';
+import { useAuth } from '@/lib/useAuth';
 
 const PNL_GROUPS = [
   { value: 'REVENUE_POS', label: 'Касса (Эвотор)', type: 'income' },
@@ -59,9 +61,15 @@ interface CatalogRule {
 }
 
 export default function CatalogPage() {
+  const { account } = useAuth();
+  const canManageCatalog =
+    account?.role === 'owner' || account?.role === 'accountant';
+  const canManageMotivation =
+    account?.role === 'owner' || account?.role === 'manager';
   const [unmapped, setUnmapped] = useState<string[]>([]);
   const [rules, setRules] = useState<CatalogRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [bonusRules, setBonusRules] = useState<MotivationBonusRule[]>([]);
   const [newCatParentId, setNewCatParentId] = useState<string>('none');
 
   const [activeTab, setActiveTab] = useState<
@@ -78,14 +86,18 @@ export default function CatalogPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [unmappedRes, rulesRes, catRes] = await Promise.all([
+      const [unmappedRes, rulesRes, catRes, bonusRulesRes] = await Promise.all([
         apiFetch('/api/catalog/unmapped'),
         apiFetch('/api/catalog/rules'),
         apiFetch('/api/catalog/categories'),
+        apiFetch('/api/motivation/bonus-rules'),
       ]);
       setUnmapped(await unmappedRes.json());
       setRules(await rulesRes.json());
       setCategories(await catRes.json());
+      if (bonusRulesRes.ok) {
+        setBonusRules((await bonusRulesRes.json()) as MotivationBonusRule[]);
+      }
     } catch (e) {
       console.error('Fetch error:', e);
     }
@@ -95,6 +107,16 @@ export default function CatalogPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchData();
   }, [fetchData]);
+
+  const motivationByCategoryId = useMemo(() => {
+    const map = new Map<number, MotivationBonusRule>();
+    bonusRules.forEach((rule) => {
+      rule.categories.forEach((category) => {
+        map.set(category.id, rule);
+      });
+    });
+    return map;
+  }, [bonusRules]);
 
   const handleSaveRule = async (itemName: string) => {
     const category = selections[itemName];
@@ -186,6 +208,30 @@ export default function CatalogPage() {
     } catch (e) {
       console.error('Update error:', e);
     }
+  };
+
+  const handleUpdateMotivation = async (
+    categoryId: number,
+    bonusRuleId: string,
+  ) => {
+    const res = await apiFetch(`/api/motivation/categories/${categoryId}/rule`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        bonusRuleId: bonusRuleId === 'none' ? null : Number(bonusRuleId),
+      }),
+    });
+
+    if (!res.ok) {
+      try {
+        const data = (await res.json()) as { error?: string };
+        alert(data.error || 'Не удалось обновить мотивацию категории');
+      } catch {
+        alert('Не удалось обновить мотивацию категории');
+      }
+      return;
+    }
+
+    setBonusRules((await res.json()) as MotivationBonusRule[]);
   };
 
   // ФУНКЦИИ ЗАЩИТЫ ОТ ЦИКЛОВ НА КЛИЕНТЕ
@@ -344,7 +390,7 @@ export default function CatalogPage() {
                       <TableCell>
                         <Button
                           size="sm"
-                          disabled={!selections[itemName]}
+                          disabled={!canManageCatalog || !selections[itemName]}
                           onClick={() => handleSaveRule(itemName)}
                         >
                           Сохранить
@@ -405,85 +451,89 @@ export default function CatalogPage() {
             <CardTitle>Управление категориями P&L</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            <form
-              onSubmit={handleAddCategory}
-              className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"
-            >
-              <div className="space-y-2">
-                <label className="text-sm font-medium">
-                  Название категории
-                </label>
-                <Input
-                  placeholder="Например: Лунда"
-                  value={newCatName}
-                  onChange={(e) => setNewCatName(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Группа в отчете</label>
-                <Select
-                  value={newCatGroup}
-                  onValueChange={setNewCatGroup}
-                  disabled={newCatParentId !== 'none'}
-                >
-                  <SelectTrigger
-                    className={newCatParentId !== 'none' ? 'bg-muted' : ''}
-                  >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {PNL_GROUPS.map((g) => (
-                      <SelectItem key={g.value} value={g.value}>
-                        {g.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {newCatParentId !== 'none' && (
-                  <p className="text-[10px] text-muted-foreground absolute mt-0.5">
-                    Наследуется от родителя
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Авто-комиссия (%)</label>
-                <div className="relative">
+            {canManageCatalog && (
+              <form
+                onSubmit={handleAddCategory}
+                className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"
+              >
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    Название категории
+                  </label>
                   <Input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    max="100"
-                    placeholder="0"
-                    value={newCatPercent}
-                    onChange={(e) => setNewCatPercent(e.target.value)}
+                    placeholder="Например: Лунда"
+                    value={newCatName}
+                    onChange={(e) => setNewCatName(e.target.value)}
+                    required
                   />
-                  <Percent className="w-4 h-4 text-muted-foreground absolute right-3 top-3" />
                 </div>
-              </div>
-              <div className="space-y-2">
-                <label className="text-sm font-medium">Родитель</label>
-                <Select
-                  value={newCatParentId}
-                  onValueChange={handleParentChange}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Нет (Корневая)</SelectItem>
-                    {categories.map((c) => (
-                      <SelectItem key={c.id} value={String(c.id)}>
-                        {c.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button type="submit" className="w-full">
-                <Plus className="w-4 h-4 mr-2" /> Добавить
-              </Button>
-            </form>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Группа в отчете</label>
+                  <Select
+                    value={newCatGroup}
+                    onValueChange={setNewCatGroup}
+                    disabled={newCatParentId !== 'none'}
+                  >
+                    <SelectTrigger
+                      className={newCatParentId !== 'none' ? 'bg-muted' : ''}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {PNL_GROUPS.map((g) => (
+                        <SelectItem key={g.value} value={g.value}>
+                          {g.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {newCatParentId !== 'none' && (
+                    <p className="text-[10px] text-muted-foreground absolute mt-0.5">
+                      Наследуется от родителя
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">
+                    Авто-комиссия (%)
+                  </label>
+                  <div className="relative">
+                    <Input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      placeholder="0"
+                      value={newCatPercent}
+                      onChange={(e) => setNewCatPercent(e.target.value)}
+                    />
+                    <Percent className="w-4 h-4 text-muted-foreground absolute right-3 top-3" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Родитель</label>
+                  <Select
+                    value={newCatParentId}
+                    onValueChange={handleParentChange}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Нет (Корневая)</SelectItem>
+                      {categories.map((c) => (
+                        <SelectItem key={c.id} value={String(c.id)}>
+                          {c.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button type="submit" className="w-full">
+                  <Plus className="w-4 h-4 mr-2" /> Добавить
+                </Button>
+              </form>
+            )}
 
             <div className="rounded-md border">
               <Table>
@@ -492,6 +542,7 @@ export default function CatalogPage() {
                     <TableHead>Название</TableHead>
                     <TableHead>Группа отчета</TableHead>
                     <TableHead>Авто-комиссия</TableHead>
+                    <TableHead>Мотивация</TableHead>
                     <TableHead>Родитель</TableHead>
                     <TableHead className="w-[50px]"></TableHead>
                   </TableRow>
@@ -515,10 +566,45 @@ export default function CatalogPage() {
                           <span className="text-muted-foreground">-</span>
                         )}
                       </TableCell>
+                      <TableCell>
+                        {cat.type === 'income' ? (
+                          <Select
+                            value={
+                              motivationByCategoryId.get(cat.id)
+                                ? String(motivationByCategoryId.get(cat.id)?.id)
+                                : 'none'
+                            }
+                            disabled={!canManageMotivation}
+                            onValueChange={(val) =>
+                              handleUpdateMotivation(cat.id, val)
+                            }
+                          >
+                            <SelectTrigger className="w-[190px] bg-transparent border-dashed">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem
+                                value="none"
+                                className="text-muted-foreground"
+                              >
+                                Без мотивации
+                              </SelectItem>
+                              {bonusRules.map((rule) => (
+                                <SelectItem key={rule.id} value={String(rule.id)}>
+                                  {rule.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </TableCell>
                       {/* ЖИВОЙ ВЫБОР РОДИТЕЛЯ ПРЯМО В ТАБЛИЦЕ */}
                       <TableCell>
                         <Select
                           value={cat.parentId ? String(cat.parentId) : 'none'}
+                          disabled={!canManageCatalog}
                           onValueChange={(val) =>
                             handleUpdateParent(cat.id, val)
                           }
@@ -542,7 +628,7 @@ export default function CatalogPage() {
                         </Select>
                       </TableCell>
                       <TableCell>
-                        {!cat.isSystem && (
+                        {canManageCatalog && !cat.isSystem && (
                           // ВЫЗЫВАЕМ МОДАЛКУ ВМЕСТО ПРЯМОГО УДАЛЕНИЯ
                           <Button
                             variant="ghost"
@@ -558,7 +644,7 @@ export default function CatalogPage() {
                   {categories.length === 0 && (
                     <TableRow>
                       <TableCell
-                        colSpan={5}
+                        colSpan={6}
                         className="text-center py-6 text-muted-foreground"
                       >
                         Нет созданных категорий

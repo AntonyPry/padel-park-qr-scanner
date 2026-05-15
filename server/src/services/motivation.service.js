@@ -1,6 +1,5 @@
 const db = require('../../models');
 const { DEFAULT_MOTIVATION_RULES } = require('../constants/motivation-rules');
-const { DEFAULT_BONUS_RULES } = require('../constants/motivation-bonus-rules');
 
 const DEFAULT_BASE_RULES = DEFAULT_MOTIVATION_RULES.filter(
   (rule) => rule.group === 'base',
@@ -106,63 +105,6 @@ function normalizeBonusRule(rule) {
   };
 }
 
-async function getStoredRuleValueMap() {
-  const rules = await db.MotivationRule.findAll();
-  const values = DEFAULT_MOTIVATION_RULES.reduce((acc, rule) => {
-    acc[rule.key] = Number(rule.value);
-    return acc;
-  }, {});
-
-  rules.forEach((rule) => {
-    values[rule.key] = Number(rule.value);
-  });
-
-  return values;
-}
-
-async function ensureDefaultBonusRules() {
-  const count = await db.MotivationBonusRule.count();
-  if (count > 0) return;
-
-  const values = await getStoredRuleValueMap();
-  const categoryNames = Array.from(
-    new Set(DEFAULT_BONUS_RULES.flatMap((rule) => rule.categoryNames)),
-  );
-  const categories = categoryNames.length
-    ? await db.Category.findAll({
-        where: {
-          name: {
-            [db.Sequelize.Op.in]: categoryNames,
-          },
-        },
-      })
-    : [];
-  const categoryByName = new Map(
-    categories.map((category) => [category.name, category]),
-  );
-
-  for (const rule of DEFAULT_BONUS_RULES) {
-    const bonusRule = await db.MotivationBonusRule.create({
-      name: rule.name,
-      description: rule.description,
-      bonusPercent: Number(values[rule.bonusPercentKey]) || 0,
-      thresholdType: rule.thresholdType,
-      thresholdValue: rule.thresholdValueKey
-        ? Number(values[rule.thresholdValueKey]) || 0
-        : 0,
-      sortOrder: rule.sortOrder,
-      isActive: rule.isActive,
-    });
-    const linkedCategories = rule.categoryNames
-      .map((categoryName) => categoryByName.get(categoryName))
-      .filter(Boolean);
-
-    if (linkedCategories.length > 0) {
-      await bonusRule.setCategories(linkedCategories);
-    }
-  }
-}
-
 async function getAvailableCategories() {
   const categories = await db.Category.findAll({
     where: {
@@ -176,8 +118,6 @@ async function getAvailableCategories() {
 }
 
 async function getBonusRules() {
-  await ensureDefaultBonusRules();
-
   const rules = await db.MotivationBonusRule.findAll({
     include: [
       {
@@ -262,6 +202,60 @@ async function normalizeCategoryIds(categoryIds = []) {
   return normalizedIds;
 }
 
+async function assertCategoriesAvailable(categoryIds, ownerRuleId = null) {
+  if (categoryIds.length === 0) return;
+
+  const where = {
+    categoryId: {
+      [db.Sequelize.Op.in]: categoryIds,
+    },
+  };
+
+  if (ownerRuleId) {
+    where.bonusRuleId = {
+      [db.Sequelize.Op.ne]: Number(ownerRuleId),
+    };
+  }
+
+  const existingLinks = await db.MotivationBonusRuleCategory.findAll({ where });
+  if (existingLinks.length === 0) return;
+
+  const [categories, rules] = await Promise.all([
+    db.Category.findAll({
+      where: {
+        id: {
+          [db.Sequelize.Op.in]: existingLinks.map((link) => link.categoryId),
+        },
+      },
+    }),
+    db.MotivationBonusRule.findAll({
+      where: {
+        id: {
+          [db.Sequelize.Op.in]: existingLinks.map((link) => link.bonusRuleId),
+        },
+      },
+    }),
+  ]);
+  const categoryById = new Map(
+    categories.map((category) => [category.id, category.name]),
+  );
+  const ruleById = new Map(rules.map((rule) => [rule.id, rule.name]));
+  const conflicts = existingLinks
+    .map((link) => {
+      const categoryName = categoryById.get(link.categoryId);
+      const ruleName = ruleById.get(link.bonusRuleId);
+      if (!categoryName || !ruleName) return null;
+      return `${categoryName} уже в мотивации «${ruleName}»`;
+    })
+    .filter(Boolean);
+
+  throw validationError(
+    conflicts.length > 0
+      ? conflicts.join(', ')
+      : 'Категория уже используется в другой мотивации',
+  );
+}
+
 async function getBonusRuleOrFail(id) {
   const rule = await db.MotivationBonusRule.findByPk(id);
   if (!rule) {
@@ -289,6 +283,7 @@ async function findBonusRuleWithCategories(id) {
 async function createBonusRule(data) {
   const payload = normalizeBonusRulePayload(data);
   const categoryIds = await normalizeCategoryIds(data.categoryIds || []);
+  await assertCategoriesAvailable(categoryIds);
   const maxSortOrder = await db.MotivationBonusRule.max('sortOrder');
 
   const rule = await db.MotivationBonusRule.create({
@@ -314,10 +309,40 @@ async function updateBonusRule(id, data) {
 
   if (Array.isArray(data.categoryIds)) {
     const categoryIds = await normalizeCategoryIds(data.categoryIds);
+    await assertCategoriesAvailable(categoryIds, rule.id);
     await rule.setCategories(categoryIds);
   }
 
   return findBonusRuleWithCategories(rule.id);
+}
+
+async function assignCategoryToBonusRule(categoryId, bonusRuleId) {
+  const [normalizedCategoryId] = await normalizeCategoryIds([categoryId]);
+
+  if (!bonusRuleId) {
+    await db.MotivationBonusRuleCategory.destroy({
+      where: { categoryId: normalizedCategoryId },
+    });
+    return getBonusRules();
+  }
+
+  const rule = await getBonusRuleOrFail(bonusRuleId);
+
+  await db.sequelize.transaction(async (transaction) => {
+    await db.MotivationBonusRuleCategory.destroy({
+      where: { categoryId: normalizedCategoryId },
+      transaction,
+    });
+    await db.MotivationBonusRuleCategory.create(
+      {
+        bonusRuleId: rule.id,
+        categoryId: normalizedCategoryId,
+      },
+      { transaction },
+    );
+  });
+
+  return getBonusRules();
 }
 
 async function deleteBonusRule(id) {
@@ -514,6 +539,7 @@ function calculateShiftBonus(items, bonusRules = []) {
 module.exports = {
   calculateBasePay,
   calculateShiftBonus,
+  assignCategoryToBonusRule,
   createBonusRule,
   deleteBonusRule,
   getAvailableCategories,

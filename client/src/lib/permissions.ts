@@ -3,11 +3,12 @@ import type { AccountRole } from '@/lib/roles';
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
-  '/admin/finances': ['owner', 'accountant', 'viewer'],
+  '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant', 'viewer'],
+  '/admin/users': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
-  '/admin/catalog': ['owner', 'accountant'],
+  '/admin/catalog': ['owner', 'manager', 'accountant'],
 };
 
 export function hasRoleAccess(
@@ -37,6 +38,10 @@ export function canManageFinance(role: AccountRole | null | undefined) {
 }
 
 export function canManageStaff(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManageSystemUsers(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
 }
 
