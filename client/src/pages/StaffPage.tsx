@@ -39,15 +39,11 @@ import {
   RefreshCw,
   AlertTriangle,
   CheckCircle2,
+  Pencil,
+  Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
-import {
-  ACCOUNT_ROLES,
-  getAccountRoleDescription,
-  getAccountRoleLabel,
-  type AccountRole,
-} from '@/lib/roles';
 import { canManageShifts, canManageStaff } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 
@@ -83,20 +79,24 @@ interface ShiftRecord {
   items: PayrollItem[];
 }
 
-interface StaffAccount {
-  id: number;
-  email: string;
-  role: AccountRole;
-  status: string;
-}
-
 interface StaffMember {
   id: number;
   name: string;
-  role: string;
+  position?: string;
+  role?: string;
   phone?: string | null;
   status: 'active' | 'inactive' | string;
-  Account?: StaffAccount | null;
+}
+
+const emptyStaffForm = {
+  name: '',
+  phone: '',
+  position: 'Администратор',
+  status: 'active',
+};
+
+function getStaffPosition(staff: StaffMember) {
+  return staff.position || staff.role || '-';
 }
 
 export default function StaffPage() {
@@ -116,6 +116,7 @@ export default function StaffPage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isStaffModalOpen, setIsStaffModalOpen] = useState(false);
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null);
   const [detailModal, setDetailModal] = useState<{
     isOpen: boolean;
     shift: ShiftRecord | null;
@@ -129,14 +130,7 @@ export default function StaffPage() {
     hours: '',
     comment: '',
   });
-  const [staffForm, setStaffForm] = useState({
-    name: '',
-    role: 'Администратор',
-    phone: '',
-    email: '',
-    password: '',
-    accountRole: 'admin' as AccountRole,
-  });
+  const [staffForm, setStaffForm] = useState(emptyStaffForm);
 
   const fetchPayroll = useCallback(async () => {
     setLoading(true);
@@ -246,39 +240,75 @@ export default function StaffPage() {
     setIsModalOpen(true);
   };
 
+  const openStaffForm = (item?: StaffMember) => {
+    if (item) {
+      setEditingStaff(item);
+      setStaffForm({
+        name: item.name,
+        phone: item.phone || '',
+        position: getStaffPosition(item),
+        status: item.status === 'inactive' ? 'inactive' : 'active',
+      });
+    } else {
+      setEditingStaff(null);
+      setStaffForm(emptyStaffForm);
+    }
+
+    setIsStaffModalOpen(true);
+  };
+
+  const closeStaffForm = () => {
+    setIsStaffModalOpen(false);
+    setEditingStaff(null);
+    setStaffForm(emptyStaffForm);
+  };
+
   const handleSaveStaff = async (e: React.FormEvent) => {
     e.preventDefault();
 
     try {
       const payload = {
         name: staffForm.name.trim(),
-        role: staffForm.role.trim(),
+        position: staffForm.position.trim(),
         phone: staffForm.phone.trim() || undefined,
-        email: staffForm.email.trim() || undefined,
-        password: staffForm.password || undefined,
-        accountRole: staffForm.email.trim() ? staffForm.accountRole : undefined,
+        status: staffForm.status,
       };
 
-      const res = await apiFetch('/api/staff', {
-        method: 'POST',
-        body: JSON.stringify(payload),
+      const res = await apiFetch(
+        editingStaff ? `/api/staff/${editingStaff.id}` : '/api/staff',
+        {
+          method: editingStaff ? 'PUT' : 'POST',
+          body: JSON.stringify(payload),
+        },
+      );
+
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        alert(data.error || 'Не удалось сохранить сотрудника');
+        return;
+      }
+
+      closeStaffForm();
+      fetchPayroll();
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleDeleteStaff = async (item: StaffMember) => {
+    if (!confirm(`Удалить сотрудника ${item.name}?`)) return;
+
+    try {
+      const res = await apiFetch(`/api/staff/${item.id}`, {
+        method: 'DELETE',
       });
 
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        alert(data.error || 'Не удалось создать сотрудника');
+        alert(data.error || 'Не удалось удалить сотрудника');
         return;
       }
 
-      setIsStaffModalOpen(false);
-      setStaffForm({
-        name: '',
-        role: 'Администратор',
-        phone: '',
-        email: '',
-        password: '',
-        accountRole: 'admin',
-      });
       fetchPayroll();
     } catch (e) {
       console.error(e);
@@ -318,14 +348,16 @@ export default function StaffPage() {
   };
 
   return (
-    <div className="p-6 md:p-8 space-y-6">
+    <div className="min-w-0 p-4 md:p-8 space-y-6">
       {/* ШАПКА */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Администраторы</h1>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Персонал и смены
+          </h1>
           <p className="text-muted-foreground mt-1 text-sm max-w-2xl">
             Черновики смен создаются автоматически по дням, где есть кассовые
-            операции. Ты только указываешь администратора и рабочие часы.
+            операции. Здесь живут сотрудники, смены и расчет начислений.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
@@ -374,7 +406,7 @@ export default function StaffPage() {
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
           {canEditStaff && (
-            <Button variant="outline" onClick={() => setIsStaffModalOpen(true)}>
+            <Button variant="outline" onClick={() => openStaffForm()}>
               <Plus className="w-4 h-4 mr-2" /> Сотрудник
             </Button>
           )}
@@ -387,7 +419,7 @@ export default function StaffPage() {
       </div>
 
       {/* KPI КАРТОЧКИ */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         <Card>
           <CardContent className="pt-6">
             <div className="text-xs text-muted-foreground font-medium">
@@ -438,7 +470,7 @@ export default function StaffPage() {
         </Card>
       </div>
 
-      <div className="border rounded-md bg-card">
+      <div className="border rounded-md bg-card overflow-x-auto">
         <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold">Сотрудники</div>
@@ -450,20 +482,20 @@ export default function StaffPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setIsStaffModalOpen(true)}
+              onClick={() => openStaffForm()}
             >
               <Plus className="w-4 h-4 mr-2" /> Добавить
             </Button>
           )}
         </div>
-        <Table>
+        <Table className="min-w-[760px] table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead>Имя</TableHead>
-              <TableHead>Роль</TableHead>
-              <TableHead>Телефон</TableHead>
-              <TableHead>Аккаунт</TableHead>
-              <TableHead>Статус</TableHead>
+              <TableHead className="w-[28%]">Имя</TableHead>
+              <TableHead className="w-[26%]">Должность</TableHead>
+              <TableHead className="w-[20%]">Телефон</TableHead>
+              <TableHead className="w-[14%]">Статус</TableHead>
+              <TableHead className="w-[12%] text-right"></TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -479,27 +511,40 @@ export default function StaffPage() {
             )}
             {staff.map((item) => (
               <TableRow key={item.id}>
-                <TableCell className="font-medium">{item.name}</TableCell>
-                <TableCell>{item.role}</TableCell>
-                <TableCell className="text-muted-foreground">
-                  {item.phone || '-'}
+                <TableCell className="font-medium truncate">
+                  {item.name}
                 </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {item.Account ? (
-                    <div>
-                      <div>{item.Account.email}</div>
-                      <div className="text-xs">
-                        {getAccountRoleLabel(item.Account.role)}
-                      </div>
-                    </div>
-                  ) : (
-                    '-'
-                  )}
+                <TableCell className="truncate">
+                  {getStaffPosition(item)}
+                </TableCell>
+                <TableCell className="text-muted-foreground truncate">
+                  {item.phone || '-'}
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline">
                     {item.status === 'active' ? 'Активен' : 'Отключен'}
                   </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  {canEditStaff && (
+                    <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => openStaffForm(item)}
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        onClick={() => void handleDeleteStaff(item)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  )}
                 </TableCell>
               </TableRow>
             ))}
@@ -508,8 +553,8 @@ export default function StaffPage() {
       </div>
 
       {/* ЖУРНАЛ СМЕН */}
-      <div className="border rounded-md bg-card">
-        <Table>
+      <div className="border rounded-md bg-card overflow-x-auto">
+        <Table className="min-w-[980px]">
           <TableHeader>
             <TableRow>
               <TableHead>Дата</TableHead>
@@ -626,8 +671,8 @@ export default function StaffPage() {
       </div>
 
       {/* ТАБЛИЦА АГРЕГАЦИИ ПО АДМИНАМ */}
-      <div className="border rounded-md bg-card mt-8">
-        <Table>
+      <div className="border rounded-md bg-card mt-8 overflow-x-auto">
+        <Table className="min-w-[720px]">
           <TableHeader>
             <TableRow>
               <TableHead>Администратор</TableHead>
@@ -671,13 +716,18 @@ export default function StaffPage() {
         </Table>
       </div>
 
-      <Dialog open={isStaffModalOpen} onOpenChange={setIsStaffModalOpen}>
+      <Dialog
+        open={isStaffModalOpen}
+        onOpenChange={(open) => (open ? setIsStaffModalOpen(true) : closeStaffForm())}
+      >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Новый сотрудник</DialogTitle>
+            <DialogTitle>
+              {editingStaff ? 'Редактировать сотрудника' : 'Новый сотрудник'}
+            </DialogTitle>
             <div className="text-sm text-muted-foreground">
-              Аккаунт можно создать сразу, если сотрудник будет входить в
-              панель.
+              Сотрудник используется в сменах, payroll и операционной логике.
+              Доступ в CRM создается в разделе пользователей.
             </div>
           </DialogHeader>
           <form onSubmit={handleSaveStaff} className="space-y-4 pt-2">
@@ -692,12 +742,14 @@ export default function StaffPage() {
               />
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">Роль</label>
+              <label className="text-xs font-medium mb-1 block">
+                Должность
+              </label>
               <Input
                 required
-                value={staffForm.role}
+                value={staffForm.position}
                 onChange={(e) =>
-                  setStaffForm({ ...staffForm, role: e.target.value })
+                  setStaffForm({ ...staffForm, position: e.target.value })
                 }
               />
             </div>
@@ -710,65 +762,25 @@ export default function StaffPage() {
                 }
               />
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <div>
-                <label className="text-xs font-medium mb-1 block">Email</label>
-                <Input
-                  type="email"
-                  value={staffForm.email}
-                  onChange={(e) =>
-                    setStaffForm({ ...staffForm, email: e.target.value })
-                  }
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium mb-1 block">
-                  Пароль
-                </label>
-                <Input
-                  type="password"
-                  value={staffForm.password}
-                  onChange={(e) =>
-                    setStaffForm({ ...staffForm, password: e.target.value })
-                  }
-                  minLength={staffForm.email ? 6 : undefined}
-                  required={Boolean(staffForm.email)}
-                />
-              </div>
-            </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">
-                Права аккаунта
-              </label>
+              <label className="text-xs font-medium mb-1 block">Статус</label>
               <Select
-                value={staffForm.accountRole}
-                onValueChange={(accountRole) =>
-                  setStaffForm({
-                    ...staffForm,
-                    accountRole: accountRole as AccountRole,
-                  })
+                value={staffForm.status}
+                onValueChange={(status) =>
+                  setStaffForm({ ...staffForm, status })
                 }
-                disabled={!staffForm.email}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {ACCOUNT_ROLES.filter((role) => role.value !== 'owner').map(
-                    (role) => (
-                      <SelectItem key={role.value} value={role.value}>
-                        {role.label}
-                      </SelectItem>
-                    ),
-                  )}
+                  <SelectItem value="active">Активен</SelectItem>
+                  <SelectItem value="inactive">Отключен</SelectItem>
                 </SelectContent>
               </Select>
-              <p className="text-xs text-muted-foreground mt-1">
-                {getAccountRoleDescription(staffForm.accountRole)}
-              </p>
             </div>
             <Button type="submit" className="w-full">
-              Создать
+              {editingStaff ? 'Сохранить' : 'Создать'}
             </Button>
           </form>
         </DialogContent>
@@ -822,7 +834,7 @@ export default function StaffPage() {
                 <SelectContent>
                   {activeStaff.map((item) => (
                     <SelectItem key={item.id} value={String(item.id)}>
-                      {item.name} · {item.role}
+                      {item.name} · {getStaffPosition(item)}
                     </SelectItem>
                   ))}
                   {activeStaff.length === 0 && (
@@ -892,14 +904,14 @@ export default function StaffPage() {
             </Badge>
           </div>
 
-          <div className="flex-1 overflow-y-auto px-6 py-2">
-            <Table>
+          <div className="flex-1 overflow-auto px-4 py-2 sm:px-6">
+            <Table className="min-w-[560px] table-fixed">
               <TableHeader>
                 <TableRow>
-                  <TableHead>Позиция</TableHead>
-                  <TableHead className="text-right">Кол-во</TableHead>
-                  <TableHead className="text-right">Сумма</TableHead>
-                  <TableHead className="text-right">Бонус</TableHead>
+                  <TableHead className="w-[40%]">Позиция</TableHead>
+                  <TableHead className="w-[14%] text-right">Кол-во</TableHead>
+                  <TableHead className="w-[20%] text-right">Сумма</TableHead>
+                  <TableHead className="w-[26%] text-right">Бонус</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -918,9 +930,9 @@ export default function StaffPage() {
                     key={idx}
                     className={item.bucket ? getBucketStyles(item.bucket) : ''}
                   >
-                    <TableCell>
-                      <div className="font-medium">{item.name}</div>
-                      <div className="text-xs opacity-70 mt-0.5">
+                    <TableCell className="align-top whitespace-normal">
+                      <div className="font-medium break-words">{item.name}</div>
+                      <div className="text-xs opacity-70 mt-0.5 break-words">
                         {item.category}
                       </div>
                     </TableCell>
@@ -928,13 +940,13 @@ export default function StaffPage() {
                     <TableCell className="text-right font-medium">
                       {item.sum.toLocaleString('ru-RU')} ₽
                     </TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="text-right align-top whitespace-normal">
                       {Number(item.bonus) > 0 ? (
                         <div>
                           <div className="font-medium text-green-600">
                             +{Number(item.bonus).toLocaleString('ru-RU')} ₽
                           </div>
-                          <div className="text-xs text-muted-foreground">
+                          <div className="text-xs text-muted-foreground break-words">
                             {item.bonusRuleNames?.join(', ')}
                           </div>
                         </div>

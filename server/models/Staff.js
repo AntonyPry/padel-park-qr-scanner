@@ -6,7 +6,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     role: {
       type: DataTypes.STRING,
-      allowNull: false, // Например: 'Админ', 'Тренер', 'Оператор'
+      allowNull: false, // Должность: 'Администратор', 'Тренер', 'Оператор'
     },
     phone: {
       type: DataTypes.STRING,

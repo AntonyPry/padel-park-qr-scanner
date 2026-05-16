@@ -1,100 +1,82 @@
 const db = require('../../models');
-const authService = require('./auth.service');
-const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 
-const ACCOUNT_ATTRIBUTES = [
-  'id',
-  'email',
-  'role',
-  'status',
-  'lastLoginAt',
-  'staffId',
-];
+function appError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
 
-function getStaffById(id) {
-  return db.Staff.findByPk(id, {
-    include: [{ model: db.Account, attributes: ACCOUNT_ATTRIBUTES }],
-  });
+function serializeStaff(staff) {
+  if (!staff) return null;
+
+  const raw = staff.toJSON ? staff.toJSON() : staff;
+  return {
+    ...raw,
+    position: raw.position || raw.role,
+  };
+}
+
+function normalizePayload(data) {
+  const name = String(data.name || '').trim();
+  const position = String(data.position || data.role || '').trim();
+  const status = data.status || 'active';
+
+  if (!name || !position) {
+    throw appError('Имя и должность сотрудника обязательны');
+  }
+
+  if (!['active', 'inactive'].includes(status)) {
+    throw appError('Неизвестный статус сотрудника');
+  }
+
+  return {
+    name,
+    role: position,
+    phone: data.phone ? String(data.phone).trim() : null,
+    status,
+  };
+}
+
+async function getStaffById(id) {
+  return serializeStaff(await db.Staff.findByPk(id));
 }
 
 async function getAll() {
-  return db.Staff.findAll({
-    include: [{ model: db.Account, attributes: ACCOUNT_ATTRIBUTES }],
+  const staff = await db.Staff.findAll({
     order: [['createdAt', 'DESC']],
   });
+
+  return staff.map(serializeStaff);
 }
 
 async function create(data) {
-  const {
-    name,
-    role,
-    phone,
-    status = 'active',
-    email,
-    password,
-    accountRole = 'admin',
-  } = data;
+  const staff = await db.Staff.create(normalizePayload(data));
 
-  if (!name || !role) {
-    const error = new Error('Имя и роль сотрудника обязательны');
-    error.statusCode = 400;
-    throw error;
-  }
+  return getStaffById(staff.id);
+}
 
-  if (email && !password) {
-    const error = new Error('Для аккаунта сотрудника нужен пароль');
-    error.statusCode = 400;
-    throw error;
-  }
+async function update(id, data) {
+  const staff = await db.Staff.findByPk(id);
+  if (!staff) throw appError('Сотрудник не найден', 404);
 
-  if (email && !ACCOUNT_ROLE_VALUES.includes(accountRole)) {
-    const error = new Error('Неизвестная роль аккаунта');
-    error.statusCode = 400;
-    throw error;
-  }
+  await staff.update(normalizePayload(data));
 
-  const transaction = await db.sequelize.transaction();
+  return getStaffById(staff.id);
+}
 
-  try {
-    const staff = await db.Staff.create(
-      {
-        name: String(name).trim(),
-        role: String(role).trim(),
-        phone: phone || null,
-        status,
-      },
-      { transaction },
-    );
+async function remove(id) {
+  const staff = await db.Staff.findByPk(id);
+  if (!staff) throw appError('Сотрудник не найден', 404);
 
-    if (email) {
-      await db.Account.create(
-        {
-          staffId: staff.id,
-          email: String(email).trim().toLowerCase(),
-          passwordHash: authService.hashPassword(password),
-          role: accountRole,
-          status: 'active',
-        },
-        { transaction },
-      );
-    }
+  await staff.destroy();
 
-    await transaction.commit();
-    return getStaffById(staff.id);
-  } catch (error) {
-    await transaction.rollback();
-
-    if (error.name === 'SequelizeUniqueConstraintError') {
-      error.statusCode = 409;
-      error.message = 'Аккаунт с таким email уже существует';
-    }
-
-    throw error;
-  }
+  return { success: true };
 }
 
 module.exports = {
   getStaffById,
   getAll,
   create,
+  remove,
+  update,
 };

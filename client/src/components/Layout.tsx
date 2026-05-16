@@ -18,13 +18,15 @@ export const Layout = () => {
     <SidebarProvider>
       <AppSidebar />
 
-      <SidebarInset>
-        <header className="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-card px-6">
+      <SidebarInset className="min-w-0">
+        <header className="flex h-16 min-w-0 shrink-0 items-center gap-4 border-b border-border bg-card px-6">
           <SidebarTrigger className="h-10 w-10 border bg-background" />
-          <span className="font-bold text-primary">Панель управления</span>
-          <div className="ml-auto flex items-center gap-3">
+          <span className="font-bold text-primary truncate">
+            Панель управления
+          </span>
+          <div className="ml-auto flex min-w-0 items-center gap-3">
             {displayName && (
-              <span className="hidden sm:inline text-sm text-muted-foreground">
+              <span className="hidden sm:inline truncate text-sm text-muted-foreground">
                 {displayName} · {getAccountRoleLabel(account?.role)}
               </span>
             )}
@@ -35,7 +37,7 @@ export const Layout = () => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-auto">
+        <main className="min-w-0 flex-1 overflow-auto">
           <Outlet />
         </main>
       </SidebarInset>

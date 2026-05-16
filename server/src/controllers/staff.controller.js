@@ -14,11 +14,33 @@ class StaffController {
   async create(req, res) {
     try {
       const staff = await staffService.create(req.body);
-      res.json(staff);
+      res.status(201).json(staff);
     } catch (error) {
       res
         .status(error.statusCode || 500)
         .json({ error: error.message || 'Ошибка добавления' });
+    }
+  }
+
+  async update(req, res) {
+    try {
+      const staff = await staffService.update(req.params.id, req.body);
+      res.json(staff);
+    } catch (error) {
+      res
+        .status(error.statusCode || 500)
+        .json({ error: error.message || 'Ошибка обновления' });
+    }
+  }
+
+  async remove(req, res) {
+    try {
+      const result = await staffService.remove(req.params.id);
+      res.json(result);
+    } catch (error) {
+      res
+        .status(error.statusCode || 500)
+        .json({ error: error.message || 'Ошибка удаления' });
     }
   }
 }

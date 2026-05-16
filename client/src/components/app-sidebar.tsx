@@ -4,6 +4,7 @@ import {
   Database,
   LayoutDashboard,
   LineChart,
+  UserCog,
   Users,
   Wallet,
 } from 'lucide-react';
@@ -42,6 +43,11 @@ const items = [
     title: 'Персонал',
     url: '/admin/staff',
     icon: Users,
+  },
+  {
+    title: 'Пользователи',
+    url: '/admin/users',
+    icon: UserCog,
   },
   {
     title: 'Мотивацию поднимаем',

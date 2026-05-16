@@ -12,6 +12,7 @@ import VisitsAnalyticsPage from './pages/VisitsAnalyticsPage';
 import UtilizationPage from './pages/UtilizationPage';
 import CatalogPage from './pages/CatalogPage';
 import AdminMotivationPage from './pages/AdminMotivationPage';
+import SystemUsersPage from './pages/SystemUsersPage';
 
 function App() {
   return (
@@ -43,6 +44,14 @@ function App() {
                   element={
                     <RequireRoles roles={ROUTE_ACCESS['/admin/finances']}>
                       <FinancePage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/users"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/users']}>
+                      <SystemUsersPage />
                     </RequireRoles>
                   }
                 />

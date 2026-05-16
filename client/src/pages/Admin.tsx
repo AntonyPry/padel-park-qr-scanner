@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import {
   UserPlus,
@@ -84,13 +84,61 @@ interface SearchUser {
 
 interface SerialPortLike {
   open: (options: { baudRate: number }) => Promise<void>;
-  readable: ReadableStream<BufferSource>;
+  close: () => Promise<void>;
+  readable: ReadableStream<Uint8Array> | null;
 }
 
 interface NavigatorWithSerial extends Navigator {
   serial?: {
     requestPort: () => Promise<SerialPortLike>;
+    addEventListener?: (
+      type: 'disconnect',
+      listener: (event: Event) => void,
+    ) => void;
+    removeEventListener?: (
+      type: 'disconnect',
+      listener: (event: Event) => void,
+    ) => void;
   };
+}
+
+function getPhoneDigits(value: string) {
+  const digits = value.replace(/\D/g, '');
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function formatClientPhone(value: string) {
+  let digits = value.replace(/\D/g, '');
+  if (!digits) return '';
+
+  if (digits.startsWith('8')) {
+    digits = `7${digits.slice(1)}`;
+  }
+
+  if (!digits.startsWith('7')) {
+    digits = `7${digits}`;
+  }
+
+  const local = digits.slice(1, 11);
+  let formatted = '+7';
+
+  if (local.length > 0) {
+    formatted += ` (${local.slice(0, 3)}`;
+  }
+  if (local.length >= 3) {
+    formatted += ')';
+  }
+  if (local.length > 3) {
+    formatted += ` ${local.slice(3, 6)}`;
+  }
+  if (local.length > 6) {
+    formatted += `-${local.slice(6, 8)}`;
+  }
+  if (local.length > 8) {
+    formatted += `-${local.slice(8, 10)}`;
+  }
+
+  return formatted;
 }
 
 export default function AdminPage() {
@@ -105,8 +153,13 @@ export default function AdminPage() {
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scannerStatus, setScannerStatus] = useState<
-    'disconnected' | 'connected'
+    'disconnected' | 'connecting' | 'connected'
   >('disconnected');
+  const portRef = useRef<SerialPortLike | null>(null);
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(
+    null,
+  );
+  const scannerActiveRef = useRef(false);
 
   const [regForm, setRegForm] = useState({
     name: '',
@@ -175,8 +228,105 @@ export default function AdminPage() {
     };
   }, []);
 
+  const submitScan = async (qrCode: string) => {
+    try {
+      await apiFetch('/api/scan', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ qr: qrCode }),
+      });
+    } catch (e) {
+      console.error('Ошибка сканера:', e);
+    }
+  };
+
+  const closeScannerPort = useCallback(async () => {
+    scannerActiveRef.current = false;
+
+    const reader = readerRef.current;
+    if (reader) {
+      try {
+        await reader.cancel();
+      } catch {
+        // reader may already be released after a hardware disconnect
+      }
+      setScannerStatus('disconnected');
+      return;
+    }
+
+    const port = portRef.current;
+    if (port) {
+      try {
+        await port.close();
+      } catch {
+        // Chrome may already close the port on physical disconnect
+      }
+      if (portRef.current === port) {
+        portRef.current = null;
+      }
+    }
+
+    setScannerStatus('disconnected');
+  }, []);
+
+  const readScannerLoop = async (port: SerialPortLike) => {
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (scannerActiveRef.current && port.readable) {
+        const readable = port.readable;
+        if (!readable) break;
+
+        const reader = readable.getReader();
+        readerRef.current = reader;
+
+        try {
+          while (scannerActiveRef.current) {
+            const { value, done } = await reader.read();
+            if (done) break;
+
+            if (value) {
+              buffer += decoder.decode(value, { stream: true });
+
+              let newlineIndex;
+              while ((newlineIndex = buffer.search(/[\r\n]/)) !== -1) {
+                const qrCode = buffer.slice(0, newlineIndex).trim();
+                buffer = buffer.slice(newlineIndex + 1);
+
+                if (qrCode) {
+                  await submitScan(qrCode);
+                }
+              }
+            }
+          }
+        } finally {
+          if (readerRef.current === reader) {
+            readerRef.current = null;
+          }
+          try {
+            reader.releaseLock();
+          } catch {
+            // reader can be unlocked by Chrome when the device disappears
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Сканер отключился или перестал отдавать данные:', error);
+    } finally {
+      if (portRef.current === port) {
+        await closeScannerPort();
+      } else {
+        scannerActiveRef.current = false;
+        setScannerStatus('disconnected');
+      }
+    }
+  };
+
   // --- ЛОГИКА СКАНЕРА ---
   const connectScanner = async () => {
+    if (scannerStatus !== 'disconnected' || scannerActiveRef.current) return;
+
     const serial = (navigator as NavigatorWithSerial).serial;
 
     if (!serial) {
@@ -186,50 +336,48 @@ export default function AdminPage() {
       return;
     }
 
+    let port: SerialPortLike | null = null;
+
     try {
-      const port = await serial.requestPort();
+      setScannerStatus('connecting');
+      port = await serial.requestPort();
       await port.open({ baudRate: 9600 });
+      portRef.current = port;
+      scannerActiveRef.current = true;
       setScannerStatus('connected');
-
-      const textDecoder = new TextDecoderStream();
-      port.readable.pipeTo(textDecoder.writable);
-      const reader = textDecoder.readable.getReader();
-
-      let buffer = '';
-
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) {
-          reader.releaseLock();
-          break;
-        }
-
-        if (value) {
-          buffer += value;
-          let newlineIndex;
-          while ((newlineIndex = buffer.search(/[\r\n]/)) !== -1) {
-            const qrCode = buffer.slice(0, newlineIndex).trim();
-            buffer = buffer.slice(newlineIndex + 1);
-
-            if (qrCode) {
-              try {
-                await apiFetch('/api/scan', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ qr: qrCode }),
-                });
-              } catch (e) {
-                console.error('Ошибка сканера:', e);
-              }
-            }
-          }
-        }
-      }
+      void readScannerLoop(port);
     } catch (error) {
       console.error('Ошибка порта:', error);
+      if (port) {
+        try {
+          await port.close();
+        } catch {
+          // ignore cleanup errors after a failed open attempt
+        }
+      }
+      scannerActiveRef.current = false;
+      portRef.current = null;
       setScannerStatus('disconnected');
     }
   };
+
+  useEffect(() => {
+    const serial = (navigator as NavigatorWithSerial).serial;
+    if (!serial?.addEventListener || !serial.removeEventListener) return;
+
+    const handleDisconnect = (event: Event) => {
+      const disconnectedPort = event.target as unknown as SerialPortLike | null;
+      if (!portRef.current || disconnectedPort === portRef.current) {
+        void closeScannerPort();
+      }
+    };
+
+    serial.addEventListener('disconnect', handleDisconnect);
+    return () => {
+      serial.removeEventListener?.('disconnect', handleDisconnect);
+      void closeScannerPort();
+    };
+  }, [closeScannerPort]);
 
   const playSound = (type: 'success' | 'error') => {
     const url =
@@ -279,8 +427,7 @@ export default function AdminPage() {
   };
 
   const handlePhoneInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = e.target.value.replace(/[^\d+()\s-]/g, '');
-    setRegForm({ ...regForm, phone: val });
+    setRegForm({ ...regForm, phone: formatClientPhone(e.target.value) });
   };
 
   const handleNameInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -302,7 +449,7 @@ export default function AdminPage() {
       setRegError('Введите корректное имя');
       return;
     }
-    if (regForm.phone.replace(/\D/g, '').length < 10) {
+    if (getPhoneDigits(regForm.phone).length < 10) {
       setRegError('Слишком короткий номер телефона');
       return;
     }
@@ -413,11 +560,15 @@ export default function AdminPage() {
                   : ''
               }
               onClick={connectScanner}
-              disabled={scannerStatus === 'connected'}
+              disabled={scannerStatus !== 'disconnected'}
             >
               {scannerStatus === 'connected' ? (
                 <>
                   <Usb className="w-4 h-4 mr-2" /> Сканер активен
+                </>
+              ) : scannerStatus === 'connecting' ? (
+                <>
+                  <Usb className="w-4 h-4 mr-2 animate-pulse" /> Подключение...
                 </>
               ) : (
                 <>
@@ -765,6 +916,8 @@ export default function AdminPage() {
                 required
                 type="tel"
                 placeholder="+7 (999) 000-00-00"
+                inputMode="tel"
+                maxLength={18}
                 value={regForm.phone}
                 onChange={handlePhoneInput}
               />

@@ -7,17 +7,81 @@ function normalizeQr(rawQr) {
   return String(rawQr).replace(/[\s@\r\n]/g, '');
 }
 
+function normalizePhone(phone) {
+  return String(phone || '').replace(/\D/g, '');
+}
+
+function getPhoneLookupDigits(phone) {
+  const digits = normalizePhone(phone);
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+function normalizedPhoneColumn() {
+  const { col, fn } = db.Sequelize;
+
+  return fn(
+    'REPLACE',
+    fn(
+      'REPLACE',
+      fn(
+        'REPLACE',
+        fn('REPLACE', fn('REPLACE', col('phone'), '+', ''), ' ', ''),
+        '(',
+        '',
+      ),
+      ')',
+      '',
+    ),
+    '-',
+    '',
+  );
+}
+
 async function searchUsers(query) {
-  if (!query || query.length < 2) return [];
+  const normalizedQuery = String(query || '').trim();
+  if (normalizedQuery.length < 2) return [];
+
+  const phoneDigits = normalizePhone(normalizedQuery);
+  const conditions = [
+    { name: { [Op.like]: `%${normalizedQuery}%` } },
+    { phone: { [Op.like]: `%${normalizedQuery}%` } },
+  ];
+
+  if (phoneDigits.length >= 2) {
+    conditions.push(
+      db.Sequelize.where(normalizedPhoneColumn(), {
+        [Op.like]: `%${phoneDigits}%`,
+      }),
+    );
+
+    const localDigits = getPhoneLookupDigits(phoneDigits);
+    if (localDigits !== phoneDigits && localDigits.length >= 2) {
+      conditions.push(
+        db.Sequelize.where(normalizedPhoneColumn(), {
+          [Op.like]: `%${localDigits}%`,
+        }),
+      );
+    }
+  }
 
   return db.User.findAll({
     where: {
-      [Op.or]: [
-        { name: { [Op.like]: `%${query}%` } },
-        { phone: { [Op.like]: `%${query}%` } },
-      ],
+      [Op.or]: conditions,
     },
-    limit: 5,
+    order: [['createdAt', 'DESC']],
+    limit: 10,
+  });
+}
+
+async function findUserByPhone(phone) {
+  const phoneDigits = getPhoneLookupDigits(phone);
+  if (phoneDigits.length < 10) return null;
+
+  return db.User.findOne({
+    where: db.Sequelize.where(normalizedPhoneColumn(), {
+      [Op.like]: `%${phoneDigits}`,
+    }),
+    order: [['createdAt', 'DESC']],
   });
 }
 
@@ -96,11 +160,21 @@ async function scanQr(rawQr) {
 }
 
 async function registerReceptionUser({ name, phone, source }) {
+  const existingUser = await findUserByPhone(phone);
+  if (existingUser) {
+    return {
+      status: 'exists',
+      user: existingUser,
+      qrData: existingUser.webId || existingUser.telegramId || existingUser.vkId,
+      alreadyExists: true,
+    };
+  }
+
   const webId = `web_${Date.now()}`;
   const user = await db.User.create({
     webId,
-    name,
-    phone,
+    name: String(name).trim(),
+    phone: String(phone).trim(),
     source: source || 'Ресепшн (Админ)',
   });
 
