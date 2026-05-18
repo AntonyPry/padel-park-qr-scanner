@@ -34,6 +34,10 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 import type { MotivationBonusRule } from '@/lib/motivation';
+import {
+  canManageCatalog,
+  canManageMotivation,
+} from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 
 const PNL_GROUPS = [
@@ -62,10 +66,8 @@ interface CatalogRule {
 
 export default function CatalogPage() {
   const { account } = useAuth();
-  const canManageCatalog =
-    account?.role === 'owner' || account?.role === 'accountant';
-  const canManageMotivation =
-    account?.role === 'owner' || account?.role === 'manager';
+  const canEditCatalog = canManageCatalog(account?.role);
+  const canEditMotivation = canManageMotivation(account?.role);
   const [unmapped, setUnmapped] = useState<string[]>([]);
   const [rules, setRules] = useState<CatalogRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -390,7 +392,7 @@ export default function CatalogPage() {
                       <TableCell>
                         <Button
                           size="sm"
-                          disabled={!canManageCatalog || !selections[itemName]}
+                          disabled={!canEditCatalog || !selections[itemName]}
                           onClick={() => handleSaveRule(itemName)}
                         >
                           Сохранить
@@ -451,7 +453,7 @@ export default function CatalogPage() {
             <CardTitle>Управление категориями P&L</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {canManageCatalog && (
+            {canEditCatalog && (
               <form
                 onSubmit={handleAddCategory}
                 className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"
@@ -535,26 +537,28 @@ export default function CatalogPage() {
               </form>
             )}
 
-            <div className="rounded-md border">
-              <Table>
+            <div className="rounded-md border overflow-x-auto">
+              <Table className="min-w-[860px] table-fixed">
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Название</TableHead>
-                    <TableHead>Группа отчета</TableHead>
-                    <TableHead>Авто-комиссия</TableHead>
-                    <TableHead>Мотивация</TableHead>
-                    <TableHead>Родитель</TableHead>
-                    <TableHead className="w-[50px]"></TableHead>
+                    <TableHead className="w-[22%]">Название</TableHead>
+                    <TableHead className="w-[20%]">Группа отчета</TableHead>
+                    <TableHead className="w-[13%]">Комиссия</TableHead>
+                    <TableHead className="w-[18%]">Мотивация</TableHead>
+                    <TableHead className="w-[18%]">Родитель</TableHead>
+                    <TableHead className="w-[54px]"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {categories.map((cat) => (
                     <TableRow key={cat.id}>
-                      <TableCell className="font-medium flex items-center gap-2">
+                      <TableCell className="font-medium">
+                        <div className="flex min-w-0 items-center gap-2">
                         <Tag className="w-4 h-4 text-muted-foreground" />{' '}
-                        {cat.name}
+                          <span className="truncate">{cat.name}</span>
+                        </div>
                       </TableCell>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="text-muted-foreground truncate">
                         {getGroupLabel(cat.group)}
                       </TableCell>
                       <TableCell>
@@ -574,12 +578,12 @@ export default function CatalogPage() {
                                 ? String(motivationByCategoryId.get(cat.id)?.id)
                                 : 'none'
                             }
-                            disabled={!canManageMotivation}
+                            disabled={!canEditMotivation}
                             onValueChange={(val) =>
                               handleUpdateMotivation(cat.id, val)
                             }
                           >
-                            <SelectTrigger className="w-[190px] bg-transparent border-dashed">
+                            <SelectTrigger className="w-full bg-transparent border-dashed">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -604,12 +608,12 @@ export default function CatalogPage() {
                       <TableCell>
                         <Select
                           value={cat.parentId ? String(cat.parentId) : 'none'}
-                          disabled={!canManageCatalog}
+                          disabled={!canEditCatalog}
                           onValueChange={(val) =>
                             handleUpdateParent(cat.id, val)
                           }
                         >
-                          <SelectTrigger className="w-[180px] bg-transparent border-dashed">
+                          <SelectTrigger className="w-full bg-transparent border-dashed">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -628,7 +632,7 @@ export default function CatalogPage() {
                         </Select>
                       </TableCell>
                       <TableCell>
-                        {canManageCatalog && !cat.isSystem && (
+                        {canEditCatalog && !cat.isSystem && (
                           // ВЫЗЫВАЕМ МОДАЛКУ ВМЕСТО ПРЯМОГО УДАЛЕНИЯ
                           <Button
                             variant="ghost"

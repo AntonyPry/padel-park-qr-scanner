@@ -5,6 +5,14 @@ module.exports = (sequelize, DataTypes) => {
   class User extends Model {
     static associate(models) {
       User.hasMany(models.Visit, { foreignKey: 'userId' });
+      User.belongsTo(models.User, {
+        as: 'mergedInto',
+        foreignKey: 'mergedIntoUserId',
+      });
+      User.belongsTo(models.Account, {
+        as: 'mergedBy',
+        foreignKey: 'mergedByAccountId',
+      });
     }
   }
 
@@ -33,9 +41,34 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      phoneNormalized: {
+        type: DataTypes.STRING,
+        allowNull: true,
+      },
       source: {
         type: DataTypes.STRING,
         allowNull: false,
+      },
+      note: {
+        type: DataTypes.TEXT,
+        allowNull: true,
+      },
+      status: {
+        type: DataTypes.ENUM('active', 'merged', 'archived'),
+        allowNull: false,
+        defaultValue: 'active',
+      },
+      mergedIntoUserId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
+      mergedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+      },
+      mergedByAccountId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
       },
     },
     {

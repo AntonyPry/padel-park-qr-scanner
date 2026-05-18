@@ -14,11 +14,12 @@ class FinanceController {
 
   async addManualFinance(req, res) {
     try {
-      // Логика добавления ручной операции (если есть модель Finance)
       const record = await financeService.createManualRecord(req.body);
-      res.json(record);
+      res.status(201).json(record);
     } catch (error) {
-      res.status(500).json({ error: 'Ошибка добавления записи' });
+      res
+        .status(error.statusCode || 500)
+        .json({ error: error.message || 'Ошибка добавления записи' });
     }
   }
 

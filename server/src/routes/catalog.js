@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const catalogController = require('../controllers/catalog.controller');
 const { requireRole } = require('../middleware/auth');
+const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
-const viewCatalog = requireRole('owner', 'manager', 'accountant', 'viewer');
-const manageCatalog = requireRole('owner', 'accountant');
+const viewCatalog = requireRole(...ACCESS_MATRIX.catalogView);
+const manageCatalog = requireRole(...ACCESS_MATRIX.catalogManage);
 
 // Управление категориями P&L
 router.get('/categories', viewCatalog, catalogController.getCategories);

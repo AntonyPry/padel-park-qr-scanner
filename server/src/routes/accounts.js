@@ -1,9 +1,10 @@
 const express = require('express');
 const accountsController = require('../controllers/accounts.controller');
 const { requireRole } = require('../middleware/auth');
+const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const router = express.Router();
-const manageAccounts = requireRole('owner', 'manager');
+const manageAccounts = requireRole(...ACCESS_MATRIX.systemUsersManage);
 
 router.get('/accounts', manageAccounts, accountsController.getAll);
 router.post('/accounts', manageAccounts, accountsController.create);

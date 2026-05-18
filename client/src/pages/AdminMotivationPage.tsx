@@ -53,6 +53,7 @@ import {
   type MotivationRule,
   type MotivationThresholdType,
 } from '@/lib/motivation';
+import { canManageMotivation } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 
 interface FinanceRecord {
@@ -63,6 +64,7 @@ interface FinanceRecord {
   source: string;
   date: string;
   comment?: string;
+  qty?: number;
 }
 
 interface BonusRecord extends FinanceRecord {
@@ -111,7 +113,9 @@ interface ShiftStats {
     revenue: number;
   }>;
   durationHours: number;
+  grossRevenue: number;
   ruleBreakdown: RuleBreakdown[];
+  totalReturns: number;
   totalBonus: number;
   totalPay: number;
   salesList: BonusRecord[];
@@ -137,7 +141,7 @@ const formatMoney = (value: number) =>
   `${Math.round(value).toLocaleString('ru-RU')} ₽`;
 
 const formatDuration = (ms: number) => {
-  const totalSeconds = Math.floor(ms / 1000);
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
   const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
   const s = String(totalSeconds % 60).padStart(2, '0');
@@ -189,7 +193,10 @@ function buildShiftReport(shift: ShiftSession, stats: ShiftStats) {
     `Завершение: ${formatDateTime(shift.endedAt)}`,
     `Длительность: ${stats.durationHours.toFixed(1)} ч`,
     '',
-    `Продажи: ${stats.salesList.length} позиций на ${formatMoney(stats.totalRevenue)}`,
+    `Продажи: ${stats.salesList.length} позиций`,
+    `Выручка до возвратов: ${formatMoney(stats.grossRevenue)}`,
+    `Возвраты: ${formatMoney(stats.totalReturns)}`,
+    `Итого после возвратов: ${formatMoney(stats.totalRevenue)}`,
     'По категориям:',
     ...stats.categoryStats.map(
       (item) =>
@@ -536,7 +543,7 @@ function BonusRuleForm({
         </div>
       )}
 
-      <div className="sticky bottom-0 -mx-4 -mb-4 flex flex-col gap-2 border-t bg-popover/95 p-4 backdrop-blur sm:-mx-5 sm:-mb-5 sm:flex-row sm:justify-end">
+      <div className="flex flex-col gap-2 border-t pt-4 sm:flex-row sm:justify-end">
         {onDelete && (
           <Button type="button" variant="outline" onClick={onDelete}>
             <Trash2 className="h-4 w-4 mr-2" /> Удалить
@@ -552,8 +559,7 @@ function BonusRuleForm({
 
 export default function AdminMotivationPage() {
   const { account } = useAuth();
-  const canManageMotivation =
-    account?.role === 'owner' || account?.role === 'manager';
+  const canEditMotivation = canManageMotivation(account?.role);
 
   const [records, setRecords] = useState<FinanceRecord[]>([]);
   const [rules, setRules] = useState<MotivationRule[]>([]);
@@ -707,6 +713,8 @@ export default function AdminMotivationPage() {
     const activeBonusRules = bonusRules.filter((rule) => rule.isActive);
     const durationHours = Math.max(0, (now - shiftStart) / 3600000);
     let totalRevenue = 0;
+    let grossRevenue = 0;
+    let totalReturns = 0;
     const rulesByCategoryId = new Map<number, MotivationBonusRule[]>();
     const rulesByCategoryName = new Map<string, MotivationBonusRule[]>();
     const breakdownByRule = new Map<number, RuleBreakdown>();
@@ -742,18 +750,23 @@ export default function AdminMotivationPage() {
         const recordTime = new Date(record.date).getTime();
         return (
           recordTime >= shiftStart &&
-          record.type === 'income' &&
           record.source === 'evotor'
         );
       })
       .map((record) => ({
         ...record,
-        qty: parseQuantity(record.comment),
-        value: Math.abs(Number(record.amount)),
-      }));
+        qty:
+          Number.isFinite(Number(record.qty)) && Number(record.qty) !== 0
+            ? Number(record.qty)
+            : parseQuantity(record.comment),
+        value: Number(record.amount) || 0,
+      }))
+      .filter((record) => record.value !== 0);
 
     rawSales.forEach((sale) => {
       totalRevenue += sale.value;
+      if (sale.value > 0) grossRevenue += sale.value;
+      if (sale.value < 0) totalReturns += Math.abs(sale.value);
       const matchedRules =
         (sale.categoryId ? rulesByCategoryId.get(sale.categoryId) : undefined) ||
         rulesByCategoryName.get(sale.category.toLowerCase().trim()) ||
@@ -852,7 +865,9 @@ export default function AdminMotivationPage() {
       basePay,
       categoryStats,
       durationHours,
+      grossRevenue,
       ruleBreakdown,
+      totalReturns,
       totalBonus,
       totalPay: basePay + totalBonus,
       totalRevenue,
@@ -1053,7 +1068,7 @@ export default function AdminMotivationPage() {
         </div>
       </div>
 
-      {canManageMotivation && (
+      {canEditMotivation && (
         <>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
@@ -1358,7 +1373,11 @@ export default function AdminMotivationPage() {
                   {formatMoney(shiftStats?.totalRevenue || 0)}
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  {shiftStats?.salesList.length || 0} позиций
+                  {(shiftStats?.salesList.length || 0).toLocaleString('ru-RU')}{' '}
+                  позиций
+                  {shiftStats && shiftStats.totalReturns > 0
+                    ? `, возвраты ${formatMoney(shiftStats.totalReturns)}`
+                    : ''}
                 </div>
               </CardContent>
             </Card>
@@ -1562,6 +1581,7 @@ export default function AdminMotivationPage() {
                       <TableRow>
                         <TableHead>Время</TableHead>
                         <TableHead>Категория</TableHead>
+                        <TableHead>Тип</TableHead>
                         <TableHead>Правило</TableHead>
                         <TableHead className="text-right">Сумма</TableHead>
                         <TableHead className="text-right">Бонус</TableHead>
@@ -1577,6 +1597,15 @@ export default function AdminMotivationPage() {
                             {sale.category}
                           </TableCell>
                           <TableCell>
+                            {sale.value < 0 ? (
+                              <Badge variant="outline" className="text-destructive">
+                                Возврат
+                              </Badge>
+                            ) : (
+                              <Badge variant="outline">Продажа</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>
                             {sale.bonusRuleNames.length > 0 ? (
                               <div className="flex flex-wrap gap-1">
                                 {sale.bonusRuleNames.map((name) => (
@@ -1589,8 +1618,13 @@ export default function AdminMotivationPage() {
                               <span className="text-muted-foreground">-</span>
                             )}
                           </TableCell>
-                          <TableCell className="text-right">
-                            {formatMoney(Math.abs(Number(sale.amount)))}
+                          <TableCell
+                            className={`text-right ${
+                              sale.value < 0 ? 'text-destructive' : ''
+                            }`}
+                          >
+                            {sale.value > 0 ? '+' : ''}
+                            {formatMoney(sale.value)}
                           </TableCell>
                           <TableCell
                             className={`text-right font-bold ${

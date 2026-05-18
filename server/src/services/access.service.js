@@ -1,40 +1,16 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
+const clientsService = require('./clients.service');
+const {
+  getPhoneLookupDigits,
+  normalizePhone,
+  normalizedPhoneColumn,
+} = require('../utils/phone');
 
 const REPEAT_SCAN_WINDOW_MINUTES = 5;
 
 function normalizeQr(rawQr) {
   return String(rawQr).replace(/[\s@\r\n]/g, '');
-}
-
-function normalizePhone(phone) {
-  return String(phone || '').replace(/\D/g, '');
-}
-
-function getPhoneLookupDigits(phone) {
-  const digits = normalizePhone(phone);
-  return digits.length > 10 ? digits.slice(-10) : digits;
-}
-
-function normalizedPhoneColumn() {
-  const { col, fn } = db.Sequelize;
-
-  return fn(
-    'REPLACE',
-    fn(
-      'REPLACE',
-      fn(
-        'REPLACE',
-        fn('REPLACE', fn('REPLACE', col('phone'), '+', ''), ' ', ''),
-        '(',
-        '',
-      ),
-      ')',
-      '',
-    ),
-    '-',
-    '',
-  );
 }
 
 async function searchUsers(query) {
@@ -48,6 +24,7 @@ async function searchUsers(query) {
   ];
 
   if (phoneDigits.length >= 2) {
+    conditions.push({ phoneNormalized: { [Op.like]: `%${phoneDigits}%` } });
     conditions.push(
       db.Sequelize.where(normalizedPhoneColumn(), {
         [Op.like]: `%${phoneDigits}%`,
@@ -66,6 +43,7 @@ async function searchUsers(query) {
 
   return db.User.findAll({
     where: {
+      status: 'active',
       [Op.or]: conditions,
     },
     order: [['createdAt', 'DESC']],
@@ -77,28 +55,11 @@ async function findUserByPhone(phone) {
   const phoneDigits = getPhoneLookupDigits(phone);
   if (phoneDigits.length < 10) return null;
 
-  return db.User.findOne({
-    where: db.Sequelize.where(normalizedPhoneColumn(), {
-      [Op.like]: `%${phoneDigits}`,
-    }),
-    order: [['createdAt', 'DESC']],
-  });
+  return clientsService.findActiveByPhone(phoneDigits);
 }
 
 async function findUserByQr(qr) {
-  if (qr.startsWith('vk_')) {
-    return db.User.findOne({ where: { vkId: qr.replace('vk_', '') } });
-  }
-
-  if (qr.startsWith('web_')) {
-    return db.User.findOne({ where: { webId: qr } });
-  }
-
-  return db.User.findOne({
-    where: {
-      [Op.or]: [{ telegramId: qr }, { telegramId: `@${qr}` }],
-    },
-  });
+  return clientsService.findCanonicalByQr(qr);
 }
 
 async function createVisitForUser(user) {
@@ -136,7 +97,13 @@ async function createManualVisit(userId) {
   const user = await db.User.findByPk(userId);
   if (!user) return null;
 
-  return createVisitForUser(user);
+  const canonicalUser =
+    user.status === 'merged' && user.mergedIntoUserId
+      ? await db.User.findByPk(user.mergedIntoUserId)
+      : user;
+  if (!canonicalUser) return null;
+
+  return createVisitForUser(canonicalUser);
 }
 
 async function scanQr(rawQr) {
@@ -170,18 +137,13 @@ async function registerReceptionUser({ name, phone, source }) {
     };
   }
 
-  const webId = `web_${Date.now()}`;
-  const user = await db.User.create({
-    webId,
-    name: String(name).trim(),
-    phone: String(phone).trim(),
-    source: source || 'Ресепшн (Админ)',
-  });
+  const result = await clientsService.createClient({ name, phone, source });
+  const user = result.client;
 
   return {
     status: 'success',
     user,
-    qrData: webId,
+    qrData: user.webId,
   };
 }
 

@@ -1,10 +1,11 @@
 const express = require('express');
 const staffController = require('../controllers/staff.controller');
 const { requireRole } = require('../middleware/auth');
+const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const router = express.Router();
-const viewStaff = requireRole('owner', 'manager', 'accountant', 'viewer');
-const manageStaff = requireRole('owner', 'manager');
+const viewStaff = requireRole(...ACCESS_MATRIX.staffView);
+const manageStaff = requireRole(...ACCESS_MATRIX.staffManage);
 
 router.get('/staff', viewStaff, staffController.getAll);
 router.post('/staff', manageStaff, staffController.create);

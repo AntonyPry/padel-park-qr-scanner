@@ -1,9 +1,10 @@
 const express = require('express');
 const accessController = require('../controllers/access.controller');
 const { requireRole } = require('../middleware/auth');
+const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const router = express.Router();
-const operateAccess = requireRole('owner', 'manager', 'admin');
+const operateAccess = requireRole(...ACCESS_MATRIX.accessOperate);
 
 router.get('/search', operateAccess, accessController.search);
 router.post('/manual-visit', operateAccess, accessController.manualVisit);

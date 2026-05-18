@@ -7,6 +7,7 @@ import { ROUTE_ACCESS } from './lib/permissions';
 import { AuthProvider } from './lib/auth';
 import AdminPage from './pages/Admin';
 import StaffPage from './pages/StaffPage';
+import ClientsPage from './pages/ClientsPage';
 import FinancePage from './pages/FinancePage';
 import VisitsAnalyticsPage from './pages/VisitsAnalyticsPage';
 import UtilizationPage from './pages/UtilizationPage';
@@ -28,6 +29,14 @@ function App() {
                   element={
                     <RequireRoles roles={ROUTE_ACCESS['/admin']}>
                       <AdminPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/clients"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/clients']}>
+                      <ClientsPage />
                     </RequireRoles>
                   }
                 />

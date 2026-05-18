@@ -2,6 +2,7 @@ import type { AccountRole } from '@/lib/roles';
 
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
+  '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant', 'viewer'],
@@ -35,6 +36,22 @@ export function getDefaultPath(role: AccountRole | null | undefined) {
 
 export function canManageFinance(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'accountant']);
+}
+
+export function canManageClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+}
+
+export function canMergeClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManageCatalog(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'accountant']);
+}
+
+export function canManageMotivation(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canManageStaff(role: AccountRole | null | undefined) {

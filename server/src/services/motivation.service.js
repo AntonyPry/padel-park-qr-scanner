@@ -362,7 +362,7 @@ async function getCurrentShiftSales() {
   const rules = await db.CatalogRule.findAll();
   const rulesMap = {};
   rules.forEach((rule) => {
-    rulesMap[rule.itemName.toLowerCase()] = rule.category;
+    rulesMap[String(rule.itemName).toLowerCase().trim()] = rule.category;
   });
   const categories = await db.Category.findAll();
   const categoryByName = new Map(
@@ -396,6 +396,7 @@ async function getCurrentShiftSales() {
       );
       const amount = Math.abs(rawAmount) * multiplier;
       if (amount === 0) continue;
+      const quantity = Math.abs(Number(item.quantity) || 0) * multiplier;
 
       const category =
         rulesMap[String(item.name).toLowerCase().trim()] || 'Неразобранное';
@@ -410,7 +411,8 @@ async function getCurrentShiftSales() {
         type: isPayback ? 'expense' : 'income',
         source: 'evotor',
         date: receipt.dateTime,
-        comment: `${item.name} (${item.quantity} шт)`,
+        comment: `${item.name} (${quantity} шт)`,
+        qty: quantity,
       });
     }
   }

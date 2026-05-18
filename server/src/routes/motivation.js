@@ -1,10 +1,11 @@
 const express = require('express');
 const motivationController = require('../controllers/motivation.controller');
 const { requireRole } = require('../middleware/auth');
+const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const router = express.Router();
-const viewMotivation = requireRole('owner', 'manager', 'admin');
-const manageMotivation = requireRole('owner', 'manager');
+const viewMotivation = requireRole(...ACCESS_MATRIX.motivationView);
+const manageMotivation = requireRole(...ACCESS_MATRIX.motivationManage);
 
 router.get('/motivation/current-sales', viewMotivation, motivationController.getCurrentSales);
 router.get('/motivation/rules', viewMotivation, motivationController.getRules);

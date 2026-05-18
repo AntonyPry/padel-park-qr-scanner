@@ -2,6 +2,30 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const motivationService = require('./motivation.service');
+const { FINANCE_TYPES } = require('../constants/catalog');
+
+function appError(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeDateOnly(value) {
+  const date = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw appError('Укажите дату операции в формате YYYY-MM-DD');
+  }
+
+  return date;
+}
+
+function normalizeFinanceType(type) {
+  if (!FINANCE_TYPES.includes(type)) {
+    throw appError('Некорректный тип финансовой операции');
+  }
+
+  return type;
+}
 
 class FinanceService {
   // 1. Определение категории
@@ -46,7 +70,7 @@ class FinanceService {
     const rules = await db.CatalogRule.findAll();
     const rulesMap = {};
     rules.forEach((r) => {
-      rulesMap[r.itemName.toLowerCase()] = r.category;
+      rulesMap[String(r.itemName).toLowerCase().trim()] = r.category;
     });
     const motivationRules = await motivationService.getRulesMap();
     const motivationBonusRules = await motivationService.getBonusRules();
@@ -355,7 +379,7 @@ class FinanceService {
     const rulesList = await db.CatalogRule.findAll();
     const rulesMap = {};
     rulesList.forEach((r) => {
-      rulesMap[r.itemName.toLowerCase()] = r.category;
+      rulesMap[String(r.itemName).toLowerCase().trim()] = r.category;
     });
     const motivationRules = await motivationService.getRulesMap();
     const motivationBonusRules = await motivationService.getBonusRules();
@@ -445,6 +469,8 @@ class FinanceService {
         hours: hrs,
         dailyRevenue: todaySales.revenue,
         basePay: shiftBasePay,
+        calculatedBonus: shiftBonus,
+        manualAdjustment: manualAdj,
         bonus: shiftBonus + manualAdj,
         total: totalPay,
         items: detailedItems,
@@ -482,7 +508,34 @@ class FinanceService {
   }
 
   async createManualRecord(data) {
-    return await db.Finance.create(data);
+    const type = normalizeFinanceType(data.type);
+    const amount = Number(data.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw appError('Сумма операции должна быть положительным числом');
+    }
+
+    const categoryName = String(data.category || '').trim();
+    if (!categoryName) throw appError('Категория операции обязательна');
+
+    const category = await db.Category.findOne({
+      where: {
+        name: categoryName,
+        type,
+        isActive: true,
+      },
+    });
+
+    if (!category) {
+      throw appError('Категория с таким типом операции не найдена', 404);
+    }
+
+    return await db.Finance.create({
+      date: normalizeDateOnly(data.date),
+      category: category.name,
+      amount,
+      type,
+      comment: data.comment ? String(data.comment).trim() : null,
+    });
   }
 }
 

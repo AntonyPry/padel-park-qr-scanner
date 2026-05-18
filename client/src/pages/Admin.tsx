@@ -16,11 +16,6 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover';
-import {
   Table,
   TableBody,
   TableCell,
@@ -31,11 +26,11 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
-import { Card, CardContent } from '@/components/ui/card';
 import { API_URL } from '@/config';
 import { apiFetch } from '@/lib/api';
 
@@ -57,6 +52,13 @@ const VISIT_CATEGORIES = [
   'Ракетка шефа',
   'Тубус',
 ];
+
+const EMPTY_RECEPTION_CLIENT_FORM = {
+  name: '',
+  phone: '',
+  source: 'Ресепшн (Админ)',
+  note: '',
+};
 
 interface VisitCard {
   id: string;
@@ -80,6 +82,17 @@ interface SearchUser {
   id: number;
   name: string;
   phone: string;
+}
+
+interface ExistingClientCandidate {
+  id: number;
+  name: string;
+  phone: string;
+  source?: string;
+  stats?: {
+    visitCount: number;
+    lastVisitAt?: string | null;
+  };
 }
 
 interface SerialPortLike {
@@ -141,6 +154,19 @@ function formatClientPhone(value: string) {
   return formatted;
 }
 
+async function readError(response: Response, fallback: string) {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function splitVisitCategories(category?: string) {
+  return category ? category.split(', ').filter(Boolean) : [];
+}
+
 export default function AdminPage() {
   const [cards, setCards] = useState<VisitCard[]>([]);
 
@@ -148,6 +174,7 @@ export default function AdminPage() {
   const [isRegOpen, setIsRegOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
+  const [activeVisit, setActiveVisit] = useState<VisitCard | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
@@ -161,13 +188,11 @@ export default function AdminPage() {
   );
   const scannerActiveRef = useRef(false);
 
-  const [regForm, setRegForm] = useState({
-    name: '',
-    phone: '',
-    source: 'Ресепшн (Админ)',
-  });
+  const [regForm, setRegForm] = useState(EMPTY_RECEPTION_CLIENT_FORM);
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState('');
+  const [regCandidate, setRegCandidate] =
+    useState<ExistingClientCandidate | null>(null);
 
   const fetchHistory = async () => {
     try {
@@ -221,6 +246,7 @@ export default function AdminPage() {
         );
         return [newCard, ...filtered];
       });
+      setActiveVisit(newCard);
     });
 
     return () => {
@@ -410,6 +436,32 @@ export default function AdminPage() {
     }, 300);
   }, [searchQuery]);
 
+  useEffect(() => {
+    const phoneDigits = getPhoneDigits(regForm.phone);
+    if (!isRegOpen || phoneDigits.length !== 10) {
+      setRegCandidate(null);
+      return;
+    }
+
+    const timeout = window.setTimeout(async () => {
+      try {
+        const res = await apiFetch(
+          `/api/clients/lookup?phone=${encodeURIComponent(regForm.phone)}`,
+        );
+        if (!res.ok) return;
+
+        const data = (await res.json()) as {
+          client: ExistingClientCandidate | null;
+        };
+        setRegCandidate(data.client);
+      } catch (e) {
+        console.error('Ошибка проверки дубля клиента:', e);
+      }
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [isRegOpen, regForm.phone]);
+
   const handleManualVisit = async (userId: number) => {
     try {
       const res = await apiFetch('/api/manual-visit', {
@@ -426,6 +478,14 @@ export default function AdminPage() {
     }
   };
 
+  const handleUseExistingClient = async () => {
+    if (!regCandidate) return;
+    await handleManualVisit(regCandidate.id);
+    setIsRegOpen(false);
+    setRegForm(EMPTY_RECEPTION_CLIENT_FORM);
+    setRegCandidate(null);
+  };
+
   const handlePhoneInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     setRegForm({ ...regForm, phone: formatClientPhone(e.target.value) });
   };
@@ -439,6 +499,9 @@ export default function AdminPage() {
     const numericVal = val.replace(/\D/g, '');
     setCards((prev) =>
       prev.map((c) => (c.id === cardId ? { ...c, keyNumber: numericVal } : c)),
+    );
+    setActiveVisit((prev) =>
+      prev?.id === cardId ? { ...prev, keyNumber: numericVal } : prev,
     );
   };
 
@@ -458,25 +521,33 @@ export default function AdminPage() {
     setRegError('');
 
     try {
-      const regRes = await apiFetch('/api/register', {
+      const regRes = await apiFetch('/api/clients', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(regForm),
       });
 
-      const regData = await regRes.json();
-
-      if (regRes.ok && regData.user) {
-        await apiFetch('/api/manual-visit', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ userId: regData.user.id }),
-        });
-        setIsRegOpen(false);
-        setRegForm({ name: '', phone: '', source: 'Ресепшн (Админ)' });
-      } else {
-        setRegError(regData.error || 'Ошибка регистрации');
+      if (!regRes.ok) {
+        setRegError(await readError(regRes, 'Ошибка регистрации'));
+        return;
       }
+
+      const regData = (await regRes.json()) as {
+        client?: { id: number };
+      };
+      if (!regData.client?.id) {
+        setRegError('Клиент создан, но не удалось открыть визит');
+        return;
+      }
+
+      await apiFetch('/api/manual-visit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: regData.client.id }),
+      });
+      setIsRegOpen(false);
+      setRegForm(EMPTY_RECEPTION_CLIENT_FORM);
+      setRegCandidate(null);
     } catch {
       setRegError('Ошибка сервера');
     } finally {
@@ -502,6 +573,9 @@ export default function AdminPage() {
             c.id === cardId ? { ...c, keyNumber, keyIssued: true } : c,
           ),
         );
+        setActiveVisit((prev) =>
+          prev?.id === cardId ? { ...prev, keyNumber, keyIssued: true } : prev,
+        );
       }
     } catch (e) {
       console.error('Ошибка выдачи ключа', e);
@@ -517,6 +591,9 @@ export default function AdminPage() {
 
     setCards((prev) =>
       prev.map((c) => (c.id === cardId ? { ...c, category } : c)),
+    );
+    setActiveVisit((prev) =>
+      prev?.id === cardId ? { ...prev, category } : prev,
     );
 
     try {
@@ -537,9 +614,25 @@ export default function AdminPage() {
     }
   };
 
+  const activeCategories = splitVisitCategories(activeVisit?.category);
+
+  const toggleActiveVisitCategory = (category: string) => {
+    if (!activeVisit) return;
+
+    const nextCategories = activeCategories.includes(category)
+      ? activeCategories.filter((item) => item !== category)
+      : [...activeCategories, category];
+
+    void handleCategoryChange(
+      activeVisit.id,
+      activeVisit.visitId,
+      nextCategories.join(', '),
+    );
+  };
+
   return (
-    <div className="min-h-screen p-6 font-sans">
-      <div className="max-w-[1400px] mx-auto space-y-6">
+    <div className="min-h-screen p-4 font-sans md:p-6">
+      <div className="w-full space-y-4">
         {/* ШАПКА И КНОПКИ */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
           <div>
@@ -591,7 +684,7 @@ export default function AdminPage() {
               className="flex-1 sm:flex-none"
             >
               <UserPlus className="w-4 h-4 mr-2" />
-              Новый гость
+              Новый клиент
             </Button>
           </div>
         </div>
@@ -602,7 +695,7 @@ export default function AdminPage() {
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[80px]">Статус</TableHead>
-                <TableHead className="min-w-[150px]">Гость</TableHead>
+                <TableHead className="min-w-[150px]">Клиент</TableHead>
                 <TableHead className="min-w-[130px]">Контакты</TableHead>
                 <TableHead className="w-[120px]">Время</TableHead>
                 <TableHead className="w-[200px]">Цель визита</TableHead>
@@ -683,84 +776,24 @@ export default function AdminPage() {
                         </div>
                       </TableCell>
 
-                      {/* НОВАЯ КОЛОНКА: ЦЕЛЬ ВИЗИТА (МУЛЬТИ-СЕЛЕКТ) */}
                       <TableCell>
                         {card.success ? (
-                          <Popover>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                className="h-auto min-h-[32px] w-full min-w-[160px] justify-start text-left text-xs font-medium border-transparent bg-secondary/50 hover:bg-secondary px-3 py-1.5 shadow-none"
-                              >
-                                {card.category ? (
-                                  <div className="flex flex-col items-start gap-1 w-full">
-                                    {card.category
-                                      .split(', ')
-                                      .map((cat, idx) => (
-                                        <span
-                                          key={idx}
-                                          className="bg-background/60 px-1.5 py-0.5 rounded border border-border/30 whitespace-normal break-words text-left"
-                                        >
-                                          {cat}
-                                        </span>
-                                      ))}
-                                  </div>
-                                ) : (
-                                  <span className="text-muted-foreground">
-                                    Указать цели...
-                                  </span>
-                                )}
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-56 p-1" align="start">
-                              <div className="max-h-[300px] overflow-y-auto space-y-1 p-1">
-                                {VISIT_CATEGORIES.map((cat) => {
-                                  // Превращаем текущую строку в массив, чтобы понять, выбрана ли категория
-                                  const currentCategories = card.category
-                                    ? card.category.split(', ')
-                                    : [];
-                                  const isSelected =
-                                    currentCategories.includes(cat);
-
-                                  return (
-                                    <div
-                                      key={cat}
-                                      onClick={() => {
-                                        let newCats = [...currentCategories];
-                                        if (isSelected) {
-                                          newCats = newCats.filter(
-                                            (c) => c !== cat,
-                                          ); // Убираем
-                                        } else {
-                                          newCats.push(cat); // Добавляем
-                                        }
-                                        // Сохраняем обратно как строку
-                                        handleCategoryChange(
-                                          card.id,
-                                          card.visitId,
-                                          newCats.join(', '),
-                                        );
-                                      }}
-                                      className="flex items-center space-x-2 rounded-sm px-2 py-1.5 cursor-pointer hover:bg-secondary/80"
-                                    >
-                                      <div
-                                        className={`flex h-4 w-4 items-center justify-center rounded border ${
-                                          isSelected
-                                            ? 'bg-primary border-primary'
-                                            : 'border-primary/50'
-                                        }`}
-                                      >
-                                        {isSelected && (
-                                          <Check className="h-3 w-3 text-primary-foreground" />
-                                        )}
-                                      </div>
-                                      <span className="text-xs">{cat}</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            </PopoverContent>
-                          </Popover>
+                          <div className="flex max-w-[220px] flex-wrap gap-1">
+                            {card.category ? (
+                              splitVisitCategories(card.category).map((cat) => (
+                                <span
+                                  key={cat}
+                                  className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs"
+                                >
+                                  {cat}
+                                </span>
+                              ))
+                            ) : (
+                              <span className="text-sm text-muted-foreground">
+                                -
+                              </span>
+                            )}
+                          </div>
                         ) : (
                           <span className="text-muted-foreground text-sm">
                             -
@@ -770,35 +803,14 @@ export default function AdminPage() {
 
                       <TableCell>
                         {card.success ? (
-                          !card.keyIssued ? (
-                            <div className="flex gap-2 items-center">
-                              <Input
-                                placeholder="№"
-                                className="w-14 h-9 text-center"
-                                value={card.keyNumber}
-                                onChange={(e) =>
-                                  handleKeyInput(card.id, e.target.value)
-                                }
-                              />
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                className="h-9 text-primary hover:text-primary/80 hover:bg-primary/10 transition-colors px-3"
-                                onClick={() =>
-                                  handleIssueKey(
-                                    card.visitId,
-                                    card.keyNumber,
-                                    card.id,
-                                  )
-                                }
-                              >
-                                Выдать
-                              </Button>
-                            </div>
-                          ) : (
+                          card.keyIssued ? (
                             <div className="inline-flex items-center px-2.5 py-1.5 rounded-md bg-primary/10 text-primary text-sm font-medium border border-primary/20">
                               Выдан №{card.keyNumber}
                             </div>
+                          ) : (
+                            <span className="text-sm text-muted-foreground">
+                              -
+                            </span>
                           )
                         ) : (
                           <span className="text-muted-foreground text-sm">
@@ -835,7 +847,7 @@ export default function AdminPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Search className="w-5 h-5 text-muted-foreground" />
-              Поиск по базе
+              Поиск клиента
             </DialogTitle>
           </DialogHeader>
           <div className="py-4">
@@ -868,18 +880,19 @@ export default function AdminPage() {
                 </div>
               ) : (
                 searchResults.map((u) => (
-                  <Card
+                  <button
+                    type="button"
                     key={u.id}
                     onClick={() => handleManualVisit(u.id)}
-                    className="cursor-pointer hover:bg-accent hover:text-accent-foreground transition-colors shadow-none border-dashed"
+                    className="flex w-full items-center justify-between gap-3 rounded-md border border-dashed p-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground"
                   >
-                    <CardContent className="p-3 flex justify-between items-center">
-                      <div className="font-semibold">{u.name}</div>
-                      <div className="text-sm text-muted-foreground">
-                        {u.phone}
-                      </div>
-                    </CardContent>
-                  </Card>
+                    <span className="min-w-0 truncate font-semibold">
+                      {u.name}
+                    </span>
+                    <span className="shrink-0 text-sm text-muted-foreground">
+                      {u.phone}
+                    </span>
+                  </button>
                 ))
               )}
             </div>
@@ -889,42 +902,68 @@ export default function AdminPage() {
 
       {/* МОДАЛКА: РЕГИСТРАЦИЯ */}
       <Dialog open={isRegOpen} onOpenChange={setIsRegOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[720px]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-primary">
               <UserPlus className="w-5 h-5" />
-              Регистрация на ресепшене
+              Новый клиент
             </DialogTitle>
+            <DialogDescription>
+              Телефон проверяется на дубли и хранится в едином формате.
+            </DialogDescription>
           </DialogHeader>
-          <form onSubmit={handleRegisterSubmit} className="space-y-4 py-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none">
-                Фамилия и Имя *
-              </label>
-              <Input
-                required
-                placeholder="Иванов Иван"
-                value={regForm.name}
-                onChange={handleNameInput}
-              />
+          <form onSubmit={handleRegisterSubmit} className="space-y-4 pt-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Фамилия и имя
+                </label>
+                <Input
+                  required
+                  placeholder="Иванов Иван"
+                  value={regForm.name}
+                  onChange={handleNameInput}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Телефон
+                </label>
+                <Input
+                  required
+                  type="tel"
+                  placeholder="+7 (999) 000-00-00"
+                  inputMode="tel"
+                  maxLength={18}
+                  value={regForm.phone}
+                  onChange={handlePhoneInput}
+                />
+              </div>
             </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none">
-                Телефон *
-              </label>
-              <Input
-                required
-                type="tel"
-                placeholder="+7 (999) 000-00-00"
-                inputMode="tel"
-                maxLength={18}
-                value={regForm.phone}
-                onChange={handlePhoneInput}
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium leading-none">
-                Откуда узнал?
+            {regCandidate && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
+                <div className="font-medium text-amber-700 dark:text-amber-300">
+                  Такой клиент уже есть в базе
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  {regCandidate.name} · {regCandidate.phone}
+                  {regCandidate.stats
+                    ? ` · ${regCandidate.stats.visitCount} визитов`
+                    : ''}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-3 w-full"
+                  onClick={() => void handleUseExistingClient()}
+                >
+                  Использовать существующего клиента
+                </Button>
+              </div>
+            )}
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Источник
               </label>
               <Input
                 placeholder="Например: Проходил мимо"
@@ -932,6 +971,19 @@ export default function AdminPage() {
                 onChange={(e) =>
                   setRegForm({ ...regForm, source: e.target.value })
                 }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Заметка
+              </label>
+              <textarea
+                value={regForm.note}
+                onChange={(e) =>
+                  setRegForm({ ...regForm, note: e.target.value })
+                }
+                className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Что важно знать администраторам и менеджеру"
               />
             </div>
 
@@ -942,9 +994,135 @@ export default function AdminPage() {
             )}
 
             <Button type="submit" disabled={regLoading} className="w-full mt-2">
-              {regLoading ? 'Сохранение...' : 'Зарегистрировать и пропустить'}
+              {regLoading ? 'Сохранение...' : 'Создать и пропустить'}
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* МОДАЛКА: ВИЗИТ ПОСЛЕ СКАНА */}
+      <Dialog
+        open={Boolean(activeVisit)}
+        onOpenChange={(open) => !open && setActiveVisit(null)}
+      >
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[760px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {activeVisit?.success ? (
+                <CheckCircle2 className="h-5 w-5 text-primary" />
+              ) : (
+                <XCircle className="h-5 w-5 text-destructive" />
+              )}
+              {activeVisit?.success ? activeVisit.name : 'Клиент не найден'}
+            </DialogTitle>
+            <DialogDescription>
+              Проверьте клиента, укажите цель визита и номер ключа.
+            </DialogDescription>
+          </DialogHeader>
+
+          {activeVisit && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-muted-foreground">Телефон</div>
+                  <div className="mt-1 font-medium">
+                    {activeVisit.success ? activeVisit.phone || '-' : '-'}
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-muted-foreground">Источник</div>
+                  <div className="mt-1 font-medium">
+                    {activeVisit.success ? activeVisit.source || '-' : '-'}
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs text-muted-foreground">Время</div>
+                  <div className="mt-1 font-medium">
+                    {activeVisit.time.replace(/[^0-9:]/g, '') || '-'}
+                  </div>
+                </div>
+              </div>
+
+              {!activeVisit.success && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm">
+                  QR не найден в базе:{' '}
+                  <span className="font-mono">{activeVisit.qrRaw}</span>
+                </div>
+              )}
+
+              {activeVisit.success && (
+                <>
+                  <div>
+                    <div className="mb-2 text-sm font-medium">Цель визита</div>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {VISIT_CATEGORIES.map((category) => {
+                        const isSelected = activeCategories.includes(category);
+
+                        return (
+                          <button
+                            key={category}
+                            type="button"
+                            onClick={() => toggleActiveVisitCategory(category)}
+                            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                              isSelected
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border hover:bg-secondary'
+                            }`}
+                          >
+                            <span
+                              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
+                                isSelected
+                                  ? 'border-primary bg-primary'
+                                  : 'border-primary/50'
+                              }`}
+                            >
+                              {isSelected && (
+                                <Check className="h-3 w-3 text-primary-foreground" />
+                              )}
+                            </span>
+                            <span>{category}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 text-sm font-medium">Ключ</div>
+                    {activeVisit.keyIssued ? (
+                      <div className="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-medium text-primary">
+                        Выдан №{activeVisit.keyNumber}
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2 sm:flex-row">
+                        <Input
+                          placeholder="Номер ключа"
+                          inputMode="numeric"
+                          value={activeVisit.keyNumber}
+                          onChange={(event) =>
+                            handleKeyInput(activeVisit.id, event.target.value)
+                          }
+                        />
+                        <Button
+                          type="button"
+                          disabled={!activeVisit.keyNumber.trim()}
+                          onClick={() =>
+                            void handleIssueKey(
+                              activeVisit.visitId,
+                              activeVisit.keyNumber,
+                              activeVisit.id,
+                            )
+                          }
+                        >
+                          Выдать ключ
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

@@ -74,6 +74,8 @@ interface ShiftRecord {
   hours: number;
   dailyRevenue: number;
   basePay: number;
+  calculatedBonus?: number;
+  manualAdjustment?: number;
   bonus: number;
   total: number;
   items: PayrollItem[];
@@ -128,6 +130,7 @@ export default function StaffPage() {
     staffId: '',
     adminName: '',
     hours: '',
+    manualAdjustment: '',
     comment: '',
   });
   const [staffForm, setStaffForm] = useState(emptyStaffForm);
@@ -181,6 +184,7 @@ export default function StaffPage() {
         staffId: selectedStaff.id,
         adminName: selectedStaff.name,
         hours: Number(form.hours) || 0,
+        manualAdjustment: Number(form.manualAdjustment) || 0,
       };
 
       const res = await apiFetch('/api/shifts', {
@@ -225,6 +229,7 @@ export default function StaffPage() {
         staffId: matchedStaff ? String(matchedStaff) : '',
         adminName: shift.adminName || '',
         hours: String(shift.hours || ''),
+        manualAdjustment: String(shift.manualAdjustment || ''),
         comment: '',
       });
     } else {
@@ -234,6 +239,7 @@ export default function StaffPage() {
         staffId: '',
         adminName: '',
         hours: '',
+        manualAdjustment: '',
         comment: '',
       });
     }
@@ -562,7 +568,7 @@ export default function StaffPage() {
               <TableHead>Администратор</TableHead>
               <TableHead className="text-right">Часы</TableHead>
               <TableHead className="text-right">Выручка дня</TableHead>
-              <TableHead className="text-right">Премии</TableHead>
+              <TableHead className="text-right">Премии/корр.</TableHead>
               <TableHead className="text-right">Итого</TableHead>
               <TableHead></TableHead>
             </TableRow>
@@ -678,7 +684,7 @@ export default function StaffPage() {
               <TableHead>Администратор</TableHead>
               <TableHead className="text-right">Смен</TableHead>
               <TableHead className="text-right">Часы</TableHead>
-              <TableHead className="text-right">Премии</TableHead>
+              <TableHead className="text-right">Премии/корр.</TableHead>
               <TableHead className="text-right">Итого</TableHead>
             </TableRow>
           </TableHeader>
@@ -858,6 +864,23 @@ export default function StaffPage() {
             </div>
             <div>
               <label className="text-xs font-medium mb-1 block">
+                Корректировка зарплаты
+              </label>
+              <Input
+                type="number"
+                step="1"
+                placeholder="0"
+                value={form.manualAdjustment}
+                onChange={(e) =>
+                  setForm({ ...form, manualAdjustment: e.target.value })
+                }
+              />
+              <div className="mt-1 text-xs text-muted-foreground">
+                Можно указать премию или штраф вручную.
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium mb-1 block">
                 Комментарий
               </label>
               <Input
@@ -893,7 +916,14 @@ export default function StaffPage() {
                 Часы: {detailModal.shift?.hours} • Выручка:{' '}
                 {detailModal.shift?.dailyRevenue.toLocaleString()} ₽ • База:{' '}
                 {detailModal.shift?.basePay.toLocaleString()} ₽ • Премия:{' '}
-                {detailModal.shift?.bonus.toLocaleString()} ₽
+                {Number(
+                  detailModal.shift?.calculatedBonus ??
+                    detailModal.shift?.bonus ??
+                    0,
+                ).toLocaleString()}{' '}
+                ₽
+                {Number(detailModal.shift?.manualAdjustment || 0) !== 0 &&
+                  ` • Корректировка: ${Number(detailModal.shift?.manualAdjustment).toLocaleString()} ₽`}
               </div>
             )}
           </div>
