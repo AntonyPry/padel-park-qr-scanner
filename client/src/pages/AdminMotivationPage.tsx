@@ -67,6 +67,17 @@ interface FinanceRecord {
   qty?: number;
 }
 
+interface PaymentSummary {
+  cash: number;
+  cashless: number;
+  total: number;
+}
+
+interface CurrentSalesResponse {
+  paymentSummary?: Partial<PaymentSummary>;
+  records: FinanceRecord[];
+}
+
 interface BonusRecord extends FinanceRecord {
   bonusRuleIds: number[];
   bonusRuleNames: string[];
@@ -114,6 +125,7 @@ interface ShiftStats {
   }>;
   durationHours: number;
   grossRevenue: number;
+  paymentSummary: PaymentSummary;
   ruleBreakdown: RuleBreakdown[];
   totalReturns: number;
   totalBonus: number;
@@ -150,6 +162,28 @@ const formatDuration = (ms: number) => {
 
 const formatDateTime = (value?: string | null) =>
   value ? format(new Date(value), 'dd.MM.yyyy HH:mm') : '-';
+
+const emptyPaymentSummary: PaymentSummary = {
+  cash: 0,
+  cashless: 0,
+  total: 0,
+};
+
+function normalizePaymentSummary(
+  summary?: Partial<PaymentSummary>,
+): PaymentSummary {
+  const cash = Number(summary?.cash) || 0;
+  const cashless = Number(summary?.cashless) || 0;
+  const total = Number.isFinite(Number(summary?.total))
+    ? Number(summary?.total)
+    : cash + cashless;
+
+  return {
+    cash,
+    cashless,
+    total,
+  };
+}
 
 const emptyBonusDraft: BonusRuleDraft = {
   bonusPercent: '',
@@ -197,6 +231,10 @@ function buildShiftReport(shift: ShiftSession, stats: ShiftStats) {
     `Выручка до возвратов: ${formatMoney(stats.grossRevenue)}`,
     `Возвраты: ${formatMoney(stats.totalReturns)}`,
     `Итого после возвратов: ${formatMoney(stats.totalRevenue)}`,
+    'Оплаты:',
+    `- Нал: ${formatMoney(stats.paymentSummary.cash)}`,
+    `- Безнал: ${formatMoney(stats.paymentSummary.cashless)}`,
+    `- Всего по оплатам: ${formatMoney(stats.paymentSummary.total)}`,
     'По категориям:',
     ...stats.categoryStats.map(
       (item) =>
@@ -562,6 +600,8 @@ export default function AdminMotivationPage() {
   const canEditMotivation = canManageMotivation(account?.role);
 
   const [records, setRecords] = useState<FinanceRecord[]>([]);
+  const [paymentSummary, setPaymentSummary] =
+    useState<PaymentSummary>(emptyPaymentSummary);
   const [rules, setRules] = useState<MotivationRule[]>([]);
   const [bonusRules, setBonusRules] = useState<MotivationBonusRule[]>([]);
   const [categories, setCategories] = useState<MotivationCategory[]>([]);
@@ -608,9 +648,18 @@ export default function AdminMotivationPage() {
   const fetchFinances = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch('/api/motivation/current-sales');
+      const res = await apiFetch(
+        '/api/motivation/current-sales?includePaymentSummary=true',
+      );
       if (res.ok) {
-        setRecords((await res.json()) as FinanceRecord[]);
+        const data = (await res.json()) as CurrentSalesResponse | FinanceRecord[];
+        if (Array.isArray(data)) {
+          setRecords(data);
+          setPaymentSummary(emptyPaymentSummary);
+        } else {
+          setRecords(data.records || []);
+          setPaymentSummary(normalizePaymentSummary(data.paymentSummary));
+        }
       }
     } catch (e) {
       console.error(e);
@@ -866,6 +915,7 @@ export default function AdminMotivationPage() {
       categoryStats,
       durationHours,
       grossRevenue,
+      paymentSummary,
       ruleBreakdown,
       totalReturns,
       totalBonus,
@@ -873,7 +923,7 @@ export default function AdminMotivationPage() {
       totalRevenue,
       salesList,
     };
-  }, [bonusRules, now, records, rulesMap, shiftStart]);
+  }, [bonusRules, now, paymentSummary, records, rulesMap, shiftStart]);
 
   const handleStartShift = async () => {
     const res = await apiFetch('/api/shifts/start', { method: 'POST' });
@@ -885,6 +935,7 @@ export default function AdminMotivationPage() {
 
     const data = (await res.json()) as { shift: ShiftSession };
     setActiveShift(data.shift);
+    setPaymentSummary(emptyPaymentSummary);
     setShiftReport('');
     setReportCopied(false);
     void fetchFinances();

@@ -351,13 +351,22 @@ async function deleteBonusRule(id) {
   return { success: true };
 }
 
-async function getCurrentShiftSales() {
+async function getCurrentShiftSales(options = {}) {
+  const includePaymentSummary = Boolean(options.includePaymentSummary);
   const activeShift = await db.Shift.findOne({
     where: { status: 'active' },
     order: [['startedAt', 'DESC']],
   });
 
-  if (!activeShift?.startedAt) return [];
+  if (!activeShift?.startedAt) {
+    const emptyRecords = [];
+    if (!includePaymentSummary) return emptyRecords;
+
+    return {
+      paymentSummary: { cash: 0, cashless: 0, total: 0 },
+      records: emptyRecords,
+    };
+  }
 
   const rules = await db.CatalogRule.findAll();
   const rulesMap = {};
@@ -383,10 +392,22 @@ async function getCurrentShiftSales() {
   });
 
   const records = [];
+  const paymentSummary = {
+    cash: 0,
+    cashless: 0,
+    total: 0,
+  };
 
   for (const receipt of receipts) {
     const isPayback = receipt.type === 'PAYBACK';
     const multiplier = isPayback ? -1 : 1;
+    const receiptCash = Math.abs(Number(receipt.cash) || 0) * multiplier;
+    const receiptCashless =
+      Math.abs(Number(receipt.cashless) || 0) * multiplier;
+
+    paymentSummary.cash += receiptCash;
+    paymentSummary.cashless += receiptCashless;
+    paymentSummary.total += receiptCash + receiptCashless;
 
     for (const item of receipt.items) {
       const rawAmount = Number(
@@ -417,7 +438,12 @@ async function getCurrentShiftSales() {
     }
   }
 
-  return records;
+  if (!includePaymentSummary) return records;
+
+  return {
+    paymentSummary,
+    records,
+  };
 }
 
 function calculateBasePay(hours, rules) {

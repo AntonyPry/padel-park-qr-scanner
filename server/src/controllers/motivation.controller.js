@@ -3,7 +3,11 @@ const motivationService = require('../services/motivation.service');
 class MotivationController {
   async getCurrentSales(req, res) {
     try {
-      res.json(await motivationService.getCurrentShiftSales());
+      res.json(
+        await motivationService.getCurrentShiftSales({
+          includePaymentSummary: req.query.includePaymentSummary === 'true',
+        }),
+      );
     } catch (error) {
       console.error('Ошибка получения продаж смены:', error);
       res.status(500).json({ error: 'Ошибка сервера' });
