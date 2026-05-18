@@ -104,6 +104,17 @@ interface ClientDetails {
   visits: ClientVisit[];
 }
 
+interface DuplicateGroup {
+  phoneNormalized: string;
+  count: number;
+  clients: Client[];
+}
+
+interface DuplicateGroupSelection {
+  primaryId: number | null;
+  duplicateIds: number[];
+}
+
 interface ClientFormState {
   name: string;
   phone: string;
@@ -239,11 +250,41 @@ function getPaginationItems(currentPage: number, pageCount: number) {
   return pages;
 }
 
+function getDefaultPrimaryClientId(clients: Client[]) {
+  const [primary] = [...clients].sort((a, b) => {
+    const visitDiff = b.stats.visitCount - a.stats.visitCount;
+    if (visitDiff !== 0) return visitDiff;
+
+    const lastVisitDiff =
+      new Date(b.stats.lastVisitAt || 0).getTime() -
+      new Date(a.stats.lastVisitAt || 0).getTime();
+    if (lastVisitDiff !== 0) return lastVisitDiff;
+
+    return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+  });
+
+  return primary?.id ?? null;
+}
+
+function buildDuplicateSelections(groups: DuplicateGroup[]) {
+  return groups.reduce<Record<string, DuplicateGroupSelection>>((acc, group) => {
+    const primaryId = getDefaultPrimaryClientId(group.clients);
+    acc[group.phoneNormalized] = {
+      primaryId,
+      duplicateIds: group.clients
+        .map((client) => client.id)
+        .filter((clientId) => clientId !== primaryId),
+    };
+    return acc;
+  }, {});
+}
+
 export default function ClientsPage() {
   const { account } = useAuth();
   const canEdit = canManageClients(account?.role);
   const canMerge = canMergeClients(account?.role);
 
+  const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
   const [clients, setClients] = useState<Client[]>([]);
   const [sources, setSources] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -264,6 +305,12 @@ export default function ClientsPage() {
   const [form, setForm] = useState<ClientFormState>(EMPTY_FORM);
   const [duplicateWarning, setDuplicateWarning] = useState<Client | null>(null);
   const [selectedMergeIds, setSelectedMergeIds] = useState<number[]>([]);
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
+  const [duplicatesError, setDuplicatesError] = useState<string | null>(null);
+  const [groupSelections, setGroupSelections] = useState<
+    Record<string, DuplicateGroupSelection>
+  >({});
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -300,6 +347,28 @@ export default function ClientsPage() {
     }
   }, [queryString]);
 
+  const fetchDuplicateGroups = useCallback(async () => {
+    if (!canMerge) return;
+
+    setDuplicatesLoading(true);
+    setDuplicatesError(null);
+    try {
+      const res = await apiFetch('/api/clients/duplicates');
+      if (!res.ok) {
+        setDuplicatesError(await readError(res, 'Не удалось загрузить дубли'));
+        return;
+      }
+
+      const data = (await res.json()) as DuplicateGroup[];
+      setDuplicateGroups(data);
+      setGroupSelections(buildDuplicateSelections(data));
+    } catch {
+      setDuplicatesError('Не удалось загрузить дубли. Проверьте подключение к серверу.');
+    } finally {
+      setDuplicatesLoading(false);
+    }
+  }, [canMerge]);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void fetchClients();
@@ -307,6 +376,16 @@ export default function ClientsPage() {
 
     return () => window.clearTimeout(timeout);
   }, [fetchClients]);
+
+  useEffect(() => {
+    if (viewMode !== 'duplicates') return;
+    if (!canMerge) {
+      setViewMode('list');
+      return;
+    }
+
+    void fetchDuplicateGroups();
+  }, [canMerge, fetchDuplicateGroups, viewMode]);
 
   useEffect(() => {
     setPage(1);
@@ -415,6 +494,41 @@ export default function ClientsPage() {
     );
   };
 
+  const setDuplicateGroupPrimary = (group: DuplicateGroup, primaryId: number) => {
+    setGroupSelections((prev) => ({
+      ...prev,
+      [group.phoneNormalized]: {
+        primaryId,
+        duplicateIds: group.clients
+          .map((client) => client.id)
+          .filter((clientId) => clientId !== primaryId),
+      },
+    }));
+  };
+
+  const toggleDuplicateGroupClient = (group: DuplicateGroup, clientId: number) => {
+    setGroupSelections((prev) => {
+      const current = prev[group.phoneNormalized] || {
+        primaryId: getDefaultPrimaryClientId(group.clients),
+        duplicateIds: [],
+      };
+
+      if (current.primaryId === clientId) return prev;
+
+      const duplicateIds = current.duplicateIds.includes(clientId)
+        ? current.duplicateIds.filter((id) => id !== clientId)
+        : [...current.duplicateIds, clientId];
+
+      return {
+        ...prev,
+        [group.phoneNormalized]: {
+          ...current,
+          duplicateIds,
+        },
+      };
+    });
+  };
+
   const handleMerge = async () => {
     if (!details?.client || selectedMergeIds.length === 0) return;
 
@@ -439,6 +553,43 @@ export default function ClientsPage() {
     setDetails((await res.json()) as ClientDetails);
     setSelectedMergeIds([]);
     void fetchClients();
+    if (viewMode === 'duplicates') void fetchDuplicateGroups();
+  };
+
+  const handleMergeDuplicateGroup = async (group: DuplicateGroup) => {
+    const selection = groupSelections[group.phoneNormalized];
+    if (!selection?.primaryId || selection.duplicateIds.length === 0) {
+      alert('Выберите основного клиента и хотя бы один дубль');
+      return;
+    }
+
+    const primary = group.clients.find(
+      (client) => client.id === selection.primaryId,
+    );
+    if (
+      !confirm(
+        `Объединить ${selection.duplicateIds.length} дубл. с клиентом ${primary?.name || selection.primaryId}? История визитов будет перенесена.`,
+      )
+    ) {
+      return;
+    }
+
+    const res = await apiFetch(`/api/clients/${selection.primaryId}/merge`, {
+      method: 'POST',
+      body: JSON.stringify({ duplicateClientIds: selection.duplicateIds }),
+    });
+
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось объединить клиентов'));
+      return;
+    }
+
+    const mergedDetails = (await res.json()) as ClientDetails;
+    if (details?.client.id === selection.primaryId) {
+      setDetails(mergedDetails);
+    }
+    await fetchDuplicateGroups();
+    void fetchClients();
   };
 
   return (
@@ -452,12 +603,36 @@ export default function ClientsPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
+            variant={viewMode === 'list' ? 'default' : 'outline'}
+            onClick={() => setViewMode('list')}
+          >
+            Список
+          </Button>
+          {canMerge && (
+            <Button
+              variant={viewMode === 'duplicates' ? 'default' : 'outline'}
+              onClick={() => setViewMode('duplicates')}
+            >
+              <GitMerge className="mr-2 h-4 w-4" /> Дубли
+            </Button>
+          )}
+          <Button
             variant="outline"
             size="icon"
-            onClick={fetchClients}
-            disabled={loading}
+            onClick={() =>
+              viewMode === 'duplicates'
+                ? void fetchDuplicateGroups()
+                : void fetchClients()
+            }
+            disabled={viewMode === 'duplicates' ? duplicatesLoading : loading}
           >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw
+              className={`h-4 w-4 ${
+                (viewMode === 'duplicates' ? duplicatesLoading : loading)
+                  ? 'animate-spin'
+                  : ''
+              }`}
+            />
           </Button>
           {canEdit && (
             <Button onClick={openCreate}>
@@ -467,134 +642,187 @@ export default function ClientsPage() {
         </div>
       </div>
 
-      <div className="rounded-md border bg-card p-3">
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_160px]">
-          <div className="relative">
-            <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-            <Input
-              value={q}
-              onChange={(event) => setQ(event.target.value)}
-              placeholder="Имя или телефон"
-              className="pl-9"
-            />
+      {viewMode === 'list' ? (
+        <>
+          <div className="rounded-md border bg-card p-3">
+            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_160px]">
+              <div className="relative">
+                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  value={q}
+                  onChange={(event) => setQ(event.target.value)}
+                  placeholder="Имя или телефон"
+                  className="pl-9"
+                />
+              </div>
+              <Select value={source} onValueChange={setSource}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Все источники</SelectItem>
+                  {sources.map((item) => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={segment}
+                onValueChange={(value) => setSegment(value as ClientSegment)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CLIENT_SEGMENT_OPTIONS.map((option) => (
+                    <SelectItem
+                      key={option.value}
+                      value={option.value}
+                      title={option.condition}
+                    >
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select
+                value={status}
+                onValueChange={(value) =>
+                  setStatus(value as 'active' | 'archived' | 'merged' | 'all')
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="active">Активные</SelectItem>
+                  <SelectItem value="archived">Архив</SelectItem>
+                  <SelectItem value="merged">Объединенные</SelectItem>
+                  <SelectItem value="all">Все статусы</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <Select value={source} onValueChange={setSource}>
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все источники</SelectItem>
-              {sources.map((item) => (
-                <SelectItem key={item} value={item}>
-                  {item}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={segment}
-            onValueChange={(value) => setSegment(value as ClientSegment)}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {CLIENT_SEGMENT_OPTIONS.map((option) => (
-                <SelectItem
-                  key={option.value}
-                  value={option.value}
-                  title={option.condition}
-                >
-                  {option.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={status}
-            onValueChange={(value) =>
-              setStatus(value as 'active' | 'archived' | 'merged' | 'all')
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Активные</SelectItem>
-              <SelectItem value="archived">Архив</SelectItem>
-              <SelectItem value="merged">Объединенные</SelectItem>
-              <SelectItem value="all">Все статусы</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
 
-      <div className="hidden overflow-x-auto rounded-md border bg-card lg:block">
-        <Table className="min-w-[860px] table-fixed">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[25%]">Клиент</TableHead>
-              <TableHead className="w-[17%]">Телефон</TableHead>
-              <TableHead className="w-[16%]">Источник</TableHead>
-              <TableHead className="w-[14%]">Сегмент</TableHead>
-              <TableHead className="w-[9%] text-right">Визиты</TableHead>
-              <TableHead className="w-[12%]">Последний визит</TableHead>
-              <TableHead className="w-[7%] text-right"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+          <div className="hidden overflow-x-auto rounded-md border bg-card lg:block">
+            <Table className="min-w-[860px] table-fixed">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="w-[25%]">Клиент</TableHead>
+                  <TableHead className="w-[17%]">Телефон</TableHead>
+                  <TableHead className="w-[16%]">Источник</TableHead>
+                  <TableHead className="w-[14%]">Сегмент</TableHead>
+                  <TableHead className="w-[9%] text-right">Визиты</TableHead>
+                  <TableHead className="w-[12%]">Последний визит</TableHead>
+                  <TableHead className="w-[7%] text-right"></TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(isInitialLoading || error || clients.length === 0) && (
+                  <TableRow>
+                    <TableCell
+                      colSpan={7}
+                      className="py-10 text-center text-muted-foreground"
+                    >
+                      {isInitialLoading
+                        ? 'Загрузка клиентов...'
+                        : error || 'Клиенты не найдены'}
+                    </TableCell>
+                  </TableRow>
+                )}
+                {clients.map((client) => (
+                  <TableRow key={client.id}>
+                    <TableCell>
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <UserRoundCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="truncate font-medium">
+                            {client.name}
+                          </span>
+                        </div>
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          <Badge
+                            variant="outline"
+                            className={getStatusBadgeClass(client.status)}
+                          >
+                            {client.statusLabel}
+                          </Badge>
+                          {client.note && (
+                            <Badge variant="outline">Есть заметка</Badge>
+                          )}
+                        </div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="truncate text-muted-foreground">
+                      {client.phone}
+                    </TableCell>
+                    <TableCell className="truncate text-muted-foreground">
+                      {client.source}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{client.segment}</Badge>
+                    </TableCell>
+                    <TableCell className="text-right font-medium">
+                      {client.stats.visitCount}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground">
+                      {formatDate(client.stats.lastVisitAt)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => void loadDetails(client.id)}
+                        >
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        {canEdit && client.status !== 'merged' && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            onClick={() => openEdit(client)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="space-y-3 lg:hidden">
             {(isInitialLoading || error || clients.length === 0) && (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="py-10 text-center text-muted-foreground"
-                >
-                  {isInitialLoading
-                    ? 'Загрузка клиентов...'
-                    : error || 'Клиенты не найдены'}
-                </TableCell>
-              </TableRow>
+              <div className="rounded-md border bg-card p-6 text-center text-muted-foreground">
+                {isInitialLoading
+                  ? 'Загрузка клиентов...'
+                  : error || 'Клиенты не найдены'}
+              </div>
             )}
             {clients.map((client) => (
-              <TableRow key={client.id}>
-                <TableCell>
+              <div key={client.id} className="rounded-md border bg-card p-4">
+                <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
                       <UserRoundCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
-                      <span className="truncate font-medium">
-                        {client.name}
-                      </span>
+                      <span className="truncate font-medium">{client.name}</span>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
+                    <div className="mt-2 flex flex-wrap gap-1">
                       <Badge
                         variant="outline"
                         className={getStatusBadgeClass(client.status)}
                       >
                         {client.statusLabel}
                       </Badge>
-                      {client.note && (
-                        <Badge variant="outline">Есть заметка</Badge>
-                      )}
+                      <Badge variant="outline">{client.segment}</Badge>
                     </div>
                   </div>
-                </TableCell>
-                <TableCell className="truncate text-muted-foreground">
-                  {client.phone}
-                </TableCell>
-                <TableCell className="truncate text-muted-foreground">
-                  {client.source}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline">{client.segment}</Badge>
-                </TableCell>
-                <TableCell className="text-right font-medium">
-                  {client.stats.visitCount}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {formatDate(client.stats.lastVisitAt)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-1">
+                  <div className="flex shrink-0 gap-1">
                     <Button
                       variant="ghost"
                       size="icon-sm"
@@ -612,111 +840,223 @@ export default function ClientsPage() {
                       </Button>
                     )}
                   </div>
-                </TableCell>
-              </TableRow>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 gap-2 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Телефон</span>
+                    <span className="text-right font-medium">{client.phone}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Источник</span>
+                    <span className="text-right">{client.source}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Визиты</span>
+                    <span className="font-medium">{client.stats.visitCount}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Последний визит</span>
+                    <span>{formatDate(client.stats.lastVisitAt)}</span>
+                  </div>
+                </div>
+              </div>
             ))}
-          </TableBody>
-        </Table>
-      </div>
-
-      <div className="space-y-3 lg:hidden">
-        {(isInitialLoading || error || clients.length === 0) && (
-          <div className="rounded-md border bg-card p-6 text-center text-muted-foreground">
-            {isInitialLoading
-              ? 'Загрузка клиентов...'
-              : error || 'Клиенты не найдены'}
           </div>
-        )}
-        {clients.map((client) => (
-          <div key={client.id} className="rounded-md border bg-card p-4">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <UserRoundCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
-                  <span className="truncate font-medium">{client.name}</span>
-                </div>
-                <div className="mt-2 flex flex-wrap gap-1">
-                  <Badge
-                    variant="outline"
-                    className={getStatusBadgeClass(client.status)}
-                  >
-                    {client.statusLabel}
-                  </Badge>
-                  <Badge variant="outline">{client.segment}</Badge>
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => void loadDetails(client.id)}
-                >
-                  <Eye className="h-4 w-4" />
-                </Button>
-                {canEdit && client.status !== 'merged' && (
+
+          <Pagination className="justify-end">
+            <PaginationContent>
+              <PaginationItem>
+                <PaginationPrevious
+                  disabled={page <= 1}
+                  onClick={() => setPage((value) => Math.max(1, value - 1))}
+                />
+              </PaginationItem>
+              {paginationItems.map((item, index) => (
+                <PaginationItem key={`${item}-${index}`}>
+                  {item === 'ellipsis' ? (
+                    <PaginationEllipsis />
+                  ) : (
+                    <PaginationButton
+                      isActive={item === page}
+                      onClick={() => setPage(item)}
+                    >
+                      {item}
+                    </PaginationButton>
+                  )}
+                </PaginationItem>
+              ))}
+              <PaginationItem>
+                <PaginationNext
+                  disabled={page >= totalPages}
+                  onClick={() =>
+                    setPage((value) => Math.min(totalPages, value + 1))
+                  }
+                />
+              </PaginationItem>
+            </PaginationContent>
+          </Pagination>
+        </>
+      ) : (
+        <div className="rounded-md border bg-card">
+          <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-semibold">Дубликаты клиентов</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Группы строятся по одинаковому телефону. Основная запись остается,
+                выбранные дубли переносят в нее историю визитов.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={() => void fetchDuplicateGroups()}
+              disabled={duplicatesLoading}
+            >
+              <RefreshCw
+                className={`mr-2 h-4 w-4 ${
+                  duplicatesLoading ? 'animate-spin' : ''
+                }`}
+              />
+              Обновить
+            </Button>
+          </div>
+
+          {duplicatesLoading && duplicateGroups.length === 0 && (
+            <div className="p-8 text-center text-muted-foreground">
+              Загрузка дублей...
+            </div>
+          )}
+
+          {duplicatesError && (
+            <div className="p-8 text-center text-destructive">
+              {duplicatesError}
+            </div>
+          )}
+
+          {!duplicatesLoading && !duplicatesError && duplicateGroups.length === 0 && (
+            <div className="p-8 text-center text-muted-foreground">
+              Дублей по телефону не найдено.
+            </div>
+          )}
+
+          {duplicateGroups.map((group) => {
+            const selection = groupSelections[group.phoneNormalized] || {
+              primaryId: getDefaultPrimaryClientId(group.clients),
+              duplicateIds: [],
+            };
+
+            return (
+              <div key={group.phoneNormalized} className="border-t p-4">
+                <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <div className="font-medium">
+                      Телефон: {group.clients[0]?.phone || group.phoneNormalized}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {group.count} записи с одинаковым телефоном
+                    </div>
+                  </div>
                   <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() => openEdit(client)}
+                    onClick={() => void handleMergeDuplicateGroup(group)}
+                    disabled={!selection.primaryId || selection.duplicateIds.length === 0}
                   >
-                    <Pencil className="h-4 w-4" />
+                    <GitMerge className="mr-2 h-4 w-4" />
+                    Объединить выбранные
                   </Button>
-                )}
-              </div>
-            </div>
+                </div>
 
-            <div className="mt-4 grid grid-cols-1 gap-2 text-sm">
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Телефон</span>
-                <span className="text-right font-medium">{client.phone}</span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Источник</span>
-                <span className="text-right">{client.source}</span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Визиты</span>
-                <span className="font-medium">{client.stats.visitCount}</span>
-              </div>
-              <div className="flex justify-between gap-3">
-                <span className="text-muted-foreground">Последний визит</span>
-                <span>{formatDate(client.stats.lastVisitAt)}</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+                <div className="overflow-x-auto rounded-md border">
+                  <Table className="min-w-[880px] table-fixed">
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-[90px]">Основной</TableHead>
+                        <TableHead className="w-[100px]">Слить</TableHead>
+                        <TableHead className="w-[24%]">Клиент</TableHead>
+                        <TableHead className="w-[11%] text-right">
+                          Визиты
+                        </TableHead>
+                        <TableHead className="w-[16%]">Последний визит</TableHead>
+                        <TableHead className="w-[18%]">Источник</TableHead>
+                        <TableHead className="w-[90px] text-right"></TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {group.clients.map((client) => {
+                        const isPrimary = selection.primaryId === client.id;
+                        const isSelectedDuplicate =
+                          selection.duplicateIds.includes(client.id);
 
-      <Pagination className="justify-end">
-        <PaginationContent>
-          <PaginationItem>
-            <PaginationPrevious
-              disabled={page <= 1}
-              onClick={() => setPage((value) => Math.max(1, value - 1))}
-            />
-          </PaginationItem>
-          {paginationItems.map((item, index) => (
-            <PaginationItem key={`${item}-${index}`}>
-              {item === 'ellipsis' ? (
-                <PaginationEllipsis />
-              ) : (
-                <PaginationButton
-                  isActive={item === page}
-                  onClick={() => setPage(item)}
-                >
-                  {item}
-                </PaginationButton>
-              )}
-            </PaginationItem>
-          ))}
-          <PaginationItem>
-            <PaginationNext
-              disabled={page >= totalPages}
-              onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
-            />
-          </PaginationItem>
-        </PaginationContent>
-      </Pagination>
+                        return (
+                          <TableRow key={client.id}>
+                            <TableCell>
+                              <input
+                                type="radio"
+                                name={`primary-${group.phoneNormalized}`}
+                                checked={isPrimary}
+                                onChange={() =>
+                                  setDuplicateGroupPrimary(group, client.id)
+                                }
+                                className="h-4 w-4"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <input
+                                type="checkbox"
+                                checked={isSelectedDuplicate}
+                                disabled={isPrimary}
+                                onChange={() =>
+                                  toggleDuplicateGroupClient(group, client.id)
+                                }
+                                className="h-4 w-4"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <div className="min-w-0">
+                                <div className="truncate font-medium">
+                                  {client.name}
+                                </div>
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                  <Badge
+                                    variant="outline"
+                                    className={getStatusBadgeClass(client.status)}
+                                  >
+                                    {client.statusLabel}
+                                  </Badge>
+                                  {client.note && (
+                                    <Badge variant="outline">Есть заметка</Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              {client.stats.visitCount}
+                            </TableCell>
+                            <TableCell className="text-muted-foreground">
+                              {formatDate(client.stats.lastVisitAt)}
+                            </TableCell>
+                            <TableCell className="truncate text-muted-foreground">
+                              {client.source}
+                            </TableCell>
+                            <TableCell className="text-right">
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => void loadDetails(client.id)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[720px]">
