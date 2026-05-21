@@ -27,6 +27,26 @@ function normalizeFinanceType(type) {
   return type;
 }
 
+function normalizeReceiptPaymentSource(value) {
+  const source = String(value || '').trim().toUpperCase();
+  if (['CASH', 'PAY_CASH', 'TYPE_CASH', '0'].includes(source)) return 'cash';
+  if (
+    [
+      'CARD',
+      'CASHLESS',
+      'ELECTRON',
+      'ELECTRONIC',
+      'PAY_CARD',
+      'PAY_BY_CREDIT',
+      'TYPE_CARD',
+      '1',
+    ].includes(source)
+  ) {
+    return 'cashless';
+  }
+  return 'unknown';
+}
+
 class FinanceService {
   // 1. Определение категории
   async getCategoryName(itemName, rulesMap) {
@@ -59,7 +79,9 @@ class FinanceService {
       }
     }
 
-    const categories = await db.Category.findAll();
+    const categories = await db.Category.findAll({
+      where: { isActive: true },
+    });
     const catMap = {};
     const catById = {};
     categories.forEach((c) => {
@@ -67,7 +89,9 @@ class FinanceService {
       catById[c.id] = c;
     });
 
-    const rules = await db.CatalogRule.findAll();
+    const rules = await db.CatalogRule.findAll({
+      where: { status: 'active' },
+    });
     const rulesMap = {};
     rules.forEach((r) => {
       rulesMap[String(r.itemName).toLowerCase().trim()] = r.category;
@@ -223,11 +247,27 @@ class FinanceService {
       if (!salesByDate[dStr]) salesByDate[dStr] = { revenue: 0, items: [] };
 
       // Берем сумму по модулю и применяем свой знак
-      const rCashless = Math.abs(Number(receipt.cashless)) * multiplier;
-      const rCash = Math.abs(Number(receipt.cash)) * multiplier;
+      const rTotal = Math.abs(Number(receipt.totalAmount) || 0) * multiplier;
+      let rCashless = Math.abs(Number(receipt.cashless) || 0) * multiplier;
+      let rCash = Math.abs(Number(receipt.cash) || 0) * multiplier;
+      const paymentSource = normalizeReceiptPaymentSource(receipt.paymentSource);
+
+      if (paymentSource === 'cash' && rCash === 0 && rTotal !== 0) {
+        rCash = rTotal;
+        rCashless = 0;
+      } else if (
+        paymentSource === 'cashless' &&
+        rCashless === 0 &&
+        rTotal !== 0
+      ) {
+        rCash = 0;
+        rCashless = rTotal;
+      } else if (rCash === 0 && rCashless === 0 && rTotal !== 0) {
+        rCashless = rTotal;
+      }
 
       if (rCashless !== 0) {
-        const acqFee = Math.abs(Number(receipt.cashless)) * 0.01 * multiplier;
+        const acqFee = Math.abs(rCashless) * 0.01 * multiplier;
         addRecord(
           'FEES',
           'Эквайринг (1%)',
@@ -376,7 +416,9 @@ class FinanceService {
       include: [{ model: db.ReceiptItem, as: 'items' }],
     });
 
-    const rulesList = await db.CatalogRule.findAll();
+    const rulesList = await db.CatalogRule.findAll({
+      where: { status: 'active' },
+    });
     const rulesMap = {};
     rulesList.forEach((r) => {
       rulesMap[String(r.itemName).toLowerCase().trim()] = r.category;

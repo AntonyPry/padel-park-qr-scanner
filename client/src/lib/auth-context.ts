@@ -13,7 +13,7 @@ export interface Account {
   id: number;
   email: string;
   role: AccountRole;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'archived';
   staffId?: number | null;
   lastLoginAt?: string | null;
   Staff?: StaffProfile | null;

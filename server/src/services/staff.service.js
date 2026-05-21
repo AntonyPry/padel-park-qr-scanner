@@ -1,5 +1,7 @@
 const db = require('../../models');
 
+const STAFF_STATUS_VALUES = ['active', 'inactive', 'archived'];
+
 function appError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -25,7 +27,7 @@ function normalizePayload(data) {
     throw appError('Имя и должность сотрудника обязательны');
   }
 
-  if (!['active', 'inactive'].includes(status)) {
+  if (!STAFF_STATUS_VALUES.includes(status)) {
     throw appError('Неизвестный статус сотрудника');
   }
 
@@ -41,8 +43,17 @@ async function getStaffById(id) {
   return serializeStaff(await db.Staff.findByPk(id));
 }
 
-async function getAll() {
+async function getAll(query = {}) {
+  const where = {};
+  if (query.status && query.status !== 'all') {
+    if (!STAFF_STATUS_VALUES.includes(query.status)) {
+      throw appError('Неизвестный статус сотрудника');
+    }
+    where.status = query.status;
+  }
+
   const staff = await db.Staff.findAll({
+    where,
     order: [['createdAt', 'DESC']],
   });
 
@@ -68,8 +79,38 @@ async function remove(id) {
   const staff = await db.Staff.findByPk(id);
   if (!staff) throw appError('Сотрудник не найден', 404);
 
-  await staff.destroy();
+  await staff.update({ status: 'archived' });
 
+  return getStaffById(staff.id);
+}
+
+async function restore(id) {
+  const staff = await db.Staff.findByPk(id);
+  if (!staff) throw appError('Сотрудник не найден', 404);
+
+  await staff.update({ status: 'active' });
+  return getStaffById(staff.id);
+}
+
+async function removeArchived(id) {
+  const staff = await db.Staff.findByPk(id);
+  if (!staff) throw appError('Сотрудник не найден', 404);
+  if (staff.status !== 'archived') {
+    throw appError('Удалять безвозвратно можно только сотрудника из архива', 409);
+  }
+
+  const references = await Promise.all([
+    db.Account.count({ where: { staffId: staff.id } }),
+    db.Shift.count({ where: { staffId: staff.id } }),
+  ]);
+  if (references.some((count) => count > 0)) {
+    throw appError(
+      'Сотрудника нельзя удалить безвозвратно: по нему уже есть аккаунт или смены. Оставьте его в архиве.',
+      409,
+    );
+  }
+
+  await staff.destroy();
   return { success: true };
 }
 
@@ -78,5 +119,7 @@ module.exports = {
   getAll,
   create,
   remove,
+  removeArchived,
+  restore,
   update,
 };

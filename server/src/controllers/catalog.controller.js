@@ -1,16 +1,15 @@
 const catalogService = require('../services/catalog.service');
+const { sendError } = require('../utils/api-error');
 
 function handleError(res, error, fallback) {
-  res
-    .status(error.statusCode || 500)
-    .json({ error: error.message || fallback });
+  sendError(res, error, fallback);
 }
 
 class CatalogController {
   // Категории
   async getCategories(req, res) {
     try {
-      res.json(await catalogService.getCategories());
+      res.json(await catalogService.getCategories(req.query));
     } catch (error) {
       handleError(res, error, 'Ошибка получения категорий');
     }
@@ -29,6 +28,22 @@ class CatalogController {
       res.json(await catalogService.deleteCategory(req.params.id));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления категории');
+    }
+  }
+
+  async restoreCategory(req, res) {
+    try {
+      res.json(await catalogService.restoreCategory(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка восстановления категории');
+    }
+  }
+
+  async removeArchivedCategory(req, res) {
+    try {
+      res.json(await catalogService.removeArchivedCategory(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка удаления категории из архива');
     }
   }
 
@@ -55,7 +70,7 @@ class CatalogController {
 
   async getRules(req, res) {
     try {
-      res.json(await catalogService.getRules());
+      res.json(await catalogService.getRules(req.query));
     } catch (error) {
       handleError(res, error, 'Ошибка получения правил');
     }
@@ -74,6 +89,22 @@ class CatalogController {
       res.json(await catalogService.deleteRule(req.params.id));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления правила');
+    }
+  }
+
+  async restoreRule(req, res) {
+    try {
+      res.json(await catalogService.restoreRule(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка восстановления правила');
+    }
+  }
+
+  async removeArchivedRule(req, res) {
+    try {
+      res.json(await catalogService.removeArchivedRule(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка удаления правила из архива');
     }
   }
 }

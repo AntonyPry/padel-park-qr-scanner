@@ -38,6 +38,8 @@ import {
   Plus,
   RefreshCw,
   AlertTriangle,
+  Archive,
+  ArchiveRestore,
   CheckCircle2,
   Pencil,
   Trash2,
@@ -46,6 +48,10 @@ import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
 import { canManageShifts, canManageStaff } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
 
 interface AdminStat {
   staffId?: number | null;
@@ -87,8 +93,12 @@ interface StaffMember {
   position?: string;
   role?: string;
   phone?: string | null;
-  status: 'active' | 'inactive' | string;
+  status: 'active' | 'inactive' | 'archived' | string;
 }
+
+type PendingAction = ConfirmAction & {
+  onConfirm: () => Promise<void>;
+};
 
 const emptyStaffForm = {
   name: '',
@@ -134,6 +144,11 @@ export default function StaffPage() {
     comment: '',
   });
   const [staffForm, setStaffForm] = useState(emptyStaffForm);
+  const [staffStatus, setStaffStatus] = useState<'active' | 'archived' | 'all'>(
+    'active',
+  );
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(false);
 
   const fetchPayroll = useCallback(async () => {
     setLoading(true);
@@ -203,7 +218,6 @@ export default function StaffPage() {
 
   const handleDelete = async (id: number | string) => {
     if (String(id).startsWith('draft-')) return;
-    if (!confirm('Точно удалить смену?')) return;
     try {
       await apiFetch('/api/shifts', {
         method: 'DELETE',
@@ -214,6 +228,16 @@ export default function StaffPage() {
     } catch (e) {
       console.error(e);
     }
+  };
+
+  const requestDeleteShift = (shift: ShiftRecord) => {
+    setPendingAction({
+      confirmLabel: 'Удалить смену',
+      description: `Смена за ${shift.date} будет удалена из payroll. Это действие нельзя отменить.`,
+      isDestructive: true,
+      onConfirm: () => handleDelete(shift.id),
+      title: 'Удалить смену?',
+    });
   };
 
   const openForm = (shift?: ShiftRecord) => {
@@ -253,7 +277,9 @@ export default function StaffPage() {
         name: item.name,
         phone: item.phone || '',
         position: getStaffPosition(item),
-        status: item.status === 'inactive' ? 'inactive' : 'active',
+        status: ['active', 'inactive', 'archived'].includes(item.status)
+          ? item.status
+          : 'active',
       });
     } else {
       setEditingStaff(null);
@@ -301,9 +327,7 @@ export default function StaffPage() {
     }
   };
 
-  const handleDeleteStaff = async (item: StaffMember) => {
-    if (!confirm(`Удалить сотрудника ${item.name}?`)) return;
-
+  const executeArchiveStaff = async (item: StaffMember) => {
     try {
       const res = await apiFetch(`/api/staff/${item.id}`, {
         method: 'DELETE',
@@ -311,13 +335,73 @@ export default function StaffPage() {
 
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        alert(data.error || 'Не удалось удалить сотрудника');
+        alert(data.error || 'Не удалось отключить сотрудника');
         return;
       }
 
       fetchPayroll();
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const executeRestoreStaff = async (item: StaffMember) => {
+    const res = await apiFetch(`/api/staff/${item.id}/restore`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      alert(data.error || 'Не удалось восстановить сотрудника');
+      return;
+    }
+    fetchPayroll();
+  };
+
+  const executePermanentDeleteStaff = async (item: StaffMember) => {
+    const res = await apiFetch(`/api/staff/${item.id}/permanent`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      alert(data.error || 'Не удалось удалить сотрудника из архива');
+      return;
+    }
+    fetchPayroll();
+  };
+
+  const requestArchiveStaff = (item: StaffMember) => {
+    const isArchived = item.status === 'archived';
+    setPendingAction({
+      confirmLabel: isArchived ? 'Восстановить' : 'В архив',
+      description: isArchived
+        ? `Сотрудник «${item.name}» снова появится в активной операционной базе.`
+        : `Сотрудник «${item.name}» будет убран из активного списка. Смены и payroll сохранятся.`,
+      isDestructive: !isArchived,
+      onConfirm: () =>
+        isArchived ? executeRestoreStaff(item) : executeArchiveStaff(item),
+      title: isArchived ? 'Восстановить сотрудника?' : 'Архивировать сотрудника?',
+    });
+  };
+
+  const requestPermanentDeleteStaff = (item: StaffMember) => {
+    setPendingAction({
+      confirmLabel: 'Удалить навсегда',
+      description: `Сотрудник «${item.name}» будет удален без возможности восстановления. Сервер не даст удалить его, если есть смены или привязанный аккаунт.`,
+      isDestructive: true,
+      onConfirm: () => executePermanentDeleteStaff(item),
+      title: 'Удалить сотрудника из архива?',
+    });
+  };
+
+  const confirmPendingAction = async () => {
+    if (!pendingAction) return;
+
+    setPendingActionLoading(true);
+    try {
+      await pendingAction.onConfirm();
+      setPendingAction(null);
+    } finally {
+      setPendingActionLoading(false);
     }
   };
 
@@ -343,6 +427,10 @@ export default function StaffPage() {
     () => staff.filter((item) => item.status === 'active'),
     [staff],
   );
+  const displayedStaff = useMemo(() => {
+    if (staffStatus === 'all') return staff;
+    return staff.filter((item) => item.status === staffStatus);
+  }, [staff, staffStatus]);
 
   const getBucketStyles = (bucket: string) => {
     switch (bucket) {
@@ -484,15 +572,32 @@ export default function StaffPage() {
               Рабочие смены привязываются к этой базе.
             </div>
           </div>
-          {canEditStaff && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => openStaffForm()}
+          <div className="flex items-center gap-2">
+            <Select
+              value={staffStatus}
+              onValueChange={(value) =>
+                setStaffStatus(value as 'active' | 'archived' | 'all')
+              }
             >
-              <Plus className="w-4 h-4 mr-2" /> Добавить
-            </Button>
-          )}
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Активные</SelectItem>
+                <SelectItem value="archived">Архив</SelectItem>
+                <SelectItem value="all">Все</SelectItem>
+              </SelectContent>
+            </Select>
+            {canEditStaff && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => openStaffForm()}
+              >
+                <Plus className="w-4 h-4 mr-2" /> Добавить
+              </Button>
+            )}
+          </div>
         </div>
         <Table className="min-w-[760px] table-fixed">
           <TableHeader>
@@ -505,7 +610,7 @@ export default function StaffPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {staff.length === 0 && (
+            {displayedStaff.length === 0 && (
               <TableRow>
                 <TableCell
                   colSpan={5}
@@ -515,7 +620,7 @@ export default function StaffPage() {
                 </TableCell>
               </TableRow>
             )}
-            {staff.map((item) => (
+            {displayedStaff.map((item) => (
               <TableRow key={item.id}>
                 <TableCell className="font-medium truncate">
                   {item.name}
@@ -528,7 +633,11 @@ export default function StaffPage() {
                 </TableCell>
                 <TableCell>
                   <Badge variant="outline">
-                    {item.status === 'active' ? 'Активен' : 'Отключен'}
+                    {item.status === 'active'
+                      ? 'Активен'
+                      : item.status === 'archived'
+                        ? 'Архив'
+                        : 'Отключен'}
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">
@@ -545,10 +654,26 @@ export default function StaffPage() {
                         variant="ghost"
                         size="icon-sm"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => void handleDeleteStaff(item)}
+                        onClick={() => requestArchiveStaff(item)}
+                        title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
                       >
-                        <Trash2 className="h-4 w-4" />
+                        {item.status === 'archived' ? (
+                          <ArchiveRestore className="h-4 w-4" />
+                        ) : (
+                          <Archive className="h-4 w-4" />
+                        )}
                       </Button>
+                      {item.status === 'archived' && (
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => requestPermanentDeleteStaff(item)}
+                          title="Удалить навсегда"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   )}
                 </TableCell>
@@ -651,7 +776,7 @@ export default function StaffPage() {
                         variant="ghost"
                         size="sm"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => handleDelete(s.id)}
+                        onClick={() => requestDeleteShift(s)}
                       >
                         Удал.
                       </Button>
@@ -782,6 +907,7 @@ export default function StaffPage() {
                 <SelectContent>
                   <SelectItem value="active">Активен</SelectItem>
                   <SelectItem value="inactive">Отключен</SelectItem>
+                  <SelectItem value="archived">Архив</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1001,6 +1127,13 @@ export default function StaffPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmActionDialog
+        action={pendingAction}
+        loading={pendingActionLoading}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={confirmPendingAction}
+      />
     </div>
   );
 }

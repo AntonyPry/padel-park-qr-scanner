@@ -13,6 +13,12 @@ module.exports = (sequelize, DataTypes) => {
         as: 'mergedBy',
         foreignKey: 'mergedByAccountId',
       });
+      User.hasMany(models.TrainingNote, { foreignKey: 'userId' });
+      User.belongsTo(models.ClientSource, { foreignKey: 'sourceId' });
+      User.hasMany(models.CallTaskClient, {
+        as: 'callTaskClients',
+        foreignKey: 'userId',
+      });
     }
   }
 
@@ -49,12 +55,16 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+      sourceId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
       note: {
         type: DataTypes.TEXT,
         allowNull: true,
       },
       status: {
-        type: DataTypes.ENUM('active', 'merged', 'archived'),
+        type: DataTypes.ENUM('active', 'archived'),
         allowNull: false,
         defaultValue: 'active',
       },

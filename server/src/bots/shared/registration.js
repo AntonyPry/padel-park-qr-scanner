@@ -26,9 +26,35 @@ const SOURCE_ROWS = [
   ['Другое'],
 ];
 
+function chunkRows(items, size = 3) {
+  const rows = [];
+  for (let index = 0; index < items.length; index += size) {
+    rows.push(items.slice(index, index + size));
+  }
+  return rows;
+}
+
+async function getSourceRows(db) {
+  try {
+    const sources = await db.ClientSource.findAll({
+      where: { status: 'active' },
+      order: [
+        ['sortOrder', 'ASC'],
+        ['name', 'ASC'],
+      ],
+      raw: true,
+    });
+    const names = sources.map((source) => source.name).filter(Boolean);
+    return names.length > 0 ? chunkRows(names) : SOURCE_ROWS;
+  } catch {
+    return SOURCE_ROWS;
+  }
+}
+
 module.exports = {
   isValidWord,
   getPhoneValidationError,
   CONSENT_TEXT,
   SOURCE_ROWS,
+  getSourceRows,
 };

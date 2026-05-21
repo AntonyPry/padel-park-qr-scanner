@@ -13,7 +13,8 @@ const ACCOUNT_ATTRIBUTES = [
   'updatedAt',
 ];
 const STAFF_ATTRIBUTES = ['id', 'name', 'role', 'phone', 'status'];
-const MANAGER_MANAGED_ROLES = ['admin', 'accountant', 'viewer'];
+const MANAGER_MANAGED_ROLES = ['admin', 'accountant', 'viewer', 'trainer'];
+const ACCOUNT_STATUS_VALUES = ['active', 'inactive', 'archived'];
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -34,7 +35,7 @@ function normalizeRole(role) {
 }
 
 function normalizeStatus(status = 'active') {
-  if (!['active', 'inactive'].includes(status)) {
+  if (!ACCOUNT_STATUS_VALUES.includes(status)) {
     throw appError('Неизвестный статус пользователя');
   }
 
@@ -75,6 +76,9 @@ async function normalizeStaffId(staffId, accountId = null) {
 
   const staff = await db.Staff.findByPk(normalizedStaffId);
   if (!staff) throw appError('Сотрудник не найден', 404);
+  if (staff.status !== 'active') {
+    throw appError('К пользователю можно привязать только активного сотрудника', 409);
+  }
 
   const where = { staffId: normalizedStaffId };
   if (accountId) {
@@ -95,7 +99,8 @@ async function assertActiveOwnerRemains(account, nextValues = {}) {
   const nextRole = nextValues.role ?? account.role;
   const nextStatus = nextValues.status ?? account.status;
   const affectsActiveOwner =
-    nextValues.delete || nextRole !== 'owner' || nextStatus !== 'active';
+    account.status === 'active' &&
+    (nextValues.delete || nextRole !== 'owner' || nextStatus !== 'active');
 
   if (!affectsActiveOwner) return;
 
@@ -119,10 +124,16 @@ function getById(id) {
   });
 }
 
-async function getAll() {
+async function getAll(query = {}) {
+  const where = {};
+  if (query.status && query.status !== 'all') {
+    where.status = normalizeStatus(query.status);
+  }
+
   return db.Account.findAll({
     attributes: ACCOUNT_ATTRIBUTES,
     include: [{ model: db.Staff, attributes: STAFF_ATTRIBUTES }],
+    where,
     order: [['createdAt', 'DESC']],
   });
 }
@@ -215,9 +226,65 @@ async function remove(actor, id) {
   if (!account) throw appError('Пользователь не найден', 404);
 
   assertCanManageAccount(actor, account);
-  await assertActiveOwnerRemains(account, { delete: true });
-  await account.destroy();
+  await assertActiveOwnerRemains(account, { status: 'archived' });
+  await account.update({ status: 'archived' });
 
+  return getById(account.id);
+}
+
+async function restore(actor, id) {
+  const account = await db.Account.findByPk(id);
+  if (!account) throw appError('Пользователь не найден', 404);
+
+  assertCanManageAccount(actor, account);
+  await account.update({ status: 'active' });
+  return getById(account.id);
+}
+
+async function removeArchived(actor, id) {
+  const account = await db.Account.findByPk(id);
+  if (!account) throw appError('Пользователь не найден', 404);
+
+  assertCanManageAccount(actor, account);
+  if (account.status !== 'archived') {
+    throw appError('Удалять безвозвратно можно только пользователя из архива', 409);
+  }
+  if (actor?.id === account.id) {
+    throw appError('Нельзя удалить собственный аккаунт', 409);
+  }
+  await assertActiveOwnerRemains(account, { delete: true });
+
+  const references = await Promise.all([
+    db.Shift.count({ where: { approvedByAccountId: account.id } }),
+    db.TrainingNote.count({ where: { trainerAccountId: account.id } }),
+    db.ClientBase.count({
+      where: {
+        [db.Sequelize.Op.or]: [
+          { createdByAccountId: account.id },
+          { recurringAssignedToAccountId: account.id },
+        ],
+      },
+    }),
+    db.CallTask.count({
+      where: {
+        [db.Sequelize.Op.or]: [
+          { assignedToAccountId: account.id },
+          { createdByAccountId: account.id },
+        ],
+      },
+    }),
+    db.CallTaskAttempt.count({ where: { actorAccountId: account.id } }),
+    db.User.count({ where: { mergedByAccountId: account.id } }),
+  ]);
+
+  if (references.some((count) => count > 0)) {
+    throw appError(
+      'Пользователя нельзя удалить безвозвратно: по нему уже есть связанные действия. Оставьте его в архиве.',
+      409,
+    );
+  }
+
+  await account.destroy();
   return { success: true };
 }
 
@@ -225,5 +292,7 @@ module.exports = {
   create,
   getAll,
   remove,
+  removeArchived,
+  restore,
   update,
 };

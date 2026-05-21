@@ -14,6 +14,10 @@ import UtilizationPage from './pages/UtilizationPage';
 import CatalogPage from './pages/CatalogPage';
 import AdminMotivationPage from './pages/AdminMotivationPage';
 import SystemUsersPage from './pages/SystemUsersPage';
+import ClientBasesPage from './pages/ClientBasesPage';
+import CallTasksPage from './pages/CallTasksPage';
+import ReferencesPage from './pages/ReferencesPage';
+import AuditLogPage from './pages/AuditLogPage';
 
 function App() {
   return (
@@ -37,6 +41,22 @@ function App() {
                   element={
                     <RequireRoles roles={ROUTE_ACCESS['/admin/clients']}>
                       <ClientsPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/client-bases"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/client-bases']}>
+                      <ClientBasesPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/call-tasks"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/call-tasks']}>
+                      <CallTasksPage />
                     </RequireRoles>
                   }
                 />
@@ -65,6 +85,14 @@ function App() {
                   }
                 />
                 <Route
+                  path="/admin/audit"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/audit']}>
+                      <AuditLogPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
                   path="/admin/visits-analytics"
                   element={
                     <RequireRoles
@@ -87,6 +115,14 @@ function App() {
                   element={
                     <RequireRoles roles={ROUTE_ACCESS['/admin/catalog']}>
                       <CatalogPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/references"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/references']}>
+                      <ReferencesPage />
                     </RequireRoles>
                   }
                 />

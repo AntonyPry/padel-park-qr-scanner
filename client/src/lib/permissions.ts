@@ -2,7 +2,10 @@ import type { AccountRole } from '@/lib/roles';
 
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
-  '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
+  '/admin/audit': ['owner', 'manager'],
+  '/admin/clients': ['owner', 'manager', 'admin', 'viewer', 'trainer'],
+  '/admin/client-bases': ['owner', 'manager'],
+  '/admin/call-tasks': ['owner', 'manager', 'admin'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant', 'viewer'],
@@ -10,6 +13,7 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/motivation': ['owner', 'manager', 'admin'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
+  '/admin/references': ['owner', 'manager', 'admin', 'accountant', 'viewer'],
 };
 
 export function hasRoleAccess(
@@ -26,6 +30,7 @@ export function canAccessPath(role: AccountRole | null | undefined, path: string
 export function getDefaultPath(role: AccountRole | null | undefined) {
   if (role === 'accountant') return '/admin/finances';
   if (role === 'viewer') return '/admin/visits-analytics';
+  if (role === 'trainer') return '/admin/clients';
 
   const entry = Object.entries(ROUTE_ACCESS).find(([, roles]) =>
     hasRoleAccess(role, roles),
@@ -42,12 +47,32 @@ export function canManageClients(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'admin']);
 }
 
+export function canViewTrainingNotes(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'trainer']);
+}
+
+export function canManageTrainingNotes(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'trainer']);
+}
+
 export function canMergeClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManageClientBases(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManageCallTasks(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canManageCatalog(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'accountant']);
+}
+
+export function canManageReferences(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canManageMotivation(role: AccountRole | null | undefined) {
@@ -67,5 +92,9 @@ export function canManageShifts(role: AccountRole | null | undefined) {
 }
 
 export function canManageUtilization(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canViewAudit(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
 }

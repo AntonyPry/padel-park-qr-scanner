@@ -1,4 +1,5 @@
 const utilizationService = require('../services/utilization.service');
+const { sendError } = require('../utils/api-error');
 
 class UtilizationController {
   async getAll(req, res) {
@@ -6,7 +7,7 @@ class UtilizationController {
       const data = await utilizationService.getAll();
       res.json(data);
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      sendError(res, error, 'Ошибка получения утилизации');
     }
   }
 
@@ -15,7 +16,7 @@ class UtilizationController {
       const records = await utilizationService.upsertMany(req.body);
       res.json({ success: true, records });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      sendError(res, error, 'Ошибка сохранения утилизации');
     }
   }
 }

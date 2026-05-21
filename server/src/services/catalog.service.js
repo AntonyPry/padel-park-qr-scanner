@@ -45,10 +45,36 @@ async function getParentOrFail(parentId) {
     throw appError('Некорректная родительская категория');
   }
 
-  const parent = await db.Category.findByPk(normalizedParentId);
+  const parent = await db.Category.findOne({
+    where: { id: normalizedParentId, isActive: true },
+  });
   if (!parent) throw appError('Родительская категория не найдена', 404);
 
   return parent;
+}
+
+function serializeCategory(category) {
+  const raw = category.toJSON ? category.toJSON() : category;
+  return {
+    ...raw,
+    status: raw.isActive ? 'active' : 'archived',
+  };
+}
+
+function getArchiveWhere(query = {}) {
+  const status = query.status || 'active';
+  if (status === 'all') return {};
+  if (status === 'active') return { isActive: true };
+  if (status === 'archived') return { isActive: false };
+  throw appError('Некорректный статус архива');
+}
+
+function getRuleArchiveWhere(query = {}) {
+  const status = query.status || 'active';
+  if (status === 'all') return {};
+  if (status === 'active') return { status: 'active' };
+  if (status === 'archived') return { status: 'archived' };
+  throw appError('Некорректный статус архива');
 }
 
 function isUniqueError(error) {
@@ -69,8 +95,12 @@ async function assertCategoryNameAvailable(name, categoryId = null) {
 
 class CatalogService {
   // --- КАТЕГОРИИ ---
-  async getCategories() {
-    return await db.Category.findAll({ order: [['name', 'ASC']] });
+  async getCategories(query = {}) {
+    const categories = await db.Category.findAll({
+      where: getArchiveWhere(query),
+      order: [['name', 'ASC']],
+    });
+    return categories.map(serializeCategory);
   }
 
   async createCategory(data) {
@@ -82,13 +112,14 @@ class CatalogService {
     await assertCategoryNameAvailable(name);
 
     try {
-      return await db.Category.create({
+      return serializeCategory(await db.Category.create({
         name,
         type,
         group,
         commissionPercent: normalizeCommissionPercent(data.commissionPercent),
+        isActive: true,
         parentId: parent ? parent.id : null,
-      });
+      }));
     } catch (error) {
       if (isUniqueError(error)) {
         throw appError('Категория с таким названием уже существует', 409);
@@ -165,7 +196,7 @@ class CatalogService {
     }
 
     try {
-      return await category.update(payload);
+      return serializeCategory(await category.update(payload));
     } catch (error) {
       if (isUniqueError(error)) {
         throw appError('Категория с таким названием уже существует', 409);
@@ -176,13 +207,13 @@ class CatalogService {
   }
 
   async deleteCategory(id) {
+    return this.archiveCategory(id);
+  }
+
+  async getCategoryBranch(id) {
     const categoryToDelete = await db.Category.findByPk(id);
     if (!categoryToDelete) throw appError('Категория не найдена', 404);
-    if (categoryToDelete.isSystem) {
-      throw appError('Системную категорию нельзя удалить', 409);
-    }
 
-    // 1. Рекурсивная функция для поиска всех потомков (детей, внуков и т.д.)
     const getAllDescendants = async (parentId) => {
       let descendants = [];
       const children = await db.Category.findAll({ where: { parentId } });
@@ -196,18 +227,118 @@ class CatalogService {
       return descendants;
     };
 
-    // Собираем всех потомков
     const allDescendants = await getAllDescendants(id);
+    return [categoryToDelete, ...allDescendants];
+  }
 
-    // Формируем полный список на удаление (Сам родитель + все его потомки)
-    const categoriesToDelete = [categoryToDelete, ...allDescendants];
+  async archiveCategory(id) {
+    const categoryToArchive = await db.Category.findByPk(id);
+    if (!categoryToArchive) throw appError('Категория не найдена', 404);
+    if (categoryToArchive.isSystem) {
+      throw appError('Системную категорию нельзя архивировать', 409);
+    }
 
-    // Вытаскиваем их ID и Имена
-    const allIds = categoriesToDelete.map((c) => c.id);
-    const allNames = categoriesToDelete.map((c) => c.name);
+    const categoriesToArchive = await this.getCategoryBranch(id);
+    const allIds = categoriesToArchive.map((category) => category.id);
+    const allNames = categoriesToArchive.map((category) => category.name);
 
-    // 2. Уничтожаем все правила маппинга для этой ветки.
-    // Все товары, которые были в этих категориях, снова станут "Неразобранными"
+    await db.CatalogRule.update(
+      {
+        archivedByCascadeCategoryId: categoryToArchive.id,
+        status: 'archived',
+      },
+      {
+        where: {
+          category: {
+            [db.Sequelize.Op.in]: allNames,
+          },
+          status: 'active',
+        },
+      },
+    );
+    await Promise.all(
+      categoriesToArchive.map((category) => {
+        if (!category.isActive) return Promise.resolve();
+        return category.update({
+          archivedByCascadeParentId:
+            category.id === categoryToArchive.id ? null : categoryToArchive.id,
+          isActive: false,
+        });
+      }),
+    );
+
+    return { success: true };
+  }
+
+  async restoreCategory(id) {
+    const categoriesToRestore = await this.getCategoryBranch(id);
+    const root = categoriesToRestore[0];
+    if (root.parentId) {
+      const parent = await db.Category.findByPk(root.parentId);
+      if (parent && !parent.isActive) {
+        throw appError('Сначала восстановите родительскую категорию', 409);
+      }
+    }
+
+    const categoriesForRestore = categoriesToRestore.filter(
+      (category) =>
+        category.id === root.id ||
+        Number(category.archivedByCascadeParentId) === Number(root.id),
+    );
+    const allIds = categoriesForRestore.map((category) => category.id);
+
+    await db.Category.update(
+      {
+        archivedByCascadeParentId: null,
+        isActive: true,
+      },
+      {
+        where: {
+          id: {
+            [db.Sequelize.Op.in]: allIds,
+          },
+        },
+      },
+    );
+    await db.CatalogRule.update(
+      {
+        archivedByCascadeCategoryId: null,
+        status: 'active',
+      },
+      {
+        where: {
+          archivedByCascadeCategoryId: root.id,
+          status: 'archived',
+        },
+      },
+    );
+
+    return { success: true };
+  }
+
+  async removeArchivedCategory(id) {
+    const categoryToDelete = await db.Category.findByPk(id);
+    if (!categoryToDelete) throw appError('Категория не найдена', 404);
+    if (categoryToDelete.isActive) {
+      throw appError('Удалять безвозвратно можно только категории из архива', 409);
+    }
+    if (categoryToDelete.isSystem) {
+      throw appError('Системную категорию нельзя удалить', 409);
+    }
+
+    const categoriesToDelete = await this.getCategoryBranch(id);
+    const allIds = categoriesToDelete.map((category) => category.id);
+    const allNames = categoriesToDelete.map((category) => category.name);
+    const motivationLinks = await db.MotivationBonusRuleCategory.count({
+      where: { categoryId: { [db.Sequelize.Op.in]: allIds } },
+    });
+    if (motivationLinks > 0) {
+      throw appError(
+        'Категорию нельзя удалить безвозвратно: она участвует в мотивации. Сначала уберите связь с мотивацией.',
+        409,
+      );
+    }
+
     await db.CatalogRule.destroy({
       where: {
         category: {
@@ -215,20 +346,21 @@ class CatalogService {
         },
       },
     });
-
-    // 3. Уничтожаем все категории одним ударом
-    return await db.Category.destroy({
+    await db.Category.destroy({
       where: {
         id: {
           [db.Sequelize.Op.in]: allIds,
         },
       },
     });
+    return { success: true };
   }
 
   // --- ПРАВИЛА (БЕЗ ХАРДКОДА!) ---
   async getUnmappedItems() {
-    const rules = await db.CatalogRule.findAll();
+    const rules = await db.CatalogRule.findAll({
+      where: { status: 'active' },
+    });
     const mappedNames = new Set(
       rules.map((rule) => normalizeCategoryKey(rule.itemName)),
     );
@@ -250,8 +382,11 @@ class CatalogService {
     return unmapped;
   }
 
-  async getRules() {
-    return await db.CatalogRule.findAll({ order: [['createdAt', 'DESC']] });
+  async getRules(query = {}) {
+    return await db.CatalogRule.findAll({
+      order: [['createdAt', 'DESC']],
+      where: getRuleArchiveWhere(query),
+    });
   }
 
   async saveRule({ itemName, category }) {
@@ -271,13 +406,47 @@ class CatalogService {
     return await db.CatalogRule.upsert({
       itemName: normalizedItemName,
       category: catalogCategory.name,
+      status: 'active',
+      archivedByCascadeCategoryId: null,
     });
   }
 
   async deleteRule(id) {
-    const deleted = await db.CatalogRule.destroy({ where: { id } });
-    if (!deleted) throw appError('Правило справочника не найдено', 404);
-    return deleted;
+    const rule = await db.CatalogRule.findByPk(id);
+    if (!rule) throw appError('Правило справочника не найдено', 404);
+    await rule.update({
+      status: 'archived',
+      archivedByCascadeCategoryId: null,
+    });
+    return rule;
+  }
+
+  async restoreRule(id) {
+    const rule = await db.CatalogRule.findByPk(id);
+    if (!rule) throw appError('Правило справочника не найдено', 404);
+
+    const category = await db.Category.findOne({
+      where: { name: rule.category, isActive: true },
+    });
+    if (!category) {
+      throw appError('Сначала восстановите категорию правила', 409);
+    }
+
+    await rule.update({
+      status: 'active',
+      archivedByCascadeCategoryId: null,
+    });
+    return rule;
+  }
+
+  async removeArchivedRule(id) {
+    const rule = await db.CatalogRule.findByPk(id);
+    if (!rule) throw appError('Правило справочника не найдено', 404);
+    if (rule.status !== 'archived') {
+      throw appError('Удалять безвозвратно можно только правило из архива', 409);
+    }
+    await rule.destroy();
+    return { success: true };
   }
 }
 

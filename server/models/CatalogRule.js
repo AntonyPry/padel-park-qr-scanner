@@ -9,6 +9,15 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false,
     },
+    status: {
+      type: DataTypes.ENUM('active', 'archived'),
+      allowNull: false,
+      defaultValue: 'active',
+    },
+    archivedByCascadeCategoryId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
   });
   return CatalogRule;
 };

@@ -149,6 +149,7 @@ async function login({ email, password }) {
   if (
     !account ||
     account.status !== 'active' ||
+    (account.Staff && account.Staff.status !== 'active') ||
     !verifyPassword(password, account.passwordHash)
   ) {
     const error = new Error('Неверный email или пароль');

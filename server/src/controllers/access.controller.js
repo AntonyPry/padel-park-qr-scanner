@@ -1,4 +1,5 @@
 const accessService = require('../services/access.service');
+const { sendError } = require('../utils/api-error');
 
 function getIo(req) {
   return req.app.get('io');
@@ -16,16 +17,16 @@ class AccessController {
 
   async manualVisit(req, res) {
     const { userId } = req.body;
-    if (!userId) return res.status(400).send('No ID');
+    if (!userId) return sendError(res, { statusCode: 400 }, 'Не указан клиент');
 
     try {
       const event = await accessService.createManualVisit(userId);
-      if (!event) return res.status(404).send('User not found');
+      if (!event) return sendError(res, { statusCode: 404 }, 'Клиент не найден');
 
       getIo(req).emit('scan_result', event);
       res.json({ status: 'ok' });
     } catch (error) {
-      res.status(500).send('Error');
+      sendError(res, error, 'Ошибка создания визита');
     }
   }
 
@@ -36,7 +37,7 @@ class AccessController {
       await accessService.issueKey(visitId, keyNumber);
       res.json({ status: 'ok' });
     } catch (error) {
-      res.status(500).send('Error');
+      sendError(res, error, 'Ошибка выдачи ключа');
     }
   }
 
@@ -44,7 +45,7 @@ class AccessController {
     const { qr } = req.body;
     console.log('📡 Сканер прислал:', JSON.stringify(qr));
 
-    if (!qr) return res.status(400).send('No QR');
+    if (!qr) return sendError(res, { statusCode: 400 }, 'QR обязателен');
 
     try {
       const result = await accessService.scanQr(qr);
@@ -60,15 +61,15 @@ class AccessController {
       res.json({ status: 'ok', found: result.found });
     } catch (error) {
       console.error('Ошибка при сканировании:', error);
-      res.status(500).send('Server Error');
+      sendError(res, error, 'Ошибка сканирования QR');
     }
   }
 
   async register(req, res) {
-    const { name, phone, source } = req.body;
+    const { name, phone, source, sourceId } = req.body;
 
     if (!name || !phone) {
-      return res.status(400).json({ error: 'Имя и телефон обязательны' });
+      return sendError(res, { statusCode: 400 }, 'Имя и телефон обязательны');
     }
 
     try {
@@ -76,11 +77,12 @@ class AccessController {
         name,
         phone,
         source,
+        sourceId,
       });
       res.json(result);
     } catch (error) {
       console.error('Ошибка веб-регистрации:', error);
-      res.status(500).json({ error: 'Ошибка сервера при регистрации' });
+      sendError(res, error, 'Ошибка сервера при регистрации');
     }
   }
 
@@ -90,19 +92,24 @@ class AccessController {
       res.json(visits);
     } catch (error) {
       console.error(error);
-      res.status(500).send('Error');
+      sendError(res, error, 'Ошибка получения входов');
     }
   }
 
   async updateVisitCategory(req, res) {
-    const { visitId, category } = req.body;
+    const { visitId, category, categoryIds } = req.body;
 
     try {
-      await accessService.updateVisitCategory(visitId, category);
-      res.json({ status: 'ok' });
+      const result = await accessService.updateVisitCategory(
+        visitId,
+        category,
+        categoryIds,
+      );
+      if (!result) return sendError(res, { statusCode: 404 }, 'Визит не найден');
+      res.json({ status: 'ok', ...result });
     } catch (error) {
       console.error('Ошибка сохранения категории:', error);
-      res.status(500).send('Error');
+      sendError(res, error, 'Ошибка сохранения категории');
     }
   }
 }

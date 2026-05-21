@@ -117,7 +117,7 @@ async function startActive(account) {
   }
 
   const staff = await getStaffForAccount(account);
-  if (!staff || staff.status === 'inactive') {
+  if (!staff || staff.status !== 'active') {
     const error = new Error('Активный сотрудник аккаунта не найден');
     error.statusCode = 400;
     throw error;

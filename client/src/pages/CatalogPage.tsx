@@ -30,6 +30,7 @@ import {
   Plus,
   Tag,
   Percent,
+  ArchiveRestore,
   AlertTriangle,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
@@ -56,12 +57,14 @@ interface Category {
   commissionPercent: number | string;
   parentId: number | null;
   isSystem?: boolean;
+  status?: 'active' | 'archived';
 }
 
 interface CatalogRule {
   id: number;
   itemName: string;
   category: string;
+  status?: 'active' | 'archived';
 }
 
 export default function CatalogPage() {
@@ -77,6 +80,9 @@ export default function CatalogPage() {
   const [activeTab, setActiveTab] = useState<
     'unmapped' | 'rules' | 'categories'
   >('unmapped');
+  const [catalogStatus, setCatalogStatus] = useState<'active' | 'archived'>(
+    'active',
+  );
   const [selections, setSelections] = useState<Record<string, string>>({});
 
   const [newCatName, setNewCatName] = useState('');
@@ -85,13 +91,14 @@ export default function CatalogPage() {
 
   // СТЕЙТ ДЛЯ МОДАЛКИ ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
+  const [deleteMode, setDeleteMode] = useState<'archive' | 'permanent'>('archive');
 
   const fetchData = useCallback(async () => {
     try {
       const [unmappedRes, rulesRes, catRes, bonusRulesRes] = await Promise.all([
         apiFetch('/api/catalog/unmapped'),
-        apiFetch('/api/catalog/rules'),
-        apiFetch('/api/catalog/categories'),
+        apiFetch(`/api/catalog/rules?status=${catalogStatus}`),
+        apiFetch(`/api/catalog/categories?status=${catalogStatus}`),
         apiFetch('/api/motivation/bonus-rules'),
       ]);
       setUnmapped(await unmappedRes.json());
@@ -103,7 +110,7 @@ export default function CatalogPage() {
     } catch (e) {
       console.error('Fetch error:', e);
     }
-  }, []);
+  }, [catalogStatus]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -140,6 +147,16 @@ export default function CatalogPage() {
 
   const handleDeleteRule = async (id: number) => {
     await apiFetch(`/api/catalog/rules/${id}`, { method: 'DELETE' });
+    fetchData();
+  };
+
+  const handleRestoreRule = async (id: number) => {
+    await apiFetch(`/api/catalog/rules/${id}/restore`, { method: 'POST' });
+    fetchData();
+  };
+
+  const handlePermanentDeleteRule = async (id: number) => {
+    await apiFetch(`/api/catalog/rules/${id}/permanent`, { method: 'DELETE' });
     fetchData();
   };
 
@@ -181,11 +198,19 @@ export default function CatalogPage() {
   const confirmDeleteCategory = async () => {
     if (!deleteConfirmId) return;
 
-    await apiFetch(`/api/catalog/categories/${deleteConfirmId}`, {
-      method: 'DELETE',
-    });
+    await apiFetch(
+      deleteMode === 'permanent'
+        ? `/api/catalog/categories/${deleteConfirmId}/permanent`
+        : `/api/catalog/categories/${deleteConfirmId}`,
+      { method: 'DELETE' },
+    );
 
     setDeleteConfirmId(null);
+    fetchData();
+  };
+
+  const handleRestoreCategory = async (id: number) => {
+    await apiFetch(`/api/catalog/categories/${id}/restore`, { method: 'POST' });
     fetchData();
   };
 
@@ -267,33 +292,54 @@ export default function CatalogPage() {
             Распределение номенклатуры Эвотор по категориям P&L
           </p>
         </div>
-        <div className="flex bg-muted p-1 rounded-md">
-          <Button
-            variant={activeTab === 'unmapped' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setActiveTab('unmapped')}
+        <div className="flex flex-wrap items-center gap-2">
+          <Select
+            value={catalogStatus}
+            onValueChange={(value) => {
+              const nextStatus = value as 'active' | 'archived';
+              setCatalogStatus(nextStatus);
+              if (nextStatus === 'archived' && activeTab === 'unmapped') {
+                setActiveTab('rules');
+              }
+            }}
           >
-            Неразобранные
-            {unmapped.length > 0 && (
-              <span className="ml-2 bg-destructive text-white text-xs px-2 py-0.5 rounded-full">
-                {unmapped.length}
-              </span>
-            )}
-          </Button>
-          <Button
-            variant={activeTab === 'rules' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setActiveTab('rules')}
-          >
-            Правила ({rules.length})
-          </Button>
-          <Button
-            variant={activeTab === 'categories' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setActiveTab('categories')}
-          >
-            Категории ({categories.length})
-          </Button>
+            <SelectTrigger className="w-[150px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Активные</SelectItem>
+              <SelectItem value="archived">Архив</SelectItem>
+            </SelectContent>
+          </Select>
+          <div className="flex bg-muted p-1 rounded-md">
+            <Button
+              variant={activeTab === 'unmapped' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setActiveTab('unmapped')}
+              disabled={catalogStatus === 'archived'}
+            >
+              Неразобранные
+              {unmapped.length > 0 && (
+                <span className="ml-2 bg-destructive text-white text-xs px-2 py-0.5 rounded-full">
+                  {unmapped.length}
+                </span>
+              )}
+            </Button>
+            <Button
+              variant={activeTab === 'rules' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setActiveTab('rules')}
+            >
+              Правила ({rules.length})
+            </Button>
+            <Button
+              variant={activeTab === 'categories' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setActiveTab('categories')}
+            >
+              Категории ({categories.length})
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -310,15 +356,16 @@ export default function CatalogPage() {
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <p className="text-sm text-muted-foreground">
-              Вы уверены, что хотите удалить эту категорию?
+              {deleteMode === 'permanent'
+                ? 'Категория будет удалена без возможности восстановления.'
+                : 'Категория будет перенесена в архив.'}
             </p>
             <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
               <li>
-                Если у категории есть подкатегории, они также будут удалены.
+                Если у категории есть подкатегории, действие применится ко всей ветке.
               </li>
               <li>
-                Все товары из чеков, привязанные к этим категориям, вернутся во
-                вкладку «Неразобранные».
+                Правила товаров этой ветки также перейдут в архив.
               </li>
             </ul>
             <div className="flex justify-end gap-3 pt-4">
@@ -328,8 +375,11 @@ export default function CatalogPage() {
               >
                 Отмена
               </Button>
-              <Button variant="destructive" onClick={confirmDeleteCategory}>
-                Удалить категорию
+              <Button
+                variant={deleteMode === 'permanent' ? 'destructive' : 'default'}
+                onClick={confirmDeleteCategory}
+              >
+                {deleteMode === 'permanent' ? 'Удалить навсегда' : 'В архив'}
               </Button>
             </div>
           </div>
@@ -431,13 +481,38 @@ export default function CatalogPage() {
                       {rule.category}
                     </TableCell>
                     <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleDeleteRule(rule.id)}
-                      >
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
+                      {catalogStatus === 'archived' ? (
+                        <div className="flex justify-end gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleRestoreRule(rule.id)}
+                            disabled={!canEditCatalog}
+                            title="Восстановить"
+                          >
+                            <ArchiveRestore className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handlePermanentDeleteRule(rule.id)}
+                            disabled={!canEditCatalog}
+                            title="Удалить навсегда"
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleDeleteRule(rule.id)}
+                          disabled={!canEditCatalog}
+                          title="В архив"
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -453,7 +528,7 @@ export default function CatalogPage() {
             <CardTitle>Управление категориями P&L</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {canEditCatalog && (
+            {canEditCatalog && catalogStatus === 'active' && (
               <form
                 onSubmit={handleAddCategory}
                 className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"
@@ -633,14 +708,43 @@ export default function CatalogPage() {
                       </TableCell>
                       <TableCell>
                         {canEditCatalog && !cat.isSystem && (
-                          // ВЫЗЫВАЕМ МОДАЛКУ ВМЕСТО ПРЯМОГО УДАЛЕНИЯ
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => setDeleteConfirmId(cat.id)}
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            {catalogStatus === 'archived' ? (
+                              <>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => handleRestoreCategory(cat.id)}
+                                  title="Восстановить"
+                                >
+                                  <ArchiveRestore className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    setDeleteMode('permanent');
+                                    setDeleteConfirmId(cat.id);
+                                  }}
+                                  title="Удалить навсегда"
+                                >
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </>
+                            ) : (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => {
+                                  setDeleteMode('archive');
+                                  setDeleteConfirmId(cat.id);
+                                }}
+                                title="В архив"
+                              >
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            )}
+                          </div>
                         )}
                       </TableCell>
                     </TableRow>

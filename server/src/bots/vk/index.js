@@ -8,17 +8,19 @@ const {
 const db = require('../../../models');
 const {
   CONSENT_TEXT,
-  SOURCE_ROWS,
   getPhoneValidationError,
+  getSourceRows,
   isValidWord,
 } = require('../shared/registration');
+const clientsService = require('../../services/clients.service');
 
-function buildSourceKeyboard() {
+async function buildSourceKeyboard() {
   const keyboard = VkKeyboard.builder();
+  const rows = await getSourceRows(db);
 
-  SOURCE_ROWS.forEach((row, rowIndex) => {
+  rows.forEach((row, rowIndex) => {
     row.forEach((label) => keyboard.textButton({ label }));
-    if (rowIndex < SOURCE_ROWS.length - 1) keyboard.row();
+    if (rowIndex < rows.length - 1) keyboard.row();
   });
 
   return keyboard.oneTime();
@@ -144,7 +146,7 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
     async (ctx) => {
       if (ctx.scene.step.firstTime) {
         await ctx.send('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
-          keyboard: buildSourceKeyboard(),
+          keyboard: await buildSourceKeyboard(),
         });
         return;
       }
@@ -155,8 +157,9 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
       const fullName = `${ctx.scene.state.surname} ${ctx.scene.state.firstname}`;
 
       try {
-        await db.User.upsert({
-          vkId,
+        await clientsService.registerClientFromMessenger({
+          externalId: vkId,
+          messenger: 'vk',
           name: fullName,
           phone: ctx.scene.state.phone,
           source: ctx.scene.state.source,
@@ -165,7 +168,11 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
         await sendQrCode(ctx, vkId);
       } catch (error) {
         console.error('Ошибка БД ВК:', error);
-        await ctx.send('❌ Произошла ошибка при сохранении.');
+        await ctx.send(
+          error.statusCode === 409
+            ? `❌ ${error.message}`
+            : '❌ Произошла ошибка при сохранении.',
+        );
       }
 
       await ctx.scene.leave();

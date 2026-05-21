@@ -15,10 +15,11 @@ const { run: runTg } = require('@grammyjs/runner');
 const db = require('../../../models');
 const {
   CONSENT_TEXT,
-  SOURCE_ROWS,
   getPhoneValidationError,
+  getSourceRows,
   isValidWord,
 } = require('../shared/registration');
+const clientsService = require('../../services/clients.service');
 
 function createProxyAgent(proxyUrl) {
   if (!proxyUrl) return undefined;
@@ -29,8 +30,8 @@ function createProxyAgent(proxyUrl) {
   });
 }
 
-function createSourceKeyboard(includeBack = false) {
-  const rows = SOURCE_ROWS.map((row) => [...row]);
+async function createSourceKeyboard(includeBack = false) {
+  const rows = (await getSourceRows(db)).map((row) => [...row]);
   if (includeBack) rows[rows.length - 1].push('⬅️ Назад');
   return TgKeyboard.from(rows).resized().oneTime();
 }
@@ -161,7 +162,7 @@ function createTelegramBot({
         step++;
       } else if (step === 3) {
         await ctx.reply('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
-          reply_markup: createSourceKeyboard(true),
+          reply_markup: await createSourceKeyboard(true),
         });
         const msg = await conversation.waitFor(':text');
         if (msg.message.text === '⬅️ Назад') {
@@ -176,14 +177,26 @@ function createTelegramBot({
     const telegramId = String(ctx.from.id);
     const fullName = `${surname} ${firstname}`;
 
-    await conversation.external(async () => {
-      await db.User.upsert({
-        telegramId,
-        name: fullName,
-        phone,
-        source,
-      });
-    });
+    try {
+      await conversation.external(() =>
+        clientsService.registerClientFromMessenger({
+          externalId: telegramId,
+          messenger: 'telegram',
+          name: fullName,
+          phone,
+          source,
+        }),
+      );
+    } catch (error) {
+      console.error('Ошибка регистрации Tg:', error);
+      await ctx.reply(
+        error.statusCode === 409
+          ? `❌ ${error.message}`
+          : '❌ Произошла ошибка при сохранении.',
+        { reply_markup: { remove_keyboard: true } },
+      );
+      return;
+    }
 
     await ctx.reply('✅ Регистрация завершена!', {
       reply_markup: { remove_keyboard: true },

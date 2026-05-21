@@ -3,9 +3,13 @@ import {
   BicepsFlexed,
   ContactRound,
   Database,
+  Filter,
+  History,
   LayoutDashboard,
   LineChart,
   LogOut,
+  ListTree,
+  PhoneCall,
   UserCog,
   Users,
   Wallet,
@@ -46,6 +50,16 @@ const items = [
     icon: ContactRound,
   },
   {
+    title: 'Базы клиентов',
+    url: '/admin/client-bases',
+    icon: Filter,
+  },
+  {
+    title: 'Задачи обзвона',
+    url: '/admin/call-tasks',
+    icon: PhoneCall,
+  },
+  {
     title: 'Финансы (P&L)',
     url: '/admin/finances',
     icon: Wallet,
@@ -61,6 +75,11 @@ const items = [
     icon: UserCog,
   },
   {
+    title: 'Журнал действий',
+    url: '/admin/audit',
+    icon: History,
+  },
+  {
     title: 'Мотивацию поднимаем',
     url: '/admin/motivation',
     icon: BicepsFlexed,
@@ -74,6 +93,11 @@ const items = [
     title: 'Справочник товаров',
     url: '/admin/catalog',
     icon: Database,
+  },
+  {
+    title: 'Справочники CRM',
+    url: '/admin/references',
+    icon: ListTree,
   },
 ];
 

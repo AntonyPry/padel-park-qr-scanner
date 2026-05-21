@@ -1,4 +1,5 @@
 const authService = require('../services/auth.service');
+const { sendError } = require('../utils/api-error');
 
 class AuthController {
   async status(req, res) {
@@ -9,9 +10,11 @@ class AuthController {
     try {
       const { name, phone, email, password } = req.body;
       if (!name || !email || !password) {
-        return res
-          .status(400)
-          .json({ error: 'Имя, email и пароль обязательны' });
+        return sendError(
+          res,
+          { statusCode: 400 },
+          'Имя, email и пароль обязательны',
+        );
       }
 
       const session = await authService.bootstrapOwner({
@@ -22,9 +25,7 @@ class AuthController {
       });
       res.json(session);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка настройки аккаунта' });
+      sendError(res, error, 'Ошибка настройки аккаунта');
     }
   }
 
@@ -32,15 +33,13 @@ class AuthController {
     try {
       const { email, password } = req.body;
       if (!email || !password) {
-        return res.status(400).json({ error: 'Email и пароль обязательны' });
+        return sendError(res, { statusCode: 400 }, 'Email и пароль обязательны');
       }
 
       const session = await authService.login({ email, password });
       res.json(session);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка входа' });
+      sendError(res, error, 'Ошибка входа');
     }
   }
 

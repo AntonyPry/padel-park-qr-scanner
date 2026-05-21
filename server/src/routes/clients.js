@@ -14,6 +14,11 @@ router.get('/clients/duplicates', mergeClients, clientsController.getDuplicates)
 router.post('/clients', manageClients, clientsController.create);
 router.get('/clients/:id', viewClients, clientsController.getOne);
 router.put('/clients/:id', manageClients, clientsController.update);
+router.delete(
+  '/clients/:id/permanent',
+  manageClients,
+  clientsController.removeArchived,
+);
 router.post('/clients/:id/merge', mergeClients, clientsController.merge);
 
 module.exports = router;

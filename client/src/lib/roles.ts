@@ -1,4 +1,10 @@
-export type AccountRole = 'owner' | 'manager' | 'admin' | 'accountant' | 'viewer';
+export type AccountRole =
+  | 'owner'
+  | 'manager'
+  | 'admin'
+  | 'accountant'
+  | 'viewer'
+  | 'trainer';
 
 export const ACCOUNT_ROLES: Array<{
   value: AccountRole;
@@ -34,6 +40,12 @@ export const ACCOUNT_ROLES: Array<{
     label: 'Наблюдатель',
     description:
       'Только просмотр отчетов и аналитики без права менять операционные данные.',
+  },
+  {
+    value: 'trainer',
+    label: 'Тренер',
+    description:
+      'Тренерский доступ: клиентская карточка без телефонов, дневник тренировок, упражнения и уровень игрока.',
   },
 ];
 

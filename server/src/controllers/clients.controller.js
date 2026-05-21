@@ -1,15 +1,14 @@
 const clientsService = require('../services/clients.service');
+const { sendError } = require('../utils/api-error');
 
 function handleError(res, error, fallback) {
-  res
-    .status(error.statusCode || 500)
-    .json({ error: error.message || fallback });
+  sendError(res, error, fallback);
 }
 
 class ClientsController {
   async getAll(req, res) {
     try {
-      res.json(await clientsService.listClients(req.query));
+      res.json(await clientsService.listClients(req.query, req.account));
     } catch (error) {
       handleError(res, error, 'Ошибка получения клиентов');
     }
@@ -17,7 +16,7 @@ class ClientsController {
 
   async getOne(req, res) {
     try {
-      res.json(await clientsService.getClientDetails(req.params.id));
+      res.json(await clientsService.getClientDetails(req.params.id, req.account));
     } catch (error) {
       handleError(res, error, 'Ошибка получения клиента');
     }
@@ -45,6 +44,8 @@ class ClientsController {
         client: await clientsService.lookupByPhone(
           req.query.phone,
           req.query.excludeClientId,
+          req.account,
+          { includeArchived: req.query.includeArchived === 'true' },
         ),
       });
     } catch (error) {
@@ -71,6 +72,14 @@ class ClientsController {
       );
     } catch (error) {
       handleError(res, error, 'Ошибка объединения клиентов');
+    }
+  }
+
+  async removeArchived(req, res) {
+    try {
+      res.json(await clientsService.removeArchivedClient(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка удаления клиента из архива');
     }
   }
 }

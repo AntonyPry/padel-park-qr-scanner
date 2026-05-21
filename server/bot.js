@@ -6,6 +6,7 @@ const createApp = require('./src/app');
 const { createSocketServer } = require('./src/sockets');
 const { createTelegramBot } = require('./src/bots/telegram');
 const { createVkBot } = require('./src/bots/vk');
+const callTasksService = require('./src/services/call-tasks.service');
 
 const PORT = process.env.PORT || 3000;
 
@@ -23,6 +24,26 @@ async function startDatabase() {
 function startHttpServer() {
   server.listen(PORT);
   console.log('Сервер запущен на порту', PORT);
+}
+
+function startRecurringCallTasksRunner() {
+  const intervalMs = Number(process.env.CALL_TASKS_RUNNER_INTERVAL_MS || 60000);
+
+  const run = async () => {
+    try {
+      const result = await callTasksService.runDueRecurringTasks(new Date());
+      if (result.processed > 0) {
+        console.log(
+          `📞 Автозадачи обзвона: обработано баз ${result.processed}.`,
+        );
+      }
+    } catch (error) {
+      console.error('❌ Ошибка автозадач обзвона:', error);
+    }
+  };
+
+  setInterval(run, intervalMs);
+  void run();
 }
 
 async function startTelegramBot() {
@@ -68,6 +89,7 @@ async function startApp() {
 
   try {
     startHttpServer();
+    startRecurringCallTasksRunner();
   } catch (error) {
     console.error('❌ Ошибка старта сервера:', error);
   }

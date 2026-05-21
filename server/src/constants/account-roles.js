@@ -24,6 +24,11 @@ const ACCOUNT_ROLES = {
     description:
       'Только просмотр отчетов и аналитики без права менять операционные данные.',
   },
+  trainer: {
+    label: 'Тренер',
+    description:
+      'Тренерский доступ: клиентская карточка без телефонов, дневник тренировок, упражнения и уровень игрока.',
+  },
 };
 
 const ACCOUNT_ROLE_VALUES = Object.keys(ACCOUNT_ROLES);

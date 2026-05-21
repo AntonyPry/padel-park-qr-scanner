@@ -1,4 +1,5 @@
 const visitsAnalyticsService = require('../services/visits-analytics.service');
+const { sendError } = require('../utils/api-error');
 
 class VisitsAnalyticsController {
   async getAnalytics(req, res) {
@@ -11,7 +12,7 @@ class VisitsAnalyticsController {
       res.json(analytics);
     } catch (error) {
       console.error('Ошибка аналитики визитов:', error);
-      res.status(500).json({ error: 'Server error' });
+      sendError(res, error, 'Ошибка аналитики визитов');
     }
   }
 
@@ -34,7 +35,7 @@ class VisitsAnalyticsController {
       res.send(buffer);
     } catch (error) {
       console.error('Ошибка экспорта визитов:', error);
-      res.status(500).send('Export error');
+      sendError(res, error, 'Ошибка экспорта визитов');
     }
   }
 }

@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
+const referencesService = require('./references.service');
 const {
   getPhoneLookupDigits,
   normalizePhone,
@@ -44,6 +45,7 @@ async function searchUsers(query) {
   return db.User.findAll({
     where: {
       status: 'active',
+      mergedIntoUserId: null,
       [Op.or]: conditions,
     },
     order: [['createdAt', 'DESC']],
@@ -98,10 +100,10 @@ async function createManualVisit(userId) {
   if (!user) return null;
 
   const canonicalUser =
-    user.status === 'merged' && user.mergedIntoUserId
+    user.mergedIntoUserId
       ? await db.User.findByPk(user.mergedIntoUserId)
       : user;
-  if (!canonicalUser) return null;
+  if (!canonicalUser || canonicalUser.status !== 'active') return null;
 
   return createVisitForUser(canonicalUser);
 }
@@ -110,7 +112,7 @@ async function scanQr(rawQr) {
   const qr = normalizeQr(rawQr);
   const user = await findUserByQr(qr);
 
-  if (!user) {
+  if (!user || user.status !== 'active') {
     return {
       found: false,
       qr,
@@ -126,7 +128,7 @@ async function scanQr(rawQr) {
   };
 }
 
-async function registerReceptionUser({ name, phone, source }) {
+async function registerReceptionUser({ name, phone, source, sourceId }) {
   const existingUser = await findUserByPhone(phone);
   if (existingUser) {
     return {
@@ -137,7 +139,12 @@ async function registerReceptionUser({ name, phone, source }) {
     };
   }
 
-  const result = await clientsService.createClient({ name, phone, source });
+  const result = await clientsService.createClient({
+    name,
+    phone,
+    source,
+    sourceId,
+  });
   const user = result.client;
 
   return {
@@ -151,32 +158,84 @@ async function getRecentVisitCards(limit = 50) {
   const visits = await db.Visit.findAll({
     limit,
     order: [['createdAt', 'DESC']],
-    include: [{ model: db.User }],
+    include: [
+      { model: db.User },
+      {
+        model: db.VisitCategory,
+        as: 'categories',
+        attributes: ['id', 'name'],
+        through: { attributes: [] },
+      },
+    ],
   });
 
-  return visits.map((visit) => ({
-    id: String(visit.id),
-    success: true,
-    time: new Date(visit.createdAt).toLocaleTimeString('ru-RU', {
-      hour: '2-digit',
-      minute: '2-digit',
-    }),
-    name: visit.User?.name || 'Неизвестный',
-    phone: visit.User?.phone || '',
-    source: visit.User?.source || '-',
-    visitId: visit.id,
-    keyNumber: visit.keyNumber || '',
-    keyIssued: !!visit.keyNumber,
-    category: visit.category || '',
-  }));
+  return visits.map((visit) => {
+    const categories = visit.categories || [];
+    return {
+      id: String(visit.id),
+      success: true,
+      time: new Date(visit.createdAt).toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+      }),
+      name: visit.User?.name || 'Неизвестный',
+      phone: visit.User?.phone || '',
+      source: visit.User?.source || '-',
+      visitId: visit.id,
+      keyNumber: visit.keyNumber || '',
+      keyIssued: !!visit.keyNumber,
+      category: visit.category || categories.map((category) => category.name).join(', '),
+      categoryIds: categories.map((category) => category.id),
+    };
+  });
 }
 
 async function issueKey(visitId, keyNumber) {
   return db.Visit.update({ keyNumber }, { where: { id: visitId } });
 }
 
-async function updateVisitCategory(visitId, category) {
-  return db.Visit.update({ category }, { where: { id: visitId } });
+function splitVisitCategories(category) {
+  return String(category || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function updateVisitCategory(visitId, category, categoryIds = []) {
+  const visit = await db.Visit.findByPk(Number(visitId));
+  if (!visit) return null;
+
+  const categories =
+    Array.isArray(categoryIds) && categoryIds.length > 0
+      ? await referencesService.getVisitCategoriesByIds(categoryIds)
+      : await referencesService.getVisitCategoriesByNames(
+          splitVisitCategories(category),
+        );
+  const categoryName = categories.map((item) => item.name).join(', ');
+
+  await db.sequelize.transaction(async (transaction) => {
+    await db.VisitCategoryAssignment.destroy({
+      where: { visitId: visit.id },
+      transaction,
+    });
+
+    if (categories.length > 0) {
+      await db.VisitCategoryAssignment.bulkCreate(
+        categories.map((item) => ({
+          visitId: visit.id,
+          visitCategoryId: item.id,
+        })),
+        { transaction },
+      );
+    }
+
+    await visit.update({ category: categoryName || null }, { transaction });
+  });
+
+  return {
+    category: categoryName,
+    categoryIds: categories.map((item) => item.id),
+  };
 }
 
 module.exports = {

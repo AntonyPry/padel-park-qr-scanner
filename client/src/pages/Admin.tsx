@@ -31,31 +31,24 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { API_URL } from '@/config';
 import { apiFetch } from '@/lib/api';
+import type { ReferenceItem } from '@/lib/references';
+import { fetchReferences } from '@/lib/references';
 
 const socket = io(API_URL);
-
-// Список категорий визита
-const VISIT_CATEGORIES = [
-  'Первый раз',
-  'Мастер класс',
-  'Групповая тренировка',
-  'Индивидуальная тренировка',
-  'Первый турнир',
-  'Турнир',
-  'Игра на сингл',
-  'Игра 2х2',
-  'Настольный теннис',
-  'Вип раздевалка',
-  'Аренда ракетки',
-  'Ракетка шефа',
-  'Тубус',
-];
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
   name: '',
   phone: '',
+  sourceId: '',
   source: 'Ресепшн (Админ)',
   note: '',
 };
@@ -76,6 +69,7 @@ interface VisitCard {
   keyIssued: boolean;
   isRepeated?: boolean;
   category?: string;
+  categoryIds?: number[];
 }
 
 interface SearchUser {
@@ -87,8 +81,11 @@ interface SearchUser {
 interface ExistingClientCandidate {
   id: number;
   name: string;
+  note?: string | null;
   phone: string;
   source?: string;
+  sourceId?: number | null;
+  status?: 'active' | 'archived';
   stats?: {
     visitCount: number;
     lastVisitAt?: string | null;
@@ -154,17 +151,32 @@ function formatClientPhone(value: string) {
   return formatted;
 }
 
-async function readError(response: Response, fallback: string) {
+async function readApiError(response: Response, fallback: string) {
   try {
-    const data = (await response.json()) as { error?: string };
-    return data.error || fallback;
+    const data = (await response.json()) as {
+      client?: ExistingClientCandidate;
+      code?: string;
+      error?: string;
+    };
+    return {
+      client: data.client,
+      code: data.code,
+      error: data.error || fallback,
+    };
   } catch {
-    return fallback;
+    return { error: fallback };
   }
 }
 
 function splitVisitCategories(category?: string) {
   return category ? category.split(', ').filter(Boolean) : [];
+}
+
+function getCategoryNamesByIds(categories: ReferenceItem[], categoryIds: number[]) {
+  const names = categoryIds
+    .map((id) => categories.find((category) => category.id === id)?.name)
+    .filter(Boolean);
+  return names.join(', ');
 }
 
 export default function AdminPage() {
@@ -193,6 +205,22 @@ export default function AdminPage() {
   const [regError, setRegError] = useState('');
   const [regCandidate, setRegCandidate] =
     useState<ExistingClientCandidate | null>(null);
+  const [restoreCandidate, setRestoreCandidate] =
+    useState<ExistingClientCandidate | null>(null);
+  const [clientSources, setClientSources] = useState<ReferenceItem[]>([]);
+  const [visitCategories, setVisitCategories] = useState<ReferenceItem[]>([]);
+
+  const getEmptyReceptionForm = useCallback(() => {
+    const defaultSource =
+      clientSources.find((source) => source.name === 'Ресепшн (Админ)') ||
+      clientSources[0];
+
+    return {
+      ...EMPTY_RECEPTION_CLIENT_FORM,
+      sourceId: defaultSource ? String(defaultSource.id) : '',
+      source: defaultSource?.name || EMPTY_RECEPTION_CLIENT_FORM.source,
+    };
+  }, [clientSources]);
 
   const fetchHistory = async () => {
     try {
@@ -208,6 +236,44 @@ export default function AdminPage() {
 
   useEffect(() => {
     fetchHistory();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadReferences() {
+      try {
+        const [sources, categories] = await Promise.all([
+          fetchReferences('client-sources'),
+          fetchReferences('visit-categories'),
+        ]);
+        if (cancelled) return;
+
+        setClientSources(sources);
+        setVisitCategories(categories);
+        const defaultSource =
+          sources.find((source) => source.name === 'Ресепшн (Админ)') ||
+          sources[0];
+        if (defaultSource) {
+          setRegForm((prev) =>
+            prev.sourceId
+              ? prev
+              : {
+                  ...prev,
+                  sourceId: String(defaultSource.id),
+                  source: defaultSource.name,
+                },
+          );
+        }
+      } catch (error) {
+        console.error('Ошибка загрузки справочников:', error);
+      }
+    }
+
+    void loadReferences();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -232,7 +298,8 @@ export default function AdminPage() {
         qrRaw: data.id,
         keyNumber: '',
         keyIssued: false,
-        category: '',
+        category: data.category || '',
+        categoryIds: data.categoryIds || [],
       };
 
       playSound(data.success ? 'success' : 'error');
@@ -443,24 +510,38 @@ export default function AdminPage() {
       return;
     }
 
+    let cancelled = false;
+    const checkedPhoneDigits = phoneDigits;
+
     const timeout = window.setTimeout(async () => {
       try {
         const res = await apiFetch(
-          `/api/clients/lookup?phone=${encodeURIComponent(regForm.phone)}`,
+          `/api/clients/lookup?phone=${encodeURIComponent(regForm.phone)}&includeArchived=true${
+            restoreCandidate ? `&excludeClientId=${restoreCandidate.id}` : ''
+          }`,
         );
+        if (cancelled || getPhoneDigits(regForm.phone) !== checkedPhoneDigits) {
+          return;
+        }
         if (!res.ok) return;
 
         const data = (await res.json()) as {
           client: ExistingClientCandidate | null;
         };
+        if (cancelled || getPhoneDigits(regForm.phone) !== checkedPhoneDigits) {
+          return;
+        }
         setRegCandidate(data.client);
       } catch (e) {
         console.error('Ошибка проверки дубля клиента:', e);
       }
     }, 250);
 
-    return () => window.clearTimeout(timeout);
-  }, [isRegOpen, regForm.phone]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [isRegOpen, regForm.phone, restoreCandidate]);
 
   const handleManualVisit = async (userId: number) => {
     try {
@@ -482,8 +563,27 @@ export default function AdminPage() {
     if (!regCandidate) return;
     await handleManualVisit(regCandidate.id);
     setIsRegOpen(false);
-    setRegForm(EMPTY_RECEPTION_CLIENT_FORM);
+    setRegForm(getEmptyReceptionForm());
     setRegCandidate(null);
+    setRestoreCandidate(null);
+  };
+
+  const openReceptionRestore = (candidate: ExistingClientCandidate) => {
+    setRestoreCandidate(candidate);
+    setRegCandidate(null);
+    setRegError('');
+    setRegForm({
+      name: candidate.name,
+      note: candidate.note || '',
+      phone: candidate.phone,
+      source: candidate.source || getEmptyReceptionForm().source,
+      sourceId: candidate.sourceId
+        ? String(candidate.sourceId)
+        : String(
+            clientSources.find((source) => source.name === candidate.source)
+              ?.id || '',
+          ),
+    });
   };
 
   const handlePhoneInput = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -521,14 +621,33 @@ export default function AdminPage() {
     setRegError('');
 
     try {
-      const regRes = await apiFetch('/api/clients', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(regForm),
-      });
+      const payload = {
+        ...regForm,
+        sourceId: regForm.sourceId ? Number(regForm.sourceId) : undefined,
+      };
+      const regRes = await apiFetch(
+        restoreCandidate ? `/api/clients/${restoreCandidate.id}` : '/api/clients',
+        {
+          method: restoreCandidate ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(
+            restoreCandidate ? { ...payload, status: 'active' } : payload,
+          ),
+        },
+      );
 
       if (!regRes.ok) {
-        setRegError(await readError(regRes, 'Ошибка регистрации'));
+        const apiError = await readApiError(regRes, 'Ошибка регистрации');
+        if (
+          apiError.code === 'CLIENT_ARCHIVED_CONFLICT' &&
+          apiError.client &&
+          !restoreCandidate
+        ) {
+          openReceptionRestore(apiError.client);
+          return;
+        }
+
+        setRegError(apiError.error);
         return;
       }
 
@@ -536,7 +655,7 @@ export default function AdminPage() {
         client?: { id: number };
       };
       if (!regData.client?.id) {
-        setRegError('Клиент создан, но не удалось открыть визит');
+        setRegError('Клиент сохранен, но не удалось открыть визит');
         return;
       }
 
@@ -546,8 +665,9 @@ export default function AdminPage() {
         body: JSON.stringify({ userId: regData.client.id }),
       });
       setIsRegOpen(false);
-      setRegForm(EMPTY_RECEPTION_CLIENT_FORM);
+      setRegForm(getEmptyReceptionForm());
       setRegCandidate(null);
+      setRestoreCandidate(null);
     } catch {
       setRegError('Ошибка сервера');
     } finally {
@@ -585,22 +705,25 @@ export default function AdminPage() {
   const handleCategoryChange = async (
     cardId: string,
     visitId: number | undefined,
-    category: string,
+    categoryIds: number[],
   ) => {
     if (!visitId) return;
+    const category = getCategoryNamesByIds(visitCategories, categoryIds);
 
     setCards((prev) =>
-      prev.map((c) => (c.id === cardId ? { ...c, category } : c)),
+      prev.map((c) =>
+        c.id === cardId ? { ...c, category, categoryIds } : c,
+      ),
     );
     setActiveVisit((prev) =>
-      prev?.id === cardId ? { ...prev, category } : prev,
+      prev?.id === cardId ? { ...prev, category, categoryIds } : prev,
     );
 
     try {
       await apiFetch('/api/visit/category', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ visitId, category }),
+        body: JSON.stringify({ visitId, categoryIds }),
       });
     } catch (e) {
       console.error('Ошибка сохранения категории:', e);
@@ -614,19 +737,27 @@ export default function AdminPage() {
     }
   };
 
-  const activeCategories = splitVisitCategories(activeVisit?.category);
+  const activeCategoryIds =
+    activeVisit?.categoryIds && activeVisit.categoryIds.length > 0
+      ? activeVisit.categoryIds
+      : splitVisitCategories(activeVisit?.category)
+          .map(
+            (name) =>
+              visitCategories.find((category) => category.name === name)?.id,
+          )
+          .filter((id): id is number => Boolean(id));
 
-  const toggleActiveVisitCategory = (category: string) => {
+  const toggleActiveVisitCategory = (categoryId: number) => {
     if (!activeVisit) return;
 
-    const nextCategories = activeCategories.includes(category)
-      ? activeCategories.filter((item) => item !== category)
-      : [...activeCategories, category];
+    const nextCategoryIds = activeCategoryIds.includes(categoryId)
+      ? activeCategoryIds.filter((id) => id !== categoryId)
+      : [...activeCategoryIds, categoryId];
 
     void handleCategoryChange(
       activeVisit.id,
       activeVisit.visitId,
-      nextCategories.join(', '),
+      nextCategoryIds,
     );
   };
 
@@ -680,7 +811,13 @@ export default function AdminPage() {
               Ручной поиск
             </Button>
             <Button
-              onClick={() => setIsRegOpen(true)}
+              onClick={() => {
+                setRegForm(getEmptyReceptionForm());
+                setRegCandidate(null);
+                setRestoreCandidate(null);
+                setRegError('');
+                setIsRegOpen(true);
+              }}
               className="flex-1 sm:flex-none"
             >
               <UserPlus className="w-4 h-4 mr-2" />
@@ -872,6 +1009,10 @@ export default function AdminPage() {
                     variant="outline"
                     onClick={() => {
                       setIsSearchOpen(false);
+                      setRegForm(getEmptyReceptionForm());
+                      setRegCandidate(null);
+                      setRestoreCandidate(null);
+                      setRegError('');
                       setIsRegOpen(true);
                     }}
                   >
@@ -906,10 +1047,12 @@ export default function AdminPage() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-primary">
               <UserPlus className="w-5 h-5" />
-              Новый клиент
+              {restoreCandidate ? 'Восстановить клиента' : 'Новый клиент'}
             </DialogTitle>
             <DialogDescription>
-              Телефон проверяется на дубли и хранится в едином формате.
+              {restoreCandidate
+                ? 'Проверьте данные архивного клиента перед возвратом в актуальную базу.'
+                : 'Телефон проверяется на дубли и хранится в едином формате.'}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleRegisterSubmit} className="space-y-4 pt-2">
@@ -943,7 +1086,9 @@ export default function AdminPage() {
             {regCandidate && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                 <div className="font-medium text-amber-700 dark:text-amber-300">
-                  Такой клиент уже есть в базе
+                  {regCandidate.status === 'archived'
+                    ? 'Такой клиент уже есть в архиве'
+                    : 'Такой клиент уже есть в базе'}
                 </div>
                 <div className="mt-1 text-muted-foreground">
                   {regCandidate.name} · {regCandidate.phone}
@@ -955,9 +1100,15 @@ export default function AdminPage() {
                   type="button"
                   variant="outline"
                   className="mt-3 w-full"
-                  onClick={() => void handleUseExistingClient()}
+                  onClick={() =>
+                    regCandidate.status === 'archived'
+                      ? openReceptionRestore(regCandidate)
+                      : void handleUseExistingClient()
+                  }
                 >
-                  Использовать существующего клиента
+                  {regCandidate.status === 'archived'
+                    ? 'Восстановить и отредактировать'
+                    : 'Использовать существующего клиента'}
                 </Button>
               </div>
             )}
@@ -965,13 +1116,30 @@ export default function AdminPage() {
               <label className="mb-1 block text-xs font-medium">
                 Источник
               </label>
-              <Input
-                placeholder="Например: Проходил мимо"
-                value={regForm.source}
-                onChange={(e) =>
-                  setRegForm({ ...regForm, source: e.target.value })
-                }
-              />
+              <Select
+                value={regForm.sourceId}
+                onValueChange={(sourceId) => {
+                  const source = clientSources.find(
+                    (item) => String(item.id) === sourceId,
+                  );
+                  setRegForm({
+                    ...regForm,
+                    sourceId,
+                    source: source?.name || regForm.source,
+                  });
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Выберите источник" />
+                </SelectTrigger>
+                <SelectContent>
+                  {clientSources.map((source) => (
+                    <SelectItem key={source.id} value={String(source.id)}>
+                      {source.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">
@@ -994,7 +1162,11 @@ export default function AdminPage() {
             )}
 
             <Button type="submit" disabled={regLoading} className="w-full mt-2">
-              {regLoading ? 'Сохранение...' : 'Создать и пропустить'}
+              {regLoading
+                ? 'Сохранение...'
+                : restoreCandidate
+                  ? 'Восстановить и пропустить'
+                  : 'Создать и пропустить'}
             </Button>
           </form>
         </DialogContent>
@@ -1055,14 +1227,14 @@ export default function AdminPage() {
                   <div>
                     <div className="mb-2 text-sm font-medium">Цель визита</div>
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      {VISIT_CATEGORIES.map((category) => {
-                        const isSelected = activeCategories.includes(category);
+                      {visitCategories.map((category) => {
+                        const isSelected = activeCategoryIds.includes(category.id);
 
                         return (
                           <button
-                            key={category}
+                            key={category.id}
                             type="button"
-                            onClick={() => toggleActiveVisitCategory(category)}
+                            onClick={() => toggleActiveVisitCategory(category.id)}
                             className={`flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors ${
                               isSelected
                                 ? 'border-primary bg-primary/10 text-primary'
@@ -1080,10 +1252,15 @@ export default function AdminPage() {
                                 <Check className="h-3 w-3 text-primary-foreground" />
                               )}
                             </span>
-                            <span>{category}</span>
+                            <span>{category.name}</span>
                           </button>
                         );
                       })}
+                      {visitCategories.length === 0 && (
+                        <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground sm:col-span-2">
+                          Сначала создайте категории визитов в справочниках CRM.
+                        </div>
+                      )}
                     </div>
                   </div>
 

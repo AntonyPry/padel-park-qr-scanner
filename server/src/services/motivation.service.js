@@ -6,6 +6,26 @@ const DEFAULT_BASE_RULES = DEFAULT_MOTIVATION_RULES.filter(
 );
 const THRESHOLD_TYPES = new Set(['none', 'revenue', 'quantity']);
 
+function normalizeReceiptPaymentSource(value) {
+  const source = String(value || '').trim().toUpperCase();
+  if (['CASH', 'PAY_CASH', 'TYPE_CASH', '0'].includes(source)) return 'cash';
+  if (
+    [
+      'CARD',
+      'CASHLESS',
+      'ELECTRON',
+      'ELECTRONIC',
+      'PAY_CARD',
+      'PAY_BY_CREDIT',
+      'TYPE_CARD',
+      '1',
+    ].includes(source)
+  ) {
+    return 'cashless';
+  }
+  return 'unknown';
+}
+
 function normalizeRule(rule) {
   const raw = rule.toJSON ? rule.toJSON() : rule;
   return {
@@ -368,12 +388,16 @@ async function getCurrentShiftSales(options = {}) {
     };
   }
 
-  const rules = await db.CatalogRule.findAll();
+  const rules = await db.CatalogRule.findAll({
+    where: { status: 'active' },
+  });
   const rulesMap = {};
   rules.forEach((rule) => {
     rulesMap[String(rule.itemName).toLowerCase().trim()] = rule.category;
   });
-  const categories = await db.Category.findAll();
+  const categories = await db.Category.findAll({
+    where: { isActive: true },
+  });
   const categoryByName = new Map(
     categories.map((category) => [
       String(category.name).toLowerCase(),
@@ -401,13 +425,36 @@ async function getCurrentShiftSales(options = {}) {
   for (const receipt of receipts) {
     const isPayback = receipt.type === 'PAYBACK';
     const multiplier = isPayback ? -1 : 1;
-    const receiptCash = Math.abs(Number(receipt.cash) || 0) * multiplier;
-    const receiptCashless =
-      Math.abs(Number(receipt.cashless) || 0) * multiplier;
+    const receiptTotal = Math.abs(Number(receipt.totalAmount) || 0) * multiplier;
+    let receiptCash = Math.abs(Number(receipt.cash) || 0) * multiplier;
+    let receiptCashless = Math.abs(Number(receipt.cashless) || 0) * multiplier;
+    const paymentSource = normalizeReceiptPaymentSource(receipt.paymentSource);
+
+    if (paymentSource === 'cash' && receiptCash === 0 && receiptTotal !== 0) {
+      receiptCash = receiptTotal;
+      receiptCashless = 0;
+    } else if (
+      paymentSource === 'cashless' &&
+      receiptCashless === 0 &&
+      receiptTotal !== 0
+    ) {
+      receiptCash = 0;
+      receiptCashless = receiptTotal;
+    } else if (receiptCash === 0 && receiptCashless === 0 && receiptTotal !== 0) {
+      receiptCashless = receiptTotal;
+    }
 
     paymentSummary.cash += receiptCash;
     paymentSummary.cashless += receiptCashless;
     paymentSummary.total += receiptCash + receiptCashless;
+    const paymentMethod =
+      receiptCash !== 0 && receiptCashless !== 0
+        ? 'mixed'
+        : receiptCash !== 0
+          ? 'cash'
+          : receiptCashless !== 0
+            ? 'cashless'
+            : 'unknown';
 
     for (const item of receipt.items) {
       const rawAmount = Number(
@@ -433,6 +480,11 @@ async function getCurrentShiftSales(options = {}) {
         source: 'evotor',
         date: receipt.dateTime,
         comment: `${item.name} (${quantity} шт)`,
+        paymentCash: receiptCash,
+        paymentCashless: receiptCashless,
+        paymentMethod,
+        paymentSource: receipt.paymentSource || null,
+        receiptId: receipt.id,
         qty: quantity,
       });
     }

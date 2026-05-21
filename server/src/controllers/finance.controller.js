@@ -1,4 +1,5 @@
 const financeService = require('../services/finance.service');
+const { sendError } = require('../utils/api-error');
 
 class FinanceController {
   async getFinanceRecords(req, res) {
@@ -8,7 +9,7 @@ class FinanceController {
       res.json(report);
     } catch (error) {
       console.error('❌ Ошибка P&L:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка финансового отчета');
     }
   }
 
@@ -17,9 +18,7 @@ class FinanceController {
       const record = await financeService.createManualRecord(req.body);
       res.status(201).json(record);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка добавления записи' });
+      sendError(res, error, 'Ошибка добавления записи');
     }
   }
 
@@ -30,7 +29,7 @@ class FinanceController {
       res.json(data);
     } catch (error) {
       console.error('❌ Ошибка Payroll:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка расчета payroll');
     }
   }
 }

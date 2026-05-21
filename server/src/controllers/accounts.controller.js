@@ -1,13 +1,13 @@
 const accountsService = require('../services/accounts.service');
+const { sendError } = require('../utils/api-error');
 
 class AccountsController {
   async getAll(req, res) {
     try {
-      const accounts = await accountsService.getAll();
+      const accounts = await accountsService.getAll(req.query);
       res.json(accounts);
     } catch (error) {
-      console.error('Ошибка получения пользователей:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка получения пользователей');
     }
   }
 
@@ -16,9 +16,7 @@ class AccountsController {
       const account = await accountsService.create(req.account, req.body);
       res.status(201).json(account);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка создания пользователя' });
+      sendError(res, error, 'Ошибка создания пользователя');
     }
   }
 
@@ -31,9 +29,7 @@ class AccountsController {
       );
       res.json(account);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка обновления пользователя' });
+      sendError(res, error, 'Ошибка обновления пользователя');
     }
   }
 
@@ -42,9 +38,28 @@ class AccountsController {
       const result = await accountsService.remove(req.account, req.params.id);
       res.json(result);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка удаления пользователя' });
+      sendError(res, error, 'Ошибка удаления пользователя');
+    }
+  }
+
+  async restore(req, res) {
+    try {
+      const result = await accountsService.restore(req.account, req.params.id);
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка восстановления пользователя');
+    }
+  }
+
+  async removeArchived(req, res) {
+    try {
+      const result = await accountsService.removeArchived(
+        req.account,
+        req.params.id,
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка удаления пользователя из архива');
     }
   }
 }

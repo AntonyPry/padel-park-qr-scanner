@@ -1,16 +1,21 @@
 const motivationService = require('../services/motivation.service');
+const { sendError } = require('../utils/api-error');
 
 class MotivationController {
   async getCurrentSales(req, res) {
     try {
+      const includePaymentSummary = ['true', '1'].includes(
+        String(req.query.includePaymentSummary).toLowerCase(),
+      );
+
       res.json(
         await motivationService.getCurrentShiftSales({
-          includePaymentSummary: req.query.includePaymentSummary === 'true',
+          includePaymentSummary,
         }),
       );
     } catch (error) {
       console.error('Ошибка получения продаж смены:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка получения продаж смены');
     }
   }
 
@@ -19,7 +24,7 @@ class MotivationController {
       res.json(await motivationService.getRules());
     } catch (error) {
       console.error('Ошибка получения правил мотивации:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка получения правил мотивации');
     }
   }
 
@@ -28,7 +33,7 @@ class MotivationController {
       res.json(await motivationService.getBonusRules());
     } catch (error) {
       console.error('Ошибка получения бонусных правил мотивации:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка получения бонусных правил мотивации');
     }
   }
 
@@ -37,7 +42,7 @@ class MotivationController {
       res.json(await motivationService.getAvailableCategories());
     } catch (error) {
       console.error('Ошибка получения категорий мотивации:', error);
-      res.status(500).json({ error: 'Ошибка сервера' });
+      sendError(res, error, 'Ошибка получения категорий мотивации');
     }
   }
 
@@ -46,9 +51,7 @@ class MotivationController {
       const rule = await motivationService.updateRule(req.params.key, req.body);
       res.json(rule);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка обновления правила' });
+      sendError(res, error, 'Ошибка обновления правила');
     }
   }
 
@@ -57,9 +60,7 @@ class MotivationController {
       const rule = await motivationService.createBonusRule(req.body);
       res.status(201).json(rule);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка создания бонусного правила' });
+      sendError(res, error, 'Ошибка создания бонусного правила');
     }
   }
 
@@ -71,9 +72,7 @@ class MotivationController {
       );
       res.json(rule);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка обновления бонусного правила' });
+      sendError(res, error, 'Ошибка обновления бонусного правила');
     }
   }
 
@@ -85,9 +84,7 @@ class MotivationController {
       );
       res.json(rules);
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка обновления мотивации категории' });
+      sendError(res, error, 'Ошибка обновления мотивации категории');
     }
   }
 
@@ -95,9 +92,7 @@ class MotivationController {
     try {
       res.json(await motivationService.deleteBonusRule(req.params.id));
     } catch (error) {
-      res
-        .status(error.statusCode || 500)
-        .json({ error: error.message || 'Ошибка удаления бонусного правила' });
+      sendError(res, error, 'Ошибка удаления бонусного правила');
     }
   }
 }

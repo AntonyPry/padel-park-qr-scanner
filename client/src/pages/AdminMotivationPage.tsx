@@ -51,6 +51,7 @@ import {
   type MotivationBonusRule,
   type MotivationCategory,
   type MotivationRule,
+  type MotivationRulesMap,
   type MotivationThresholdType,
 } from '@/lib/motivation';
 import { canManageMotivation } from '@/lib/permissions';
@@ -64,6 +65,11 @@ interface FinanceRecord {
   source: string;
   date: string;
   comment?: string;
+  paymentCash?: number;
+  paymentCashless?: number;
+  paymentMethod?: 'cash' | 'cashless' | 'mixed' | 'unknown' | string;
+  paymentSource?: string | null;
+  receiptId?: number;
   qty?: number;
 }
 
@@ -152,6 +158,17 @@ const parseQuantity = (comment?: string) => {
 const formatMoney = (value: number) =>
   `${Math.round(value).toLocaleString('ru-RU')} ₽`;
 
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: 'Нал',
+  cashless: 'Безнал',
+  mixed: 'Смешанная',
+  unknown: 'Не указано',
+};
+
+function formatPaymentMethod(method?: string) {
+  return PAYMENT_METHOD_LABELS[method || 'unknown'] || method || 'Не указано';
+}
+
 const formatDuration = (ms: number) => {
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -204,6 +221,184 @@ function toBonusDraft(rule: MotivationBonusRule): BonusRuleDraft {
     name: rule.name,
     thresholdType: rule.thresholdType,
     thresholdValue: String(Number(rule.thresholdValue)),
+  };
+}
+
+function calculateShiftStatsSnapshot({
+  bonusRules,
+  now,
+  paymentSummary,
+  records,
+  rulesMap,
+  shiftStart,
+}: {
+  bonusRules: MotivationBonusRule[];
+  now: number;
+  paymentSummary: PaymentSummary;
+  records: FinanceRecord[];
+  rulesMap: MotivationRulesMap;
+  shiftStart: number;
+}): ShiftStats {
+  const activeBonusRules = bonusRules.filter((rule) => rule.isActive);
+  const durationHours = Math.max(0, (now - shiftStart) / 3600000);
+  let totalRevenue = 0;
+  let grossRevenue = 0;
+  let totalReturns = 0;
+  const rulesByCategoryId = new Map<number, MotivationBonusRule[]>();
+  const rulesByCategoryName = new Map<string, MotivationBonusRule[]>();
+  const breakdownByRule = new Map<number, RuleBreakdown>();
+
+  activeBonusRules.forEach((rule) => {
+    breakdownByRule.set(rule.id, {
+      bonus: 0,
+      bonusPercent: Number(rule.bonusPercent),
+      categoryNames: rule.categories.map((category) => category.name),
+      quantity: 0,
+      revenue: 0,
+      ruleId: rule.id,
+      ruleName: rule.name,
+      thresholdPassed: false,
+      thresholdType: rule.thresholdType,
+      thresholdValue: Number(rule.thresholdValue),
+    });
+
+    rule.categories.forEach((category) => {
+      const byId = rulesByCategoryId.get(category.id) || [];
+      byId.push(rule);
+      rulesByCategoryId.set(category.id, byId);
+
+      const key = category.name.toLowerCase().trim();
+      const byName = rulesByCategoryName.get(key) || [];
+      byName.push(rule);
+      rulesByCategoryName.set(key, byName);
+    });
+  });
+
+  const rawSales = records
+    .filter((record) => {
+      const recordTime = new Date(record.date).getTime();
+      return recordTime >= shiftStart && record.source === 'evotor';
+    })
+    .map((record) => ({
+      ...record,
+      qty:
+        Number.isFinite(Number(record.qty)) && Number(record.qty) !== 0
+          ? Number(record.qty)
+          : parseQuantity(record.comment),
+      value: Number(record.amount) || 0,
+    }))
+    .filter((record) => record.value !== 0);
+
+  rawSales.forEach((sale) => {
+    totalRevenue += sale.value;
+    if (sale.value > 0) grossRevenue += sale.value;
+    if (sale.value < 0) totalReturns += Math.abs(sale.value);
+    const matchedRules =
+      (sale.categoryId ? rulesByCategoryId.get(sale.categoryId) : undefined) ||
+      rulesByCategoryName.get(sale.category.toLowerCase().trim()) ||
+      [];
+
+    matchedRules.forEach((rule) => {
+      const breakdown = breakdownByRule.get(rule.id);
+      if (!breakdown) return;
+
+      breakdown.revenue += sale.value;
+      breakdown.quantity += sale.qty;
+    });
+  });
+
+  breakdownByRule.forEach((breakdown) => {
+    breakdown.thresholdPassed =
+      breakdown.thresholdType === 'none' ||
+      (breakdown.thresholdType === 'revenue' &&
+        breakdown.revenue >= breakdown.thresholdValue) ||
+      (breakdown.thresholdType === 'quantity' &&
+        breakdown.quantity >= breakdown.thresholdValue);
+
+    breakdown.bonus = breakdown.thresholdPassed
+      ? breakdown.revenue * (breakdown.bonusPercent / 100)
+      : 0;
+  });
+
+  const salesList = rawSales.map<BonusRecord>((sale) => {
+    const matchedRules =
+      (sale.categoryId ? rulesByCategoryId.get(sale.categoryId) : undefined) ||
+      rulesByCategoryName.get(sale.category.toLowerCase().trim()) ||
+      [];
+    const appliedRules = matchedRules.filter(
+      (rule) => breakdownByRule.get(rule.id)?.thresholdPassed,
+    );
+    const earned = appliedRules.reduce(
+      (sum, rule) => sum + sale.value * (Number(rule.bonusPercent) / 100),
+      0,
+    );
+    const rate = appliedRules.reduce(
+      (sum, rule) => sum + Number(rule.bonusPercent),
+      0,
+    );
+
+    return {
+      ...sale,
+      bonusRuleIds: appliedRules.map((rule) => rule.id),
+      bonusRuleNames: appliedRules.map((rule) => rule.name),
+      earned,
+      rate,
+    };
+  });
+
+  const categoryStats = Array.from(
+    salesList
+      .reduce(
+        (acc, sale) => {
+          const current = acc.get(sale.category) || {
+            category: sale.category,
+            bonus: 0,
+            count: 0,
+            revenue: 0,
+          };
+
+          current.count += 1;
+          current.revenue += sale.value;
+          current.bonus += sale.earned;
+          acc.set(sale.category, current);
+
+          return acc;
+        },
+        new Map<
+          string,
+          {
+            category: string;
+            bonus: number;
+            count: number;
+            revenue: number;
+          }
+        >(),
+      )
+      .values(),
+  ).sort((a, b) => b.revenue - a.revenue);
+
+  salesList.sort(
+    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
+
+  const ruleBreakdown = Array.from(breakdownByRule.values()).sort(
+    (a, b) => b.bonus - a.bonus,
+  );
+  const totalBonus = ruleBreakdown.reduce((sum, rule) => sum + rule.bonus, 0);
+  const basePay = calculateBasePay(durationHours, rulesMap);
+
+  return {
+    basePay,
+    categoryStats,
+    durationHours,
+    grossRevenue,
+    paymentSummary,
+    ruleBreakdown,
+    totalReturns,
+    totalBonus,
+    totalPay: basePay + totalBonus,
+    totalRevenue,
+    salesList,
   };
 }
 
@@ -645,28 +840,40 @@ export default function AdminMotivationPage() {
     ? new Date(activeShift.startedAt).getTime()
     : null;
 
+  const fetchCurrentSalesSnapshot = useCallback(async () => {
+    const res = await apiFetch(
+      '/api/motivation/current-sales?includePaymentSummary=true',
+    );
+    if (!res.ok) {
+      throw new Error(await readError(res, 'Не удалось загрузить продажи смены'));
+    }
+
+    const data = (await res.json()) as CurrentSalesResponse | FinanceRecord[];
+    if (Array.isArray(data)) {
+      return {
+        paymentSummary: emptyPaymentSummary,
+        records: data,
+      };
+    }
+
+    return {
+      paymentSummary: normalizePaymentSummary(data.paymentSummary),
+      records: data.records || [],
+    };
+  }, []);
+
   const fetchFinances = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await apiFetch(
-        '/api/motivation/current-sales?includePaymentSummary=true',
-      );
-      if (res.ok) {
-        const data = (await res.json()) as CurrentSalesResponse | FinanceRecord[];
-        if (Array.isArray(data)) {
-          setRecords(data);
-          setPaymentSummary(emptyPaymentSummary);
-        } else {
-          setRecords(data.records || []);
-          setPaymentSummary(normalizePaymentSummary(data.paymentSummary));
-        }
-      }
+      const snapshot = await fetchCurrentSalesSnapshot();
+      setRecords(snapshot.records);
+      setPaymentSummary(snapshot.paymentSummary);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [fetchCurrentSalesSnapshot]);
 
   const fetchActiveShift = useCallback(async () => {
     try {
@@ -759,170 +966,14 @@ export default function AdminMotivationPage() {
   const shiftStats = useMemo<ShiftStats | null>(() => {
     if (!shiftStart) return null;
 
-    const activeBonusRules = bonusRules.filter((rule) => rule.isActive);
-    const durationHours = Math.max(0, (now - shiftStart) / 3600000);
-    let totalRevenue = 0;
-    let grossRevenue = 0;
-    let totalReturns = 0;
-    const rulesByCategoryId = new Map<number, MotivationBonusRule[]>();
-    const rulesByCategoryName = new Map<string, MotivationBonusRule[]>();
-    const breakdownByRule = new Map<number, RuleBreakdown>();
-
-    activeBonusRules.forEach((rule) => {
-      breakdownByRule.set(rule.id, {
-        bonus: 0,
-        bonusPercent: Number(rule.bonusPercent),
-        categoryNames: rule.categories.map((category) => category.name),
-        quantity: 0,
-        revenue: 0,
-        ruleId: rule.id,
-        ruleName: rule.name,
-        thresholdPassed: false,
-        thresholdType: rule.thresholdType,
-        thresholdValue: Number(rule.thresholdValue),
-      });
-
-      rule.categories.forEach((category) => {
-        const byId = rulesByCategoryId.get(category.id) || [];
-        byId.push(rule);
-        rulesByCategoryId.set(category.id, byId);
-
-        const key = category.name.toLowerCase().trim();
-        const byName = rulesByCategoryName.get(key) || [];
-        byName.push(rule);
-        rulesByCategoryName.set(key, byName);
-      });
-    });
-
-    const rawSales = records
-      .filter((record) => {
-        const recordTime = new Date(record.date).getTime();
-        return (
-          recordTime >= shiftStart &&
-          record.source === 'evotor'
-        );
-      })
-      .map((record) => ({
-        ...record,
-        qty:
-          Number.isFinite(Number(record.qty)) && Number(record.qty) !== 0
-            ? Number(record.qty)
-            : parseQuantity(record.comment),
-        value: Number(record.amount) || 0,
-      }))
-      .filter((record) => record.value !== 0);
-
-    rawSales.forEach((sale) => {
-      totalRevenue += sale.value;
-      if (sale.value > 0) grossRevenue += sale.value;
-      if (sale.value < 0) totalReturns += Math.abs(sale.value);
-      const matchedRules =
-        (sale.categoryId ? rulesByCategoryId.get(sale.categoryId) : undefined) ||
-        rulesByCategoryName.get(sale.category.toLowerCase().trim()) ||
-        [];
-
-      matchedRules.forEach((rule) => {
-        const breakdown = breakdownByRule.get(rule.id);
-        if (!breakdown) return;
-
-        breakdown.revenue += sale.value;
-        breakdown.quantity += sale.qty;
-      });
-    });
-
-    breakdownByRule.forEach((breakdown) => {
-      breakdown.thresholdPassed =
-        breakdown.thresholdType === 'none' ||
-        (breakdown.thresholdType === 'revenue' &&
-          breakdown.revenue >= breakdown.thresholdValue) ||
-        (breakdown.thresholdType === 'quantity' &&
-          breakdown.quantity >= breakdown.thresholdValue);
-
-      breakdown.bonus = breakdown.thresholdPassed
-        ? breakdown.revenue * (breakdown.bonusPercent / 100)
-        : 0;
-    });
-
-    const salesList = rawSales.map<BonusRecord>((sale) => {
-      const matchedRules =
-        (sale.categoryId ? rulesByCategoryId.get(sale.categoryId) : undefined) ||
-        rulesByCategoryName.get(sale.category.toLowerCase().trim()) ||
-        [];
-      const appliedRules = matchedRules.filter(
-        (rule) => breakdownByRule.get(rule.id)?.thresholdPassed,
-      );
-      const earned = appliedRules.reduce(
-        (sum, rule) => sum + sale.value * (Number(rule.bonusPercent) / 100),
-        0,
-      );
-      const rate = appliedRules.reduce(
-        (sum, rule) => sum + Number(rule.bonusPercent),
-        0,
-      );
-
-      return {
-        ...sale,
-        bonusRuleIds: appliedRules.map((rule) => rule.id),
-        bonusRuleNames: appliedRules.map((rule) => rule.name),
-        earned,
-        rate,
-      };
-    });
-
-    const categoryStats = Array.from(
-      salesList
-        .reduce(
-          (acc, sale) => {
-            const current = acc.get(sale.category) || {
-              category: sale.category,
-              bonus: 0,
-              count: 0,
-              revenue: 0,
-            };
-
-            current.count += 1;
-            current.revenue += sale.value;
-            current.bonus += sale.earned;
-            acc.set(sale.category, current);
-
-            return acc;
-          },
-          new Map<
-            string,
-            {
-              category: string;
-              bonus: number;
-              count: number;
-              revenue: number;
-            }
-          >(),
-        )
-        .values(),
-    ).sort((a, b) => b.revenue - a.revenue);
-
-    salesList.sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    );
-
-    const ruleBreakdown = Array.from(breakdownByRule.values()).sort(
-      (a, b) => b.bonus - a.bonus,
-    );
-    const totalBonus = ruleBreakdown.reduce((sum, rule) => sum + rule.bonus, 0);
-    const basePay = calculateBasePay(durationHours, rulesMap);
-
-    return {
-      basePay,
-      categoryStats,
-      durationHours,
-      grossRevenue,
+    return calculateShiftStatsSnapshot({
+      bonusRules,
+      now,
       paymentSummary,
-      ruleBreakdown,
-      totalReturns,
-      totalBonus,
-      totalPay: basePay + totalBonus,
-      totalRevenue,
-      salesList,
-    };
+      records,
+      rulesMap,
+      shiftStart,
+    });
   }, [bonusRules, now, paymentSummary, records, rulesMap, shiftStart]);
 
   const handleStartShift = async () => {
@@ -942,8 +993,29 @@ export default function AdminMotivationPage() {
   };
 
   const handleEndShift = async () => {
-    if (!activeShift || !shiftStats) return;
+    if (!activeShift || !shiftStart) return;
     if (!confirm('Уверены, что хотите завершить смену?')) return;
+
+    let latestStats = shiftStats;
+    try {
+      const snapshot = await fetchCurrentSalesSnapshot();
+      setRecords(snapshot.records);
+      setPaymentSummary(snapshot.paymentSummary);
+      latestStats = calculateShiftStatsSnapshot({
+        bonusRules,
+        now: Date.now(),
+        paymentSummary: snapshot.paymentSummary,
+        records: snapshot.records,
+        rulesMap,
+        shiftStart,
+      });
+    } catch (error) {
+      console.error(error);
+      alert('Не удалось обновить продажи перед закрытием смены');
+      return;
+    }
+
+    if (!latestStats) return;
 
     const res = await apiFetch('/api/shifts/end', { method: 'POST' });
     if (!res.ok) {
@@ -952,7 +1024,7 @@ export default function AdminMotivationPage() {
     }
 
     const data = (await res.json()) as { shift: ShiftSession };
-    setShiftReport(buildShiftReport(data.shift, shiftStats));
+    setShiftReport(buildShiftReport(data.shift, latestStats));
     setReportCopied(false);
     setActiveShift(null);
     void fetchFinances();
@@ -1633,6 +1705,7 @@ export default function AdminMotivationPage() {
                         <TableHead>Время</TableHead>
                         <TableHead>Категория</TableHead>
                         <TableHead>Тип</TableHead>
+                        <TableHead>Оплата</TableHead>
                         <TableHead>Правило</TableHead>
                         <TableHead className="text-right">Сумма</TableHead>
                         <TableHead className="text-right">Бонус</TableHead>
@@ -1655,6 +1728,20 @@ export default function AdminMotivationPage() {
                             ) : (
                               <Badge variant="outline">Продажа</Badge>
                             )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <Badge variant="outline">
+                                {formatPaymentMethod(sale.paymentMethod)}
+                              </Badge>
+                              {sale.paymentMethod === 'mixed' && (
+                                <span className="text-xs text-muted-foreground">
+                                  нал {formatMoney(Number(sale.paymentCash) || 0)} ·
+                                  безнал{' '}
+                                  {formatMoney(Number(sale.paymentCashless) || 0)}
+                                </span>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell>
                             {sale.bonusRuleNames.length > 0 ? (

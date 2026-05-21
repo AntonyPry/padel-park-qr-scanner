@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Archive,
+  ArchiveRestore,
   Pencil,
   Plus,
   RefreshCw,
@@ -10,6 +12,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
 import {
   Dialog,
   DialogContent,
@@ -42,7 +48,7 @@ import {
 } from '@/lib/roles';
 import { useAuth } from '@/lib/useAuth';
 
-type AccountStatus = 'active' | 'inactive';
+type AccountStatus = 'active' | 'inactive' | 'archived';
 
 interface StaffOption {
   id: number;
@@ -72,7 +78,16 @@ interface AccountFormState {
   status: AccountStatus;
 }
 
-const MANAGER_MANAGED_ROLES: AccountRole[] = ['admin', 'accountant', 'viewer'];
+type PendingAction = ConfirmAction & {
+  onConfirm: () => Promise<void>;
+};
+
+const MANAGER_MANAGED_ROLES: AccountRole[] = [
+  'admin',
+  'accountant',
+  'viewer',
+  'trainer',
+];
 const EMPTY_FORM: AccountFormState = {
   email: '',
   password: '',
@@ -113,6 +128,11 @@ export default function SystemUsersPage() {
     null,
   );
   const [form, setForm] = useState<AccountFormState>(EMPTY_FORM);
+  const [accountStatus, setAccountStatus] = useState<
+    'active' | 'archived' | 'all'
+  >('active');
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(false);
 
   const availableRoles = useMemo(() => {
     if (account?.role === 'owner') return ACCOUNT_ROLES;
@@ -130,9 +150,18 @@ export default function SystemUsersPage() {
   }, [accounts, editingAccount?.id]);
 
   const staffOptions = useMemo(
-    () => staff.filter((item) => !linkedStaffIds.has(item.id)),
-    [linkedStaffIds, staff],
+    () =>
+      staff.filter(
+        (item) =>
+          !linkedStaffIds.has(item.id) &&
+          (item.status === 'active' || item.id === editingAccount?.staffId),
+      ),
+    [editingAccount?.staffId, linkedStaffIds, staff],
   );
+  const displayedAccounts = useMemo(() => {
+    if (accountStatus === 'all') return accounts;
+    return accounts.filter((item) => item.status === accountStatus);
+  }, [accountStatus, accounts]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -219,19 +248,80 @@ export default function SystemUsersPage() {
     setIsModalOpen(false);
   };
 
-  const handleDelete = async (target: SystemAccount) => {
-    if (!confirm(`Удалить пользователя ${target.email}?`)) return;
-
+  const executeArchive = async (target: SystemAccount) => {
     const response = await apiFetch(`/api/accounts/${target.id}`, {
       method: 'DELETE',
     });
 
     if (!response.ok) {
-      alert(await readError(response, 'Не удалось удалить пользователя'));
+      alert(await readError(response, 'Не удалось отключить пользователя'));
       return;
     }
 
+    const saved = (await response.json()) as SystemAccount;
+    setAccounts((prev) =>
+      prev.map((item) => (item.id === saved.id ? saved : item)),
+    );
+  };
+
+  const executeRestore = async (target: SystemAccount) => {
+    const response = await apiFetch(`/api/accounts/${target.id}/restore`, {
+      method: 'POST',
+    });
+    if (!response.ok) {
+      alert(await readError(response, 'Не удалось восстановить пользователя'));
+      return;
+    }
+    const saved = (await response.json()) as SystemAccount;
+    setAccounts((prev) =>
+      prev.map((item) => (item.id === saved.id ? saved : item)),
+    );
+  };
+
+  const executePermanentDelete = async (target: SystemAccount) => {
+    const response = await apiFetch(`/api/accounts/${target.id}/permanent`, {
+      method: 'DELETE',
+    });
+    if (!response.ok) {
+      alert(await readError(response, 'Не удалось удалить пользователя из архива'));
+      return;
+    }
     setAccounts((prev) => prev.filter((item) => item.id !== target.id));
+  };
+
+  const requestArchive = (target: SystemAccount) => {
+    const isArchived = target.status === 'archived';
+    setPendingAction({
+      confirmLabel: isArchived ? 'Восстановить' : 'В архив',
+      description: isArchived
+        ? `Пользователь ${target.email} снова сможет войти в CRM.`
+        : `Пользователь ${target.email} не сможет войти и будет перенесен в архив. История его действий сохранится.`,
+      isDestructive: !isArchived,
+      onConfirm: () => (isArchived ? executeRestore(target) : executeArchive(target)),
+      title: isArchived ? 'Восстановить пользователя?' : 'Архивировать пользователя?',
+    });
+  };
+
+  const requestPermanentDelete = (target: SystemAccount) => {
+    setPendingAction({
+      confirmLabel: 'Удалить навсегда',
+      description: `Пользователь ${target.email} будет удален без возможности восстановления. Сервер не даст удалить его, если есть связанные действия.`,
+      isDestructive: true,
+      onConfirm: () => executePermanentDelete(target),
+      title: 'Удалить пользователя из архива?',
+    });
+  };
+
+  const confirmPendingAction = async () => {
+    if (!pendingAction) return;
+
+    setPendingActionLoading(true);
+    try {
+      await pendingAction.onConfirm();
+      setPendingAction(null);
+    } finally {
+      setPendingActionLoading(false);
+    }
   };
 
   const stats = useMemo(
@@ -256,6 +346,21 @@ export default function SystemUsersPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Select
+            value={accountStatus}
+            onValueChange={(value) =>
+              setAccountStatus(value as 'active' | 'archived' | 'all')
+            }
+          >
+            <SelectTrigger className="w-[150px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Активные</SelectItem>
+              <SelectItem value="archived">Архив</SelectItem>
+              <SelectItem value="all">Все</SelectItem>
+            </SelectContent>
+          </Select>
           <Button
             variant="outline"
             size="icon"
@@ -308,7 +413,7 @@ export default function SystemUsersPage() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {accounts.length === 0 && (
+            {displayedAccounts.length === 0 && (
               <TableRow>
                 <TableCell
                   colSpan={6}
@@ -318,7 +423,7 @@ export default function SystemUsersPage() {
                 </TableCell>
               </TableRow>
             )}
-            {accounts.map((item) => {
+            {displayedAccounts.map((item) => {
               const manageable = canManageAccount(item);
 
               return (
@@ -366,7 +471,11 @@ export default function SystemUsersPage() {
                           : ''
                       }
                     >
-                      {item.status === 'active' ? 'Активен' : 'Отключен'}
+                      {item.status === 'active'
+                        ? 'Активен'
+                        : item.status === 'archived'
+                          ? 'Архив'
+                          : 'Отключен'}
                     </Badge>
                   </TableCell>
                   <TableCell className="hidden xl:table-cell text-muted-foreground">
@@ -383,12 +492,29 @@ export default function SystemUsersPage() {
                           <Pencil className="h-4 w-4" />
                         </Button>
                         <Button
-                          variant="destructive"
+                          variant="ghost"
                           size="icon-sm"
-                          onClick={() => void handleDelete(item)}
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => requestArchive(item)}
+                          title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          {item.status === 'archived' ? (
+                            <ArchiveRestore className="h-4 w-4" />
+                          ) : (
+                            <Archive className="h-4 w-4" />
+                          )}
                         </Button>
+                        {item.status === 'archived' && (
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => requestPermanentDelete(item)}
+                            title="Удалить навсегда"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        )}
                       </div>
                     ) : (
                       <span className="text-xs text-muted-foreground">
@@ -481,6 +607,7 @@ export default function SystemUsersPage() {
                   <SelectContent>
                     <SelectItem value="active">Активен</SelectItem>
                     <SelectItem value="inactive">Отключен</SelectItem>
+                    <SelectItem value="archived">Архив</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -518,6 +645,13 @@ export default function SystemUsersPage() {
           </form>
         </DialogContent>
       </Dialog>
+
+      <ConfirmActionDialog
+        action={pendingAction}
+        loading={pendingActionLoading}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={confirmPendingAction}
+      />
     </div>
   );
 }

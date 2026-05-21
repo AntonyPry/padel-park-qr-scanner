@@ -46,6 +46,14 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
     },
+    paymentDetails: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
+    paymentParseStatus: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
   });
 
   Receipt.associate = (models) => {
