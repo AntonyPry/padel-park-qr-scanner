@@ -33,6 +33,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    slaDays: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     recurringEnabled: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

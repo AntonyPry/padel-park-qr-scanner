@@ -2,7 +2,7 @@ module.exports = (sequelize, DataTypes) => {
   const CallTask = sequelize.define('CallTask', {
     clientBaseId: {
       type: DataTypes.INTEGER,
-      allowNull: false,
+      allowNull: true,
     },
     title: {
       type: DataTypes.STRING,

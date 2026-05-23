@@ -17,5 +17,15 @@ router.post(
   manageTrainingNotes,
   trainingNotesController.create,
 );
+router.put(
+  '/training-notes/:noteId',
+  manageTrainingNotes,
+  trainingNotesController.update,
+);
+router.delete(
+  '/training-notes/:noteId',
+  manageTrainingNotes,
+  trainingNotesController.remove,
+);
 
 module.exports = router;

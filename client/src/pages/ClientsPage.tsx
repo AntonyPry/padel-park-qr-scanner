@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   Archive,
   ArchiveRestore,
   CalendarDays,
   Dumbbell,
   Eye,
   GitMerge,
+  History,
+  MessageSquareText,
   Pencil,
   Phone,
   Plus,
@@ -57,6 +60,7 @@ import {
 import { apiFetch } from '@/lib/api';
 import {
   canManageClients,
+  canManageCallTasks,
   canManageTrainingNotes,
   canMergeClients,
   canViewTrainingNotes,
@@ -120,8 +124,55 @@ interface ClientDetails {
   client: Client;
   duplicateCandidates: Client[];
   mergedInto?: Client | null;
+  timeline: ClientTimelineItem[];
   trainingNotes: TrainingNote[];
   visits: ClientVisit[];
+}
+
+type ClientTimelineType =
+  | 'call_attempt'
+  | 'call_task'
+  | 'client_change'
+  | 'training'
+  | 'visit';
+
+interface ClientTimelineItem {
+  actor?: {
+    id: number;
+    email?: string;
+    name: string;
+    role?: string;
+  } | null;
+  description: string;
+  id: string;
+  meta?: Record<string, unknown>;
+  occurredAt: string;
+  title: string;
+  type: ClientTimelineType;
+}
+
+interface ClientSavedView {
+  createdAt: string;
+  filters: ClientSavedViewFilters;
+  id: number;
+  name: string;
+  updatedAt: string;
+}
+
+interface ClientSavedViewFilters {
+  lastVisitDaysFrom?: number;
+  lastVisitDaysTo?: number;
+  lastVisitFrom?: string;
+  lastVisitTo?: string;
+  q?: string;
+  segment?: ClientSegment;
+  source?: string;
+  sourceId?: number | string;
+  status?: 'active' | 'archived' | 'all';
+  visitCategory?: string;
+  visitCategoryId?: number;
+  visitCountMax?: number;
+  visitCountMin?: number;
 }
 
 interface TrainingNote {
@@ -132,8 +183,8 @@ interface TrainingNote {
   note: string;
   trainer?: {
     id: number;
-    email: string;
     name: string;
+    role?: string;
   } | null;
   createdAt: string;
   updatedAt: string;
@@ -149,8 +200,13 @@ interface TrainingFormState {
 }
 
 interface DuplicateGroup {
-  phoneNormalized: string;
+  field?: string;
+  key?: string;
+  label?: string;
+  phoneNormalized?: string;
   count: number;
+  type?: 'phone' | 'telegram' | 'vk' | 'web' | string;
+  value?: string;
   clients: Client[];
 }
 
@@ -164,6 +220,9 @@ interface ClientFormState {
   phone: string;
   sourceId: string;
   source: string;
+  telegramId: string;
+  vkId: string;
+  webId: string;
   note: string;
   status: 'active' | 'archived';
 }
@@ -175,6 +234,15 @@ interface ClientPayload {
   source: string;
   sourceId?: number;
   status: 'active' | 'archived';
+  telegramId?: string;
+  vkId?: string;
+  webId?: string;
+}
+
+interface ClientCallTaskFormState {
+  description: string;
+  dueAt: string;
+  title: string;
 }
 
 type PendingAction = ConfirmAction & {
@@ -186,6 +254,9 @@ const EMPTY_FORM: ClientFormState = {
   phone: '',
   sourceId: '',
   source: 'Ресепшн (Админ)',
+  telegramId: '',
+  vkId: '',
+  webId: '',
   note: '',
   status: 'active',
 };
@@ -201,6 +272,12 @@ const EMPTY_TRAINING_FORM: TrainingFormState = {
   level: 'D',
   note: '',
   trainedAt: getTodayDate(),
+};
+
+const EMPTY_CALL_TASK_FORM: ClientCallTaskFormState = {
+  description: '',
+  dueAt: '',
+  title: '',
 };
 
 const CLIENT_SEGMENT_OPTIONS: Array<{
@@ -234,6 +311,23 @@ const CLIENT_SEGMENT_OPTIONS: Array<{
     condition: 'Клиенты, у которых еще нет ни одного визита.',
   },
 ];
+
+const TIMELINE_TYPE_LABELS: Record<ClientTimelineType, string> = {
+  call_attempt: 'Попытка',
+  call_task: 'Обзвон',
+  client_change: 'Изменение',
+  training: 'Тренировка',
+  visit: 'Визит',
+};
+
+const CALL_CLIENT_STATUS_LABELS: Record<string, string> = {
+  booked: 'Записался',
+  callback: 'Перезвонить',
+  doubting: 'Сомневается',
+  new: 'Новый',
+  no_answer: 'Не взял трубку',
+  refused: 'Отказ',
+};
 
 function getPhoneDigits(value: string) {
   const digits = value.replace(/\D/g, '');
@@ -355,7 +449,7 @@ function getDefaultPrimaryClientId(clients: Client[]) {
 function buildDuplicateSelections(groups: DuplicateGroup[]) {
   return groups.reduce<Record<string, DuplicateGroupSelection>>((acc, group) => {
     const primaryId = getDefaultPrimaryClientId(group.clients);
-    acc[group.phoneNormalized] = {
+    acc[getDuplicateGroupKey(group)] = {
       primaryId,
       duplicateIds: [],
     };
@@ -368,9 +462,51 @@ function formatVisitCategories(visit: ClientVisit) {
   return names && names.length > 0 ? names.join(', ') : visit.category || '-';
 }
 
+function getDuplicateGroupKey(group: DuplicateGroup) {
+  return group.key || group.phoneNormalized || `${group.type}:${group.value}`;
+}
+
+function getDuplicateGroupLabel(group: DuplicateGroup) {
+  if (group.label && group.value) return `${group.label}: ${group.value}`;
+  return `Телефон: ${group.clients[0]?.phone || group.phoneNormalized || '-'}`;
+}
+
+function getTimelineIcon(type: ClientTimelineType) {
+  if (type === 'visit') return CalendarDays;
+  if (type === 'training') return Dumbbell;
+  if (type === 'call_task' || type === 'call_attempt') return MessageSquareText;
+  return History;
+}
+
+function getTimelineMeta(item: ClientTimelineItem) {
+  const meta = item.meta || {};
+  const parts: string[] = [];
+  const status = typeof meta.status === 'string' ? meta.status : '';
+  const deadlineAt =
+    typeof meta.deadlineAt === 'string' ? meta.deadlineAt : null;
+  const keyNumber =
+    typeof meta.keyNumber === 'string' || typeof meta.keyNumber === 'number'
+      ? String(meta.keyNumber)
+      : '';
+  const level = typeof meta.level === 'string' ? meta.level : '';
+
+  if (status) parts.push(CALL_CLIENT_STATUS_LABELS[status] || status);
+  if (deadlineAt) parts.push(`дедлайн ${formatDateTime(deadlineAt)}`);
+  if (keyNumber) parts.push(`ключ ${keyNumber}`);
+  if (level) parts.push(`уровень ${level}`);
+
+  return parts.join(' · ');
+}
+
+function normalizeSavedFilterValue(value?: string | number) {
+  if (value === undefined || value === null || value === '') return 'all';
+  return String(value);
+}
+
 export default function ClientsPage() {
   const { account } = useAuth();
   const canEdit = canManageClients(account?.role);
+  const canCreateCallTask = canManageCallTasks(account?.role);
   const canMerge = canMergeClients(account?.role);
   const canViewTraining = canViewTrainingNotes(account?.role);
   const canEditTraining = canManageTrainingNotes(account?.role);
@@ -380,6 +516,16 @@ export default function ClientsPage() {
   const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
   const [clients, setClients] = useState<Client[]>([]);
   const [sources, setSources] = useState<ReferenceItem[]>([]);
+  const [savedViews, setSavedViews] = useState<ClientSavedView[]>([]);
+  const [selectedSavedViewId, setSelectedSavedViewId] = useState('none');
+  const [savedViewDialogOpen, setSavedViewDialogOpen] = useState(false);
+  const [savedViewName, setSavedViewName] = useState('');
+  const [savedViewSaving, setSavedViewSaving] = useState(false);
+  const [callTaskDialogOpen, setCallTaskDialogOpen] = useState(false);
+  const [callTaskForm, setCallTaskForm] = useState<ClientCallTaskFormState>({
+    ...EMPTY_CALL_TASK_FORM,
+  });
+  const [callTaskSaving, setCallTaskSaving] = useState(false);
   const [referencesLoading, setReferencesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -396,6 +542,9 @@ export default function ClientsPage() {
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [form, setForm] = useState<ClientFormState>(EMPTY_FORM);
   const [duplicateWarning, setDuplicateWarning] = useState<Client | null>(null);
+  const [duplicateWarningMessage, setDuplicateWarningMessage] = useState<
+    string | null
+  >(null);
   const [trainingForm, setTrainingForm] = useState<TrainingFormState>({
     ...EMPTY_TRAINING_FORM,
     trainedAt: getTodayDate(),
@@ -410,6 +559,8 @@ export default function ClientsPage() {
   >({});
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const clientsRequestIdRef = useRef(0);
+  const detailsRequestIdRef = useRef(0);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -425,23 +576,49 @@ export default function ClientsPage() {
     return params.toString();
   }, [page, q, segment, sourceId, status]);
 
+  const currentSavedViewFilters = useMemo<ClientSavedViewFilters>(() => {
+    const filters: ClientSavedViewFilters = {
+      segment,
+      status,
+    };
+
+    if (q.trim()) filters.q = q.trim();
+    if (sourceId !== 'all') filters.sourceId = Number(sourceId);
+
+    return filters;
+  }, [q, segment, sourceId, status]);
+
+  const selectedSavedView = useMemo(
+    () =>
+      savedViews.find((view) => String(view.id) === selectedSavedViewId) ||
+      null,
+    [savedViews, selectedSavedViewId],
+  );
+
   const fetchClients = useCallback(async () => {
+    const requestId = clientsRequestIdRef.current + 1;
+    clientsRequestIdRef.current = requestId;
     setLoading(true);
     setError(null);
     try {
       const res = await apiFetch(`/api/clients?${queryString}`);
+      if (requestId !== clientsRequestIdRef.current) return;
       if (!res.ok) {
         setError(await readError(res, 'Не удалось загрузить клиентов'));
         return;
       }
 
       const data = (await res.json()) as ClientsResponse;
+      if (requestId !== clientsRequestIdRef.current) return;
       setClients(data.items);
       setTotalPages(data.totalPages);
     } catch {
+      if (requestId !== clientsRequestIdRef.current) return;
       setError('Не удалось загрузить клиентов. Проверьте подключение к серверу.');
     } finally {
-      setLoading(false);
+      if (requestId === clientsRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [queryString]);
 
@@ -453,6 +630,16 @@ export default function ClientsPage() {
       setSources([]);
     } finally {
       setReferencesLoading(false);
+    }
+  }, []);
+
+  const fetchSavedViews = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/clients/views');
+      if (!res.ok) return;
+      setSavedViews((await res.json()) as ClientSavedView[]);
+    } catch {
+      setSavedViews([]);
     }
   }, []);
 
@@ -480,7 +667,8 @@ export default function ClientsPage() {
 
   useEffect(() => {
     void fetchClientSources();
-  }, [fetchClientSources]);
+    void fetchSavedViews();
+  }, [fetchClientSources, fetchSavedViews]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -508,6 +696,7 @@ export default function ClientsPage() {
     const digits = getPhoneDigits(form.phone);
     if (!formOpen || digits.length !== 10) {
       setDuplicateWarning(null);
+      setDuplicateWarningMessage(null);
       return;
     }
 
@@ -531,6 +720,7 @@ export default function ClientsPage() {
         return;
       }
       setDuplicateWarning(data.client);
+      setDuplicateWarningMessage(null);
     }, 300);
 
     return () => {
@@ -579,6 +769,7 @@ export default function ClientsPage() {
     setEditingClient(null);
     setForm(getEmptyClientForm());
     setDuplicateWarning(null);
+    setDuplicateWarningMessage(null);
     setFormOpen(true);
   };
 
@@ -591,10 +782,14 @@ export default function ClientsPage() {
         ? String(client.sourceId)
         : String(sources.find((item) => item.name === client.source)?.id || ''),
       source: client.source,
+      telegramId: client.telegramId || '',
+      vkId: client.vkId || '',
+      webId: client.webId || '',
       note: client.note || '',
       status: client.status === 'archived' ? 'archived' : 'active',
     });
     setDuplicateWarning(null);
+    setDuplicateWarningMessage(null);
     setFormOpen(true);
   };
 
@@ -607,29 +802,163 @@ export default function ClientsPage() {
         ? String(client.sourceId)
         : String(sources.find((item) => item.name === client.source)?.id || ''),
       source: client.source,
+      telegramId: client.telegramId || '',
+      vkId: client.vkId || '',
+      webId: client.webId || '',
       note: client.note || '',
       status: 'active',
     });
     setDuplicateWarning(null);
+    setDuplicateWarningMessage(null);
     setFormOpen(true);
   };
 
+  const applySavedView = (view: ClientSavedView) => {
+    const filters = view.filters || {};
+    setQ(filters.q || '');
+    setSourceId(normalizeSavedFilterValue(filters.sourceId));
+    setSegment((filters.segment || 'all') as ClientSegment);
+    setStatus((filters.status || 'active') as 'active' | 'archived' | 'all');
+    setPage(1);
+  };
+
+  const handleSavedViewChange = (value: string) => {
+    setSelectedSavedViewId(value);
+    if (value === 'none') return;
+
+    const view = savedViews.find((item) => String(item.id) === value);
+    if (view) applySavedView(view);
+  };
+
+  const openSavedViewDialog = () => {
+    setSavedViewName(selectedSavedView?.name || '');
+    setSavedViewDialogOpen(true);
+  };
+
+  const openCallTaskDialog = () => {
+    if (!details?.client) return;
+    setCallTaskForm({
+      description: '',
+      dueAt: '',
+      title: `Обзвон: ${details.client.name}`,
+    });
+    setCallTaskDialogOpen(true);
+  };
+
+  const saveCurrentView = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setSavedViewSaving(true);
+    try {
+      const res = await apiFetch('/api/clients/views', {
+        method: 'POST',
+        body: JSON.stringify({
+          filters: currentSavedViewFilters,
+          name: savedViewName,
+        }),
+      });
+
+      if (!res.ok) {
+        alert(await readError(res, 'Не удалось сохранить фильтр'));
+        return;
+      }
+
+      const view = (await res.json()) as ClientSavedView;
+      setSavedViews((prev) =>
+        [...prev, view].sort((a, b) => a.name.localeCompare(b.name)),
+      );
+      setSelectedSavedViewId(String(view.id));
+      setSavedViewDialogOpen(false);
+    } finally {
+      setSavedViewSaving(false);
+    }
+  };
+
+  const executeDeleteSavedView = async (view: ClientSavedView) => {
+    const res = await apiFetch(`/api/clients/views/${view.id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось удалить фильтр'));
+      return;
+    }
+
+    setSavedViews((prev) => prev.filter((item) => item.id !== view.id));
+    setSelectedSavedViewId('none');
+  };
+
+  const updateSelectedSavedView = async (view: ClientSavedView) => {
+    const res = await apiFetch(`/api/clients/views/${view.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        filters: currentSavedViewFilters,
+        name: view.name,
+      }),
+    });
+
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось обновить фильтр'));
+      return;
+    }
+
+    const updated = (await res.json()) as ClientSavedView;
+    setSavedViews((prev) =>
+      prev.map((item) => (item.id === updated.id ? updated : item)),
+    );
+  };
+
+  const requestUpdateSavedView = (view: ClientSavedView) => {
+    setPendingAction({
+      confirmLabel: 'Обновить',
+      description: `Фильтр «${view.name}» будет перезаписан текущими условиями списка клиентов.`,
+      isDestructive: false,
+      onConfirm: () => updateSelectedSavedView(view),
+      title: 'Обновить сохраненный фильтр?',
+    });
+  };
+
+  const requestDeleteSavedView = (view: ClientSavedView) => {
+    setPendingAction({
+      confirmLabel: 'Удалить',
+      description: `Сохраненный фильтр «${view.name}» исчезнет только у вашего аккаунта. Клиенты и базы не изменятся.`,
+      isDestructive: true,
+      onConfirm: () => executeDeleteSavedView(view),
+      title: 'Удалить сохраненный фильтр?',
+    });
+  };
+
   const loadDetails = async (clientId: number) => {
+    const requestId = detailsRequestIdRef.current + 1;
+    detailsRequestIdRef.current = requestId;
     setDetailsLoading(true);
     try {
       const res = await apiFetch(`/api/clients/${clientId}`);
+      if (requestId !== detailsRequestIdRef.current) return;
       if (!res.ok) {
         alert(await readError(res, 'Не удалось открыть клиента'));
         return;
       }
 
       const data = (await res.json()) as ClientDetails;
-      setDetails({ ...data, trainingNotes: data.trainingNotes || [] });
+      if (requestId !== detailsRequestIdRef.current) return;
+      setDetails({
+        ...data,
+        timeline: data.timeline || [],
+        trainingNotes: data.trainingNotes || [],
+      });
       setTrainingForm({ ...EMPTY_TRAINING_FORM, trainedAt: getTodayDate() });
       setSelectedMergeIds([]);
     } finally {
-      setDetailsLoading(false);
+      if (requestId === detailsRequestIdRef.current) {
+        setDetailsLoading(false);
+      }
     }
+  };
+
+  const closeDetails = () => {
+    detailsRequestIdRef.current += 1;
+    setDetailsLoading(false);
+    setDetails(null);
+    setSelectedMergeIds([]);
   };
 
   const saveClient = async (payload: ClientPayload) => {
@@ -649,6 +978,7 @@ export default function ClientsPage() {
         !editingClient
       ) {
         setDuplicateWarning(apiError.client);
+        setDuplicateWarningMessage(apiError.error);
         return;
       }
 
@@ -670,6 +1000,9 @@ export default function ClientsPage() {
       phone: form.phone,
       sourceId: form.sourceId ? Number(form.sourceId) : undefined,
       source: form.source.trim(),
+      telegramId: form.telegramId.trim(),
+      vkId: form.vkId.trim(),
+      webId: form.webId.trim(),
       note: form.note.trim(),
       status: form.status,
     };
@@ -801,8 +1134,40 @@ export default function ClientsPage() {
       const trainingNotes = (await res.json()) as TrainingNote[];
       setDetails({ ...details, trainingNotes });
       setTrainingForm({ ...EMPTY_TRAINING_FORM, trainedAt: getTodayDate() });
+      void loadDetails(details.client.id);
     } finally {
       setTrainingSaving(false);
+    }
+  };
+
+  const createClientCallTask = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!details?.client) return;
+
+    setCallTaskSaving(true);
+    try {
+      const res = await apiFetch(
+        `/api/clients/${details.client.id}/call-tasks`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            description: callTaskForm.description,
+            dueAt: callTaskForm.dueAt || null,
+            title: callTaskForm.title,
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        alert(await readError(res, 'Не удалось создать задачу обзвона'));
+        return;
+      }
+
+      setCallTaskDialogOpen(false);
+      setCallTaskForm({ ...EMPTY_CALL_TASK_FORM });
+      void loadDetails(details.client.id);
+    } finally {
+      setCallTaskSaving(false);
     }
   };
 
@@ -815,9 +1180,10 @@ export default function ClientsPage() {
   };
 
   const setDuplicateGroupPrimary = (group: DuplicateGroup, primaryId: number) => {
+    const groupKey = getDuplicateGroupKey(group);
     setGroupSelections((prev) => ({
       ...prev,
-      [group.phoneNormalized]: {
+      [groupKey]: {
         primaryId,
         duplicateIds: [],
       },
@@ -825,8 +1191,9 @@ export default function ClientsPage() {
   };
 
   const toggleDuplicateGroupClient = (group: DuplicateGroup, clientId: number) => {
+    const groupKey = getDuplicateGroupKey(group);
     setGroupSelections((prev) => {
-      const current = prev[group.phoneNormalized] || {
+      const current = prev[groupKey] || {
         primaryId: getDefaultPrimaryClientId(group.clients),
         duplicateIds: [],
       };
@@ -839,7 +1206,7 @@ export default function ClientsPage() {
 
       return {
         ...prev,
-        [group.phoneNormalized]: {
+        [groupKey]: {
           ...current,
           duplicateIds,
         },
@@ -885,7 +1252,7 @@ export default function ClientsPage() {
   };
 
   const handleMergeDuplicateGroup = (group: DuplicateGroup) => {
-    const selection = groupSelections[group.phoneNormalized];
+    const selection = groupSelections[getDuplicateGroupKey(group)];
     if (!selection?.primaryId || selection.duplicateIds.length === 0) {
       alert('Выберите основного клиента и хотя бы один дубль');
       return;
@@ -964,6 +1331,58 @@ export default function ClientsPage() {
       {viewMode === 'list' ? (
         <>
           <div className="rounded-md border bg-card p-3">
+            <div className="mb-3 flex flex-col gap-2 border-b pb-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="text-sm font-medium">Представление</div>
+                <Select
+                  value={selectedSavedViewId}
+                  onValueChange={handleSavedViewChange}
+                >
+                  <SelectTrigger className="w-full sm:w-[280px]">
+                    <SelectValue placeholder="Выберите сохраненный фильтр" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Без сохраненного фильтра</SelectItem>
+                    {savedViews.map((view) => (
+                      <SelectItem key={view.id} value={String(view.id)}>
+                        {view.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={openSavedViewDialog}
+                >
+                  <Save className="mr-2 h-4 w-4" />
+                  Сохранить фильтр
+                </Button>
+                {selectedSavedView && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => requestUpdateSavedView(selectedSavedView)}
+                    >
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      Обновить
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => requestDeleteSavedView(selectedSavedView)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Удалить
+                    </Button>
+                  </>
+                )}
+              </div>
+            </div>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_160px]">
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
@@ -1315,8 +1734,8 @@ export default function ClientsPage() {
             <div>
               <h2 className="font-semibold">Дубликаты клиентов</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Группы строятся по одинаковому телефону. Основная запись остается,
-                выбранные дубли переносят в нее историю визитов.
+                Группы строятся по одинаковому телефону, Telegram, VK или WEB ID.
+                Основная запись остается, выбранные дубли переносят в нее историю.
               </p>
             </div>
             <Button
@@ -1347,25 +1766,26 @@ export default function ClientsPage() {
 
           {!duplicatesLoading && !duplicatesError && duplicateGroups.length === 0 && (
             <div className="p-8 text-center text-muted-foreground">
-              Дублей по телефону не найдено.
+              Дублей по телефону, Telegram, VK или WEB ID не найдено.
             </div>
           )}
 
           {duplicateGroups.map((group) => {
-            const selection = groupSelections[group.phoneNormalized] || {
+            const groupKey = getDuplicateGroupKey(group);
+            const selection = groupSelections[groupKey] || {
               primaryId: getDefaultPrimaryClientId(group.clients),
               duplicateIds: [],
             };
 
             return (
-              <div key={group.phoneNormalized} className="border-t p-4">
+              <div key={groupKey} className="border-t p-4">
                 <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                   <div>
                     <div className="font-medium">
-                      Телефон: {group.clients[0]?.phone || group.phoneNormalized}
+                      {getDuplicateGroupLabel(group)}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      {group.count} записи с одинаковым телефоном
+                      {group.count} записи с одинаковым идентификатором
                     </div>
                   </div>
                   <Button
@@ -1403,7 +1823,7 @@ export default function ClientsPage() {
                             <TableCell>
                               <input
                                 type="radio"
-                                name={`primary-${group.phoneNormalized}`}
+                                name={`primary-${groupKey}`}
                                 checked={isPrimary}
                                 onChange={() =>
                                   setDuplicateGroupPrimary(group, client.id)
@@ -1426,6 +1846,9 @@ export default function ClientsPage() {
                               <div className="min-w-0">
                                 <div className="truncate font-medium">
                                   {client.name}
+                                </div>
+                                <div className="truncate text-sm text-muted-foreground">
+                                  {client.phone}
                                 </div>
                                 <div className="mt-1 flex flex-wrap gap-1">
                                   <Badge
@@ -1522,9 +1945,10 @@ export default function ClientsPage() {
             {duplicateWarning && (
               <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm">
                 <div className="font-medium text-amber-700 dark:text-amber-300">
-                  {duplicateWarning.status === 'archived'
-                    ? 'Клиент с таким телефоном уже есть в архиве'
-                    : 'Клиент с таким телефоном уже есть'}
+                  {duplicateWarningMessage ||
+                    (duplicateWarning.status === 'archived'
+                      ? 'Клиент с таким телефоном уже есть в архиве'
+                      : 'Клиент с таким телефоном уже есть')}
                 </div>
                 <div className="mt-1 text-muted-foreground">
                   {duplicateWarning.name} · {duplicateWarning.phone}
@@ -1613,6 +2037,52 @@ export default function ClientsPage() {
               )}
             </div>
 
+            <div className="rounded-md border p-3">
+              <div className="text-sm font-medium">Внешние идентификаторы</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Необязательно. Используются для поиска дублей по Telegram, VK и
+                web-коду клиента.
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium">
+                    Telegram ID
+                  </label>
+                  <Input
+                    value={form.telegramId}
+                    onChange={(event) =>
+                      setForm({ ...form, telegramId: event.target.value })
+                    }
+                    placeholder="@username или id"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium">
+                    VK ID
+                  </label>
+                  <Input
+                    value={form.vkId}
+                    onChange={(event) =>
+                      setForm({ ...form, vkId: event.target.value })
+                    }
+                    placeholder="vk id"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium">
+                    WEB ID
+                  </label>
+                  <Input
+                    value={form.webId}
+                    onChange={(event) =>
+                      setForm({ ...form, webId: event.target.value })
+                    }
+                    placeholder="web id"
+                  />
+                </div>
+              </div>
+            </div>
+
             <div>
               <label className="mb-1 block text-xs font-medium">
                 Заметка
@@ -1634,7 +2104,121 @@ export default function ClientsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(details)} onOpenChange={(open) => !open && setDetails(null)}>
+      <Dialog open={savedViewDialogOpen} onOpenChange={setSavedViewDialogOpen}>
+        <DialogContent className="sm:max-w-[480px]">
+          <DialogHeader>
+            <DialogTitle>Сохранить фильтр клиентов</DialogTitle>
+            <DialogDescription>
+              Представление сохранится только для вашего аккаунта и не изменит
+              клиентскую базу.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveCurrentView} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Название
+              </label>
+              <Input
+                required
+                value={savedViewName}
+                onChange={(event) => setSavedViewName(event.target.value)}
+                placeholder="Например: Новые с ресепшена"
+              />
+            </div>
+            <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+              Текущие условия: сегмент{' '}
+              {
+                CLIENT_SEGMENT_OPTIONS.find((item) => item.value === segment)
+                  ?.label
+              }
+              , статус{' '}
+              {status === 'active'
+                ? 'активные'
+                : status === 'archived'
+                  ? 'архив'
+                  : 'все'}
+              {q.trim() ? `, поиск «${q.trim()}»` : ''}
+              {sourceId !== 'all'
+                ? `, источник ${
+                    sources.find((source) => String(source.id) === sourceId)
+                      ?.name || sourceId
+                  }`
+                : ''}
+              .
+            </div>
+            <Button type="submit" className="w-full" disabled={savedViewSaving}>
+              <Save className="mr-2 h-4 w-4" />
+              {savedViewSaving ? 'Сохранение...' : 'Сохранить'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={callTaskDialogOpen} onOpenChange={setCallTaskDialogOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Создать задачу обзвона</DialogTitle>
+            <DialogDescription>
+              В задачу попадет только текущий клиент. Дальше она появится в
+              разделе задач обзвона.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={createClientCallTask} className="space-y-4">
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Название
+              </label>
+              <Input
+                required
+                value={callTaskForm.title}
+                onChange={(event) =>
+                  setCallTaskForm({
+                    ...callTaskForm,
+                    title: event.target.value,
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Дедлайн
+              </label>
+              <Input
+                type="datetime-local"
+                value={callTaskForm.dueAt}
+                onChange={(event) =>
+                  setCallTaskForm({
+                    ...callTaskForm,
+                    dueAt: event.target.value,
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Комментарий
+              </label>
+              <textarea
+                value={callTaskForm.description}
+                onChange={(event) =>
+                  setCallTaskForm({
+                    ...callTaskForm,
+                    description: event.target.value,
+                  })
+                }
+                className="min-h-[110px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Что нужно выяснить или предложить клиенту"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={callTaskSaving}>
+              <MessageSquareText className="mr-2 h-4 w-4" />
+              {callTaskSaving ? 'Создание...' : 'Создать задачу'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 pr-8">
@@ -1711,6 +2295,17 @@ export default function ClientsPage() {
                         <div className="font-medium">Данные клиента</div>
                         {canEdit && (
                           <div className="flex flex-wrap justify-end gap-2">
+                            {canCreateCallTask &&
+                              details.client.status !== 'archived' && (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={openCallTaskDialog}
+                                >
+                                  <MessageSquareText className="mr-2 h-4 w-4" />
+                                  Задача
+                                </Button>
+                              )}
                             <Button
                               variant="outline"
                               size="sm"
@@ -1794,14 +2389,17 @@ export default function ClientsPage() {
                           <span className="text-muted-foreground">
                             Внешние ID
                           </span>
-                          <span className="text-right text-xs">
+                          <span className="min-w-0 break-all text-right text-xs">
                             {[
-                              details.client.telegramId && 'TG',
-                              details.client.vkId && 'VK',
-                              details.client.webId && 'WEB',
+                              details.client.telegramId &&
+                                `TG: ${details.client.telegramId}`,
+                              details.client.vkId &&
+                                `VK: ${details.client.vkId}`,
+                              details.client.webId &&
+                                `WEB: ${details.client.webId}`,
                             ]
                               .filter(Boolean)
-                              .join(', ') || '-'}
+                              .join(' · ') || '-'}
                           </span>
                         </div>
                       </div>
@@ -1812,6 +2410,80 @@ export default function ClientsPage() {
                       <div className="min-h-[112px] whitespace-pre-wrap text-sm text-muted-foreground">
                         {details.client.note || 'Заметка пока не заполнена.'}
                       </div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-md border">
+                    <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="flex items-center gap-2 font-medium">
+                          <Activity className="h-4 w-4 text-muted-foreground" />
+                          Лента клиента
+                        </div>
+                        <div className="mt-1 text-sm text-muted-foreground">
+                          Визиты, обзвоны, тренировки и изменения карточки.
+                        </div>
+                      </div>
+                      <Badge variant="outline">
+                        {details.timeline.length} событий
+                      </Badge>
+                    </div>
+                    <div className="max-h-[420px] overflow-y-auto p-3">
+                      {details.timeline.length === 0 ? (
+                        <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
+                          История клиента пока пустая.
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {details.timeline.map((item) => {
+                            const Icon = getTimelineIcon(item.type);
+                            const meta = getTimelineMeta(item);
+
+                            return (
+                              <div
+                                key={item.id}
+                                className="grid grid-cols-[32px_1fr] gap-3 rounded-md border p-3"
+                              >
+                                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
+                                  <Icon className="h-4 w-4 text-muted-foreground" />
+                                </div>
+                                <div className="min-w-0">
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant="outline">
+                                          {TIMELINE_TYPE_LABELS[item.type]}
+                                        </Badge>
+                                        <span className="break-words font-medium">
+                                          {item.title}
+                                        </span>
+                                      </div>
+                                      {item.actor && (
+                                        <div className="mt-1 text-xs text-muted-foreground">
+                                          {item.actor.name}
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="shrink-0 text-sm text-muted-foreground">
+                                      {formatDateTime(item.occurredAt)}
+                                    </div>
+                                  </div>
+                                  {meta && (
+                                    <div className="mt-2 text-sm text-muted-foreground">
+                                      {meta}
+                                    </div>
+                                  )}
+                                  {item.description && (
+                                    <div className="mt-2 whitespace-pre-wrap break-words text-sm">
+                                      {item.description}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
 

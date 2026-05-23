@@ -1,8 +1,11 @@
 // src/services/finance.service.js
 const { Op } = require('sequelize');
+const xlsx = require('xlsx');
 const db = require('../../models');
 const motivationService = require('./motivation.service');
+const payrollService = require('./payroll.service');
 const { FINANCE_TYPES } = require('../constants/catalog');
+const { resolveStoredReceiptPayments } = require('../utils/payments');
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -25,26 +28,6 @@ function normalizeFinanceType(type) {
   }
 
   return type;
-}
-
-function normalizeReceiptPaymentSource(value) {
-  const source = String(value || '').trim().toUpperCase();
-  if (['CASH', 'PAY_CASH', 'TYPE_CASH', '0'].includes(source)) return 'cash';
-  if (
-    [
-      'CARD',
-      'CASHLESS',
-      'ELECTRON',
-      'ELECTRONIC',
-      'PAY_CARD',
-      'PAY_BY_CREDIT',
-      'TYPE_CARD',
-      '1',
-    ].includes(source)
-  ) {
-    return 'cashless';
-  }
-  return 'unknown';
 }
 
 class FinanceService {
@@ -120,6 +103,12 @@ class FinanceService {
         OPEX: {},
       },
       details: [],
+      reconciliation: {
+        receiptCount: 0,
+        receiptsTotal: 0,
+        receiptItemsTotal: 0,
+        difference: 0,
+      },
     };
 
     // --- ОБНОВЛЕННЫЙ ДОБАВЛЯТОР (принимает recordDate) ---
@@ -247,24 +236,10 @@ class FinanceService {
       if (!salesByDate[dStr]) salesByDate[dStr] = { revenue: 0, items: [] };
 
       // Берем сумму по модулю и применяем свой знак
-      const rTotal = Math.abs(Number(receipt.totalAmount) || 0) * multiplier;
-      let rCashless = Math.abs(Number(receipt.cashless) || 0) * multiplier;
-      let rCash = Math.abs(Number(receipt.cash) || 0) * multiplier;
-      const paymentSource = normalizeReceiptPaymentSource(receipt.paymentSource);
-
-      if (paymentSource === 'cash' && rCash === 0 && rTotal !== 0) {
-        rCash = rTotal;
-        rCashless = 0;
-      } else if (
-        paymentSource === 'cashless' &&
-        rCashless === 0 &&
-        rTotal !== 0
-      ) {
-        rCash = 0;
-        rCashless = rTotal;
-      } else if (rCash === 0 && rCashless === 0 && rTotal !== 0) {
-        rCashless = rTotal;
-      }
+      const { cash: rCash, cashless: rCashless, total: rTotal } =
+        resolveStoredReceiptPayments(receipt);
+      report.reconciliation.receiptCount += 1;
+      report.reconciliation.receiptsTotal += rTotal;
 
       if (rCashless !== 0) {
         const acqFee = Math.abs(rCashless) * 0.01 * multiplier;
@@ -299,6 +274,7 @@ class FinanceService {
         if (finalAmount === 0) continue;
 
         itemsSum += Math.abs(rawAmount);
+        report.reconciliation.receiptItemsTotal += finalAmount;
 
         const catName = await this.getCategoryName(item.name, rulesMap);
         addRecord(
@@ -346,12 +322,20 @@ class FinanceService {
           sum: finalDiffAmount,
           qty: 1 * multiplier,
         });
+        report.reconciliation.receiptItemsTotal += finalDiffAmount;
       }
     }
 
+    report.reconciliation.difference =
+      report.reconciliation.receiptsTotal -
+      report.reconciliation.receiptItemsTotal;
+
     // --- ЗП АДМИНОВ (АВТОРАСЧЕТ) ---
     const shifts = await db.Shift.findAll({
-      where: dateFilter,
+      where: {
+        ...dateFilter,
+        archivedAt: null,
+      },
       include: [{ model: db.Staff, attributes: ['id', 'name'] }],
     });
     shifts.forEach((shift) => {
@@ -409,147 +393,10 @@ class FinanceService {
   }
 
   async calculatePayroll(from, to) {
-    const shiftsDb = await db.Shift.findAll({
-      include: [{ model: db.Staff, attributes: ['id', 'name'] }],
-    });
-    const receipts = await db.Receipt.findAll({
-      include: [{ model: db.ReceiptItem, as: 'items' }],
-    });
-
-    const rulesList = await db.CatalogRule.findAll({
-      where: { status: 'active' },
-    });
-    const rulesMap = {};
-    rulesList.forEach((r) => {
-      rulesMap[String(r.itemName).toLowerCase().trim()] = r.category;
-    });
-    const motivationRules = await motivationService.getRulesMap();
-    const motivationBonusRules = await motivationService.getBonusRules();
-
-    const salesByDate = {};
-    for (const r of receipts) {
-      const dStr = new Date(r.dateTime).toISOString().split('T')[0];
-      if (from && dStr < from) continue;
-      if (to && dStr > to) continue;
-
-      if (!salesByDate[dStr]) salesByDate[dStr] = { revenue: 0, items: [] };
-
-      const multiplier = r.type === 'PAYBACK' ? -1 : 1;
-      for (const item of r.items) {
-        const category = await this.getCategoryName(item.name, rulesMap);
-        const rawAmount = Number(
-          item.sumPrice !== undefined && item.sumPrice !== null
-            ? item.sumPrice
-            : item.sum,
-        );
-        const sum = Math.abs(rawAmount) * multiplier;
-        const qty = Math.abs(Number(item.quantity)) * multiplier;
-        salesByDate[dStr].revenue += sum;
-        salesByDate[dStr].items.push({ name: item.name, category, sum, qty });
-      }
-    }
-
-    const validShifts = shiftsDb.filter((s) => {
-      if (from && s.date < from) return false;
-      if (to && s.date > to) return false;
-      return true;
-    });
-
-    const payrollByAdmin = {};
-    const shiftsHistory = [];
-    const processedDates = new Set();
-
-    validShifts.forEach((shift) => {
-      processedDates.add(shift.date);
-      const admin = shift.Staff?.name || shift.adminName;
-      const staffId = shift.staffId || shift.Staff?.id || null;
-      const rawHours = Number(shift.actualHours ?? shift.hours);
-      const hrs = Number.isFinite(rawHours) && rawHours > 0 ? rawHours : 0;
-      const todaySales = salesByDate[shift.date] || { revenue: 0, items: [] };
-
-      const bonusResult = motivationService.calculateShiftBonus(
-        todaySales.items,
-        motivationBonusRules,
-      );
-      const shiftBonus = bonusResult.total;
-      const detailedItems = bonusResult.detailedItems;
-      const shiftBasePay = motivationService.calculateBasePay(
-        hrs,
-        motivationRules,
-      );
-      const manualAdj = Number(shift.manualAdjustment) || 0;
-      const totalPay = shiftBasePay + shiftBonus + manualAdj;
-
-      if (admin && hrs > 0) {
-        const adminKey = staffId
-          ? `staff:${staffId}`
-          : `name:${admin.toLowerCase()}`;
-
-        if (!payrollByAdmin[adminKey])
-          payrollByAdmin[adminKey] = {
-            staffId,
-            name: admin,
-            totalShifts: 0,
-            totalHours: 0,
-            basePay: 0,
-            bonusPay: 0,
-            totalPay: 0,
-          };
-        payrollByAdmin[adminKey].totalShifts += 1;
-        payrollByAdmin[adminKey].totalHours += hrs;
-        payrollByAdmin[adminKey].basePay += shiftBasePay;
-        payrollByAdmin[adminKey].bonusPay += shiftBonus + manualAdj;
-        payrollByAdmin[adminKey].totalPay += totalPay;
-      }
-
-      shiftsHistory.push({
-        id: shift.id,
-        isDraft: false,
-        date: shift.date,
-        staffId,
-        adminName: admin,
-        hours: hrs,
-        dailyRevenue: todaySales.revenue,
-        basePay: shiftBasePay,
-        calculatedBonus: shiftBonus,
-        manualAdjustment: manualAdj,
-        bonus: shiftBonus + manualAdj,
-        total: totalPay,
-        items: detailedItems,
-      });
-    });
-
-    Object.keys(salesByDate).forEach((date) => {
-      if (!processedDates.has(date)) {
-        const todaySales = salesByDate[date];
-        const detailedItems = motivationService.calculateShiftBonus(
-          todaySales.items,
-          motivationBonusRules,
-        ).detailedItems;
-
-        shiftsHistory.push({
-          id: `draft-${date}`,
-          isDraft: true,
-          date: date,
-          staffId: null,
-          adminName: null,
-          hours: 0,
-          dailyRevenue: todaySales.revenue,
-          basePay: 0,
-          bonus: 0,
-          total: 0,
-          items: detailedItems,
-        });
-      }
-    });
-
-    shiftsHistory.sort(
-      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-    );
-    return { admins: Object.values(payrollByAdmin), shifts: shiftsHistory };
+    return payrollService.calculatePayroll(from, to);
   }
 
-  async createManualRecord(data) {
+  async createManualRecord(data, account) {
     const type = normalizeFinanceType(data.type);
     const amount = Number(data.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -571,13 +418,97 @@ class FinanceService {
       throw appError('Категория с таким типом операции не найдена', 404);
     }
 
-    return await db.Finance.create({
-      date: normalizeDateOnly(data.date),
+    const date = normalizeDateOnly(data.date);
+    await payrollService.assertDateEditable(date, 'ручную финансовую операцию');
+
+    const record = await db.Finance.create({
+      date,
       category: category.name,
       amount,
       type,
       comment: data.comment ? String(data.comment).trim() : null,
+      createdByAccountId: account?.id || null,
     });
+
+    await payrollService.recordChange({
+      action: 'finance_manual.create',
+      entityType: 'finance',
+      entityId: record.id,
+      account,
+      date,
+      reason: data.comment,
+      afterData: record.toJSON(),
+    });
+
+    return record;
+  }
+
+  buildFinanceExport(report, from, to) {
+    const summaryRows = Object.entries(report.summary).map(([key, value]) => ({
+      Показатель: key,
+      Значение: value,
+    }));
+
+    summaryRows.push(
+      {
+        Показатель: 'Период',
+        Значение: `${from || '...'} — ${to || '...'}`,
+      },
+      {
+        Показатель: 'Чеков Эвотор',
+        Значение: report.reconciliation.receiptCount,
+      },
+      {
+        Показатель: 'Расхождение чеков и позиций',
+        Значение: report.reconciliation.difference,
+      },
+    );
+
+    const detailRows = report.details.map((detail) => ({
+      Дата: detail.date,
+      Группа: detail.group,
+      Категория: detail.category,
+      Путь: detail.path?.join(' / ') || detail.category,
+      Тип: detail.type,
+      Источник: detail.source,
+      Сумма: detail.amount,
+      Комментарий: detail.comment || '',
+    }));
+
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(
+      workbook,
+      xlsx.utils.json_to_sheet(summaryRows),
+      'Итоги',
+    );
+    xlsx.utils.book_append_sheet(
+      workbook,
+      xlsx.utils.json_to_sheet(detailRows),
+      'Операции',
+    );
+
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  }
+
+  async exportFinanceReport(from, to, account) {
+    const report = await this.getFinanceReport(from, to);
+
+    await payrollService.recordChange({
+      action: 'finance_report.export',
+      entityType: 'finance_report',
+      account,
+      fromDate: from || null,
+      toDate: to || null,
+      afterData: {
+        summary: report.summary,
+        reconciliation: report.reconciliation,
+      },
+    });
+
+    return {
+      buffer: this.buildFinanceExport(report, from, to),
+      filename: `pnl-${from || 'start'}-${to || 'end'}.xlsx`,
+    };
   }
 }
 

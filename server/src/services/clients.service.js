@@ -32,6 +32,30 @@ const SEGMENT_VALUES = new Set([
   'inactive',
   'no_visits',
 ]);
+const TRAINING_LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
+const CLIENT_VIEW_FILTER_KEYS = new Set([
+  'lastVisitDaysFrom',
+  'lastVisitDaysTo',
+  'lastVisitFrom',
+  'lastVisitTo',
+  'q',
+  'segment',
+  'source',
+  'sourceId',
+  'status',
+  'trainingLevel',
+  'visitCategory',
+  'visitCategoryId',
+  'visitCountMax',
+  'visitCountMin',
+]);
+const CLIENT_IDENTITY_FIELDS = ['telegramId', 'vkId', 'webId'];
+const DUPLICATE_GROUPS = [
+  { field: 'phoneNormalized', label: 'Телефон', type: 'phone' },
+  { field: 'telegramId', label: 'Telegram', type: 'telegram' },
+  { field: 'vkId', label: 'VK', type: 'vk' },
+  { field: 'webId', label: 'WEB', type: 'web' },
+];
 
 function appError(message, statusCode = 400, details = {}) {
   const error = new Error(message);
@@ -60,6 +84,11 @@ function normalizeStatus(status = 'active') {
 function normalizeNote(note) {
   const value = String(note || '').trim();
   return value || null;
+}
+
+function normalizeOptionalIdentity(value) {
+  const normalized = String(value || '').trim();
+  return normalized || null;
 }
 
 function normalizePhonePayload(phone) {
@@ -117,12 +146,18 @@ function mapClient(row) {
     lastVisitAt: raw.lastVisitAt || null,
     visitCount,
   };
+  const training = {
+    latestAt: raw.latestTrainingAt || null,
+    latestLevel: raw.latestTrainingLevel || null,
+    notesCount: Number(raw.trainingNotesCount || 0),
+  };
 
   return {
     ...raw,
     statusLabel: getClientStatus(raw),
     segment: getClientSegment(stats),
     stats,
+    training,
   };
 }
 
@@ -147,11 +182,60 @@ function sanitizeClientForAccount(client, account) {
     phoneNormalized: null,
     mergedIntoUserId: null,
     mergedByAccountId: null,
+    note: null,
   };
 }
 
 function sanitizeClientsForAccount(clients, account) {
   return clients.map((client) => sanitizeClientForAccount(client, account));
+}
+
+function mapAccount(account) {
+  if (!account) return null;
+  const raw = account.toJSON ? account.toJSON() : account;
+
+  return {
+    email: raw.email,
+    id: raw.id,
+    name: raw.Staff?.name || raw.email,
+    role: raw.role,
+  };
+}
+
+function normalizeClientViewFilters(filters = {}) {
+  const normalized = {};
+  Object.entries(filters || {}).forEach(([key, value]) => {
+    if (!CLIENT_VIEW_FILTER_KEYS.has(key)) return;
+    if (value === undefined || value === null || value === '' || value === 'all') {
+      if (key === 'status' || key === 'segment') normalized[key] = 'all';
+      return;
+    }
+
+    if (
+      [
+        'lastVisitDaysFrom',
+        'lastVisitDaysTo',
+        'sourceId',
+        'visitCategoryId',
+        'visitCountMax',
+        'visitCountMin',
+      ].includes(key)
+    ) {
+      const numberValue = Number(value);
+      if (Number.isFinite(numberValue) && numberValue >= 0) {
+        normalized[key] = numberValue;
+      }
+      return;
+    }
+
+    normalized[key] = String(value).trim();
+  });
+
+  return {
+    segment: normalized.segment || 'all',
+    status: normalized.status || 'active',
+    ...normalized,
+  };
 }
 
 function parsePaging(query) {
@@ -178,6 +262,7 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
     ? query.status
     : 'active';
   const segment = SEGMENT_VALUES.has(query.segment) ? query.segment : 'all';
+  const trainingLevel = String(query.trainingLevel || '').trim().toUpperCase();
 
   if (query.includeMerged !== 'true') {
     where.push('u.mergedIntoUserId IS NULL');
@@ -300,6 +385,10 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
     having.push('visitCount > 0');
     having.push('lastVisitAt < DATE_SUB(NOW(), INTERVAL 60 DAY)');
   }
+  if (TRAINING_LEVELS.has(trainingLevel)) {
+    having.push('latestTrainingLevel = :trainingLevel');
+    replacements.trainingLevel = trainingLevel;
+  }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   const havingSql = having.length ? `HAVING ${having.join(' AND ')}` : '';
@@ -309,7 +398,26 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
       u.*,
       COUNT(v.id) AS visitCount,
       MIN(v.scannedAt) AS firstVisitAt,
-      MAX(v.scannedAt) AS lastVisitAt
+      MAX(v.scannedAt) AS lastVisitAt,
+      (
+        SELECT tn.level
+        FROM TrainingNotes tn
+        WHERE tn.userId = u.id
+        ORDER BY tn.trainedAt DESC, tn.createdAt DESC
+        LIMIT 1
+      ) AS latestTrainingLevel,
+      (
+        SELECT tn.trainedAt
+        FROM TrainingNotes tn
+        WHERE tn.userId = u.id
+        ORDER BY tn.trainedAt DESC, tn.createdAt DESC
+        LIMIT 1
+      ) AS latestTrainingAt,
+      (
+        SELECT COUNT(*)
+        FROM TrainingNotes tn_count
+        WHERE tn_count.userId = u.id
+      ) AS trainingNotesCount
     FROM Users u
     LEFT JOIN Visits v ON v.userId = u.id
     ${whereSql}
@@ -398,6 +506,104 @@ async function countClients(query = {}) {
   return Number(rows[0]?.total || 0);
 }
 
+function normalizeSavedViewName(name) {
+  const normalized = String(name || '').trim().replace(/\s+/g, ' ');
+  if (normalized.length < 2) {
+    throw appError('Название представления должно быть не короче 2 символов');
+  }
+  if (normalized.length > 80) {
+    throw appError('Название представления должно быть не длиннее 80 символов');
+  }
+
+  return normalized;
+}
+
+function assertSavedViewsAccount(account) {
+  if (!account?.id) {
+    throw appError('Нужна авторизация для работы с представлениями', 401);
+  }
+}
+
+function mapSavedView(row) {
+  const raw = row.toJSON ? row.toJSON() : row;
+  return {
+    createdAt: raw.createdAt,
+    filters: normalizeClientViewFilters(raw.filters),
+    id: raw.id,
+    name: raw.name,
+    updatedAt: raw.updatedAt,
+  };
+}
+
+async function listSavedViews(account) {
+  assertSavedViewsAccount(account);
+  const views = await db.ClientSavedView.findAll({
+    order: [['name', 'ASC']],
+    where: { accountId: account.id },
+  });
+
+  return views.map(mapSavedView);
+}
+
+async function getSavedViewOrFail(account, id) {
+  assertSavedViewsAccount(account);
+  const view = await db.ClientSavedView.findOne({
+    where: {
+      accountId: account.id,
+      id: Number(id),
+    },
+  });
+
+  if (!view) throw appError('Представление клиентов не найдено', 404);
+  return view;
+}
+
+async function createSavedView(account, data) {
+  assertSavedViewsAccount(account);
+  const name = normalizeSavedViewName(data.name);
+  const filters = normalizeClientViewFilters(data.filters);
+
+  try {
+    const view = await db.ClientSavedView.create({
+      accountId: account.id,
+      filters,
+      name,
+    });
+
+    return mapSavedView(view);
+  } catch (error) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      throw appError('Представление с таким названием уже существует', 409);
+    }
+    throw error;
+  }
+}
+
+async function updateSavedView(account, id, data) {
+  const view = await getSavedViewOrFail(account, id);
+  const payload = {};
+
+  if ('name' in data) payload.name = normalizeSavedViewName(data.name);
+  if ('filters' in data) payload.filters = normalizeClientViewFilters(data.filters);
+
+  try {
+    await view.update(payload);
+  } catch (error) {
+    if (error.name === 'SequelizeUniqueConstraintError') {
+      throw appError('Представление с таким названием уже существует', 409);
+    }
+    throw error;
+  }
+
+  return mapSavedView(view);
+}
+
+async function deleteSavedView(account, id) {
+  const view = await getSavedViewOrFail(account, id);
+  await view.destroy();
+  return { success: true };
+}
+
 async function getSources() {
   const rows = await referencesService.list('client-sources', {
     status: 'active',
@@ -440,7 +646,12 @@ async function getClientOrFail(id, { includeMerged = false } = {}) {
 }
 
 async function getDuplicateCandidates(client) {
-  if (!client.phoneNormalized) return [];
+  const conditions = [];
+  if (client.phoneNormalized) conditions.push({ phoneNormalized: client.phoneNormalized });
+  CLIENT_IDENTITY_FIELDS.forEach((field) => {
+    if (client[field]) conditions.push({ [field]: client[field] });
+  });
+  if (conditions.length === 0) return [];
 
   const candidates = await db.User.findAll({
     attributes: CLIENT_ATTRIBUTES,
@@ -448,7 +659,7 @@ async function getDuplicateCandidates(client) {
       id: {
         [Op.ne]: client.id,
       },
-      phoneNormalized: client.phoneNormalized,
+      [Op.or]: conditions,
       status: 'active',
       mergedIntoUserId: null,
     },
@@ -520,7 +731,7 @@ async function listTrainingNotes(clientId) {
       {
         model: db.Account,
         as: 'trainerAccount',
-        attributes: ['id', 'email', 'role', 'staffId'],
+        attributes: ['id', 'role', 'staffId'],
         include: [{ model: db.Staff, attributes: ['id', 'name'] }],
       },
     ],
@@ -546,8 +757,8 @@ async function listTrainingNotes(clientId) {
       trainer: trainer
         ? {
             id: trainer.id,
-            email: trainer.email,
-            name: trainer.Staff?.name || trainer.email,
+            name: trainer.Staff?.name || 'Тренер',
+            role: trainer.role,
           }
         : null,
     };
@@ -557,6 +768,10 @@ async function listTrainingNotes(clientId) {
 async function getClientDetails(id, account = null) {
   const client = await getClientOrFail(id, { includeMerged: true });
   if (client.mergedIntoUserId) {
+    const trainingNotes = canViewTrainingNotes(account)
+      ? await listTrainingNotes(client.id)
+      : [];
+    const includeOperationalHistory = !isTrainer(account);
     return {
       client: sanitizeClientForAccount(mapClient(client), account),
       mergedInto: sanitizeClientForAccount(
@@ -565,15 +780,21 @@ async function getClientDetails(id, account = null) {
       ),
       visits: [],
       duplicateCandidates: [],
-      trainingNotes: canViewTrainingNotes(account)
-        ? await listTrainingNotes(client.id)
+      timeline: includeOperationalHistory
+        ? await listClientTimeline(client.id, {
+            account,
+            trainingNotes,
+            visits: [],
+          })
         : [],
+      trainingNotes,
     };
   }
 
+  const includeOperationalHistory = !isTrainer(account);
   const [stats, visits, duplicateCandidates, trainingNotes] = await Promise.all([
     getClientStats(client.id),
-    listClientVisits(client.id, { limit: 50 }),
+    includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
     isTrainer(account) ? [] : getDuplicateCandidates(client),
     canViewTrainingNotes(account) ? listTrainingNotes(client.id) : [],
   ]);
@@ -584,8 +805,15 @@ async function getClientDetails(id, account = null) {
       account,
     ),
     duplicateCandidates: sanitizeClientsForAccount(duplicateCandidates, account),
+    timeline: includeOperationalHistory
+      ? await listClientTimeline(client.id, {
+          account,
+          trainingNotes,
+          visits,
+        })
+      : [],
     trainingNotes,
-    visits,
+    visits: includeOperationalHistory ? visits : [],
   };
 }
 
@@ -620,6 +848,229 @@ async function listClientVisits(clientId, options = {}) {
       createdAt: visit.createdAt,
     };
   });
+}
+
+function createTimelineItem({
+  actor = null,
+  description = '',
+  id,
+  meta = {},
+  occurredAt,
+  title,
+  type,
+}) {
+  return {
+    actor,
+    description,
+    id: String(id),
+    meta,
+    occurredAt,
+    title,
+    type,
+  };
+}
+
+function canViewCallTimeline(account) {
+  return ['owner', 'manager', 'admin'].includes(account?.role);
+}
+
+function canViewClientAuditTimeline(account) {
+  return ['owner', 'manager'].includes(account?.role);
+}
+
+const CLIENT_CHANGE_FIELD_LABELS = {
+  name: 'имя',
+  note: 'заметка',
+  phone: 'телефон',
+  source: 'источник',
+  sourceId: 'источник',
+  status: 'статус',
+  telegramId: 'Telegram ID',
+  vkId: 'VK ID',
+  webId: 'WEB ID',
+};
+
+function parseJsonValue(value) {
+  if (!value || typeof value !== 'string') return value || null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function summarizeClientAudit(raw) {
+  const metadata = parseJsonValue(raw.metadata);
+  const body = metadata?.body || {};
+  const fields = Object.keys(body)
+    .filter((key) => CLIENT_CHANGE_FIELD_LABELS[key])
+    .map((key) => CLIENT_CHANGE_FIELD_LABELS[key]);
+
+  if (fields.length === 0) return raw.summary || '';
+
+  return `Изменены поля: ${Array.from(new Set(fields)).join(', ')}`;
+}
+
+async function listClientCallTimeline(clientId, account) {
+  if (!canViewCallTimeline(account)) return [];
+
+  const rows = await db.CallTaskClient.findAll({
+    include: [
+      {
+        model: db.CallTask,
+        as: 'callTask',
+        attributes: ['id', 'title', 'status', 'dueAt', 'updatedAt'],
+        include: [
+          {
+            model: db.ClientBase,
+            as: 'clientBase',
+            attributes: ['id', 'name'],
+          },
+        ],
+      },
+      {
+        model: db.CallTaskAttempt,
+        as: 'attempts',
+        include: [
+          {
+            model: db.Account,
+            as: 'actorAccount',
+            attributes: ['id', 'email', 'role', 'staffId'],
+            include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+          },
+        ],
+      },
+    ],
+    limit: 25,
+    order: [
+      ['updatedAt', 'DESC'],
+      [{ model: db.CallTaskAttempt, as: 'attempts' }, 'createdAt', 'DESC'],
+    ],
+    where: { userId: clientId },
+  });
+
+  return rows.flatMap((row) => {
+    const raw = row.toJSON();
+    const task = raw.callTask;
+    const items = [
+      createTimelineItem({
+        description: raw.summary || task?.clientBase?.name || '',
+        id: `call-task-client-${raw.id}`,
+        meta: {
+          deadlineAt: raw.deadlineAt,
+          status: raw.status,
+          taskId: task?.id || raw.callTaskId,
+          taskStatus: task?.status || null,
+        },
+        occurredAt: raw.contactedAt || raw.updatedAt || raw.createdAt,
+        title: task?.title || 'Задача обзвона',
+        type: 'call_task',
+      }),
+    ];
+
+    (raw.attempts || []).forEach((attempt) => {
+      items.push(
+        createTimelineItem({
+          actor: mapAccount(attempt.actorAccount),
+          description: attempt.summary || '',
+          id: `call-attempt-${attempt.id}`,
+          meta: {
+            deadlineAt: attempt.deadlineAt,
+            status: attempt.status,
+            taskId: task?.id || raw.callTaskId,
+          },
+          occurredAt: attempt.createdAt,
+          title: `Попытка обзвона: ${task?.title || 'задача'}`,
+          type: 'call_attempt',
+        }),
+      );
+    });
+
+    return items;
+  });
+}
+
+async function listClientAuditTimeline(clientId, account) {
+  if (!canViewClientAuditTimeline(account)) return [];
+
+  const logs = await db.AuditLog.findAll({
+    include: [
+      {
+        model: db.Account,
+        as: 'account',
+        attributes: ['id', 'email', 'role', 'staffId'],
+        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+      },
+    ],
+    limit: 25,
+    order: [['createdAt', 'DESC']],
+    where: {
+      entityId: String(clientId),
+      entityType: 'client',
+    },
+  });
+
+  return logs.map((log) => {
+    const raw = log.toJSON();
+    return createTimelineItem({
+      actor: mapAccount(raw.account),
+      description: summarizeClientAudit(raw),
+      id: `audit-${raw.id}`,
+      meta: {
+        action: raw.action,
+        method: raw.method,
+        path: raw.path,
+        statusCode: raw.statusCode,
+      },
+      occurredAt: raw.createdAt,
+      title: 'Изменение клиента',
+      type: 'client_change',
+    });
+  });
+}
+
+async function listClientTimeline(clientId, { account, visits, trainingNotes } = {}) {
+  const [callItems, auditItems] = await Promise.all([
+    listClientCallTimeline(clientId, account),
+    listClientAuditTimeline(clientId, account),
+  ]);
+  const visitItems = (visits || []).map((visit) =>
+    createTimelineItem({
+      description: formatVisitCategorySummary(visit),
+      id: `visit-${visit.id}`,
+      meta: {
+        keyNumber: visit.keyNumber || null,
+        visitId: visit.id,
+      },
+      occurredAt: visit.scannedAt || visit.createdAt,
+      title: 'Визит',
+      type: 'visit',
+    }),
+  );
+  const trainingItems = (trainingNotes || []).map((note) =>
+    createTimelineItem({
+      actor: note.trainer || null,
+      description: [note.exercises, note.note].filter(Boolean).join('\n'),
+      id: `training-${note.id}`,
+      meta: {
+        level: note.level,
+      },
+      occurredAt: note.trainedAt || note.createdAt,
+      title: 'Тренировка',
+      type: 'training',
+    }),
+  );
+
+  return [...visitItems, ...trainingItems, ...callItems, ...auditItems]
+    .filter((item) => item.occurredAt)
+    .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
+    .slice(0, 120);
+}
+
+function formatVisitCategorySummary(visit) {
+  const names = visit.categories?.map((category) => category.name).filter(Boolean);
+  if (names && names.length > 0) return names.join(', ');
+  return visit.category || '';
 }
 
 async function mapClientWithCurrentStats(client, account = null) {
@@ -670,6 +1121,30 @@ async function lookupByPhone(
   return mapClientWithCurrentStats(client, account);
 }
 
+async function findExistingByIdentity(field, value, excludeClientId = null) {
+  const normalizedValue = normalizeOptionalIdentity(value);
+  if (!normalizedValue) return null;
+
+  const where = {
+    [field]: normalizedValue,
+    mergedIntoUserId: null,
+  };
+  if (excludeClientId) {
+    where.id = { [Op.ne]: Number(excludeClientId) };
+  }
+
+  const client = await db.User.findOne({
+    attributes: CLIENT_ATTRIBUTES,
+    where,
+    order: [
+      [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
+      ['createdAt', 'DESC'],
+    ],
+  });
+
+  return client ? resolveCanonicalClient(client) : null;
+}
+
 async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
   const where = {
     phoneNormalized,
@@ -689,11 +1164,50 @@ async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
   });
 }
 
+async function assertIdentityAvailable(data, excludeClientId = null) {
+  for (const field of CLIENT_IDENTITY_FIELDS) {
+    if (!(field in data)) continue;
+    const value = normalizeOptionalIdentity(data[field]);
+    if (!value) continue;
+
+    const existing = await findExistingByIdentity(field, value, excludeClientId);
+    if (!existing) continue;
+
+    const isArchived = existing.status === 'archived';
+    const label =
+      field === 'telegramId' ? 'Telegram' : field === 'vkId' ? 'VK' : 'WEB ID';
+
+    throw appError(
+      isArchived
+        ? `Клиент с таким ${label} уже есть в архиве. Восстановите его вместо повторной регистрации`
+        : `Клиент с таким ${label} уже существует`,
+      409,
+      {
+        code: isArchived
+          ? 'CLIENT_ARCHIVED_CONFLICT'
+          : 'CLIENT_ACTIVE_CONFLICT',
+        client: await mapClientWithCurrentStats(existing),
+      },
+    );
+  }
+}
+
+async function generateWebId() {
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const webId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+    const existing = await findExistingByIdentity('webId', webId);
+    if (!existing) return webId;
+  }
+
+  throw appError('Не удалось сгенерировать уникальный WEB ID клиента');
+}
+
 async function createClient(data) {
   const name = normalizeClientName(data.name);
   const sourceRef = await referencesService.getClientSourceByInput(data);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
   const existing = await findExistingByPhone(phoneNormalized);
+  await assertIdentityAvailable(data);
 
   if (existing) {
     const isArchived = existing.status === 'archived';
@@ -711,10 +1225,14 @@ async function createClient(data) {
     );
   }
 
+  const identityPayload = {};
+  CLIENT_IDENTITY_FIELDS.forEach((field) => {
+    if (field in data) identityPayload[field] = normalizeOptionalIdentity(data[field]);
+  });
+  if (!identityPayload.webId) identityPayload.webId = await generateWebId();
+
   const client = await db.User.create({
-    webId:
-      data.webId ||
-      `web_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    ...identityPayload,
     name,
     phone,
     phoneNormalized,
@@ -843,6 +1361,11 @@ async function updateClient(id, data) {
   }
   if ('note' in data) payload.note = normalizeNote(data.note);
   if ('status' in data) payload.status = normalizeStatus(data.status);
+
+  await assertIdentityAvailable(data, client.id);
+  CLIENT_IDENTITY_FIELDS.forEach((field) => {
+    if (field in data) payload[field] = normalizeOptionalIdentity(data[field]);
+  });
 
   if ('phone' in data) {
     const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
@@ -1004,47 +1527,71 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
 }
 
 async function getDuplicateGroups() {
-  const rows = await db.sequelize.query(
-    `
-      SELECT phoneNormalized, COUNT(*) AS count
-      FROM Users
-      WHERE status = 'active'
-        AND mergedIntoUserId IS NULL
-        AND phoneNormalized IS NOT NULL
-      GROUP BY phoneNormalized
-      HAVING COUNT(*) > 1
-      ORDER BY count DESC, phoneNormalized ASC
-    `,
-    { type: db.Sequelize.QueryTypes.SELECT },
-  );
+  const duplicateGroups = [];
 
-  if (rows.length === 0) return [];
+  for (const group of DUPLICATE_GROUPS) {
+    const rows = await db.sequelize.query(
+      `
+        SELECT ${group.field} AS value, COUNT(*) AS count
+        FROM Users
+        WHERE status = 'active'
+          AND mergedIntoUserId IS NULL
+          AND ${group.field} IS NOT NULL
+          AND ${group.field} <> ''
+        GROUP BY ${group.field}
+        HAVING COUNT(*) > 1
+        ORDER BY count DESC, ${group.field} ASC
+      `,
+      { type: db.Sequelize.QueryTypes.SELECT },
+    );
 
+    for (const row of rows) {
+      duplicateGroups.push({
+        count: Number(row.count),
+        field: group.field,
+        key: `${group.type}:${row.value}`,
+        label: group.label,
+        type: group.type,
+        value: row.value,
+      });
+    }
+  }
+
+  if (duplicateGroups.length === 0) return [];
+
+  const clientsByGroupKey = new Map();
+  const conditions = duplicateGroups.map((group) => ({
+    [group.field]: group.value,
+  }));
   const clients = await db.User.findAll({
     attributes: CLIENT_ATTRIBUTES,
     where: {
-      phoneNormalized: {
-        [Op.in]: rows.map((row) => row.phoneNormalized),
-      },
+      [Op.or]: conditions,
       status: 'active',
       mergedIntoUserId: null,
     },
-    order: [
-      ['phoneNormalized', 'ASC'],
-      ['createdAt', 'DESC'],
-    ],
+    order: [['createdAt', 'DESC']],
   });
   const statsByClientId = await getStatsByClientIds(
     clients.map((client) => client.id),
   );
 
-  return rows.map((row) => ({
-    phoneNormalized: row.phoneNormalized,
-    count: Number(row.count),
-    clients: clients
-      .filter((client) => client.phoneNormalized === row.phoneNormalized)
-      .map((client) => mapClientWithStats(client, statsByClientId)),
-  }));
+  duplicateGroups.forEach((group) => {
+    clientsByGroupKey.set(
+      group.key,
+      clients
+        .filter((client) => String(client[group.field]) === String(group.value))
+        .map((client) => mapClientWithStats(client, statsByClientId)),
+    );
+  });
+
+  return duplicateGroups
+    .map((group) => ({
+      ...group,
+      clients: clientsByGroupKey.get(group.key) || [],
+    }))
+    .filter((group) => group.clients.length > 1)
+    .sort((a, b) => b.clients.length - a.clients.length || a.key.localeCompare(b.key));
 }
 
 async function removeArchivedClient(id) {
@@ -1080,6 +1627,8 @@ async function removeArchivedClient(id) {
 module.exports = {
   countClients,
   createClient,
+  createSavedView,
+  deleteSavedView,
   findActiveByPhone,
   findCanonicalByQr,
   getClientDetails,
@@ -1087,9 +1636,11 @@ module.exports = {
   listClientVisits,
   listClients,
   listClientsForSnapshot,
+  listSavedViews,
   lookupByPhone,
   mergeClients,
   removeArchivedClient,
   registerClientFromMessenger,
   updateClient,
+  updateSavedView,
 };

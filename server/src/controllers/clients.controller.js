@@ -82,6 +82,46 @@ class ClientsController {
       handleError(res, error, 'Ошибка удаления клиента из архива');
     }
   }
+
+  async getSavedViews(req, res) {
+    try {
+      res.json(await clientsService.listSavedViews(req.account));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения представлений клиентов');
+    }
+  }
+
+  async createSavedView(req, res) {
+    try {
+      res.status(201).json(
+        await clientsService.createSavedView(req.account, req.body),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка сохранения представления клиентов');
+    }
+  }
+
+  async updateSavedView(req, res) {
+    try {
+      res.json(
+        await clientsService.updateSavedView(
+          req.account,
+          req.params.viewId,
+          req.body,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка обновления представления клиентов');
+    }
+  }
+
+  async deleteSavedView(req, res) {
+    try {
+      res.json(await clientsService.deleteSavedView(req.account, req.params.viewId));
+    } catch (error) {
+      handleError(res, error, 'Ошибка удаления представления клиентов');
+    }
+  }
 }
 
 module.exports = new ClientsController();

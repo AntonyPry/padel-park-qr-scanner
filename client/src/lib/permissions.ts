@@ -3,12 +3,13 @@ import type { AccountRole } from '@/lib/roles';
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
   '/admin/audit': ['owner', 'manager'],
-  '/admin/clients': ['owner', 'manager', 'admin', 'viewer', 'trainer'],
+  '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
+  '/admin/trainer': ['owner', 'manager', 'trainer'],
   '/admin/client-bases': ['owner', 'manager'],
   '/admin/call-tasks': ['owner', 'manager', 'admin'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
-  '/admin/staff': ['owner', 'manager', 'accountant', 'viewer'],
+  '/admin/staff': ['owner', 'manager', 'accountant'],
   '/admin/users': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
@@ -30,7 +31,7 @@ export function canAccessPath(role: AccountRole | null | undefined, path: string
 export function getDefaultPath(role: AccountRole | null | undefined) {
   if (role === 'accountant') return '/admin/finances';
   if (role === 'viewer') return '/admin/visits-analytics';
-  if (role === 'trainer') return '/admin/clients';
+  if (role === 'trainer') return '/admin/trainer';
 
   const entry = Object.entries(ROUTE_ACCESS).find(([, roles]) =>
     hasRoleAccess(role, roles),
@@ -41,6 +42,10 @@ export function getDefaultPath(role: AccountRole | null | undefined) {
 
 export function canManageFinance(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'accountant']);
+}
+
+export function canExportFinance(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'accountant']);
 }
 
 export function canManageClients(role: AccountRole | null | undefined) {
@@ -89,6 +94,18 @@ export function canManageSystemUsers(role: AccountRole | null | undefined) {
 
 export function canManageShifts(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canReviewPayroll(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'accountant']);
+}
+
+export function canApprovePayroll(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canPayPayroll(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'accountant']);
 }
 
 export function canManageUtilization(role: AccountRole | null | undefined) {

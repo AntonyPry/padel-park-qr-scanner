@@ -13,7 +13,13 @@ router.post(
   manageCallTasks,
   callTasksController.createFromBase,
 );
+router.post(
+  '/clients/:clientId/call-tasks',
+  manageCallTasks,
+  callTasksController.createForClient,
+);
 router.get('/call-tasks', viewCallTasks, callTasksController.getAll);
+router.get('/call-tasks/report', viewCallTasks, callTasksController.getReport);
 router.post(
   '/call-tasks/recurring/run',
   manageCallTasks,
@@ -31,6 +37,11 @@ router.get(
   '/call-tasks/:id/clients',
   workCallTasks,
   callTasksController.getClients,
+);
+router.patch(
+  '/call-tasks/:id/clients/bulk',
+  workCallTasks,
+  callTasksController.bulkUpdateClients,
 );
 router.post(
   '/call-task-clients/:taskClientId/attempts',

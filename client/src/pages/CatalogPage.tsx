@@ -16,12 +16,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import {
   AlertCircle,
@@ -31,9 +25,12 @@ import {
   Tag,
   Percent,
   ArchiveRestore,
-  AlertTriangle,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
 import type { MotivationBonusRule } from '@/lib/motivation';
 import {
   canManageCatalog,
@@ -67,6 +64,19 @@ interface CatalogRule {
   status?: 'active' | 'archived';
 }
 
+type PendingAction = ConfirmAction & {
+  onConfirm: () => Promise<void>;
+};
+
+async function readError(response: Response, fallback: string) {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function CatalogPage() {
   const { account } = useAuth();
   const canEditCatalog = canManageCatalog(account?.role);
@@ -89,9 +99,8 @@ export default function CatalogPage() {
   const [newCatGroup, setNewCatGroup] = useState('OPEX');
   const [newCatPercent, setNewCatPercent] = useState('');
 
-  // СТЕЙТ ДЛЯ МОДАЛКИ ПОДТВЕРЖДЕНИЯ УДАЛЕНИЯ
-  const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null);
-  const [deleteMode, setDeleteMode] = useState<'archive' | 'permanent'>('archive');
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -113,7 +122,6 @@ export default function CatalogPage() {
   }, [catalogStatus]);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void fetchData();
   }, [fetchData]);
 
@@ -145,19 +153,69 @@ export default function CatalogPage() {
     fetchData();
   };
 
-  const handleDeleteRule = async (id: number) => {
-    await apiFetch(`/api/catalog/rules/${id}`, { method: 'DELETE' });
-    fetchData();
+  const executeArchiveRule = async (rule: CatalogRule) => {
+    const res = await apiFetch(`/api/catalog/rules/${rule.id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось архивировать правило'));
+      return;
+    }
+
+    await fetchData();
   };
 
-  const handleRestoreRule = async (id: number) => {
-    await apiFetch(`/api/catalog/rules/${id}/restore`, { method: 'POST' });
-    fetchData();
+  const executeRestoreRule = async (rule: CatalogRule) => {
+    const res = await apiFetch(`/api/catalog/rules/${rule.id}/restore`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось восстановить правило'));
+      return;
+    }
+
+    await fetchData();
   };
 
-  const handlePermanentDeleteRule = async (id: number) => {
-    await apiFetch(`/api/catalog/rules/${id}/permanent`, { method: 'DELETE' });
-    fetchData();
+  const executePermanentDeleteRule = async (rule: CatalogRule) => {
+    const res = await apiFetch(`/api/catalog/rules/${rule.id}/permanent`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось удалить правило из архива'));
+      return;
+    }
+
+    await fetchData();
+  };
+
+  const requestArchiveRule = (rule: CatalogRule) => {
+    setPendingAction({
+      confirmLabel: 'В архив',
+      description: `Правило для «${rule.itemName}» перестанет распределять новые чеки по категории «${rule.category}». История чеков не удаляется.`,
+      isDestructive: true,
+      onConfirm: () => executeArchiveRule(rule),
+      title: 'Архивировать правило товара?',
+    });
+  };
+
+  const requestRestoreRule = (rule: CatalogRule) => {
+    setPendingAction({
+      confirmLabel: 'Восстановить',
+      description: `Правило для «${rule.itemName}» снова будет распределять чеки по категории «${rule.category}».`,
+      onConfirm: () => executeRestoreRule(rule),
+      title: 'Восстановить правило товара?',
+    });
+  };
+
+  const requestPermanentDeleteRule = (rule: CatalogRule) => {
+    setPendingAction({
+      confirmLabel: 'Удалить навсегда',
+      description: `Правило для «${rule.itemName}» будет удалено без возможности восстановления. Используйте это только для случайно созданных правил без истории.`,
+      isDestructive: true,
+      onConfirm: () => executePermanentDeleteRule(rule),
+      title: 'Удалить правило из архива?',
+    });
   };
 
   const handleParentChange = (val: string) => {
@@ -194,24 +252,69 @@ export default function CatalogPage() {
     fetchData();
   };
 
-  // ФАКТИЧЕСКОЕ УДАЛЕНИЕ (ВЫЗЫВАЕТСЯ ИЗ МОДАЛКИ)
-  const confirmDeleteCategory = async () => {
-    if (!deleteConfirmId) return;
+  const executeArchiveCategory = async (category: Category) => {
+    const res = await apiFetch(`/api/catalog/categories/${category.id}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось архивировать категорию'));
+      return;
+    }
 
-    await apiFetch(
-      deleteMode === 'permanent'
-        ? `/api/catalog/categories/${deleteConfirmId}/permanent`
-        : `/api/catalog/categories/${deleteConfirmId}`,
-      { method: 'DELETE' },
-    );
-
-    setDeleteConfirmId(null);
-    fetchData();
+    await fetchData();
   };
 
-  const handleRestoreCategory = async (id: number) => {
-    await apiFetch(`/api/catalog/categories/${id}/restore`, { method: 'POST' });
-    fetchData();
+  const executeRestoreCategory = async (category: Category) => {
+    const res = await apiFetch(`/api/catalog/categories/${category.id}/restore`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось восстановить категорию'));
+      return;
+    }
+
+    await fetchData();
+  };
+
+  const executePermanentDeleteCategory = async (category: Category) => {
+    const res = await apiFetch(`/api/catalog/categories/${category.id}/permanent`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      alert(await readError(res, 'Не удалось удалить категорию из архива'));
+      return;
+    }
+
+    await fetchData();
+  };
+
+  const requestArchiveCategory = (category: Category) => {
+    setPendingAction({
+      confirmLabel: 'В архив',
+      description: `Категория «${category.name}» и ее подкатегории исчезнут из активных списков. Связанные правила товаров тоже уйдут в архив. История чеков и финансов не удаляется.`,
+      isDestructive: true,
+      onConfirm: () => executeArchiveCategory(category),
+      title: 'Архивировать категорию?',
+    });
+  };
+
+  const requestRestoreCategory = (category: Category) => {
+    setPendingAction({
+      confirmLabel: 'Восстановить',
+      description: `Категория «${category.name}» снова появится в активном справочнике. Если она была архивирована веткой, связанные правила этой ветки тоже восстановятся.`,
+      onConfirm: () => executeRestoreCategory(category),
+      title: 'Восстановить категорию?',
+    });
+  };
+
+  const requestPermanentDeleteCategory = (category: Category) => {
+    setPendingAction({
+      confirmLabel: 'Удалить навсегда',
+      description: `Категория «${category.name}» будет удалена без возможности восстановления. Сервер не даст удалить ее, если есть мотивация, финансовая история или использованные в чеках правила.`,
+      isDestructive: true,
+      onConfirm: () => executePermanentDeleteCategory(category),
+      title: 'Удалить категорию из архива?',
+    });
   };
 
   const getGroupLabel = (groupVal: string) => {
@@ -259,6 +362,18 @@ export default function CatalogPage() {
     }
 
     setBonusRules((await res.json()) as MotivationBonusRule[]);
+  };
+
+  const confirmPendingAction = async () => {
+    if (!pendingAction) return;
+
+    setPendingActionLoading(true);
+    try {
+      await pendingAction.onConfirm();
+      setPendingAction(null);
+    } finally {
+      setPendingActionLoading(false);
+    }
   };
 
   // ФУНКЦИИ ЗАЩИТЫ ОТ ЦИКЛОВ НА КЛИЕНТЕ
@@ -317,6 +432,11 @@ export default function CatalogPage() {
               size="sm"
               onClick={() => setActiveTab('unmapped')}
               disabled={catalogStatus === 'archived'}
+              title={
+                catalogStatus === 'archived'
+                  ? 'Неразобранные товары доступны только в активном справочнике'
+                  : 'Показать товары без правила'
+              }
             >
               Неразобранные
               {unmapped.length > 0 && (
@@ -342,49 +462,6 @@ export default function CatalogPage() {
           </div>
         </div>
       </div>
-
-      {/* Модальное окно подтверждения удаления */}
-      <Dialog
-        open={deleteConfirmId !== null}
-        onOpenChange={(open) => !open && setDeleteConfirmId(null)}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-destructive" /> Внимание
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 pt-2">
-            <p className="text-sm text-muted-foreground">
-              {deleteMode === 'permanent'
-                ? 'Категория будет удалена без возможности восстановления.'
-                : 'Категория будет перенесена в архив.'}
-            </p>
-            <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-1">
-              <li>
-                Если у категории есть подкатегории, действие применится ко всей ветке.
-              </li>
-              <li>
-                Правила товаров этой ветки также перейдут в архив.
-              </li>
-            </ul>
-            <div className="flex justify-end gap-3 pt-4">
-              <Button
-                variant="outline"
-                onClick={() => setDeleteConfirmId(null)}
-              >
-                Отмена
-              </Button>
-              <Button
-                variant={deleteMode === 'permanent' ? 'destructive' : 'default'}
-                onClick={confirmDeleteCategory}
-              >
-                {deleteMode === 'permanent' ? 'Удалить навсегда' : 'В архив'}
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* ОСТАЛЬНАЯ ЧАСТЬ ИНТЕРФЕЙСА */}
       {activeTab === 'unmapped' && (
@@ -443,6 +520,14 @@ export default function CatalogPage() {
                         <Button
                           size="sm"
                           disabled={!canEditCatalog || !selections[itemName]}
+                          aria-label={`Сохранить правило для ${itemName}`}
+                          title={
+                            !canEditCatalog
+                              ? 'Недостаточно прав для изменения справочника'
+                              : !selections[itemName]
+                                ? 'Сначала выберите категорию'
+                                : 'Сохранить правило'
+                          }
                           onClick={() => handleSaveRule(itemName)}
                         >
                           Сохранить
@@ -486,8 +571,9 @@ export default function CatalogPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleRestoreRule(rule.id)}
+                            onClick={() => requestRestoreRule(rule)}
                             disabled={!canEditCatalog}
+                            aria-label={`Восстановить правило для ${rule.itemName}`}
                             title="Восстановить"
                           >
                             <ArchiveRestore className="h-4 w-4" />
@@ -495,8 +581,9 @@ export default function CatalogPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handlePermanentDeleteRule(rule.id)}
+                            onClick={() => requestPermanentDeleteRule(rule)}
                             disabled={!canEditCatalog}
+                            aria-label={`Удалить навсегда правило для ${rule.itemName}`}
                             title="Удалить навсегда"
                           >
                             <Trash2 className="h-4 w-4 text-destructive" />
@@ -506,8 +593,9 @@ export default function CatalogPage() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => handleDeleteRule(rule.id)}
+                          onClick={() => requestArchiveRule(rule)}
                           disabled={!canEditCatalog}
+                          aria-label={`Архивировать правило для ${rule.itemName}`}
                           title="В архив"
                         >
                           <Trash2 className="h-4 w-4 text-destructive" />
@@ -714,7 +802,8 @@ export default function CatalogPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => handleRestoreCategory(cat.id)}
+                                  onClick={() => requestRestoreCategory(cat)}
+                                  aria-label={`Восстановить категорию ${cat.name}`}
                                   title="Восстановить"
                                 >
                                   <ArchiveRestore className="h-4 w-4" />
@@ -722,10 +811,8 @@ export default function CatalogPage() {
                                 <Button
                                   variant="ghost"
                                   size="icon"
-                                  onClick={() => {
-                                    setDeleteMode('permanent');
-                                    setDeleteConfirmId(cat.id);
-                                  }}
+                                  onClick={() => requestPermanentDeleteCategory(cat)}
+                                  aria-label={`Удалить навсегда категорию ${cat.name}`}
                                   title="Удалить навсегда"
                                 >
                                   <Trash2 className="h-4 w-4 text-destructive" />
@@ -735,10 +822,8 @@ export default function CatalogPage() {
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={() => {
-                                  setDeleteMode('archive');
-                                  setDeleteConfirmId(cat.id);
-                                }}
+                                onClick={() => requestArchiveCategory(cat)}
+                                aria-label={`Архивировать категорию ${cat.name}`}
                                 title="В архив"
                               >
                                 <Trash2 className="h-4 w-4 text-destructive" />
@@ -765,6 +850,13 @@ export default function CatalogPage() {
           </CardContent>
         </Card>
       )}
+
+      <ConfirmActionDialog
+        action={pendingAction}
+        loading={pendingActionLoading}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={confirmPendingAction}
+      />
     </div>
   );
 }

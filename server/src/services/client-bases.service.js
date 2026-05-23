@@ -48,6 +48,16 @@ function normalizeNumber(value, { allowZero = false } = {}) {
   return number;
 }
 
+function normalizeSlaDays(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < 0 || number > 60) {
+    throw appError('Срок прозвона базы должен быть целым числом от 0 до 60 дней');
+  }
+
+  return number;
+}
+
 function normalizeTime(value) {
   const time = String(value || '').trim();
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
@@ -212,6 +222,15 @@ function normalizeFilters(filters = {}) {
   return normalized;
 }
 
+function assertTaskableFilters(filters) {
+  if ((filters.status || 'active') === 'active') return;
+
+  throw appError(
+    'Автозадачи можно включить только для базы с активными клиентами. Выберите статус клиентов «Активные».',
+    409,
+  );
+}
+
 function parseFilters(filters) {
   if (!filters) return {};
   if (typeof filters === 'string') {
@@ -250,6 +269,10 @@ async function mapBase(base, { includeCount = true } = {}) {
     lastCalculatedAt: raw.lastCalculatedAt,
     lastTaskClientCount,
     lastTaskCreatedAt: raw.lastTaskCreatedAt,
+    slaDays:
+      raw.slaDays === null || raw.slaDays === undefined
+        ? null
+        : Number(raw.slaDays),
     recurrence: {
       assignedTo: raw.recurringAssignedToAccount
         ? {
@@ -340,13 +363,18 @@ async function create(actor, data) {
   const name = String(data.name || '').trim();
   if (name.length < 2) throw appError('Название базы слишком короткое');
 
+  const filters = normalizeFilters(data.filters);
   const recurrencePayload = normalizeRecurrence(data.recurrence || {});
+  if (recurrencePayload.recurringEnabled) {
+    assertTaskableFilters(filters);
+  }
   await assertRecurringAssignee(recurrencePayload.recurringAssignedToAccountId);
 
   const base = await db.ClientBase.create({
     name,
     description: String(data.description || '').trim() || null,
-    filters: normalizeFilters(data.filters),
+    filters,
+    slaDays: normalizeSlaDays(data.slaDays),
     ...recurrencePayload,
     status: normalizeStatus(data.status),
     createdByAccountId: actor?.id || null,
@@ -375,6 +403,10 @@ async function update(id, data) {
     payload.lastCalculatedAt = new Date();
   }
 
+  if ('slaDays' in data) {
+    payload.slaDays = normalizeSlaDays(data.slaDays);
+  }
+
   if ('status' in data) {
     payload.status = normalizeStatus(data.status);
   }
@@ -382,6 +414,15 @@ async function update(id, data) {
   if ('recurrence' in data) {
     Object.assign(payload, normalizeRecurrence(data.recurrence, base));
     await assertRecurringAssignee(payload.recurringAssignedToAccountId);
+  }
+
+  const nextFilters = payload.filters || normalizeFilters(parseFilters(base.filters));
+  const nextRecurringEnabled =
+    'recurrence' in data
+      ? Boolean(payload.recurringEnabled)
+      : Boolean(base.recurringEnabled);
+  if (nextRecurringEnabled) {
+    assertTaskableFilters(nextFilters);
   }
 
   await base.update(payload);

@@ -38,6 +38,8 @@ import {
   LayoutList,
   ChevronDown,
   List,
+  Download,
+  History,
 } from 'lucide-react';
 import {
   PieChart,
@@ -53,8 +55,9 @@ import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
-import { canManageFinance } from '@/lib/permissions';
+import { canExportFinance, canManageFinance } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import { MetricCard } from '@/components/dashboard-metric';
 
 const PIE_COLORS = [
   '#3b82f6',
@@ -81,6 +84,8 @@ interface PnlSummary {
   opex: number;
   net: number;
   margin: number;
+  cash?: number;
+  cashless?: number;
 }
 
 interface PnlSectionItem {
@@ -101,6 +106,12 @@ interface PnlDetail {
 
 interface FinanceReport {
   summary: PnlSummary;
+  reconciliation?: {
+    receiptCount: number;
+    receiptsTotal: number;
+    receiptItemsTotal: number;
+    difference: number;
+  };
   sections: {
     REVENUE_POS: PnlSectionItem[];
     REVENUE_EXT: PnlSectionItem[];
@@ -109,6 +120,23 @@ interface FinanceReport {
     OPEX: PnlSectionItem[];
   };
   details: PnlDetail[];
+}
+
+interface FinanceHistoryItem {
+  id: number;
+  action: string;
+  entityType: string;
+  entityId?: string | null;
+  date?: string | null;
+  fromDate?: string | null;
+  toDate?: string | null;
+  reason?: string | null;
+  createdAt: string;
+  account?: {
+    name?: string;
+    email?: string;
+    role?: string;
+  } | null;
 }
 
 interface ManualFinanceForm {
@@ -124,12 +152,36 @@ const formatCurrencyValue = (val: unknown) => {
   return `${Number(rawValue ?? 0).toLocaleString()} ₽`;
 };
 
+const FINANCE_ACTION_LABELS: Record<string, string> = {
+  'finance_manual.create': 'Ручная операция добавлена',
+  'finance_report.export': 'Финансовый отчет выгружен',
+  'payroll.export': 'Payroll выгружен',
+  'payroll_period.approved': 'Payroll утвержден',
+  'payroll_period.create': 'Payroll-период создан',
+  'payroll_period.draft': 'Payroll возвращен в черновик',
+  'payroll_period.paid': 'Payroll выплачен',
+  'payroll_period.recalculate': 'Payroll пересчитан',
+  'payroll_period.reviewed': 'Payroll отправлен на проверку',
+  'shift.archive': 'Смена архивирована',
+  'shift.close': 'Смена завершена',
+  'shift.create': 'Смена создана',
+  'shift.start': 'Смена начата',
+  'shift.update': 'Смена изменена',
+};
+
+function getFinanceActionLabel(action: string) {
+  return FINANCE_ACTION_LABELS[action] || action;
+}
+
 export default function FinancePage() {
   const { account } = useAuth();
   const canEditFinance = canManageFinance(account?.role);
+  const canDownloadFinance = canExportFinance(account?.role);
   const [report, setReport] = useState<FinanceReport | null>(null);
+  const [history, setHistory] = useState<FinanceHistoryItem[]>([]);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorMessage, setErrorMessage] = useState('');
   const [detailsModalCat, setDetailsModalCat] = useState<string | null>(null);
 
   const now = new Date();
@@ -150,6 +202,7 @@ export default function FinancePage() {
 
   const fetchFinances = useCallback(async () => {
     setLoading(true);
+    setErrorMessage('');
     try {
       // Передаем даты на бэкенд, чтобы он сам всё отфильтровал
       const fromStr = dateRange?.from
@@ -162,10 +215,27 @@ export default function FinancePage() {
         apiFetch('/api/catalog/categories'),
       ]);
 
-      if (finRes.ok) setReport((await finRes.json()) as FinanceReport);
+      if (finRes.ok) {
+        setReport((await finRes.json()) as FinanceReport);
+      } else {
+        const data = (await finRes.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setReport(null);
+        setErrorMessage(data.error || 'Не удалось загрузить финансовый отчет');
+      }
       if (catRes.ok) setCategories((await catRes.json()) as CatalogCategory[]);
+
+      const historyRes = await apiFetch(
+        `/api/finance/history?from=${fromStr}&to=${toStr}&limit=10`,
+      );
+      if (historyRes.ok) {
+        setHistory((await historyRes.json()) as FinanceHistoryItem[]);
+      }
     } catch (e) {
       console.error(e);
+      setReport(null);
+      setErrorMessage('Не удалось загрузить финансовый отчет');
     } finally {
       setLoading(false);
     }
@@ -193,7 +263,41 @@ export default function FinancePage() {
     }
   };
 
-  if (!report) return null; // Ждем загрузки отчета
+  const handleExport = async () => {
+    const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
+    const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : '';
+    const res = await apiFetch(`/api/finance/export?from=${fromStr}&to=${toStr}`);
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setErrorMessage(data.error || 'Не удалось выгрузить финансовый отчет');
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `pnl-${fromStr || 'start'}-${toStr || 'end'}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  if (!report) {
+    return (
+      <div className="p-6 md:p-8 space-y-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Финансы</h1>
+          <p className="text-muted-foreground mt-1">
+            P&L: прибыль, расходы, касса и ручные операции.
+          </p>
+        </div>
+        <div className="rounded-md border bg-card px-4 py-8 text-center text-muted-foreground">
+          {loading ? 'Загрузка финансового отчета...' : errorMessage || 'Нет данных для отчета'}
+        </div>
+      </div>
+    );
+  }
 
   const { summary, sections } = report;
 
@@ -272,6 +376,8 @@ export default function FinancePage() {
                 variant="ghost"
                 size="icon"
                 className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+                title={`Показать детализацию: ${item.name}`}
+                aria-label={`Показать детализацию: ${item.name}`}
                 onClick={(e) => {
                   e.stopPropagation();
                   setDetailsModalCat(item.name);
@@ -323,9 +429,9 @@ export default function FinancePage() {
     <div className="p-6 md:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">P&L Отчет</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Финансы</h1>
           <p className="text-muted-foreground mt-1">
-            Финансовый результат клуба (касса + ручные операции)
+            P&L: прибыль, расходы, касса и ручные операции.
           </p>
         </div>
 
@@ -372,9 +478,16 @@ export default function FinancePage() {
             size="icon"
             onClick={fetchFinances}
             disabled={loading}
+            title="Обновить отчет"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
           </Button>
+
+          {canDownloadFinance && (
+            <Button variant="outline" onClick={handleExport}>
+              <Download className="w-4 h-4 mr-2" /> Экспорт
+            </Button>
+          )}
 
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
             {canEditFinance && (
@@ -474,64 +587,50 @@ export default function FinancePage() {
         </div>
       </div>
 
+      {errorMessage && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {errorMessage}
+        </div>
+      )}
+
       {/* KPI карточки (берем прямо из summary) */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground font-medium">
-              Выручка
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {summary.revenue.toLocaleString('ru-RU')} ₽
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground font-medium">
-              Валовая прибыль (Gross)
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {summary.gross.toLocaleString('ru-RU')} ₽
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground font-medium">
-              OPEX (Расходы)
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {summary.opex.toLocaleString('ru-RU')} ₽
-            </div>
-          </CardContent>
-        </Card>
-        <Card
-          className={
-            summary.net >= 0
-              ? 'border-green-500/50 bg-green-500/5'
-              : 'border-destructive/50 bg-destructive/5'
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <MetricCard
+          label="Выручка"
+          tooltip="Все доходы за выбранный период: касса Эвотор и ручные доходные операции."
+          value={`${summary.revenue.toLocaleString('ru-RU')} ₽`}
+        />
+        <MetricCard
+          label="Валовая прибыль"
+          tooltip="Выручка минус себестоимость и комиссии."
+          value={`${summary.gross.toLocaleString('ru-RU')} ₽`}
+        />
+        <MetricCard
+          label="Опер. расходы"
+          tooltip="Операционные расходы, включая автоматический расчет зарплаты администраторов."
+          value={`${summary.opex.toLocaleString('ru-RU')} ₽`}
+        />
+        <MetricCard
+          label="Чистая прибыль"
+          tooltip="Итоговый финансовый результат после себестоимости, комиссий и операционных расходов."
+          value={`${summary.net.toLocaleString('ru-RU')} ₽`}
+          valueClassName={summary.net >= 0 ? 'text-green-500' : 'text-destructive'}
+        />
+        <MetricCard
+          label="Рентабельность"
+          tooltip="Доля чистой прибыли от общей выручки."
+          value={`${summary.margin.toFixed(1)} %`}
+        />
+        <MetricCard
+          label="Сверка чеков"
+          tooltip="Разница между суммой чеков Эвотора и суммой их позиций. Ноль означает, что чековая сумма и позиции сходятся."
+          value={`${Number(report.reconciliation?.difference || 0).toLocaleString('ru-RU')} ₽`}
+          valueClassName={
+            Math.abs(Number(report.reconciliation?.difference || 0)) <= 1
+              ? 'text-green-500'
+              : 'text-amber-500'
           }
-        >
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground font-medium">
-              Чистая прибыль (Net)
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {summary.net.toLocaleString('ru-RU')} ₽
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground font-medium">
-              Рентабельность (Margin)
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {summary.margin.toFixed(1)} %
-            </div>
-          </CardContent>
-        </Card>
+        />
       </div>
 
       {/* Диаграммы */}
@@ -578,7 +677,7 @@ export default function FinancePage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base font-semibold">
-              Структура расходов (COGS + OPEX)
+              Структура расходов
             </CardTitle>
           </CardHeader>
           <CardContent className="h-[250px]">
@@ -627,7 +726,7 @@ export default function FinancePage() {
 
       {/* ДИНАМИЧЕСКАЯ ТАБЛИЦА P&L */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-        <div className="col-span-2 space-y-6">
+        <div className="lg:col-span-2 space-y-6">
           <div className="border rounded-md bg-card">
             <Table>
               <TableHeader>
@@ -659,7 +758,7 @@ export default function FinancePage() {
                 <TableRow className="bg-muted/10">
                   <TableCell className="font-semibold pl-6">
                     <LayoutList className="inline w-4 h-4 mr-2" />
-                    Вне кассы (Ручные/Корп)
+                    Вне кассы
                   </TableCell>
                   <TableCell className="text-right font-medium">
                     {summary.extTotal.toLocaleString('ru-RU')} ₽
@@ -669,7 +768,9 @@ export default function FinancePage() {
 
                 {/* БЛОК СЕБЕСТОИМОСТИ И КОМИССИЙ */}
                 <TableRow className="bg-muted/30 mt-4">
-                  <TableCell className="font-bold">COGS + комиссии</TableCell>
+                  <TableCell className="font-bold">
+                    Себестоимость и комиссии
+                  </TableCell>
                   <TableCell className="text-right font-bold text-destructive">
                     -{summary.cogsTotal.toLocaleString('ru-RU')} ₽
                   </TableCell>
@@ -678,7 +779,7 @@ export default function FinancePage() {
                 <TableRow className="bg-muted/10">
                   <TableCell className="font-semibold pl-6">
                     <LayoutList className="inline w-4 h-4 mr-2" />
-                    Закупы (Себестоимость)
+                    Закупы
                   </TableCell>
                   <TableCell></TableCell>
                 </TableRow>
@@ -696,7 +797,7 @@ export default function FinancePage() {
                 {/* ВАЛОВАЯ ПРИБЫЛЬ */}
                 <TableRow className="bg-primary/5 border-y-2 border-primary/20">
                   <TableCell className="font-bold text-lg">
-                    Валовая прибыль (Gross)
+                    Валовая прибыль
                   </TableCell>
                   <TableCell className="text-right font-bold text-lg text-primary">
                     {summary.gross.toLocaleString('ru-RU')} ₽
@@ -706,7 +807,7 @@ export default function FinancePage() {
                 {/* БЛОК OPEX */}
                 <TableRow className="bg-muted/30">
                   <TableCell className="font-bold">
-                    OPEX (операционные расходы)
+                    Операционные расходы
                   </TableCell>
                   <TableCell className="text-right font-bold text-destructive">
                     -{summary.opex.toLocaleString('ru-RU')} ₽
@@ -733,6 +834,56 @@ export default function FinancePage() {
             </Table>
           </div>
         </div>
+      </div>
+      <div className="border rounded-md bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b flex items-center gap-2">
+          <History className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <div className="font-semibold">Финансовая история</div>
+            <div className="text-xs text-muted-foreground">
+              Кто менял смены, ручные операции, payroll-периоды и выгрузки.
+            </div>
+          </div>
+        </div>
+        <Table className="min-w-[760px]">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Дата</TableHead>
+              <TableHead>Действие</TableHead>
+              <TableHead>Период/операция</TableHead>
+              <TableHead>Кто</TableHead>
+              <TableHead>Причина</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {history.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                  Изменений за период пока нет
+                </TableCell>
+              </TableRow>
+            )}
+            {history.map((item) => (
+              <TableRow key={item.id}>
+                <TableCell className="whitespace-nowrap">
+                  {format(new Date(item.createdAt), 'dd.MM.yyyy HH:mm')}
+                </TableCell>
+                <TableCell className="font-medium">
+                  {getFinanceActionLabel(item.action)}
+                </TableCell>
+                <TableCell className="text-muted-foreground">
+                  {item.fromDate && item.toDate
+                    ? `${item.fromDate} — ${item.toDate}`
+                    : item.date || item.entityId || '-'}
+                </TableCell>
+                <TableCell>{item.account?.name || item.account?.email || '-'}</TableCell>
+                <TableCell className="max-w-[260px] truncate">
+                  {item.reason || '-'}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </div>
       {/* МОДАЛЬНОЕ ОКНО ДЕТАЛИЗАЦИИ */}
       <Dialog

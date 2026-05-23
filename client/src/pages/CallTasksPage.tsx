@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Archive,
   ArchiveRestore,
+  BarChart3,
   CheckCircle2,
   Clock,
+  ListChecks,
   MessageSquareText,
   Pencil,
   PhoneCall,
@@ -56,6 +64,11 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  HelpTooltip,
+  MetricCard,
+  MetricLabel,
+} from '@/components/dashboard-metric';
 import { apiFetch } from '@/lib/api';
 import { canManageCallTasks } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
@@ -92,6 +105,7 @@ interface CallTask {
     taskCount: number;
     updatedCount: number;
   } | null;
+  metrics?: CallTaskMetrics;
   newInBaseCount?: number | null;
   overdueCount: number;
   scopeType: 'snapshot' | 'dynamic';
@@ -99,6 +113,16 @@ interface CallTask {
   status: CallTaskStatus;
   title: string;
   totalClientCount: number;
+}
+
+interface CallTaskMetrics {
+  bookedCount: number;
+  completionRate: number;
+  contactedCount: number;
+  contactRate: number;
+  conversionRate: number;
+  finishedCount: number;
+  overdueRate: number;
 }
 
 interface CallTaskClient {
@@ -144,9 +168,24 @@ interface TaskClientsResponse {
   totalPages: number;
 }
 
+interface CallTasksReport {
+  attemptsCount: number;
+  counts: Record<CallTaskClientStatus, number>;
+  metrics: CallTaskMetrics;
+  overdueCount: number;
+  tasksCount: number;
+  totalClientCount: number;
+}
+
 interface AttemptFormState {
   deadlineAt: string;
   status: CallTaskClientStatus;
+  summary: string;
+}
+
+interface BulkFormState {
+  deadlineAt: string;
+  status: CallTaskClientStatus | 'keep';
   summary: string;
 }
 
@@ -203,6 +242,12 @@ const EMPTY_ATTEMPT_FORM: AttemptFormState = {
   summary: '',
 };
 
+const EMPTY_BULK_FORM: BulkFormState = {
+  deadlineAt: '',
+  status: 'keep',
+  summary: '',
+};
+
 const EMPTY_TASK_FORM: TaskFormState = {
   assignedToAccountId: 'none',
   description: '',
@@ -224,6 +269,12 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat('ru-RU', {
     dateStyle: 'short',
   }).format(new Date(value));
+}
+
+function formatPercent(value?: number | null) {
+  return `${Number(value || 0).toLocaleString('ru-RU', {
+    maximumFractionDigits: 1,
+  })}%`;
 }
 
 function formatForDateTimeInput(value?: string | null) {
@@ -293,6 +344,7 @@ export default function CallTasksPage() {
   const { account } = useAuth();
   const canManage = canManageCallTasks(account?.role);
   const [tasks, setTasks] = useState<CallTask[]>([]);
+  const [report, setReport] = useState<CallTasksReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<TaskFilterStatus>('active');
   const [selectedTask, setSelectedTask] = useState<CallTask | null>(null);
@@ -305,10 +357,14 @@ export default function CallTasksPage() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalClients, setTotalClients] = useState(0);
+  const [selectedClientIds, setSelectedClientIds] = useState<number[]>([]);
   const [editingClient, setEditingClient] = useState<CallTaskClient | null>(null);
   const [attemptForm, setAttemptForm] =
     useState<AttemptFormState>(EMPTY_ATTEMPT_FORM);
   const [savingAttempt, setSavingAttempt] = useState(false);
+  const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
+  const [bulkForm, setBulkForm] = useState<BulkFormState>(EMPTY_BULK_FORM);
+  const [savingBulk, setSavingBulk] = useState(false);
   const [confirmAction, setConfirmAction] =
     useState<ConfirmActionState | null>(null);
   const [confirmingAction, setConfirmingAction] = useState(false);
@@ -316,16 +372,24 @@ export default function CallTasksPage() {
   const [taskForm, setTaskForm] = useState<TaskFormState>(EMPTY_TASK_FORM);
   const [savingTask, setSavingTask] = useState(false);
   const [syncingTask, setSyncingTask] = useState(false);
+  const tasksRequestIdRef = useRef(0);
+  const reportRequestIdRef = useRef(0);
+  const clientsRequestIdRef = useRef(0);
+  const taskDetailsRequestIdRef = useRef(0);
 
   const fetchTasks = useCallback(async () => {
+    const requestId = tasksRequestIdRef.current + 1;
+    tasksRequestIdRef.current = requestId;
     setLoading(true);
     try {
       const res = await apiFetch(`/api/call-tasks?status=${status}`);
+      if (requestId !== tasksRequestIdRef.current) return;
       if (!res.ok) {
         alert(await readError(res, 'Не удалось загрузить задачи обзвона'));
         return;
       }
       const data = (await res.json()) as CallTask[];
+      if (requestId !== tasksRequestIdRef.current) return;
       setTasks(data);
       setSelectedTask(
         selectedTaskId
@@ -333,9 +397,33 @@ export default function CallTasksPage() {
           : null,
       );
     } finally {
-      setLoading(false);
+      if (requestId === tasksRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [selectedTaskId, status]);
+
+  const fetchReport = useCallback(async () => {
+    const requestId = reportRequestIdRef.current + 1;
+    reportRequestIdRef.current = requestId;
+    try {
+      const res = await apiFetch(`/api/call-tasks/report?status=${status}`);
+      if (requestId !== reportRequestIdRef.current) return;
+      if (!res.ok) {
+        setReport(null);
+        return;
+      }
+
+      const nextReport = (await res.json()) as CallTasksReport;
+      if (requestId === reportRequestIdRef.current) {
+        setReport(nextReport);
+      }
+    } catch {
+      if (requestId === reportRequestIdRef.current) {
+        setReport(null);
+      }
+    }
+  }, [status]);
 
   const fetchAccounts = useCallback(async () => {
     try {
@@ -348,17 +436,52 @@ export default function CallTasksPage() {
   }, []);
 
   const openTask = useCallback(async (task: CallTask) => {
+    const requestId = taskDetailsRequestIdRef.current + 1;
+    taskDetailsRequestIdRef.current = requestId;
     setSelectedTaskId(task.id);
     setSelectedTask(task);
+    setClients([]);
+    setTotalClients(0);
+    setTotalPages(1);
+    setSelectedClientIds([]);
+    setEditingClient(null);
+    setBulkDialogOpen(false);
 
     const res = await apiFetch(`/api/call-tasks/${task.id}`);
     if (res.ok) {
-      setSelectedTask((await res.json()) as CallTask);
+      const freshTask = (await res.json()) as CallTask;
+      if (requestId === taskDetailsRequestIdRef.current) {
+        setSelectedTask(freshTask);
+      }
     }
   }, []);
 
+  const refreshTaskDetails = useCallback(async (taskId: number) => {
+    const requestId = taskDetailsRequestIdRef.current + 1;
+    taskDetailsRequestIdRef.current = requestId;
+    const res = await apiFetch(`/api/call-tasks/${taskId}`);
+    if (!res.ok || requestId !== taskDetailsRequestIdRef.current) return;
+
+    const freshTask = (await res.json()) as CallTask;
+    setSelectedTask((current) =>
+      current?.id === freshTask.id ? freshTask : current,
+    );
+    setSelectedTaskId((current) =>
+      current === freshTask.id ? freshTask.id : current,
+    );
+  }, []);
+
   const fetchClients = useCallback(async () => {
-    if (!selectedTask) return;
+    const requestId = clientsRequestIdRef.current + 1;
+    clientsRequestIdRef.current = requestId;
+
+    if (!selectedTask) {
+      setClients([]);
+      setTotalClients(0);
+      setTotalPages(1);
+      setClientsLoading(false);
+      return;
+    }
 
     setClientsLoading(true);
     setClients([]);
@@ -380,11 +503,14 @@ export default function CallTasksPage() {
         return;
       }
       const data = (await res.json()) as TaskClientsResponse;
+      if (requestId !== clientsRequestIdRef.current) return;
       setClients(data.items);
       setTotalPages(data.totalPages);
       setTotalClients(data.total);
     } finally {
-      setClientsLoading(false);
+      if (requestId === clientsRequestIdRef.current) {
+        setClientsLoading(false);
+      }
     }
   }, [clientQuery, clientStatus, page, selectedTask]);
 
@@ -393,11 +519,16 @@ export default function CallTasksPage() {
   }, [fetchTasks]);
 
   useEffect(() => {
+    void fetchReport();
+  }, [fetchReport]);
+
+  useEffect(() => {
     void fetchAccounts();
   }, [fetchAccounts]);
 
   useEffect(() => {
     setPage(1);
+    setSelectedClientIds([]);
   }, [clientQuery, clientStatus, selectedTask?.id]);
 
   useEffect(() => {
@@ -441,7 +572,84 @@ export default function CallTasksPage() {
       prev.map((client) => (client.id === saved.id ? saved : client)),
     );
     setEditingClient(null);
-    void fetchTasks();
+    await fetchTasks();
+    if (selectedTask) await refreshTaskDetails(selectedTask.id);
+    await fetchReport();
+  };
+
+  const selectedClientsOnPage = useMemo(
+    () => clients.filter((client) => selectedClientIds.includes(client.id)),
+    [clients, selectedClientIds],
+  );
+  const allClientsOnPageSelected =
+    clients.length > 0 && selectedClientsOnPage.length === clients.length;
+
+  const toggleClientSelection = (clientId: number) => {
+    setSelectedClientIds((prev) =>
+      prev.includes(clientId)
+        ? prev.filter((id) => id !== clientId)
+        : [...prev, clientId],
+    );
+  };
+
+  const toggleAllClientsOnPage = () => {
+    if (allClientsOnPageSelected) {
+      setSelectedClientIds((prev) =>
+        prev.filter((id) => !clients.some((client) => client.id === id)),
+      );
+      return;
+    }
+
+    setSelectedClientIds((prev) =>
+      Array.from(new Set([...prev, ...clients.map((client) => client.id)])),
+    );
+  };
+
+  const openBulkDialog = () => {
+    setBulkForm({ ...EMPTY_BULK_FORM });
+    setBulkDialogOpen(true);
+  };
+
+  const saveBulkAction = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selectedTask || selectedClientIds.length === 0) return;
+
+    const payload: {
+      deadlineAt?: string | null;
+      status?: CallTaskClientStatus;
+      summary?: string;
+      taskClientIds: number[];
+    } = {
+      taskClientIds: selectedClientIds,
+    };
+    if (bulkForm.status !== 'keep') payload.status = bulkForm.status;
+    if (bulkForm.deadlineAt) payload.deadlineAt = bulkForm.deadlineAt;
+    if (bulkForm.summary.trim()) payload.summary = bulkForm.summary.trim();
+
+    setSavingBulk(true);
+    try {
+      const res = await apiFetch(
+        `/api/call-tasks/${selectedTask.id}/clients/bulk`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify(payload),
+        },
+      );
+
+      if (!res.ok) {
+        alert(await readError(res, 'Не удалось массово обновить клиентов'));
+        return;
+      }
+
+      setBulkDialogOpen(false);
+      setSelectedClientIds([]);
+      await fetchClients();
+      await fetchTasks();
+      await refreshTaskDetails(selectedTask.id);
+      await fetchReport();
+    } finally {
+      setSavingBulk(false);
+    }
   };
 
   const openEditTask = (task: CallTask) => {
@@ -487,6 +695,8 @@ export default function CallTasksPage() {
     setSelectedTask(saved);
     setSelectedTaskId(saved.id);
     await fetchTasks();
+    await refreshTaskDetails(saved.id);
+    await fetchReport();
   };
 
   const syncSelectedTask = async () => {
@@ -514,6 +724,7 @@ export default function CallTasksPage() {
       );
       await fetchTasks();
       await fetchClients();
+      await fetchReport();
     } finally {
       setSyncingTask(false);
     }
@@ -532,6 +743,8 @@ export default function CallTasksPage() {
       return;
     }
     await fetchTasks();
+    await refreshTaskDetails(task.id);
+    await fetchReport();
   };
 
   const requestTaskStatusUpdate = (
@@ -558,12 +771,13 @@ export default function CallTasksPage() {
     setSelectedTaskId(null);
     setClients([]);
     await fetchTasks();
+    await fetchReport();
   };
 
   const requestPermanentDelete = (task: CallTask) => {
     setConfirmAction({
       confirmLabel: 'Удалить навсегда',
-      description: `Задача «${task.title}» будет удалена вместе со списком клиентов и историей попыток обзвона. Это действие нельзя отменить.`,
+      description: `Задача «${task.title}» будет удалена без возможности восстановления. Сервер не даст удалить ее, если по ней уже были звонки, статусы или комментарии.`,
       isDestructive: true,
       onConfirm: () => executePermanentDelete(task),
       title: 'Удалить задачу из архива?',
@@ -574,7 +788,7 @@ export default function CallTasksPage() {
     if (!canManage) {
       return (
         <ContextMenuItem disabled>
-          Только owner или manager могут менять задачу
+          Только руководитель может менять задачу
         </ContextMenuItem>
       );
     }
@@ -655,6 +869,84 @@ export default function CallTasksPage() {
   const selectedTaskIsReadOnly =
     selectedTask?.status === 'archived' || selectedTask?.status === 'done';
 
+  const renderTaskCard = (task: CallTask) => {
+    const progress = getTaskProgress(task);
+    const isSelected = selectedTask?.id === task.id;
+
+    return (
+      <ContextMenu key={task.id}>
+        <ContextMenuTrigger asChild>
+          <button
+            type="button"
+            onClick={() => void openTask(task)}
+            className={`block w-full rounded-md px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
+              isSelected ? 'bg-muted' : ''
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="truncate font-medium">{task.title}</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">
+                  {task.clientBase?.name || 'Без базы'} ·{' '}
+                  {task.assignedTo?.name || 'без исполнителя'}
+                </div>
+              </div>
+              <Badge variant="outline">
+                {TASK_STATUS_LABELS[task.status]}
+              </Badge>
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
+              <div>
+                <MetricLabel tooltip="Клиенты с финальным результатом: «Записался» или «Отказ».">
+                  Готово
+                </MetricLabel>
+                <div className="font-medium">
+                  {progress.done}/{progress.total}
+                </div>
+              </div>
+              <div>
+                <MetricLabel tooltip="Клиенты в этой задаче, у которых уже прошел дедлайн и статус еще не финальный.">
+                  Просрочено
+                </MetricLabel>
+                <div
+                  className={
+                    task.overdueCount > 0
+                      ? 'font-medium text-destructive'
+                      : 'font-medium'
+                  }
+                >
+                  {task.overdueCount}
+                </div>
+              </div>
+              <div>
+                <MetricLabel tooltip="Доля записавшихся среди клиентов, по которым уже был контакт.">
+                  Запись
+                </MetricLabel>
+                <div className="font-medium">
+                  {formatPercent(task.metrics?.conversionRate)}
+                </div>
+              </div>
+            </div>
+            {task.newInBaseCount ? (
+              <div className="mt-2 text-xs text-primary">
+                +{task.newInBaseCount} новых клиентов в базе
+              </div>
+            ) : null}
+          </button>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuLabel>Действия с задачей</ContextMenuLabel>
+          <ContextMenuItem onSelect={() => void openTask(task)}>
+            <PhoneCall className="h-4 w-4" />
+            Открыть
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          {renderTaskActionItems(task)}
+        </ContextMenuContent>
+      </ContextMenu>
+    );
+  };
+
   return (
     <div className="min-w-0 space-y-4 p-4 md:p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -665,7 +957,14 @@ export default function CallTasksPage() {
             по клиенту и контроль просрочек.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-muted-foreground">Показать</span>
+            <HelpTooltip>
+              Фильтр меняет набор задач на экране и в верхней сводке. Клиенты
+              внутри выбранной задачи фильтруются отдельно ниже.
+            </HelpTooltip>
+          </div>
           <Select
             value={status}
             onValueChange={(value) => setStatus(value as TaskFilterStatus)}
@@ -695,6 +994,42 @@ export default function CallTasksPage() {
         </div>
       </div>
 
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+        <MetricCard
+          icon={<ListChecks className="h-4 w-4" />}
+          label="Задач"
+          tooltip="Количество задач в выбранном фильтре: активные, архив, готовые или все."
+          value={report?.tasksCount ?? 0}
+        />
+        <MetricCard
+          label="Клиентов"
+          tooltip="Суммарное количество клиентов внутри задач, которые сейчас попали в фильтр."
+          value={(report?.totalClientCount ?? 0).toLocaleString('ru-RU')}
+        />
+        <MetricCard
+          label="Контакт"
+          tooltip="Доля клиентов, по которым уже есть результат звонка. Формула: все статусы кроме «Не звонили» / все клиенты."
+          value={formatPercent(report?.metrics.contactRate)}
+        />
+        <MetricCard
+          label="Запись"
+          tooltip="Конверсия в запись среди тех, с кем уже был контакт. Формула: «Записался» / все клиенты не в статусе «Не звонили»."
+          value={formatPercent(report?.metrics.conversionRate)}
+        />
+        <MetricCard
+          label="Просрочено"
+          tooltip="Клиенты, у которых прошел дедлайн обзвона и статус еще не финальный. Финальные статусы: «Записался» и «Отказ»."
+          value={report?.overdueCount ?? 0}
+          valueClassName={report?.overdueCount ? 'text-destructive' : ''}
+        />
+        <MetricCard
+          icon={<BarChart3 className="h-4 w-4" />}
+          label="Попыток"
+          tooltip="Количество сохраненных записей в истории попыток звонка по клиентам из выбранных задач."
+          value={report?.attemptsCount ?? 0}
+        />
+      </div>
+
       <div className="grid min-h-[520px] grid-cols-1 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
         <div className="rounded-md border bg-card">
           <div className="flex items-center justify-between border-b px-4 py-3">
@@ -707,79 +1042,7 @@ export default function CallTasksPage() {
                 Активных задач обзвона пока нет.
               </div>
             )}
-            {tasks.map((task) => {
-              const progress = getTaskProgress(task);
-              const isSelected = selectedTask?.id === task.id;
-
-              return (
-                <ContextMenu key={task.id}>
-                  <ContextMenuTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => void openTask(task)}
-                      className={`block w-full px-4 py-3 text-left transition-colors hover:bg-muted/60 ${
-                        isSelected ? 'bg-muted' : ''
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <div className="truncate font-medium">{task.title}</div>
-                          <div className="mt-1 truncate text-xs text-muted-foreground">
-                            {task.clientBase?.name || 'Без базы'} ·{' '}
-                            {task.assignedTo?.name || 'без исполнителя'}
-                          </div>
-                        </div>
-                        <Badge variant="outline">
-                          {TASK_STATUS_LABELS[task.status]}
-                        </Badge>
-                      </div>
-                      <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <div className="text-muted-foreground">Готово</div>
-                          <div className="font-medium">
-                            {progress.done}/{progress.total}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">Просрочено</div>
-                          <div
-                            className={
-                              task.overdueCount > 0
-                                ? 'font-medium text-destructive'
-                                : 'font-medium'
-                            }
-                          >
-                            {task.overdueCount}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-muted-foreground">В базе</div>
-                          <div className="font-medium">
-                            {task.currentBaseClientCount ?? '-'}
-                          </div>
-                        </div>
-                      </div>
-                      {task.newInBaseCount ? (
-                        <div className="mt-2 text-xs text-primary">
-                          +{task.newInBaseCount} новых клиентов в базе
-                        </div>
-                      ) : null}
-                    </button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuLabel>Действия с задачей</ContextMenuLabel>
-                    <ContextMenuItem
-                      onSelect={() => void openTask(task)}
-                    >
-                      <PhoneCall className="h-4 w-4" />
-                      Открыть
-                    </ContextMenuItem>
-                    <ContextMenuSeparator />
-                    {renderTaskActionItems(task)}
-                  </ContextMenuContent>
-                </ContextMenu>
-              );
-            })}
+            {tasks.map((task) => renderTaskCard(task))}
           </div>
         </div>
 
@@ -803,6 +1066,11 @@ export default function CallTasksPage() {
                           ? 'Автообновляемая'
                           : 'Фиксированная'}
                       </Badge>
+                      <HelpTooltip>
+                        {selectedTask.scopeType === 'dynamic'
+                          ? 'CRM сверяет задачу с фильтром базы и добавляет новых подходящих клиентов. Клиенты с историей звонков не удаляются молча.'
+                          : 'Список клиентов был зафиксирован в момент создания задачи и не меняется автоматически.'}
+                      </HelpTooltip>
                     </div>
                     <div className="mt-1 text-sm text-muted-foreground">
                       {selectedTask.clientBase?.name || 'Без базы'} · дедлайн:{' '}
@@ -904,28 +1172,76 @@ export default function CallTasksPage() {
 
                 <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-5">
                   <div>
-                    <div className="text-muted-foreground">Всего</div>
+                    <MetricLabel tooltip="Сколько клиентов находится в выбранной задаче сейчас.">
+                      Всего
+                    </MetricLabel>
                     <div className="font-semibold">{selectedProgress.total}</div>
                   </div>
                   <div>
-                    <div className="text-muted-foreground">Записались</div>
+                    <MetricLabel tooltip="Клиенты со статусом «Записался». Это основной успешный результат обзвона.">
+                      Записались
+                    </MetricLabel>
                     <div className="font-semibold">{selectedTask.counts.booked}</div>
                   </div>
                   <div>
-                    <div className="text-muted-foreground">Перезвонить</div>
+                    <MetricLabel tooltip="Клиенты, по которым нужен следующий контакт. Дедлайн по клиенту помогает не пропустить срок.">
+                      Перезвонить
+                    </MetricLabel>
                     <div className="font-semibold">
                       {selectedTask.counts.callback}
                     </div>
                   </div>
                   <div>
-                    <div className="text-muted-foreground">Сомневаются</div>
+                    <MetricLabel tooltip="Клиенты, которые не отказались, но пока не готовы записаться. Обычно требуют повторного касания.">
+                      Сомневаются
+                    </MetricLabel>
                     <div className="font-semibold">
                       {selectedTask.counts.doubting}
                     </div>
                   </div>
                   <div>
-                    <div className="text-muted-foreground">Отказы</div>
+                    <MetricLabel tooltip="Клиенты с финальным отрицательным результатом. Они считаются закрытыми в этой задаче.">
+                      Отказы
+                    </MetricLabel>
                     <div className="font-semibold">{selectedTask.counts.refused}</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
+                  <div className="rounded-md border px-3 py-2">
+                    <MetricLabel tooltip="Доля клиентов, у которых статус уже изменился с «Не звонили» на любой результат.">
+                      Контакт
+                    </MetricLabel>
+                    <div className="font-semibold">
+                      {formatPercent(selectedTask.metrics?.contactRate)}
+                    </div>
+                  </div>
+                  <div className="rounded-md border px-3 py-2">
+                    <MetricLabel tooltip="Доля «Записался» среди клиентов, по которым уже был контакт.">
+                      Конверсия в запись
+                    </MetricLabel>
+                    <div className="font-semibold">
+                      {formatPercent(selectedTask.metrics?.conversionRate)}
+                    </div>
+                  </div>
+                  <div className="rounded-md border px-3 py-2">
+                    <MetricLabel tooltip="Доля клиентов с финальным статусом: «Записался» или «Отказ».">
+                      Закрыто
+                    </MetricLabel>
+                    <div className="font-semibold">
+                      {formatPercent(selectedTask.metrics?.completionRate)}
+                    </div>
+                  </div>
+                  <div className="rounded-md border px-3 py-2">
+                    <MetricLabel tooltip="Доля клиентов в задаче, у которых прошел дедлайн и статус еще не финальный.">
+                      Просрочка
+                    </MetricLabel>
+                    <div
+                      className={`font-semibold ${
+                        selectedTask.overdueCount > 0 ? 'text-destructive' : ''
+                      }`}
+                    >
+                      {formatPercent(selectedTask.metrics?.overdueRate)}
+                    </div>
                   </div>
                 </div>
                 {selectedTask.membershipDiff &&
@@ -933,7 +1249,15 @@ export default function CallTasksPage() {
                     selectedTask.membershipDiff.removedCount > 0 ||
                     selectedTask.membershipDiff.updatedCount > 0) && (
                     <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
-                      <span className="font-medium">Расхождение с базой: </span>
+                      <span className="inline-flex items-center gap-1.5 font-medium">
+                        Расхождение с базой
+                        <HelpTooltip>
+                          Показывает, как текущий фильтр базы отличается от
+                          состава задачи: кто добавился, кто выпал из фильтра и
+                          у кого изменились данные снапшота.
+                        </HelpTooltip>
+                        :
+                      </span>{' '}
                       новых {selectedTask.membershipDiff.addedCount}, выпали{' '}
                       {selectedTask.membershipDiff.removedCount}, изменились{' '}
                       {selectedTask.membershipDiff.updatedCount}.
@@ -974,16 +1298,64 @@ export default function CallTasksPage() {
                 </div>
               </div>
 
+              {selectedClientIds.length > 0 && (
+                <div className="flex flex-col gap-2 border-b bg-muted/35 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="text-sm">
+                    Выбрано клиентов: <span className="font-medium">{selectedClientIds.length}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={() => setSelectedClientIds([])}
+                    >
+                      Снять выбор
+                    </Button>
+                    {!selectedTaskIsReadOnly && (
+                      <Button onClick={openBulkDialog}>
+                        <ListChecks className="mr-2 h-4 w-4" />
+                        Массовое действие
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               <div className="overflow-x-auto">
-                <Table className="min-w-[920px] table-fixed">
+                <Table className="min-w-[980px] table-fixed">
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-[44px]">
+                        <input
+                          type="checkbox"
+                          checked={allClientsOnPageSelected}
+                          disabled={clients.length === 0 || selectedTaskIsReadOnly}
+                          onChange={toggleAllClientsOnPage}
+                          className="h-4 w-4"
+                          aria-label="Выбрать всех клиентов на странице"
+                        />
+                      </TableHead>
                       <TableHead className="w-[24%]">Клиент</TableHead>
                       <TableHead className="w-[16%]">Телефон</TableHead>
-                      <TableHead className="w-[13%]">Визиты</TableHead>
-                      <TableHead className="w-[16%]">Статус</TableHead>
-                      <TableHead className="w-[15%]">Дедлайн</TableHead>
-                      <TableHead className="w-[16%]">Комментарий</TableHead>
+                      <TableHead className="w-[13%]">
+                        <MetricLabel tooltip="Сверху количество визитов клиента, ниже дата последнего визита.">
+                          Визиты
+                        </MetricLabel>
+                      </TableHead>
+                      <TableHead className="w-[16%]">
+                        <MetricLabel tooltip="Текущий результат работы по клиенту в этой задаче обзвона.">
+                          Статус
+                        </MetricLabel>
+                      </TableHead>
+                      <TableHead className="w-[15%]">
+                        <MetricLabel tooltip="Срок, до которого нужно обработать конкретного клиента. Может быть задан сроком прозвона базы, дедлайном задачи или вручную.">
+                          Дедлайн
+                        </MetricLabel>
+                      </TableHead>
+                      <TableHead className="w-[16%]">
+                        <MetricLabel tooltip="Последнее саммари по клиенту в этой задаче. Полная история открывается через кнопку результата звонка.">
+                          Комментарий
+                        </MetricLabel>
+                      </TableHead>
                       <TableHead className="w-[92px] text-right"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -991,7 +1363,7 @@ export default function CallTasksPage() {
                     {clientsLoading && (
                       <TableRow>
                         <TableCell
-                          colSpan={7}
+                          colSpan={8}
                           className="py-10 text-center text-muted-foreground"
                         >
                           Загрузка клиентов...
@@ -1001,7 +1373,7 @@ export default function CallTasksPage() {
                     {!clientsLoading && clients.length === 0 && (
                       <TableRow>
                         <TableCell
-                          colSpan={7}
+                          colSpan={8}
                           className="py-10 text-center text-muted-foreground"
                         >
                           Клиенты не найдены.
@@ -1011,6 +1383,16 @@ export default function CallTasksPage() {
                     {!clientsLoading &&
                       clients.map((client) => (
                         <TableRow key={client.id}>
+                          <TableCell>
+                            <input
+                              type="checkbox"
+                              checked={selectedClientIds.includes(client.id)}
+                              disabled={selectedTaskIsReadOnly}
+                              onChange={() => toggleClientSelection(client.id)}
+                              className="h-4 w-4"
+                              aria-label={`Выбрать ${client.clientName}`}
+                            />
+                          </TableCell>
                           <TableCell>
                             <div className="min-w-0">
                               <div className="truncate font-medium">
@@ -1115,7 +1497,13 @@ export default function CallTasksPage() {
           <form onSubmit={saveAttempt} className="space-y-4 pt-2">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="mb-1 block text-xs font-medium">Статус</label>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Статус
+                  <HelpTooltip>
+                    Результат последнего контакта с клиентом. По нему строится
+                    прогресс задачи и отчет по обзвону.
+                  </HelpTooltip>
+                </label>
                 <Select
                   value={attemptForm.status}
                   onValueChange={(statusValue) =>
@@ -1138,8 +1526,13 @@ export default function CallTasksPage() {
                 </Select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium">
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
                   Дедлайн по клиенту
+                  <HelpTooltip>
+                    Индивидуальный срок следующего действия по этому клиенту.
+                    Если срок прошел и статус не финальный, клиент попадет в
+                    просрочку.
+                  </HelpTooltip>
                 </label>
                 <Input
                   type="datetime-local"
@@ -1155,7 +1548,14 @@ export default function CallTasksPage() {
             </div>
 
             <div>
-              <label className="mb-1 block text-xs font-medium">Саммари</label>
+              <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                Саммари
+                <HelpTooltip>
+                  Коротко запишите итог разговора: что сказал клиент, когда
+                  перезвонить и о чем договорились. Это сохранится в истории
+                  попыток.
+                </HelpTooltip>
+              </label>
               <textarea
                 required
                 value={attemptForm.summary}
@@ -1233,7 +1633,13 @@ export default function CallTasksPage() {
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <div>
-                <label className="mb-1 block text-xs font-medium">Режим</label>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Режим
+                  <HelpTooltip>
+                    Фиксированный список не меняется после создания. Автообновляемая
+                    задача подтягивает новых клиентов из фильтра базы.
+                  </HelpTooltip>
+                </label>
                 <Select
                   value={taskForm.scopeType}
                   onValueChange={(value) =>
@@ -1253,8 +1659,13 @@ export default function CallTasksPage() {
                 </Select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium">
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
                   Исполнитель
+                  <HelpTooltip>
+                    Аккаунт, который будет работать с задачей. Руководители
+                    видят все задачи, администратор видит назначенные ему и
+                    неназначенные.
+                  </HelpTooltip>
                 </label>
                 <Select
                   value={taskForm.assignedToAccountId}
@@ -1281,7 +1692,13 @@ export default function CallTasksPage() {
                 </Select>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium">Дедлайн</label>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Дедлайн
+                  <HelpTooltip>
+                    Общий срок задачи. Если у базы задан срок прозвона, у
+                    клиентов будет свой дедлайн от даты создания задачи.
+                  </HelpTooltip>
+                </label>
                 <Input
                   type="datetime-local"
                   value={taskForm.dueAt}
@@ -1306,6 +1723,95 @@ export default function CallTasksPage() {
             <Button type="submit" disabled={savingTask} className="w-full">
               <Save className="mr-2 h-4 w-4" />
               {savingTask ? 'Сохраняем...' : 'Сохранить задачу'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={bulkDialogOpen} onOpenChange={setBulkDialogOpen}>
+        <DialogContent className="sm:max-w-[620px]">
+          <DialogHeader>
+            <DialogTitle>Массовое действие</DialogTitle>
+            <DialogDescription>
+              Обновятся выбранные клиенты текущей задачи. Для каждого клиента
+              сохранится запись в истории попыток.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={saveBulkAction} className="space-y-4 pt-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Статус
+                  <HelpTooltip>
+                    Можно массово перевести выбранных клиентов в один результат
+                    или оставить статус без изменений.
+                  </HelpTooltip>
+                </label>
+                <Select
+                  value={bulkForm.status}
+                  onValueChange={(statusValue) =>
+                    setBulkForm({
+                      ...bulkForm,
+                      status: statusValue as BulkFormState['status'],
+                    })
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="keep">Не менять</SelectItem>
+                    {CLIENT_STATUSES.map((item) => (
+                      <SelectItem key={item} value={item}>
+                        {CLIENT_STATUS_LABELS[item]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Новый дедлайн
+                  <HelpTooltip>
+                    Поставит выбранным клиентам общий индивидуальный дедлайн.
+                    Если оставить пустым, текущие дедлайны не изменятся.
+                  </HelpTooltip>
+                </label>
+                <Input
+                  type="datetime-local"
+                  value={bulkForm.deadlineAt}
+                  onChange={(event) =>
+                    setBulkForm({ ...bulkForm, deadlineAt: event.target.value })
+                  }
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                Комментарий
+                <HelpTooltip>
+                  Комментарий добавится в историю попыток каждого выбранного
+                  клиента. При изменении только комментария время контакта не
+                  перезаписывается.
+                </HelpTooltip>
+              </label>
+              <textarea
+                value={bulkForm.summary}
+                onChange={(event) =>
+                  setBulkForm({ ...bulkForm, summary: event.target.value })
+                }
+                className="min-h-[110px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Например: массовая отметка после обзвона"
+              />
+            </div>
+
+            <Button type="submit" disabled={savingBulk} className="w-full">
+              <Save className="mr-2 h-4 w-4" />
+              {savingBulk
+                ? 'Сохраняем...'
+                : `Применить к ${selectedClientIds.length} клиентам`}
             </Button>
           </form>
         </DialogContent>

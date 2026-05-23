@@ -118,6 +118,22 @@ function parseFilters(filters) {
   return filters;
 }
 
+function baseTargetsOnlyActiveClients(base) {
+  const filters = parseFilters(base.filters);
+  const clientStatus = filters.status || 'active';
+
+  return clientStatus === 'active';
+}
+
+function assertBaseTargetsOnlyActiveClients(base) {
+  if (baseTargetsOnlyActiveClients(base)) return;
+
+  throw appError(
+    'Нельзя создать задачу обзвона по базе с архивными клиентами. В фильтре базы должен быть статус «Активные».',
+    409,
+  );
+}
+
 function isManager(actor) {
   return actor?.role === 'owner' || actor?.role === 'manager';
 }
@@ -181,7 +197,7 @@ function taskInclude() {
     {
       model: db.ClientBase,
       as: 'clientBase',
-      attributes: ['id', 'name', 'filters', 'status'],
+      attributes: ['id', 'name', 'filters', 'slaDays', 'status'],
     },
     {
       model: db.Account,
@@ -218,6 +234,23 @@ function emptyCounts() {
     new: 0,
     no_answer: 0,
     refused: 0,
+  };
+}
+
+function getTaskCompletionMetrics(counts, total, overdueCount = 0) {
+  const contactedCount = Math.max(0, total - Number(counts.new || 0));
+  const finishedCount = Number(counts.booked || 0) + Number(counts.refused || 0);
+  const bookedCount = Number(counts.booked || 0);
+
+  return {
+    bookedCount,
+    completionRate: total > 0 ? Math.round((finishedCount / total) * 1000) / 10 : 0,
+    contactedCount,
+    contactRate: total > 0 ? Math.round((contactedCount / total) * 1000) / 10 : 0,
+    conversionRate:
+      contactedCount > 0 ? Math.round((bookedCount / contactedCount) * 1000) / 10 : 0,
+    finishedCount,
+    overdueRate: total > 0 ? Math.round((overdueCount / total) * 1000) / 10 : 0,
   };
 }
 
@@ -311,6 +344,11 @@ async function mapTask(task, metricsByTask = new Map()) {
     description: raw.description || '',
     dueAt: raw.dueAt,
     id: raw.id,
+    metrics: getTaskCompletionMetrics(
+      metrics.counts,
+      metrics.total,
+      metrics.overdueCount,
+    ),
     newInBaseCount:
       currentBaseClientCount === null
         ? null
@@ -348,6 +386,54 @@ function mapSnapshotClient(client) {
   };
 }
 
+function getClientDeadlineAt(base, from = new Date(), fallbackDueAt = null) {
+  const slaDays = Number(base?.slaDays);
+  if (Number.isInteger(slaDays) && slaDays >= 0) {
+    if (slaDays === 0) {
+      const endOfDay = new Date(from);
+      endOfDay.setHours(23, 59, 59, 999);
+      return endOfDay;
+    }
+    return addDays(from, slaDays);
+  }
+
+  return fallbackDueAt || null;
+}
+
+async function getClientStatsForTask(clientId) {
+  const stats = await db.Visit.findOne({
+    attributes: [
+      [db.Sequelize.fn('COUNT', db.Sequelize.col('id')), 'visitCount'],
+      [db.Sequelize.fn('MAX', db.Sequelize.col('scannedAt')), 'lastVisitAt'],
+    ],
+    raw: true,
+    where: { userId: clientId },
+  });
+
+  return {
+    lastVisitAt: stats?.lastVisitAt || null,
+    visitCount: Number(stats?.visitCount || 0),
+  };
+}
+
+async function getClientSnapshotOrFail(clientId) {
+  const client = await db.User.findOne({
+    where: {
+      id: Number(clientId),
+      mergedIntoUserId: null,
+    },
+  });
+  if (!client) throw appError('Клиент не найден', 404);
+  if (client.status !== 'active') {
+    throw appError('Нельзя создать задачу по архивному клиенту', 409);
+  }
+
+  return {
+    ...client.toJSON(),
+    stats: await getClientStatsForTask(client.id),
+  };
+}
+
 function getSnapshotUpdatePayload(row, client) {
   const next = mapSnapshotClient(client);
   const payload = {};
@@ -368,6 +454,8 @@ function getSnapshotUpdatePayload(row, client) {
 }
 
 async function getBaseSnapshotClients(base, options = {}) {
+  assertBaseTargetsOnlyActiveClients(base);
+
   const filters = parseFilters(base.filters);
   const clients = await clientsService.listClientsForSnapshot(filters, {
     limit: options.limit || 20000,
@@ -395,6 +483,7 @@ async function syncDynamicTask(task) {
   if (raw.scopeType !== 'dynamic' || !raw.clientBase) return emptyResult;
   if (raw.status === 'archived' || raw.status === 'done') return emptyResult;
   if (raw.clientBase.status !== 'active') return emptyResult;
+  if (!baseTargetsOnlyActiveClients(raw.clientBase)) return emptyResult;
 
   return db.sequelize.transaction(async (transaction) => {
     const currentClients = await getBaseSnapshotClients(raw.clientBase);
@@ -446,7 +535,7 @@ async function syncDynamicTask(task) {
         missingClients.map((client) => ({
           ...mapSnapshotClient(client),
           callTaskId: raw.id,
-          deadlineAt: raw.dueAt || null,
+          deadlineAt: getClientDeadlineAt(raw.clientBase, new Date(), raw.dueAt),
           status: 'new',
         })),
         {
@@ -478,6 +567,9 @@ async function syncDynamicTask(task) {
 async function getTaskMembershipDiff(task) {
   const raw = task.toJSON ? task.toJSON() : task;
   if (!raw.clientBase || raw.clientBase.status !== 'active') {
+    return null;
+  }
+  if (!baseTargetsOnlyActiveClients(raw.clientBase)) {
     return null;
   }
 
@@ -528,6 +620,7 @@ async function createTaskForBase({
     normalizeText(data.title) ||
     `${base.name}: обзвон ${formatDateForTitle(now)}`;
   const dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
+  const clientDeadlineAt = getClientDeadlineAt(base, now, dueAt);
   const scopeType = normalizeScopeType(data.scopeType);
   const assignedToAccountId = await normalizeAssigneeId(
     data.assignedToAccountId,
@@ -554,7 +647,7 @@ async function createTaskForBase({
       snapshotClients.map((client) => ({
         ...mapSnapshotClient(client),
         callTaskId: createdTask.id,
-        deadlineAt: dueAt,
+        deadlineAt: clientDeadlineAt,
         status: 'new',
       })),
       { transaction },
@@ -573,7 +666,51 @@ async function createTaskForBase({
   return createdTask;
 }
 
-async function list(actor, query = {}) {
+async function createForClient(actor, clientId, data = {}) {
+  assertCanManageTask(actor);
+
+  const client = await getClientSnapshotOrFail(clientId);
+  const dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
+  const assignedToAccountId = await normalizeAssigneeId(data.assignedToAccountId);
+  const title = normalizeText(data.title) || `Обзвон: ${client.name}`;
+
+  if (title.length < 2) {
+    throw appError('Название задачи слишком короткое');
+  }
+
+  const createdTask = await db.sequelize.transaction(async (transaction) => {
+    const task = await db.CallTask.create(
+      {
+        assignedToAccountId,
+        clientBaseId: null,
+        createdByAccountId: actor?.id || null,
+        description: normalizeText(data.description),
+        dueAt,
+        scopeType: 'snapshot',
+        snapshotClientCount: 1,
+        status: 'backlog',
+        title,
+      },
+      { transaction },
+    );
+
+    await db.CallTaskClient.create(
+      {
+        ...mapSnapshotClient(client),
+        callTaskId: task.id,
+        deadlineAt: dueAt,
+        status: 'new',
+      },
+      { transaction },
+    );
+
+    return task;
+  });
+
+  return getOne(actor, createdTask.id);
+}
+
+function buildTaskWhere(actor, query = {}) {
   const where = {};
   const status = query.status || 'active';
 
@@ -594,6 +731,12 @@ async function list(actor, query = {}) {
       { assignedToAccountId: actor.id },
     ];
   }
+
+  return where;
+}
+
+async function list(actor, query = {}) {
+  const where = buildTaskWhere(actor, query);
 
   const tasks = await db.CallTask.findAll({
     where,
@@ -911,6 +1054,175 @@ async function addAttempt(actor, taskClientId, data = {}) {
   );
 }
 
+function normalizeTaskClientIds(value) {
+  const ids = Array.isArray(value) ? value : [];
+  const normalized = Array.from(
+    new Set(
+      ids
+        .map((id) => Number(id))
+        .filter((id) => Number.isInteger(id) && id > 0),
+    ),
+  );
+
+  if (normalized.length === 0) {
+    throw appError('Выберите клиентов для массового действия');
+  }
+  if (normalized.length > 500) {
+    throw appError('За один раз можно обновить не больше 500 клиентов');
+  }
+
+  return normalized;
+}
+
+async function bulkUpdateClients(actor, taskId, data = {}) {
+  const task = await getTaskOrFail(taskId);
+  assertCanWorkTask(actor, task);
+  if (task.status === 'archived') {
+    throw appError('Архивная задача доступна только для просмотра', 409);
+  }
+  if (task.status === 'done') {
+    throw appError('Завершенная задача доступна только для просмотра', 409);
+  }
+
+  const taskClientIds = normalizeTaskClientIds(data.taskClientIds);
+  const hasStatus = 'status' in data && data.status !== '' && data.status !== null;
+  const hasDeadline = 'deadlineAt' in data;
+  const hasSummary = 'summary' in data;
+  if (!hasStatus && !hasDeadline && !hasSummary) {
+    throw appError('Укажите, что нужно изменить');
+  }
+
+  const status = hasStatus ? normalizeClientStatus(data.status) : null;
+  const deadlineAt = hasDeadline
+    ? normalizeDateTime(data.deadlineAt, 'дедлайн клиентов')
+    : undefined;
+  const summary = hasSummary ? normalizeText(data.summary) : undefined;
+  const now = new Date();
+
+  const result = await db.sequelize.transaction(async (transaction) => {
+    const rows = await db.CallTaskClient.findAll({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: {
+        callTaskId: task.id,
+        id: { [Op.in]: taskClientIds },
+      },
+    });
+
+    if (rows.length !== taskClientIds.length) {
+      throw appError('Часть клиентов не найдена в этой задаче', 404);
+    }
+
+    for (const row of rows) {
+      const nextStatus = status || row.status;
+      const nextDeadlineAt = deadlineAt === undefined ? row.deadlineAt : deadlineAt;
+      const nextSummary = summary === undefined ? row.summary : summary;
+      const nextContactedAt =
+        hasStatus && nextStatus !== 'new' ? now : row.contactedAt;
+
+      await db.CallTaskAttempt.create(
+        {
+          actorAccountId: actor?.id || null,
+          callTaskClientId: row.id,
+          deadlineAt: nextDeadlineAt,
+          status: nextStatus,
+          summary: summary === undefined ? 'Массовое обновление' : summary,
+        },
+        { transaction },
+      );
+
+      await row.update(
+        {
+          contactedAt: nextContactedAt,
+          deadlineAt: nextDeadlineAt,
+          status: nextStatus,
+          summary: nextSummary,
+        },
+        { transaction },
+      );
+    }
+
+    return rows.length;
+  });
+
+  return {
+    updatedCount: result,
+  };
+}
+
+async function getReport(actor, query = {}) {
+  const where = buildTaskWhere(actor, query);
+  const createdFrom = normalizeDateTime(query.createdFrom, 'начало периода');
+  const createdTo = normalizeDateTime(query.createdTo, 'конец периода');
+  if (createdFrom || createdTo) {
+    where.createdAt = {};
+    if (createdFrom) where.createdAt[Op.gte] = createdFrom;
+    if (createdTo) where.createdAt[Op.lte] = createdTo;
+  }
+
+  const tasks = await db.CallTask.findAll({
+    where,
+    include: taskInclude(),
+  });
+
+  await Promise.all(
+    tasks
+      .filter((task) => task.scopeType === 'dynamic')
+      .map((task) => syncDynamicTask(task)),
+  );
+
+  const taskIds = (
+    await db.CallTask.findAll({
+      attributes: ['id'],
+      raw: true,
+      where,
+    })
+  ).map((task) => Number(task.id));
+
+  if (taskIds.length === 0) {
+    return {
+      attemptsCount: 0,
+      counts: emptyCounts(),
+      metrics: getTaskCompletionMetrics(emptyCounts(), 0, 0),
+      overdueCount: 0,
+      tasksCount: 0,
+      totalClientCount: 0,
+    };
+  }
+
+  const metricsByTask = await getTaskClientMetrics(taskIds);
+  const counts = emptyCounts();
+  let overdueCount = 0;
+  let totalClientCount = 0;
+  metricsByTask.forEach((metrics) => {
+    totalClientCount += metrics.total;
+    overdueCount += metrics.overdueCount;
+    Object.keys(counts).forEach((key) => {
+      counts[key] += Number(metrics.counts[key] || 0);
+    });
+  });
+
+  const attemptsCount = await db.CallTaskAttempt.count({
+    include: [
+      {
+        model: db.CallTaskClient,
+        as: 'taskClient',
+        required: true,
+        where: { callTaskId: { [Op.in]: taskIds } },
+      },
+    ],
+  });
+
+  return {
+    attemptsCount,
+    counts,
+    metrics: getTaskCompletionMetrics(counts, totalClientCount, overdueCount),
+    overdueCount,
+    tasksCount: taskIds.length,
+    totalClientCount,
+  };
+}
+
 async function sync(actor, id) {
   const task = await getTaskOrFail(id);
   assertCanManageTask(actor);
@@ -1042,14 +1354,48 @@ async function removeArchived(actor, id) {
     throw appError('Удалять безвозвратно можно только задачи из архива', 409);
   }
 
+  const taskClients = await db.CallTaskClient.findAll({
+    attributes: ['id', 'status', 'summary', 'contactedAt'],
+    where: { callTaskId: task.id },
+  });
+  const clientIds = taskClients.map((client) => client.id);
+  const attemptsCount =
+    clientIds.length === 0
+      ? 0
+      : await db.CallTaskAttempt.count({
+          where: {
+            callTaskClientId: {
+              [Op.in]: clientIds,
+            },
+          },
+        });
+  const hasCallHistory =
+    attemptsCount > 0 ||
+    taskClients.some(
+      (client) =>
+        client.status !== 'new' ||
+        Boolean(String(client.summary || '').trim()) ||
+        Boolean(client.contactedAt),
+    );
+
+  if (hasCallHistory) {
+    throw appError(
+      'Задачу нельзя удалить безвозвратно: по ней уже есть история обзвона. Оставьте ее в архиве.',
+      409,
+    );
+  }
+
   await task.destroy();
   return { success: true };
 }
 
 module.exports = {
   addAttempt,
+  bulkUpdateClients,
+  createForClient,
   createFromBase,
   getOne,
+  getReport,
   list,
   listTaskClients,
   removeArchived,

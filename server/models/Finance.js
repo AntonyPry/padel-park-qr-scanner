@@ -19,7 +19,18 @@ module.exports = (sequelize, DataTypes) => {
     comment: {
       type: DataTypes.TEXT,
     },
+    createdByAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
   });
+
+  Finance.associate = (models) => {
+    Finance.belongsTo(models.Account, {
+      as: 'createdBy',
+      foreignKey: 'createdByAccountId',
+    });
+  };
 
   return Finance;
 };

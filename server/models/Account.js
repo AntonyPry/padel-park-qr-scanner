@@ -38,6 +38,38 @@ module.exports = (sequelize, DataTypes) => {
       as: 'approvedShifts',
       foreignKey: 'approvedByAccountId',
     });
+    Account.hasMany(models.Shift, {
+      as: 'archivedShifts',
+      foreignKey: 'archivedByAccountId',
+    });
+    Account.hasMany(models.Finance, {
+      as: 'createdFinanceRecords',
+      foreignKey: 'createdByAccountId',
+    });
+    Account.hasMany(models.PayrollPeriod, {
+      as: 'reviewedPayrollPeriods',
+      foreignKey: 'reviewedByAccountId',
+    });
+    Account.hasMany(models.PayrollPeriod, {
+      as: 'approvedPayrollPeriods',
+      foreignKey: 'approvedByAccountId',
+    });
+    Account.hasMany(models.PayrollPeriod, {
+      as: 'paidPayrollPeriods',
+      foreignKey: 'paidByAccountId',
+    });
+    Account.hasMany(models.FinanceChangeLog, {
+      as: 'financeChangeLogs',
+      foreignKey: 'accountId',
+    });
+    Account.hasMany(models.ScannerEvent, {
+      as: 'scannerEvents',
+      foreignKey: 'accountId',
+    });
+    Account.hasMany(models.Visit, {
+      as: 'issuedVisitKeys',
+      foreignKey: 'keyIssuedByAccountId',
+    });
     Account.hasMany(models.TrainingNote, {
       as: 'trainingNotes',
       foreignKey: 'trainerAccountId',
@@ -53,6 +85,10 @@ module.exports = (sequelize, DataTypes) => {
     Account.hasMany(models.CallTaskAttempt, {
       as: 'callTaskAttempts',
       foreignKey: 'actorAccountId',
+    });
+    Account.hasMany(models.ClientSavedView, {
+      as: 'clientSavedViews',
+      foreignKey: 'accountId',
     });
   };
 

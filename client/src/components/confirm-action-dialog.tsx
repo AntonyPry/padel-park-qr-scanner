@@ -11,6 +11,7 @@ import {
 export interface ConfirmAction {
   confirmLabel: string;
   description: string;
+  hideCancel?: boolean;
   isDestructive?: boolean;
   title: string;
 }
@@ -41,9 +42,16 @@ export function ConfirmActionDialog({
           <DialogDescription>{action?.description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
-            Отмена
-          </Button>
+          {!action?.hideCancel && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={onCancel}
+              disabled={loading}
+            >
+              Отмена
+            </Button>
+          )}
           <Button
             type="button"
             variant={action?.isDestructive ? 'destructive' : 'default'}

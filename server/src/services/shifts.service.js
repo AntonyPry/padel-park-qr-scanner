@@ -1,4 +1,5 @@
 const db = require('../../models');
+const payrollService = require('./payroll.service');
 
 const SHIFT_INCLUDE = [{ model: db.Staff, attributes: ['id', 'name', 'role'] }];
 
@@ -25,7 +26,7 @@ function normalizeHours(hours) {
 
 async function getActive() {
   return db.Shift.findOne({
-    where: { status: 'active' },
+    where: { status: 'active', archivedAt: null },
     include: SHIFT_INCLUDE,
     order: [['startedAt', 'DESC']],
   });
@@ -66,12 +67,26 @@ async function resolveShiftOwner({ staffId, adminName }) {
   };
 }
 
-async function create(data) {
+function assertManualAdjustmentReason(data) {
+  const manualAdjustment = Number(data.manualAdjustment) || 0;
+  const comment = String(data.comment || '').trim();
+
+  if (manualAdjustment !== 0 && !comment) {
+    const error = new Error('Укажите причину ручной корректировки зарплаты');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+async function create(data, account) {
   const { date, hours, manualAdjustment, comment } = data;
+  await payrollService.assertDateEditable(date, 'смену');
+  assertManualAdjustmentReason(data);
+
   const owner = await resolveShiftOwner(data);
   const normalizedHours = normalizeHours(hours);
 
-  return db.Shift.create({
+  const shift = await db.Shift.create({
     date,
     ...owner,
     hours: normalizedHours,
@@ -80,16 +95,40 @@ async function create(data) {
     comment,
     status: data.status || 'closed',
   });
+
+  await payrollService.recordChange({
+    action: 'shift.create',
+    entityType: 'shift',
+    entityId: shift.id,
+    account,
+    date,
+    reason: comment,
+    afterData: shift.toJSON(),
+  });
+
+  return shift;
 }
 
-async function update(data) {
+async function update(data, account) {
   const { id, date, hours, manualAdjustment, comment } = data;
   const shift = await db.Shift.findByPk(id);
 
   if (!shift) return null;
+  if (shift.archivedAt) {
+    const error = new Error('Архивную смену нельзя редактировать');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  await payrollService.assertDateEditable(shift.date, 'смену');
+  if (date && date !== shift.date) {
+    await payrollService.assertDateEditable(date, 'смену');
+  }
+  assertManualAdjustmentReason(data);
 
   const owner = await resolveShiftOwner(data);
   const normalizedHours = normalizeHours(hours);
+  const before = shift.toJSON();
 
   await shift.update({
     date,
@@ -101,11 +140,45 @@ async function update(data) {
     status: data.status || shift.status || 'closed',
   });
 
+  await payrollService.recordChange({
+    action: 'shift.update',
+    entityType: 'shift',
+    entityId: shift.id,
+    account,
+    date: shift.date,
+    reason: comment,
+    beforeData: before,
+    afterData: shift.toJSON(),
+  });
+
   return shift;
 }
 
-async function remove(id) {
-  return db.Shift.destroy({ where: { id } });
+async function remove(id, account, reason) {
+  const shift = await db.Shift.findByPk(id);
+  if (!shift) return null;
+  if (shift.archivedAt) return shift;
+
+  await payrollService.assertDateEditable(shift.date, 'смену');
+  const before = shift.toJSON();
+  await shift.update({
+    archivedAt: new Date(),
+    archivedByAccountId: account?.id || null,
+    archiveReason: reason ? String(reason).trim() : null,
+  });
+
+  await payrollService.recordChange({
+    action: 'shift.archive',
+    entityType: 'shift',
+    entityId: shift.id,
+    account,
+    date: shift.date,
+    reason,
+    beforeData: before,
+    afterData: shift.toJSON(),
+  });
+
+  return shift;
 }
 
 async function startActive(account) {
@@ -123,8 +196,11 @@ async function startActive(account) {
     throw error;
   }
 
-  return db.Shift.create({
-    date: getMoscowDateString(),
+  const date = getMoscowDateString();
+  await payrollService.assertDateEditable(date, 'смену');
+
+  const shift = await db.Shift.create({
+    date,
     staffId: staff.id,
     adminName: staff.name,
     hours: 0,
@@ -134,6 +210,17 @@ async function startActive(account) {
     manualAdjustment: 0,
     comment: 'Смена начата через трекер администратора',
   });
+
+  await payrollService.recordChange({
+    action: 'shift.start',
+    entityType: 'shift',
+    entityId: shift.id,
+    account,
+    date,
+    afterData: shift.toJSON(),
+  });
+
+  return shift;
 }
 
 async function endActive(account) {
@@ -152,12 +239,23 @@ async function endActive(account) {
     Math.round(Math.max(0, (endedAt.getTime() - startedAt.getTime()) / 3600000) * 10) /
     10;
 
+  const before = activeShift.toJSON();
   await activeShift.update({
     endedAt,
     hours: actualHours,
     actualHours,
     status: 'closed',
     approvedByAccountId: account.id,
+  });
+
+  await payrollService.recordChange({
+    action: 'shift.close',
+    entityType: 'shift',
+    entityId: activeShift.id,
+    account,
+    date: activeShift.date,
+    beforeData: before,
+    afterData: activeShift.toJSON(),
   });
 
   return db.Shift.findByPk(activeShift.id, { include: SHIFT_INCLUDE });

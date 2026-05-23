@@ -9,7 +9,6 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -41,17 +40,27 @@ import {
   Archive,
   ArchiveRestore,
   CheckCircle2,
+  Download,
+  Lock,
   Pencil,
+  RotateCcw,
   Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch } from '@/lib/api';
-import { canManageShifts, canManageStaff } from '@/lib/permissions';
+import {
+  canApprovePayroll,
+  canManageShifts,
+  canManageStaff,
+  canPayPayroll,
+  canReviewPayroll,
+} from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { MetricCard } from '@/components/dashboard-metric';
 
 interface AdminStat {
   staffId?: number | null;
@@ -59,6 +68,8 @@ interface AdminStat {
   totalShifts: number;
   totalHours: number;
   basePay: number;
+  calculatedBonusPay?: number;
+  manualAdjustmentTotal?: number;
   bonusPay: number;
   totalPay: number;
 }
@@ -75,6 +86,7 @@ interface ShiftRecord {
   id: number | string;
   isDraft: boolean;
   date: string;
+  status?: string;
   staffId?: number | null;
   adminName: string | null;
   hours: number;
@@ -82,9 +94,32 @@ interface ShiftRecord {
   basePay: number;
   calculatedBonus?: number;
   manualAdjustment?: number;
+  comment?: string;
   bonus: number;
   total: number;
   items: PayrollItem[];
+}
+
+interface PayrollPeriod {
+  id: number;
+  fromDate: string;
+  toDate: string;
+  status: 'draft' | 'reviewed' | 'approved' | 'paid';
+  note?: string;
+  reviewedAt?: string | null;
+  approvedAt?: string | null;
+  paidAt?: string | null;
+  updatedAt?: string | null;
+  reviewedBy?: PayrollActor | null;
+  approvedBy?: PayrollActor | null;
+  paidBy?: PayrollActor | null;
+}
+
+interface PayrollActor {
+  id?: number;
+  email?: string;
+  name?: string;
+  role?: string;
 }
 
 interface StaffMember {
@@ -111,13 +146,30 @@ function getStaffPosition(staff: StaffMember) {
   return staff.position || staff.role || '-';
 }
 
+function formatActor(actor?: PayrollActor | null) {
+  if (!actor) return '-';
+  return actor.name || actor.email || '-';
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  return format(new Date(value), 'dd.MM.yyyy HH:mm');
+}
+
 export default function StaffPage() {
   const { account } = useAuth();
   const canEditStaff = canManageStaff(account?.role);
   const canEditShifts = canManageShifts(account?.role);
+  const canReview = canReviewPayroll(account?.role);
+  const canApprove = canApprovePayroll(account?.role);
+  const canPay = canPayPayroll(account?.role);
   const [admins, setAdmins] = useState<AdminStat[]>([]);
   const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
+  const [payrollPeriod, setPayrollPeriod] = useState<PayrollPeriod | null>(null);
+  const [payrollLocked, setPayrollLocked] = useState(false);
+  const [payrollWarnings, setPayrollWarnings] = useState<string[]>([]);
+  const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(true);
 
   const now = new Date();
@@ -152,6 +204,7 @@ export default function StaffPage() {
 
   const fetchPayroll = useCallback(async () => {
     setLoading(true);
+    setErrorMessage('');
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
 
@@ -165,6 +218,14 @@ export default function StaffPage() {
         const data = await payrollRes.json();
         setAdmins(data.admins);
         setShifts(data.shifts);
+        setPayrollPeriod(data.period || null);
+        setPayrollLocked(Boolean(data.locked));
+        setPayrollWarnings(Array.isArray(data.warnings) ? data.warnings : []);
+      } else {
+        const data = (await payrollRes.json().catch(() => ({}))) as {
+          error?: string;
+        };
+        setErrorMessage(data.error || 'Не удалось загрузить payroll');
       }
 
       if (staffRes.ok) {
@@ -172,6 +233,7 @@ export default function StaffPage() {
       }
     } catch (e) {
       console.error(e);
+      setErrorMessage('Не удалось загрузить payroll');
     } finally {
       setLoading(false);
     }
@@ -183,14 +245,25 @@ export default function StaffPage() {
 
   const handleSaveShift = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (payrollLocked) {
+      setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
+      return;
+    }
+
     const selectedStaff = staff.find((item) => String(item.id) === form.staffId);
 
     if (!selectedStaff) {
-      alert('Выберите сотрудника смены');
+      setErrorMessage('Выберите сотрудника смены');
+      return;
+    }
+
+    if (Number(form.manualAdjustment) !== 0 && !form.comment.trim()) {
+      setErrorMessage('Для ручной корректировки зарплаты нужно указать причину.');
       return;
     }
 
     try {
+      setErrorMessage('');
       const method =
         String(form.id).startsWith('draft-') || !form.id ? 'POST' : 'PUT';
       const payload = {
@@ -210,33 +283,51 @@ export default function StaffPage() {
       if (res.ok) {
         setIsModalOpen(false);
         fetchPayroll();
+      } else {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setErrorMessage(data.error || 'Не удалось сохранить смену');
       }
     } catch (e) {
       console.error(e);
+      setErrorMessage('Не удалось сохранить смену');
     }
   };
 
   const handleDelete = async (id: number | string) => {
     if (String(id).startsWith('draft-')) return;
+    if (payrollLocked) {
+      setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
+      return;
+    }
+
     try {
-      await apiFetch('/api/shifts', {
+      const res = await apiFetch('/api/shifts', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+        body: JSON.stringify({
+          id,
+          reason: 'Архивировано из раздела персонала и смен',
+        }),
       });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setErrorMessage(data.error || 'Не удалось архивировать смену');
+        return;
+      }
       fetchPayroll();
     } catch (e) {
       console.error(e);
+      setErrorMessage('Не удалось архивировать смену');
     }
   };
 
   const requestDeleteShift = (shift: ShiftRecord) => {
     setPendingAction({
-      confirmLabel: 'Удалить смену',
-      description: `Смена за ${shift.date} будет удалена из payroll. Это действие нельзя отменить.`,
+      confirmLabel: 'В архив',
+      description: `Смена за ${shift.date} будет убрана из расчета. Если период уже закрыт, сервер не даст изменить смену.`,
       isDestructive: true,
       onConfirm: () => handleDelete(shift.id),
-      title: 'Удалить смену?',
+      title: 'Архивировать смену?',
     });
   };
 
@@ -254,7 +345,7 @@ export default function StaffPage() {
         adminName: shift.adminName || '',
         hours: String(shift.hours || ''),
         manualAdjustment: String(shift.manualAdjustment || ''),
-        comment: '',
+        comment: shift.comment || '',
       });
     } else {
       setForm({
@@ -268,6 +359,111 @@ export default function StaffPage() {
       });
     }
     setIsModalOpen(true);
+  };
+
+  const getRangeParams = () => {
+    const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
+    const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
+    return { fromStr, toStr };
+  };
+
+  const requestCreatePayrollPeriod = () => {
+    const { fromStr, toStr } = getRangeParams();
+    setPendingAction({
+      confirmLabel: 'Создать период',
+      description: `Будет создан черновик payroll за ${fromStr} — ${toStr}. В нем сохранится расчет, который можно отправить на проверку.`,
+      onConfirm: async () => {
+        const res = await apiFetch('/api/finance/payroll/periods', {
+          method: 'POST',
+          body: JSON.stringify({ from: fromStr, to: toStr }),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setErrorMessage(data.error || 'Не удалось создать payroll-период');
+          return;
+        }
+        await fetchPayroll();
+      },
+      title: 'Создать payroll-период?',
+    });
+  };
+
+  const requestRecalculatePayrollPeriod = () => {
+    if (!payrollPeriod) return;
+    setPendingAction({
+      confirmLabel: 'Пересчитать',
+      description:
+        'Черновик будет пересчитан по текущим сменам, чекам, мотивации и ручным корректировкам.',
+      onConfirm: async () => {
+        const res = await apiFetch(
+          `/api/finance/payroll/periods/${payrollPeriod.id}/recalculate`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ reason: 'Ручной пересчет payroll' }),
+          },
+        );
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setErrorMessage(data.error || 'Не удалось пересчитать payroll');
+          return;
+        }
+        await fetchPayroll();
+      },
+      title: 'Пересчитать payroll?',
+    });
+  };
+
+  const requestPayrollTransition = (
+    status: PayrollPeriod['status'],
+    title: string,
+    confirmLabel: string,
+    description: string,
+    isDestructive = false,
+  ) => {
+    if (!payrollPeriod) return;
+    setPendingAction({
+      confirmLabel,
+      description,
+      isDestructive,
+      onConfirm: async () => {
+        const res = await apiFetch(
+          `/api/finance/payroll/periods/${payrollPeriod.id}/status`,
+          {
+            method: 'PATCH',
+            body: JSON.stringify({ status }),
+          },
+        );
+        if (!res.ok) {
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          setErrorMessage(data.error || 'Не удалось изменить статус payroll');
+          return;
+        }
+        await fetchPayroll();
+      },
+      title,
+    });
+  };
+
+  const handleExportPayroll = async () => {
+    const { fromStr, toStr } = getRangeParams();
+    const query = payrollPeriod
+      ? `periodId=${payrollPeriod.id}`
+      : `from=${fromStr}&to=${toStr}`;
+    const res = await apiFetch(`/api/finance/payroll/export?${query}`);
+
+    if (!res.ok) {
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      setErrorMessage(data.error || 'Не удалось выгрузить payroll');
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `payroll-${fromStr}-${toStr}.xlsx`;
+    link.click();
+    URL.revokeObjectURL(url);
   };
 
   const openStaffForm = (item?: StaffMember) => {
@@ -316,7 +512,7 @@ export default function StaffPage() {
 
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        alert(data.error || 'Не удалось сохранить сотрудника');
+        setErrorMessage(data.error || 'Не удалось сохранить сотрудника');
         return;
       }
 
@@ -335,7 +531,7 @@ export default function StaffPage() {
 
       if (!res.ok) {
         const data = (await res.json()) as { error?: string };
-        alert(data.error || 'Не удалось отключить сотрудника');
+        setErrorMessage(data.error || 'Не удалось отключить сотрудника');
         return;
       }
 
@@ -351,7 +547,7 @@ export default function StaffPage() {
     });
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
-      alert(data.error || 'Не удалось восстановить сотрудника');
+      setErrorMessage(data.error || 'Не удалось восстановить сотрудника');
       return;
     }
     fetchPayroll();
@@ -363,7 +559,7 @@ export default function StaffPage() {
     });
     if (!res.ok) {
       const data = (await res.json()) as { error?: string };
-      alert(data.error || 'Не удалось удалить сотрудника из архива');
+      setErrorMessage(data.error || 'Не удалось удалить сотрудника из архива');
       return;
     }
     fetchPayroll();
@@ -441,6 +637,24 @@ export default function StaffPage() {
     }
   };
 
+  const payrollStatusLabel: Record<PayrollPeriod['status'], string> = {
+    draft: 'Черновик',
+    reviewed: 'Проверен',
+    approved: 'Утвержден',
+    paid: 'Выплачен',
+  };
+
+  const payrollStatusClass = payrollPeriod
+    ? {
+        draft: 'bg-muted text-foreground',
+        reviewed: 'bg-blue-500/10 text-blue-500 border-blue-500/20',
+        approved: 'bg-green-500/10 text-green-500 border-green-500/20',
+        paid: 'bg-primary/10 text-primary border-primary/20',
+      }[payrollPeriod.status]
+    : 'bg-muted text-muted-foreground';
+
+  const canChangeShifts = canEditShifts && !payrollLocked;
+
   return (
     <div className="min-w-0 p-4 md:p-8 space-y-6">
       {/* ШАПКА */}
@@ -496,8 +710,12 @@ export default function StaffPage() {
             size="icon"
             onClick={fetchPayroll}
             disabled={loading}
+            title="Обновить payroll"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
+          <Button variant="outline" onClick={handleExportPayroll}>
+            <Download className="w-4 h-4 mr-2" /> Экспорт
           </Button>
           {canEditStaff && (
             <Button variant="outline" onClick={() => openStaffForm()}>
@@ -505,63 +723,180 @@ export default function StaffPage() {
             </Button>
           )}
           {canEditShifts && (
-            <Button onClick={() => openForm()}>
+            <Button
+              onClick={() => openForm()}
+              disabled={payrollLocked}
+              title={
+                payrollLocked
+                  ? 'Payroll-период закрыт, смены внутри него менять нельзя'
+                  : 'Добавить смену'
+              }
+            >
               <Plus className="w-4 h-4 mr-2" /> Добавить смену
             </Button>
           )}
         </div>
       </div>
 
+      {errorMessage && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {errorMessage}
+        </div>
+      )}
+
+      <div className="border rounded-md bg-card p-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-semibold">Payroll-период</h2>
+              <Badge variant="outline" className={payrollStatusClass}>
+                {payrollPeriod
+                  ? payrollStatusLabel[payrollPeriod.status]
+                  : 'Не создан'}
+              </Badge>
+              {payrollLocked && (
+                <Badge variant="outline" className="gap-1">
+                  <Lock className="h-3 w-3" /> Период закрыт для изменений
+                </Badge>
+              )}
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              {payrollPeriod
+                ? `${payrollPeriod.fromDate} — ${payrollPeriod.toDate}. Закрытые периоды защищают смены и ручные операции от случайных правок.`
+                : 'Создайте период, когда смены за выбранные даты заполнены и расчет готов к проверке.'}
+            </div>
+            {payrollPeriod && (
+              <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
+                <div>
+                  <span className="text-foreground">Проверка:</span>{' '}
+                  {formatDateTime(payrollPeriod.reviewedAt)} ·{' '}
+                  {formatActor(payrollPeriod.reviewedBy)}
+                </div>
+                <div>
+                  <span className="text-foreground">Утверждение:</span>{' '}
+                  {formatDateTime(payrollPeriod.approvedAt)} ·{' '}
+                  {formatActor(payrollPeriod.approvedBy)}
+                </div>
+                <div>
+                  <span className="text-foreground">Выплата:</span>{' '}
+                  {formatDateTime(payrollPeriod.paidAt)} ·{' '}
+                  {formatActor(payrollPeriod.paidBy)}
+                </div>
+              </div>
+            )}
+            {payrollWarnings.length > 0 && (
+              <div className="mt-2 space-y-1 text-xs text-amber-500">
+                {payrollWarnings.slice(0, 3).map((warning) => (
+                  <div key={warning}>{warning}</div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {!payrollPeriod && canReview && (
+              <Button onClick={requestCreatePayrollPeriod}>
+                Создать период
+              </Button>
+            )}
+            {payrollPeriod?.status === 'draft' && canReview && (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={requestRecalculatePayrollPeriod}
+                >
+                  <RotateCcw className="w-4 h-4 mr-2" /> Пересчитать
+                </Button>
+                <Button
+                  onClick={() =>
+                    requestPayrollTransition(
+                      'reviewed',
+                      'Отправить payroll на проверку?',
+                      'На проверку',
+                      'Расчет будет пересчитан и зафиксирован. После этого смены и ручные операции в периоде нельзя будет менять без возврата в черновик.',
+                    )
+                  }
+                >
+                  На проверку
+                </Button>
+              </>
+            )}
+            {payrollPeriod?.status === 'reviewed' && canReview && (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  requestPayrollTransition(
+                    'draft',
+                    'Вернуть payroll в черновик?',
+                    'Вернуть',
+                    'Период снова станет редактируемым. Это нужно делать только если нашли ошибку в сменах или корректировках.',
+                    true,
+                  )
+                }
+              >
+                В черновик
+              </Button>
+            )}
+            {payrollPeriod?.status === 'reviewed' && canApprove && (
+              <Button
+                onClick={() =>
+                  requestPayrollTransition(
+                    'approved',
+                    'Утвердить payroll?',
+                    'Утвердить',
+                    'После утверждения расчет считается финальным для выплаты.',
+                  )
+                }
+              >
+                Утвердить
+              </Button>
+            )}
+            {payrollPeriod?.status === 'approved' && canPay && (
+              <Button
+                onClick={() =>
+                  requestPayrollTransition(
+                    'paid',
+                    'Отметить payroll выплаченным?',
+                    'Выплачено',
+                    'Период будет помечен как выплаченный. Это финальный статус.',
+                  )
+                }
+              >
+                Выплачено
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* KPI КАРТОЧКИ */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xs text-muted-foreground font-medium">
-              Смен
-            </div>
-            <div className="text-2xl font-bold mt-1">{stats.totalShifts}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xs text-muted-foreground font-medium">
-              Черновики
-            </div>
-            <div className="text-2xl font-bold mt-1 text-amber-500">
-              {stats.totalDrafts}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xs text-muted-foreground font-medium">
-              Часов
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {stats.totalHours.toLocaleString()}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xs text-muted-foreground font-medium">
-              Выручка дней
-            </div>
-            <div className="text-2xl font-bold mt-1">
-              {stats.totalRev.toLocaleString()} ₽
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-xs text-muted-foreground font-medium">
-              Итого начислено
-            </div>
-            <div className="text-2xl font-bold mt-1 text-primary">
-              {stats.totalPay.toLocaleString()} ₽
-            </div>
-          </CardContent>
-        </Card>
+        <MetricCard
+          label="Смен"
+          tooltip="Заполненные смены, которые участвуют в расчете payroll."
+          value={stats.totalShifts}
+        />
+        <MetricCard
+          label="Черновики"
+          tooltip="Дни, где есть кассовые операции, но смена еще не заполнена администратором и часами."
+          value={stats.totalDrafts}
+          valueClassName="text-amber-500"
+        />
+        <MetricCard
+          label="Часов"
+          tooltip="Сумма рабочих часов по заполненным сменам в выбранном периоде."
+          value={stats.totalHours.toLocaleString()}
+        />
+        <MetricCard
+          label="Выручка"
+          tooltip="Выручка, которая использована для расчета бонусов смен в выбранном периоде."
+          value={`${stats.totalRev.toLocaleString()} ₽`}
+        />
+        <MetricCard
+          label="Начислено"
+          tooltip="Базовая оплата, бонусы мотивации и ручные корректировки по всем заполненным сменам."
+          value={`${stats.totalPay.toLocaleString()} ₽`}
+          valueClassName="text-primary"
+        />
       </div>
 
       <div className="border rounded-md bg-card overflow-x-auto">
@@ -647,6 +982,8 @@ export default function StaffPage() {
                         variant="ghost"
                         size="icon-sm"
                         onClick={() => openStaffForm(item)}
+                        title="Редактировать сотрудника"
+                        aria-label={`Редактировать сотрудника ${item.name}`}
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -656,6 +993,11 @@ export default function StaffPage() {
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={() => requestArchiveStaff(item)}
                         title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
+                        aria-label={
+                          item.status === 'archived'
+                            ? `Восстановить сотрудника ${item.name}`
+                            : `Архивировать сотрудника ${item.name}`
+                        }
                       >
                         {item.status === 'archived' ? (
                           <ArchiveRestore className="h-4 w-4" />
@@ -670,6 +1012,7 @@ export default function StaffPage() {
                           className="text-destructive hover:text-destructive hover:bg-destructive/10"
                           onClick={() => requestPermanentDeleteStaff(item)}
                           title="Удалить навсегда"
+                          aria-label={`Удалить сотрудника ${item.name} навсегда`}
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
@@ -685,15 +1028,16 @@ export default function StaffPage() {
 
       {/* ЖУРНАЛ СМЕН */}
       <div className="border rounded-md bg-card overflow-x-auto">
-        <Table className="min-w-[980px]">
+        <Table className="min-w-[1120px]">
           <TableHeader>
             <TableRow>
               <TableHead>Дата</TableHead>
               <TableHead>Статус</TableHead>
               <TableHead>Администратор</TableHead>
               <TableHead className="text-right">Часы</TableHead>
-              <TableHead className="text-right">Выручка дня</TableHead>
-              <TableHead className="text-right">Премии/корр.</TableHead>
+              <TableHead className="text-right">Выручка</TableHead>
+              <TableHead className="text-right">Бонус</TableHead>
+              <TableHead className="text-right">Корр.</TableHead>
               <TableHead className="text-right">Итого</TableHead>
               <TableHead></TableHead>
             </TableRow>
@@ -702,7 +1046,7 @@ export default function StaffPage() {
             {shifts.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={8}
+                  colSpan={9}
                   className="text-center text-muted-foreground py-8"
                 >
                   Нет данных за этот период
@@ -747,12 +1091,21 @@ export default function StaffPage() {
                   {s.dailyRevenue.toLocaleString('ru-RU')} ₽
                 </TableCell>
                 <TableCell className="text-right text-muted-foreground">
-                  {s.bonus > 0
-                    ? `+${s.bonus.toLocaleString()}`
-                    : s.bonus === 0
+                  {Number(s.calculatedBonus || 0) > 0
+                    ? `+${Number(s.calculatedBonus || 0).toLocaleString('ru-RU')}`
+                    : Number(s.calculatedBonus || 0) === 0
                       ? '—'
-                      : s.bonus.toLocaleString()}{' '}
-                  ₽
+                      : Number(s.calculatedBonus || 0).toLocaleString('ru-RU') + ' ₽'}
+                  {Number(s.calculatedBonus || 0) > 0 ? ' ₽' : ''}
+                </TableCell>
+                <TableCell
+                  className={`text-right ${Number(s.manualAdjustment || 0) < 0 ? 'text-destructive' : 'text-muted-foreground'}`}
+                >
+                  {Number(s.manualAdjustment || 0) === 0
+                    ? '—'
+                    : `${Number(s.manualAdjustment || 0) > 0 ? '+' : ''}${Number(
+                        s.manualAdjustment || 0,
+                      ).toLocaleString('ru-RU')} ₽`}
                 </TableCell>
                 <TableCell className="text-right font-bold text-base">
                   {s.total > 0 ? s.total.toLocaleString('ru-RU') + ' ₽' : '—'}
@@ -766,9 +1119,15 @@ export default function StaffPage() {
                       <Button
                         variant="ghost"
                         size="sm"
+                        disabled={!canChangeShifts}
+                        title={
+                          canChangeShifts
+                            ? 'Изменить смену'
+                            : 'Payroll-период закрыт, смены менять нельзя'
+                        }
                         onClick={() => openForm(s)}
                       >
-                        Изм.
+                        Изменить
                       </Button>
                     )}
                     {canEditShifts && !s.isDraft && (
@@ -776,9 +1135,15 @@ export default function StaffPage() {
                         variant="ghost"
                         size="sm"
                         className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        disabled={!canChangeShifts}
+                        title={
+                          canChangeShifts
+                            ? 'Архивировать смену'
+                            : 'Payroll-период закрыт, смены менять нельзя'
+                        }
                         onClick={() => requestDeleteShift(s)}
                       >
-                        Удал.
+                        В архив
                       </Button>
                     )}
                   </div>
@@ -803,13 +1168,15 @@ export default function StaffPage() {
 
       {/* ТАБЛИЦА АГРЕГАЦИИ ПО АДМИНАМ */}
       <div className="border rounded-md bg-card mt-8 overflow-x-auto">
-        <Table className="min-w-[720px]">
+        <Table className="min-w-[860px]">
           <TableHeader>
             <TableRow>
               <TableHead>Администратор</TableHead>
               <TableHead className="text-right">Смен</TableHead>
               <TableHead className="text-right">Часы</TableHead>
-              <TableHead className="text-right">Премии/корр.</TableHead>
+              <TableHead className="text-right">База</TableHead>
+              <TableHead className="text-right">Бонусы</TableHead>
+              <TableHead className="text-right">Корр.</TableHead>
               <TableHead className="text-right">Итого</TableHead>
             </TableRow>
           </TableHeader>
@@ -817,7 +1184,7 @@ export default function StaffPage() {
             {admins.length === 0 && (
               <TableRow>
                 <TableCell
-                  colSpan={5}
+                  colSpan={7}
                   className="text-center text-muted-foreground py-8"
                 >
                   Нет заполненных смен за выбранный период
@@ -836,7 +1203,21 @@ export default function StaffPage() {
                   </TableCell>
                   <TableCell className="text-right">{a.totalHours}</TableCell>
                   <TableCell className="text-right text-muted-foreground">
-                    {a.bonusPay.toLocaleString('ru-RU')} ₽
+                    {a.basePay.toLocaleString('ru-RU')} ₽
+                  </TableCell>
+                  <TableCell className="text-right text-muted-foreground">
+                    {Number(
+                      a.calculatedBonusPay ?? a.bonusPay,
+                    ).toLocaleString('ru-RU')}{' '}
+                    ₽
+                  </TableCell>
+                  <TableCell
+                    className={`text-right ${Number(a.manualAdjustmentTotal || 0) < 0 ? 'text-destructive' : 'text-muted-foreground'}`}
+                  >
+                    {Number(a.manualAdjustmentTotal || 0).toLocaleString(
+                      'ru-RU',
+                    )}{' '}
+                    ₽
                   </TableCell>
                   <TableCell className="text-right font-bold text-lg">
                     {a.totalPay.toLocaleString('ru-RU')} ₽
@@ -1015,7 +1396,7 @@ export default function StaffPage() {
                 onChange={(e) => setForm({ ...form, comment: e.target.value })}
               />
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={payrollLocked}>
               Сохранить
             </Button>
           </form>

@@ -2,3 +2,11 @@ node_modules
 .env
 .DS_Store
 *.xlsx
+
+# Local QA/demo artifacts: screenshots, videos, temporary presentations.
+outputs/
+artifacts/
+screenshots/
+recordings/
+docs/generated/
+docs/artifacts/

@@ -29,6 +29,28 @@ class TrainingNotesController {
       handleError(res, error, 'Ошибка создания записи тренировки');
     }
   }
+
+  async update(req, res) {
+    try {
+      res.json(
+        await trainingNotesService.update(
+          req.params.noteId,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка обновления записи тренировки');
+    }
+  }
+
+  async remove(req, res) {
+    try {
+      res.json(await trainingNotesService.remove(req.params.noteId, req.account));
+    } catch (error) {
+      handleError(res, error, 'Ошибка удаления записи тренировки');
+    }
+  }
 }
 
 module.exports = new TrainingNotesController();

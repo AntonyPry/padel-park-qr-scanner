@@ -6,6 +6,22 @@ function handleError(res, error, fallback) {
 }
 
 class CallTasksController {
+  async createForClient(req, res) {
+    try {
+      res
+        .status(201)
+        .json(
+          await callTasksService.createForClient(
+            req.account,
+            req.params.clientId,
+            req.body,
+          ),
+        );
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания задачи по клиенту');
+    }
+  }
+
   async createFromBase(req, res) {
     try {
       res
@@ -27,6 +43,14 @@ class CallTasksController {
       res.json(await callTasksService.list(req.account, req.query));
     } catch (error) {
       handleError(res, error, 'Ошибка получения задач обзвона');
+    }
+  }
+
+  async getReport(req, res) {
+    try {
+      res.json(await callTasksService.getReport(req.account, req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения отчета обзвона');
     }
   }
 
@@ -83,6 +107,20 @@ class CallTasksController {
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения клиентов задачи');
+    }
+  }
+
+  async bulkUpdateClients(req, res) {
+    try {
+      res.json(
+        await callTasksService.bulkUpdateClients(
+          req.account,
+          req.params.id,
+          req.body,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка массового обновления клиентов задачи');
     }
   }
 

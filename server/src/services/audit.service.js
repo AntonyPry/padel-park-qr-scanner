@@ -3,11 +3,17 @@ const db = require('../../models');
 const MAX_PAGE_SIZE = 100;
 const SENSITIVE_KEYS = new Set([
   'authorization',
+  'clientPhone',
   'password',
   'passwordHash',
+  'phone',
+  'phoneNormalized',
+  'telegramId',
   'token',
   'accessToken',
   'refreshToken',
+  'vkId',
+  'webId',
 ]);
 
 function appError(message, statusCode = 400) {
@@ -39,6 +45,12 @@ function inferEntity(path = '') {
   const [first, second, third] = normalizedPath.split('/');
 
   if (first === 'client-bases') return { entityType: 'client_base', entityId: second };
+  if (first === 'clients' && second === 'views') {
+    return { entityType: 'client_saved_view', entityId: third };
+  }
+  if (first === 'clients' && third === 'call-tasks') {
+    return { entityType: 'client_call_task', entityId: second };
+  }
   if (first === 'clients') return { entityType: 'client', entityId: second };
   if (first === 'call-tasks') return { entityType: 'call_task', entityId: second };
   if (first === 'call-task-clients') return { entityType: 'call_task_client', entityId: second };
@@ -53,6 +65,9 @@ function inferEntity(path = '') {
   if (first === 'categories') return { entityType: 'catalog_category', entityId: second };
   if (first === 'rules') return { entityType: 'catalog_rule', entityId: second };
   if (first === 'references') return { entityType: `reference:${second || 'unknown'}`, entityId: third };
+  if (first === 'finance' && second === 'payroll' && third === 'periods') {
+    return { entityType: 'payroll_period', entityId: normalizedPath.split('/')[3] };
+  }
   if (first === 'motivation') return { entityType: `motivation:${second || 'unknown'}`, entityId: third };
   if (first === 'shifts') return { entityType: 'shift', entityId: second };
   if (first === 'finance') return { entityType: 'finance', entityId: second };

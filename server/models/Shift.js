@@ -44,6 +44,18 @@ module.exports = (sequelize, DataTypes) => {
     comment: {
       type: DataTypes.TEXT,
     },
+    archivedAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    archivedByAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    archiveReason: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
   });
 
   Shift.associate = (models) => {
@@ -51,6 +63,10 @@ module.exports = (sequelize, DataTypes) => {
     Shift.belongsTo(models.Account, {
       as: 'approvedBy',
       foreignKey: 'approvedByAccountId',
+    });
+    Shift.belongsTo(models.Account, {
+      as: 'archivedBy',
+      foreignKey: 'archivedByAccountId',
     });
   };
 

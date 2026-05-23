@@ -11,8 +11,15 @@ import {
   Usb,
   Unplug,
   Check,
+  AlertTriangle,
+  Clock3,
+  History,
+  Loader2,
+  RotateCw,
+  WifiOff,
 } from 'lucide-react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -39,11 +46,17 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { API_URL } from '@/config';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getAuthToken } from '@/lib/api';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import { HelpTooltip } from '@/components/dashboard-metric';
 
-const socket = io(API_URL);
+const socket = io(API_URL, {
+  autoConnect: false,
+  auth: {
+    token: getAuthToken(),
+  },
+});
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
   name: '',
@@ -53,10 +66,19 @@ const EMPTY_RECEPTION_CLIENT_FORM = {
   note: '',
 };
 
+type ScannerStatus =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting';
+
+type AudioContextConstructor = typeof AudioContext;
+
 interface VisitCard {
   id: string;
   success: boolean;
   time: string;
+  clientEventId?: string | null;
   name?: string;
   phone?: string;
   source?: string;
@@ -70,6 +92,61 @@ interface VisitCard {
   isRepeated?: boolean;
   category?: string;
   categoryIds?: number[];
+}
+
+interface ScanResultPayload {
+  id?: string;
+  success?: boolean;
+  time?: string;
+  clientEventId?: string | null;
+  isRepeated?: boolean;
+  user?: {
+    id?: number;
+    name?: string;
+    phone?: string;
+    source?: string;
+    telegramId?: string;
+    vkId?: string;
+    webId?: string;
+  };
+  visitId?: number;
+  keyNumber?: string;
+  keyIssued?: boolean;
+  category?: string;
+  categoryIds?: number[];
+}
+
+interface ScannerEvent {
+  id: number;
+  eventType: string;
+  severity: 'info' | 'warning' | 'error';
+  status?: string | null;
+  message?: string | null;
+  code?: string | null;
+  source?: string | null;
+  qrPreview?: string | null;
+  qrHash?: string | null;
+  visitId?: number | null;
+  userId?: number | null;
+  clientEventId?: string | null;
+  createdAt: string;
+  account?: {
+    id: number;
+    name?: string;
+    email?: string;
+    role?: string;
+  } | null;
+  user?: {
+    id: number;
+    name: string;
+  } | null;
+}
+
+interface PendingScan {
+  attempts: number;
+  clientEventId: string;
+  createdAt: number;
+  qrCode: string;
 }
 
 interface SearchUser {
@@ -96,11 +173,16 @@ interface SerialPortLike {
   open: (options: { baudRate: number }) => Promise<void>;
   close: () => Promise<void>;
   readable: ReadableStream<Uint8Array> | null;
+  getInfo?: () => {
+    usbVendorId?: number;
+    usbProductId?: number;
+  };
 }
 
 interface NavigatorWithSerial extends Navigator {
   serial?: {
     requestPort: () => Promise<SerialPortLike>;
+    getPorts?: () => Promise<SerialPortLike[]>;
     addEventListener?: (
       type: 'disconnect',
       listener: (event: Event) => void,
@@ -172,11 +254,97 @@ function splitVisitCategories(category?: string) {
   return category ? category.split(', ').filter(Boolean) : [];
 }
 
+function getVisitCategoryNames(card: VisitCard) {
+  return splitVisitCategories(card.category);
+}
+
 function getCategoryNamesByIds(categories: ReferenceItem[], categoryIds: number[]) {
   const names = categoryIds
     .map((id) => categories.find((category) => category.id === id)?.name)
     .filter(Boolean);
   return names.join(', ');
+}
+
+function createClientEventId(prefix = 'scanner') {
+  const randomPart =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `${prefix}-${randomPart}`;
+}
+
+function getDeviceLabel(port: SerialPortLike | null) {
+  const info = port?.getInfo?.();
+  if (!info?.usbVendorId && !info?.usbProductId) return 'Web Serial';
+  return `USB ${info.usbVendorId || '-'}:${info.usbProductId || '-'}`;
+}
+
+function getPortFingerprint(port: SerialPortLike | null) {
+  const info = port?.getInfo?.();
+  if (!info?.usbVendorId && !info?.usbProductId) return 'web-serial';
+  return `${info.usbVendorId || 'unknown'}:${info.usbProductId || 'unknown'}`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getScannerEventLabel(eventType: string) {
+  const labels: Record<string, string> = {
+    client_connected: 'Подключен',
+    client_disconnected: 'Отключен',
+    client_reconnect_scheduled: 'Автопереподключение',
+    client_reconnect_failed: 'Не удалось переподключить',
+    client_reader_error: 'Ошибка чтения',
+    client_scan_submit_failed: 'Ошибка отправки QR',
+    key_issued: 'Ключ',
+    manual_duplicate: 'Повтор ручного входа',
+    manual_success: 'Ручной вход',
+    qr_duplicate: 'Повтор QR',
+    qr_error: 'Ошибка QR',
+    qr_not_found: 'QR не найден',
+    qr_success: 'QR найден',
+    visit_category_changed: 'Цель визита',
+  };
+
+  return labels[eventType] || eventType;
+}
+
+function getScannerStatusText(status: ScannerStatus) {
+  if (status === 'connected') return 'Сканер активен';
+  if (status === 'connecting') return 'Подключение...';
+  if (status === 'reconnecting') return 'Переподключение...';
+  return 'Сканер отключен';
+}
+
+function playSound(type: 'success' | 'error') {
+  const AudioContextClass: AudioContextConstructor | undefined =
+    window.AudioContext ||
+    (window as Window & { webkitAudioContext?: AudioContextConstructor })
+      .webkitAudioContext;
+  if (!AudioContextClass) return;
+
+  const context = new AudioContextClass();
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = 'sine';
+  oscillator.frequency.value = type === 'success' ? 880 : 220;
+  gain.gain.value = 0.08;
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start();
+  oscillator.stop(context.currentTime + (type === 'success' ? 0.08 : 0.16));
+  oscillator.onended = () => {
+    void context.close();
+  };
 }
 
 export default function AdminPage() {
@@ -185,20 +353,42 @@ export default function AdminPage() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isRegOpen, setIsRegOpen] = useState(false);
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
+  const [isDisconnectOpen, setIsDisconnectOpen] = useState(false);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
   const [activeVisit, setActiveVisit] = useState<VisitCard | null>(null);
+  const [visitActionError, setVisitActionError] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
+  const [searchError, setSearchError] = useState('');
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [scannerStatus, setScannerStatus] = useState<
-    'disconnected' | 'connecting' | 'connected'
+    ScannerStatus
   >('disconnected');
+  const [scannerLastError, setScannerLastError] = useState('');
+  const [scannerLastEvent, setScannerLastEvent] = useState('');
+  const [scannerSessionId, setScannerSessionId] = useState(() =>
+    createClientEventId('session'),
+  );
+  const [scannerEvents, setScannerEvents] = useState<ScannerEvent[]>([]);
+  const [isScannerJournalOpen, setIsScannerJournalOpen] = useState(false);
+  const [queuedVisits, setQueuedVisits] = useState<VisitCard[]>([]);
+  const activeVisitRef = useRef<VisitCard | null>(null);
+  const processedClientEventsRef = useRef<Set<string>>(new Set());
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scanRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const intentionalDisconnectRef = useRef(false);
+  const scannerSessionIdRef = useRef(scannerSessionId);
+  const scannerRunIdRef = useRef(0);
+  const selectedPortFingerprintRef = useRef<string | null>(null);
   const portRef = useRef<SerialPortLike | null>(null);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(
     null,
   );
   const scannerActiveRef = useRef(false);
+  const scanQueueRef = useRef<PendingScan[]>([]);
+  const scanQueueProcessingRef = useRef(false);
 
   const [regForm, setRegForm] = useState(EMPTY_RECEPTION_CLIENT_FORM);
   const [regLoading, setRegLoading] = useState(false);
@@ -209,6 +399,21 @@ export default function AdminPage() {
     useState<ExistingClientCandidate | null>(null);
   const [clientSources, setClientSources] = useState<ReferenceItem[]>([]);
   const [visitCategories, setVisitCategories] = useState<ReferenceItem[]>([]);
+  const [pendingScanCount, setPendingScanCount] = useState(0);
+  const [issuingKeyVisitId, setIssuingKeyVisitId] = useState<number | null>(
+    null,
+  );
+  const [savingCategoryVisitId, setSavingCategoryVisitId] = useState<
+    number | null
+  >(null);
+
+  useEffect(() => {
+    activeVisitRef.current = activeVisit;
+  }, [activeVisit]);
+
+  useEffect(() => {
+    scannerSessionIdRef.current = scannerSessionId;
+  }, [scannerSessionId]);
 
   const getEmptyReceptionForm = useCallback(() => {
     const defaultSource =
@@ -234,9 +439,59 @@ export default function AdminPage() {
     }
   };
 
+  const fetchScannerEvents = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/scanner-events?limit=30');
+      if (res.ok) {
+        setScannerEvents((await res.json()) as ScannerEvent[]);
+      }
+    } catch (e) {
+      console.error('Ошибка загрузки журнала сканера:', e);
+    }
+  }, []);
+
+  const recordScannerClientEvent = useCallback(
+    async (
+      eventType: string,
+      options: {
+        severity?: 'info' | 'warning' | 'error';
+        status?: string;
+        message?: string;
+        code?: string;
+        clientEventId?: string;
+        metadata?: Record<string, unknown>;
+      } = {},
+    ) => {
+      try {
+        await apiFetch('/api/scanner-events', {
+          method: 'POST',
+          body: JSON.stringify({
+            eventType,
+            severity: options.severity || 'info',
+            status: options.status,
+            message: options.message,
+            code: options.code,
+            source: 'web_serial',
+            clientEventId: options.clientEventId || createClientEventId('client'),
+            metadata: {
+              scannerSessionId: scannerSessionIdRef.current,
+              deviceLabel: getDeviceLabel(portRef.current),
+              ...options.metadata,
+            },
+          }),
+        });
+        void fetchScannerEvents();
+      } catch (e) {
+        console.error('Ошибка записи события сканера:', e);
+      }
+    },
+    [fetchScannerEvents],
+  );
+
   useEffect(() => {
     fetchHistory();
-  }, []);
+    void fetchScannerEvents();
+  }, [fetchScannerEvents]);
 
   useEffect(() => {
     let cancelled = false;
@@ -276,64 +531,244 @@ export default function AdminPage() {
     };
   }, []);
 
-  useEffect(() => {
-    socket.on('scan_result', (data) => {
-      const time = new Date().toLocaleTimeString('ru-RU', {
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-
-      const newCard: VisitCard = {
-        id: Date.now().toString(),
-        success: data.success,
-        time: time,
-        isRepeated: data.isRepeated,
-        name: data.user?.name || '',
-        phone: data.user?.phone || '',
-        source: data.user?.source || '-',
-        telegramId: data.user?.telegramId,
-        vkId: data.user?.vkId,
-        webId: data.user?.webId,
-        visitId: data.visitId,
-        qrRaw: data.id,
-        keyNumber: '',
-        keyIssued: false,
-        category: data.category || '',
-        categoryIds: data.categoryIds || [],
-      };
-
-      playSound(data.success ? 'success' : 'error');
-
-      setCards((prev) => {
-        const filtered = prev.filter(
-          (c) =>
-            !(newCard.telegramId && c.telegramId === newCard.telegramId) &&
-            !(newCard.vkId && c.vkId === newCard.vkId) &&
-            !(newCard.webId && c.webId === newCard.webId),
-        );
-        return [newCard, ...filtered];
-      });
-      setActiveVisit(newCard);
+  const buildVisitCard = useCallback((data: ScanResultPayload): VisitCard => {
+    const time = new Date().toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
     });
 
-    return () => {
-      socket.off('scan_result');
+    return {
+      id: data.visitId
+        ? `visit-${data.visitId}`
+        : data.clientEventId || `scan-${Date.now()}`,
+      success: Boolean(data.success),
+      time,
+      clientEventId: data.clientEventId || null,
+      isRepeated: data.isRepeated,
+      name: data.user?.name || '',
+      phone: data.user?.phone || '',
+      source: data.user?.source || '-',
+      telegramId: data.user?.telegramId,
+      vkId: data.user?.vkId,
+      webId: data.user?.webId,
+      visitId: data.visitId,
+      qrRaw: data.id,
+      keyNumber: data.keyNumber || '',
+      keyIssued: Boolean(data.keyIssued),
+      category: data.category || '',
+      categoryIds: data.categoryIds || [],
     };
   }, []);
 
-  const submitScan = async (qrCode: string) => {
-    try {
-      await apiFetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ qr: qrCode }),
-      });
-    } catch (e) {
-      console.error('Ошибка сканера:', e);
+  const isSameVisitCard = useCallback((a: VisitCard, b: VisitCard) => {
+    if (a.visitId && b.visitId) return a.visitId === b.visitId;
+    if (a.clientEventId && b.clientEventId) {
+      return a.clientEventId === b.clientEventId;
     }
-  };
+    if (!a.success && !b.success && a.qrRaw && b.qrRaw) {
+      return a.qrRaw === b.qrRaw;
+    }
+    return a.id === b.id;
+  }, []);
 
-  const closeScannerPort = useCallback(async () => {
+  const setCurrentVisit = useCallback((visit: VisitCard | null) => {
+    activeVisitRef.current = visit;
+    setActiveVisit(visit);
+  }, []);
+
+  const handleIncomingVisit = useCallback(
+    (data: ScanResultPayload) => {
+      const newCard = buildVisitCard(data);
+
+      if (
+        newCard.clientEventId &&
+        processedClientEventsRef.current.has(newCard.clientEventId)
+      ) {
+        return;
+      }
+      if (newCard.clientEventId) {
+        processedClientEventsRef.current.add(newCard.clientEventId);
+      }
+
+      playSound(newCard.success ? 'success' : 'error');
+
+      setCards((prev) => {
+        const filtered = prev.filter((card) => !isSameVisitCard(card, newCard));
+        return [newCard, ...filtered].slice(0, 50);
+      });
+
+      const currentActiveVisit = activeVisitRef.current;
+      if (currentActiveVisit && !isSameVisitCard(currentActiveVisit, newCard)) {
+        setQueuedVisits((prev) => {
+          if (prev.some((card) => isSameVisitCard(card, newCard))) return prev;
+          return [...prev, newCard];
+        });
+        return;
+      }
+
+      setVisitActionError('');
+      setCurrentVisit(newCard);
+    },
+    [buildVisitCard, isSameVisitCard, setCurrentVisit],
+  );
+
+  const closeActiveVisit = useCallback(() => {
+    setVisitActionError('');
+    const [nextVisit, ...rest] = queuedVisits;
+    setQueuedVisits(rest);
+    setCurrentVisit(nextVisit || null);
+  }, [queuedVisits, setCurrentVisit]);
+
+  useEffect(() => {
+    socket.auth = { token: getAuthToken() };
+    socket.connect();
+    socket.on('scan_result', handleIncomingVisit);
+
+    return () => {
+      socket.off('scan_result', handleIncomingVisit);
+      socket.disconnect();
+    };
+  }, [handleIncomingVisit]);
+
+  const syncPendingScanCount = useCallback(() => {
+    setPendingScanCount(scanQueueRef.current.length);
+  }, []);
+
+  function clearScanRetryTimer() {
+    if (scanRetryTimerRef.current) {
+      window.clearTimeout(scanRetryTimerRef.current);
+      scanRetryTimerRef.current = null;
+    }
+  }
+
+  const processScanQueue = useCallback(async () => {
+    if (scanQueueProcessingRef.current) return;
+    scanQueueProcessingRef.current = true;
+    clearScanRetryTimer();
+
+    try {
+      while (scanQueueRef.current.length > 0) {
+        const scan = scanQueueRef.current[0];
+
+        try {
+          setScannerLastEvent(
+            scan.attempts > 0
+              ? `Повторная отправка QR, попытка ${scan.attempts + 1}`
+              : 'QR отправлен в CRM',
+          );
+
+          const res = await apiFetch('/api/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              qr: scan.qrCode,
+              clientEventId: scan.clientEventId,
+              scannerSessionId: scannerSessionIdRef.current,
+              deviceLabel: getDeviceLabel(portRef.current),
+            }),
+          });
+          if (!res.ok) {
+            const apiError = await readApiError(res, 'Ошибка сканирования QR');
+            throw new Error(apiError.error);
+          }
+
+          const data = await res.json();
+          scanQueueRef.current.shift();
+          syncPendingScanCount();
+          setScannerLastError('');
+          setScannerLastEvent('QR обработан');
+
+          if (data.event) {
+            handleIncomingVisit(data.event);
+            void fetchScannerEvents();
+          }
+        } catch (e) {
+          console.error('Ошибка сканера:', e);
+          const message =
+            e instanceof Error ? e.message : 'Не удалось отправить QR в CRM';
+          scan.attempts += 1;
+          const delay = Math.min(
+            30000,
+            1000 * 2 ** Math.min(scan.attempts, 5),
+          );
+
+          setScannerLastError(
+            `${message}. QR сохранен в очереди и будет отправлен повторно.`,
+          );
+          setScannerLastEvent(
+            `Повторная отправка через ${(delay / 1000).toFixed(0)} сек.`,
+          );
+          void recordScannerClientEvent('client_scan_submit_failed', {
+            severity: 'error',
+            status: 'retry_scheduled',
+            message,
+            clientEventId: createClientEventId('scan-failed'),
+            metadata: {
+              attempts: scan.attempts,
+              nextRetryDelayMs: delay,
+              originalClientEventId: scan.clientEventId,
+            },
+          });
+
+          scanRetryTimerRef.current = window.setTimeout(() => {
+            void processScanQueue();
+          }, delay);
+          break;
+        }
+      }
+    } finally {
+      scanQueueProcessingRef.current = false;
+    }
+  }, [
+    fetchScannerEvents,
+    handleIncomingVisit,
+    recordScannerClientEvent,
+    syncPendingScanCount,
+  ]);
+
+  const enqueueScan = useCallback(
+    (qrCode: string) => {
+      const normalizedQr = qrCode.trim();
+      if (!normalizedQr) return;
+
+      scanQueueRef.current.push({
+        attempts: 0,
+        clientEventId: createClientEventId('scan'),
+        createdAt: Date.now(),
+        qrCode: normalizedQr,
+      });
+      syncPendingScanCount();
+      setScannerLastEvent('QR добавлен в очередь обработки');
+      void processScanQueue();
+    },
+    [processScanQueue, syncPendingScanCount],
+  );
+
+  function clearReconnectTimer() {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }
+
+  async function waitForReaderRelease(
+    reader: ReadableStreamDefaultReader<Uint8Array> | null,
+  ) {
+    if (!reader) return;
+
+    for (let i = 0; i < 10; i += 1) {
+      if (readerRef.current !== reader) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+  }
+
+  async function closeScannerPort(
+    nextStatus: 'disconnected' | 'reconnecting' = 'disconnected',
+    options: { markStale?: boolean } = {},
+  ) {
+    if (options.markStale !== false) {
+      scannerRunIdRef.current += 1;
+    }
     scannerActiveRef.current = false;
 
     const reader = readerRef.current;
@@ -343,8 +778,7 @@ export default function AdminPage() {
       } catch {
         // reader may already be released after a hardware disconnect
       }
-      setScannerStatus('disconnected');
-      return;
+      await waitForReaderRelease(reader);
     }
 
     const port = portRef.current;
@@ -359,10 +793,10 @@ export default function AdminPage() {
       }
     }
 
-    setScannerStatus('disconnected');
-  }, []);
+    setScannerStatus(nextStatus);
+  }
 
-  const readScannerLoop = async (port: SerialPortLike) => {
+  async function readScannerLoop(port: SerialPortLike, runId: number) {
     const decoder = new TextDecoder();
     let buffer = '';
 
@@ -388,7 +822,7 @@ export default function AdminPage() {
                 buffer = buffer.slice(newlineIndex + 1);
 
                 if (qrCode) {
-                  await submitScan(qrCode);
+                  enqueueScan(qrCode);
                 }
               }
             }
@@ -406,41 +840,163 @@ export default function AdminPage() {
       }
     } catch (error) {
       console.error('Сканер отключился или перестал отдавать данные:', error);
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Сканер перестал отдавать данные';
+      setScannerLastError(message);
+      await recordScannerClientEvent('client_reader_error', {
+        severity: 'error',
+        status: 'failed',
+        message,
+      });
     } finally {
-      if (portRef.current === port) {
-        await closeScannerPort();
-      } else {
+      if (scannerRunIdRef.current === runId && portRef.current === port) {
+        await closeScannerPort('reconnecting', { markStale: false });
+        scheduleReconnect('Потеряно чтение данных со сканера');
+      } else if (scannerRunIdRef.current === runId) {
         scannerActiveRef.current = false;
         setScannerStatus('disconnected');
       }
     }
-  };
+  }
+
+  async function openScannerPort(port: SerialPortLike, reason: string) {
+    clearReconnectTimer();
+    setScannerStatus(reason === 'manual' ? 'connecting' : 'reconnecting');
+    setScannerLastError('');
+
+    await port.open({ baudRate: 9600 });
+    selectedPortFingerprintRef.current = getPortFingerprint(port);
+    portRef.current = port;
+    scannerActiveRef.current = true;
+    const runId = scannerRunIdRef.current + 1;
+    scannerRunIdRef.current = runId;
+    intentionalDisconnectRef.current = false;
+    reconnectAttemptRef.current = 0;
+    setScannerStatus('connected');
+    setScannerLastEvent('Сканер подключен');
+    await recordScannerClientEvent('client_connected', {
+      status: 'connected',
+      message: 'Web Serial порт открыт',
+      metadata: {
+        reason,
+        deviceLabel: getDeviceLabel(port),
+        portFingerprint: getPortFingerprint(port),
+      },
+    });
+    void readScannerLoop(port, runId);
+  }
+
+  async function tryReconnectToKnownPort(reason: string) {
+    const serial = (navigator as NavigatorWithSerial).serial;
+    if (!serial?.getPorts) return false;
+
+    const ports = await serial.getPorts();
+    const expectedFingerprint = selectedPortFingerprintRef.current;
+    const port =
+      expectedFingerprint
+        ? ports.find((item) => getPortFingerprint(item) === expectedFingerprint)
+        : ports.length === 1
+          ? ports[0]
+          : null;
+    if (!port) return false;
+
+    await openScannerPort(port, reason);
+    return true;
+  }
+
+  function scheduleReconnect(reason: string) {
+    if (intentionalDisconnectRef.current || scannerActiveRef.current) return;
+
+    const attempt = reconnectAttemptRef.current + 1;
+    reconnectAttemptRef.current = attempt;
+    const delay = Math.min(15000, 1500 * attempt);
+
+    setScannerStatus('reconnecting');
+    setScannerLastEvent(
+      `Автопереподключение через ${(delay / 1000).toFixed(1)} сек.`,
+    );
+    void recordScannerClientEvent('client_reconnect_scheduled', {
+      severity: 'warning',
+      status: 'scheduled',
+      message: reason,
+      metadata: {
+        attempt,
+        delayMs: delay,
+      },
+    });
+
+    clearReconnectTimer();
+    reconnectTimerRef.current = window.setTimeout(async () => {
+      try {
+        const connected = await tryReconnectToKnownPort('auto');
+        if (!connected) {
+          throw new Error('Нет ранее разрешенного Web Serial порта');
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Не удалось автоматически переподключить сканер';
+        setScannerLastError(message);
+        await recordScannerClientEvent('client_reconnect_failed', {
+          severity: 'warning',
+          status: 'failed',
+          message,
+          metadata: { attempt },
+        });
+        if (attempt < 8) {
+          scheduleReconnect(reason);
+        } else {
+          setScannerStatus('disconnected');
+          setScannerLastEvent('Автопереподключение остановлено');
+        }
+      }
+    }, delay);
+  }
 
   // --- ЛОГИКА СКАНЕРА ---
   const connectScanner = async () => {
-    if (scannerStatus !== 'disconnected' || scannerActiveRef.current) return;
+    if (
+      scannerStatus === 'connecting' ||
+      scannerStatus === 'connected' ||
+      scannerActiveRef.current
+    ) {
+      return;
+    }
 
     const serial = (navigator as NavigatorWithSerial).serial;
 
     if (!serial) {
-      alert(
-        'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.',
-      );
+      const message =
+        'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.';
+      setScannerLastError(message);
+      await recordScannerClientEvent('client_reconnect_failed', {
+        severity: 'error',
+        status: 'unsupported',
+        message,
+      });
       return;
     }
 
     let port: SerialPortLike | null = null;
 
     try {
+      clearReconnectTimer();
+      intentionalDisconnectRef.current = false;
+      reconnectAttemptRef.current = 0;
+      const nextSessionId = createClientEventId('session');
+      scannerSessionIdRef.current = nextSessionId;
+      setScannerSessionId(nextSessionId);
       setScannerStatus('connecting');
       port = await serial.requestPort();
-      await port.open({ baudRate: 9600 });
-      portRef.current = port;
-      scannerActiveRef.current = true;
-      setScannerStatus('connected');
-      void readScannerLoop(port);
+      selectedPortFingerprintRef.current = getPortFingerprint(port);
+      await openScannerPort(port, 'manual');
     } catch (error) {
       console.error('Ошибка порта:', error);
+      const message =
+        error instanceof Error ? error.message : 'Не удалось открыть сканер';
       if (port) {
         try {
           await port.close();
@@ -451,56 +1007,124 @@ export default function AdminPage() {
       scannerActiveRef.current = false;
       portRef.current = null;
       setScannerStatus('disconnected');
+      setScannerLastError(message);
+      await recordScannerClientEvent('client_reconnect_failed', {
+        severity: 'error',
+        status: 'failed',
+        message,
+      });
     }
+  };
+
+  const reconnectScanner = async () => {
+    if (scannerStatus === 'connected' || scannerStatus === 'connecting') return;
+    clearReconnectTimer();
+    reconnectAttemptRef.current = 0;
+    try {
+      const connected = await tryReconnectToKnownPort('manual-reconnect');
+      if (!connected) {
+        await connectScanner();
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Не удалось переподключить';
+      setScannerLastError(message);
+      setScannerStatus('disconnected');
+    }
+  };
+
+  const disconnectScanner = async () => {
+    intentionalDisconnectRef.current = true;
+    clearReconnectTimer();
+    await recordScannerClientEvent('client_disconnected', {
+      status: 'manual',
+      message: 'Сканер отключен вручную',
+    });
+    await closeScannerPort('disconnected');
+    setScannerLastEvent('Сканер отключен вручную');
+    setIsDisconnectOpen(false);
   };
 
   useEffect(() => {
     const serial = (navigator as NavigatorWithSerial).serial;
-    if (!serial?.addEventListener || !serial.removeEventListener) return;
+    if (!serial) return;
 
     const handleDisconnect = (event: Event) => {
       const disconnectedPort = event.target as unknown as SerialPortLike | null;
       if (!portRef.current || disconnectedPort === portRef.current) {
-        void closeScannerPort();
+        setScannerLastError('Устройство отключено от компьютера');
+        void recordScannerClientEvent('client_disconnected', {
+          severity: 'warning',
+          status: 'hardware_disconnect',
+          message: 'Chrome сообщил об отключении Web Serial устройства',
+        });
+        void closeScannerPort('reconnecting').then(() =>
+          scheduleReconnect('Устройство отключено от компьютера'),
+        );
       }
     };
 
-    serial.addEventListener('disconnect', handleDisconnect);
+    serial.addEventListener?.('disconnect', handleDisconnect);
+    void tryReconnectToKnownPort('initial').catch(() => {
+      // Пользователь подключит сканер вручную, если у браузера еще нет разрешенного порта.
+    });
+
     return () => {
       serial.removeEventListener?.('disconnect', handleDisconnect);
-      void closeScannerPort();
+      intentionalDisconnectRef.current = true;
+      clearReconnectTimer();
+      clearScanRetryTimer();
+      void closeScannerPort('disconnected');
     };
-  }, [closeScannerPort]);
-
-  const playSound = (type: 'success' | 'error') => {
-    const url =
-      type === 'success'
-        ? 'https://www.soundjay.com/buttons/sounds/button-3.mp3'
-        : 'https://www.soundjay.com/buttons/sounds/beep-05.mp3';
-    const audio = new Audio(url);
-    audio.volume = 0.3;
-    audio.play().catch(() => {});
-  };
+    // Web Serial disconnect listener is bound once; mutable refs keep the current port/session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
-    if (searchQuery.length < 2) {
-      setSearchResults([]);
-      return;
-    }
     if (searchTimeout.current) {
       clearTimeout(searchTimeout.current);
+      searchTimeout.current = null;
     }
+
+    if (searchQuery.length < 2) {
+      setSearchResults([]);
+      setSearchError('');
+      return;
+    }
+
+    let cancelled = false;
     searchTimeout.current = setTimeout(async () => {
       try {
         const res = await apiFetch(
           `/api/search?q=${encodeURIComponent(searchQuery)}`,
         );
+        if (!res.ok) {
+          const apiError = await readApiError(res, 'Поиск временно недоступен');
+          throw new Error(apiError.error);
+        }
         const data = await res.json();
+        if (cancelled) return;
         setSearchResults(data);
+        setSearchError('');
       } catch (e) {
+        if (cancelled) return;
         console.error('Ошибка поиска', e);
+        setSearchResults([]);
+        setSearchError(
+          e instanceof Error
+            ? e.message
+            : 'Поиск временно недоступен. Не создавайте дубль без проверки.',
+        );
       }
     }, 300);
+
+    return () => {
+      cancelled = true;
+      if (searchTimeout.current) {
+        clearTimeout(searchTimeout.current);
+        searchTimeout.current = null;
+      }
+    };
   }, [searchQuery]);
 
   useEffect(() => {
@@ -544,18 +1168,33 @@ export default function AdminPage() {
   }, [isRegOpen, regForm.phone, restoreCandidate]);
 
   const handleManualVisit = async (userId: number) => {
+    const clientEventId = createClientEventId('manual');
     try {
       const res = await apiFetch('/api/manual-visit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId }),
+        body: JSON.stringify({
+          userId,
+          clientEventId,
+          source: 'manual_search',
+          metadata: { scannerSessionId: scannerSessionIdRef.current },
+        }),
       });
       if (res.ok) {
+        const data = await res.json();
+        if (data.event) handleIncomingVisit(data.event);
         setIsSearchOpen(false);
         setSearchQuery('');
+        void fetchScannerEvents();
+      } else {
+        const apiError = await readApiError(res, 'Ошибка ручного добавления');
+        throw new Error(apiError.error);
       }
     } catch (e) {
       console.error('Ошибка ручного добавления', e);
+      setSearchError(
+        e instanceof Error ? e.message : 'Не удалось создать ручной вход',
+      );
     }
   };
 
@@ -659,11 +1298,27 @@ export default function AdminPage() {
         return;
       }
 
-      await apiFetch('/api/manual-visit', {
+      const visitRes = await apiFetch('/api/manual-visit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: regData.client.id }),
+        body: JSON.stringify({
+          userId: regData.client.id,
+          clientEventId: createClientEventId('manual'),
+          source: 'reception_registration',
+          metadata: { scannerSessionId: scannerSessionIdRef.current },
+        }),
       });
+      if (visitRes.ok) {
+        const visitData = await visitRes.json();
+        if (visitData.event) handleIncomingVisit(visitData.event);
+      } else {
+        const apiError = await readApiError(
+          visitRes,
+          'Клиент сохранен, но визит создать не удалось',
+        );
+        setRegError(apiError.error);
+        return;
+      }
       setIsRegOpen(false);
       setRegForm(getEmptyReceptionForm());
       setRegCandidate(null);
@@ -680,25 +1335,35 @@ export default function AdminPage() {
     keyNumber: string,
     cardId: string,
   ) => {
-    if (!visitId || !keyNumber.trim()) return;
+    if (!visitId || !keyNumber.trim() || issuingKeyVisitId === visitId) return;
+    setIssuingKeyVisitId(visitId);
     try {
       const res = await apiFetch('/api/key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitId, keyNumber }),
       });
-      if (res.ok) {
-        setCards((prev) =>
-          prev.map((c) =>
-            c.id === cardId ? { ...c, keyNumber, keyIssued: true } : c,
-          ),
-        );
-        setActiveVisit((prev) =>
-          prev?.id === cardId ? { ...prev, keyNumber, keyIssued: true } : prev,
-        );
+      if (!res.ok) {
+        const apiError = await readApiError(res, 'Ошибка выдачи ключа');
+        throw new Error(apiError.error);
       }
+      setCards((prev) =>
+        prev.map((c) =>
+          c.id === cardId ? { ...c, keyNumber, keyIssued: true } : c,
+        ),
+      );
+      setActiveVisit((prev) =>
+        prev?.id === cardId ? { ...prev, keyNumber, keyIssued: true } : prev,
+      );
+      setVisitActionError('');
+      void fetchScannerEvents();
     } catch (e) {
       console.error('Ошибка выдачи ключа', e);
+      setVisitActionError(
+        e instanceof Error ? e.message : 'Не удалось выдать ключ',
+      );
+    } finally {
+      setIssuingKeyVisitId(null);
     }
   };
 
@@ -707,26 +1372,47 @@ export default function AdminPage() {
     visitId: number | undefined,
     categoryIds: number[],
   ) => {
-    if (!visitId) return;
-    const category = getCategoryNamesByIds(visitCategories, categoryIds);
-
-    setCards((prev) =>
-      prev.map((c) =>
-        c.id === cardId ? { ...c, category, categoryIds } : c,
-      ),
-    );
-    setActiveVisit((prev) =>
-      prev?.id === cardId ? { ...prev, category, categoryIds } : prev,
-    );
+    if (!visitId || savingCategoryVisitId === visitId) return;
+    setSavingCategoryVisitId(visitId);
 
     try {
-      await apiFetch('/api/visit/category', {
+      const res = await apiFetch('/api/visit/category', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ visitId, categoryIds }),
       });
+      if (!res.ok) {
+        const apiError = await readApiError(res, 'Ошибка сохранения категории');
+        throw new Error(apiError.error);
+      }
+      const data = (await res.json()) as {
+        category?: string;
+        categoryIds?: number[];
+      };
+      const savedCategory =
+        data.category ?? getCategoryNamesByIds(visitCategories, categoryIds);
+      const savedCategoryIds = data.categoryIds ?? categoryIds;
+      setCards((prev) =>
+        prev.map((c) =>
+          c.id === cardId
+            ? { ...c, category: savedCategory, categoryIds: savedCategoryIds }
+            : c,
+        ),
+      );
+      setActiveVisit((prev) =>
+        prev?.id === cardId
+          ? { ...prev, category: savedCategory, categoryIds: savedCategoryIds }
+          : prev,
+      );
+      setVisitActionError('');
+      void fetchScannerEvents();
     } catch (e) {
       console.error('Ошибка сохранения категории:', e);
+      setVisitActionError(
+        e instanceof Error ? e.message : 'Не удалось сохранить цель визита',
+      );
+    } finally {
+      setSavingCategoryVisitId(null);
     }
   };
 
@@ -748,7 +1434,7 @@ export default function AdminPage() {
           .filter((id): id is number => Boolean(id));
 
   const toggleActiveVisitCategory = (categoryId: number) => {
-    if (!activeVisit) return;
+    if (!activeVisit || savingCategoryVisitId === activeVisit.visitId) return;
 
     const nextCategoryIds = activeCategoryIds.includes(categoryId)
       ? activeCategoryIds.filter((id) => id !== categoryId)
@@ -784,15 +1470,25 @@ export default function AdminPage() {
                   : ''
               }
               onClick={connectScanner}
-              disabled={scannerStatus !== 'disconnected'}
+              disabled={
+                scannerStatus === 'connected' ||
+                scannerStatus === 'connecting' ||
+                scannerStatus === 'reconnecting'
+              }
             >
               {scannerStatus === 'connected' ? (
                 <>
-                  <Usb className="w-4 h-4 mr-2" /> Сканер активен
+                  <Usb className="w-4 h-4 mr-2" /> {getScannerStatusText(scannerStatus)}
                 </>
               ) : scannerStatus === 'connecting' ? (
                 <>
-                  <Usb className="w-4 h-4 mr-2 animate-pulse" /> Подключение...
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />{' '}
+                  {getScannerStatusText(scannerStatus)}
+                </>
+              ) : scannerStatus === 'reconnecting' ? (
+                <>
+                  <RotateCw className="w-4 h-4 mr-2 animate-spin" />{' '}
+                  {getScannerStatusText(scannerStatus)}
                 </>
               ) : (
                 <>
@@ -800,6 +1496,41 @@ export default function AdminPage() {
                   Подключить сканер
                 </>
               )}
+            </Button>
+
+            {scannerStatus !== 'connected' && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void reconnectScanner()}
+                disabled={scannerStatus === 'connecting'}
+              >
+                <RefreshCcw className="w-4 h-4 mr-2" />
+                Переподключить
+              </Button>
+            )}
+
+            {scannerStatus === 'connected' && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsDisconnectOpen(true)}
+              >
+                <WifiOff className="w-4 h-4 mr-2" />
+                Отключить
+              </Button>
+            )}
+
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                void fetchScannerEvents();
+                setIsScannerJournalOpen(true);
+              }}
+            >
+              <History className="w-4 h-4 mr-2" />
+              Журнал
             </Button>
 
             <Button
@@ -826,8 +1557,193 @@ export default function AdminPage() {
           </div>
         </div>
 
+        <div className="flex flex-col gap-3 rounded-md border bg-card px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <Badge
+              variant={scannerStatus === 'connected' ? 'default' : 'outline'}
+              className={
+                scannerStatus === 'connected'
+                  ? 'bg-green-600 text-white hover:bg-green-600'
+                  : scannerStatus === 'reconnecting'
+                    ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
+                    : scannerStatus === 'disconnected'
+                      ? 'border-destructive/40 text-destructive'
+                      : ''
+              }
+            >
+              {getScannerStatusText(scannerStatus)}
+            </Badge>
+            <span className="min-w-0 whitespace-normal break-words text-muted-foreground">
+              {scannerLastEvent ||
+                'Подключите сканер один раз, дальше CRM попробует восстановить разрешенный порт автоматически.'}
+            </span>
+            <HelpTooltip>
+              В Chrome автопереподключение работает только для порта, которому
+              уже дали доступ через кнопку подключения.
+            </HelpTooltip>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {pendingScanCount > 0 && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/40 text-amber-600 dark:text-amber-300"
+              >
+                QR в очереди: {pendingScanCount}
+              </Badge>
+            )}
+            {queuedVisits.length > 0 && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => closeActiveVisit()}
+              >
+                <Clock3 className="mr-2 h-4 w-4" />
+                Новых входов: {queuedVisits.length}
+              </Button>
+            )}
+            {scannerLastError && (
+              <span
+                className="inline-flex max-w-full items-start gap-1 whitespace-normal break-words text-destructive"
+                title={scannerLastError}
+              >
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>{scannerLastError}</span>
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* МОБИЛЬНЫЙ СПИСОК */}
+        <div className="space-y-2 md:hidden">
+          {cards.length === 0 ? (
+            <div className="rounded-md border border-dashed bg-card p-6 text-center text-sm text-muted-foreground">
+              Ожидание сканирований...
+            </div>
+          ) : (
+            cards.map((card) => {
+              const cleanTime = card.time.replace(/[^0-9:]/g, '') || '-';
+              const categoryNames = getVisitCategoryNames(card);
+              const visibleCategoryNames = categoryNames.slice(0, 3);
+              const hiddenCategoryCount = Math.max(
+                0,
+                categoryNames.length - visibleCategoryNames.length,
+              );
+              const isRepeated = Boolean(
+                card.isRepeated || card.time.includes('🔄'),
+              );
+
+              return (
+                <div
+                  key={card.id}
+                  className="rounded-md border bg-card p-3 text-sm"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setVisitActionError('');
+                    setCurrentVisit(card);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      setVisitActionError('');
+                      setCurrentVisit(card);
+                    }
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {card.success ? (
+                          <Badge
+                            variant="outline"
+                            className={
+                              isRepeated
+                                ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
+                                : 'border-primary/40 text-primary'
+                            }
+                          >
+                            {isRepeated ? 'Повтор' : 'Найден'}
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="border-destructive/40 text-destructive"
+                          >
+                            Не найден
+                          </Badge>
+                        )}
+                        <span className="text-xs text-muted-foreground">
+                          {cleanTime}
+                        </span>
+                      </div>
+                      <div className="mt-2 truncate font-semibold">
+                        {card.success ? card.name : 'Неизвестный QR'}
+                      </div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                        {card.success ? `Источник: ${card.source}` : card.qrRaw}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        setCardToDelete(card.id);
+                        setIsDeleteOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <div className="text-muted-foreground">Контакт</div>
+                      <div className="mt-1 break-words font-medium">
+                        {card.success ? card.phone || '-' : card.qrRaw || '-'}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-muted-foreground">Ключ</div>
+                      <div className="mt-1 font-medium">
+                        {card.keyIssued ? `Выдан №${card.keyNumber}` : '-'}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex flex-wrap gap-1">
+	                            {visibleCategoryNames.length > 0 ? (
+	                              <>
+	                                {visibleCategoryNames.map((cat) => (
+	                                  <span
+	                                    key={cat}
+	                                    className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs"
+	                                  >
+	                                    {cat}
+	                                  </span>
+	                                ))}
+                        {hiddenCategoryCount > 0 && (
+                          <span className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs text-muted-foreground">
+                            +{hiddenCategoryCount}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        Цель не указана
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
         {/* ТАБЛИЦА */}
-        <div className="border rounded-md bg-card shadow-sm overflow-x-auto">
+        <div className="hidden overflow-x-auto rounded-md border bg-card shadow-sm md:block">
           <Table className="min-w-[900px]">
             <TableHeader>
               <TableRow>
@@ -853,20 +1769,59 @@ export default function AdminPage() {
               ) : (
                 cards.map((card) => {
                   const cleanTime = card.time.replace(/[^0-9:]/g, '');
+                  const categoryNames = getVisitCategoryNames(card);
+                  const visibleCategoryNames = categoryNames.slice(0, 3);
+                  const hiddenCategoryCount = Math.max(
+                    0,
+                    categoryNames.length - visibleCategoryNames.length,
+                  );
+                  const isRepeated = Boolean(
+                    card.isRepeated || card.time.includes('🔄'),
+                  );
 
                   return (
                     <TableRow
                       key={card.id}
-                      className="animate-in fade-in slide-in-from-top-2"
+                      className="cursor-pointer animate-in fade-in slide-in-from-top-2"
+                      onClick={() => {
+                        setVisitActionError('');
+                        setCurrentVisit(card);
+                      }}
                     >
                       <TableCell>
                         {card.success ? (
-                          <div className="flex items-center gap-2 text-primary font-medium">
-                            <CheckCircle2 className="w-5 h-5" />
+                          <div
+                            className={`flex items-center gap-2 font-medium ${
+                              isRepeated
+                                ? 'text-amber-600 dark:text-amber-300'
+                                : 'text-primary'
+                            }`}
+                          >
+                            {isRepeated ? (
+                              <RefreshCcw className="w-5 h-5" />
+                            ) : (
+                              <CheckCircle2 className="w-5 h-5" />
+                            )}
+                            <Badge
+                              variant="outline"
+                              className={
+                                isRepeated
+                                  ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
+                                  : 'border-primary/40 text-primary'
+                              }
+                            >
+                              {isRepeated ? 'Повтор' : 'Найден'}
+                            </Badge>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2 text-muted-foreground font-medium">
+                          <div className="flex items-center gap-2 font-medium text-destructive">
                             <XCircle className="w-5 h-5" />
+                            <Badge
+                              variant="outline"
+                              className="border-destructive/40 text-destructive"
+                            >
+                              Не найден
+                            </Badge>
                           </div>
                         )}
                       </TableCell>
@@ -882,7 +1837,7 @@ export default function AdminPage() {
                         )}
                       </TableCell>
 
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="max-w-[220px] whitespace-normal break-words text-muted-foreground">
                         {card.success ? (
                           card.phone
                         ) : (
@@ -894,9 +1849,9 @@ export default function AdminPage() {
 
                       <TableCell className="text-muted-foreground font-medium text-sm">
                         <div className="flex items-center gap-1.5">
-                          {card.isRepeated || card.time.includes('🔄') ? (
+                          {isRepeated ? (
                             <>
-                              <RefreshCcw className="w-3.5 h-3.5" />
+                              <RefreshCcw className="w-3.5 h-3.5 text-amber-600 dark:text-amber-300" />
                               <span>{cleanTime}</span>
                             </>
                           ) : card.success ? (
@@ -916,15 +1871,22 @@ export default function AdminPage() {
                       <TableCell>
                         {card.success ? (
                           <div className="flex max-w-[220px] flex-wrap gap-1">
-                            {card.category ? (
-                              splitVisitCategories(card.category).map((cat) => (
+                            {visibleCategoryNames.length > 0 ? (
+                              <>
+                                {visibleCategoryNames.map((cat) => (
                                 <span
                                   key={cat}
                                   className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs"
                                 >
                                   {cat}
                                 </span>
-                              ))
+                                ))}
+                                {hiddenCategoryCount > 0 && (
+                                  <span className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs text-muted-foreground">
+                                    +{hiddenCategoryCount}
+                                  </span>
+                                )}
+                              </>
                             ) : (
                               <span className="text-sm text-muted-foreground">
                                 -
@@ -961,7 +1923,8 @@ export default function AdminPage() {
                           variant="ghost"
                           size="icon"
                           className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 h-8 w-8"
-                          onClick={() => {
+                          onClick={(event) => {
+                            event.stopPropagation();
                             setCardToDelete(card.id);
                             setIsDeleteOpen(true);
                           }}
@@ -1000,6 +1963,10 @@ export default function AdminPage() {
                 <p className="text-sm text-muted-foreground text-center py-4">
                   Начните вводить...
                 </p>
+              ) : searchError ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {searchError}
+                </div>
               ) : searchResults.length === 0 ? (
                 <div className="text-center py-4">
                   <p className="text-sm text-muted-foreground mb-4">
@@ -1175,20 +2142,27 @@ export default function AdminPage() {
       {/* МОДАЛКА: ВИЗИТ ПОСЛЕ СКАНА */}
       <Dialog
         open={Boolean(activeVisit)}
-        onOpenChange={(open) => !open && setActiveVisit(null)}
+        onOpenChange={(open) => !open && closeActiveVisit()}
       >
         <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[760px]">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex min-w-0 items-center gap-2 pr-8">
               {activeVisit?.success ? (
-                <CheckCircle2 className="h-5 w-5 text-primary" />
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" />
               ) : (
-                <XCircle className="h-5 w-5 text-destructive" />
+                <XCircle className="h-5 w-5 shrink-0 text-destructive" />
               )}
-              {activeVisit?.success ? activeVisit.name : 'Клиент не найден'}
+              <span className="min-w-0 truncate">
+                {activeVisit?.success ? activeVisit.name : 'Клиент не найден'}
+              </span>
             </DialogTitle>
             <DialogDescription>
-              Проверьте клиента, укажите цель визита и номер ключа.
+              {activeVisit?.success
+                ? 'Проверьте клиента, укажите цель визита и номер ключа.'
+                : 'QR не найден. Найдите клиента вручную или создайте нового.'}
+              {queuedVisits.length > 0
+                ? ` В очереди еще ${queuedVisits.length} входов.`
+                : ''}
             </DialogDescription>
           </DialogHeader>
 
@@ -1219,6 +2193,80 @@ export default function AdminPage() {
                 <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm">
                   QR не найден в базе:{' '}
                   <span className="font-mono">{activeVisit.qrRaw}</span>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setIsSearchOpen(true);
+                      }}
+                    >
+                      <Search className="mr-2 h-4 w-4" />
+                      Найти вручную
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        setRegForm(getEmptyReceptionForm());
+                        setRegCandidate(null);
+                        setRestoreCandidate(null);
+                        setRegError('');
+                        setIsRegOpen(true);
+                      }}
+                    >
+                      <UserPlus className="mr-2 h-4 w-4" />
+                      Создать клиента
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {queuedVisits.length > 0 && (
+                <div className="rounded-md border bg-secondary/30 p-3 text-sm">
+                  <div className="mb-2 font-medium">Очередь входов</div>
+                  <div className="space-y-1">
+                    {queuedVisits.slice(0, 3).map((visit) => (
+                      <button
+                        key={visit.id}
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1 text-left hover:bg-background"
+                        onClick={() => {
+                          setQueuedVisits((prev) =>
+                            prev.filter((item) => item.id !== visit.id),
+                          );
+                          setCurrentVisit(visit);
+                        }}
+                      >
+                        <span className="min-w-0 truncate">
+                          {visit.success ? visit.name : 'QR не найден'}
+                        </span>
+                        <span className="shrink-0 text-xs text-muted-foreground">
+                          {visit.time.replace(/[^0-9:]/g, '') || '-'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {queuedVisits.length > 3 && (
+                    <div className="mt-2 text-xs text-muted-foreground">
+                      Еще {queuedVisits.length - 3} входов будут доступны по
+                      кнопке “Следующий вход”.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {activeVisit.isRepeated && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+                  Это повторный скан за последние несколько минут. Новый визит
+                  не создан, открыта уже существующая запись.
+                </div>
+              )}
+
+              {visitActionError && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                  {visitActionError}
                 </div>
               )}
 
@@ -1229,23 +2277,27 @@ export default function AdminPage() {
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                       {visitCategories.map((category) => {
                         const isSelected = activeCategoryIds.includes(category.id);
+                        const isSavingCategory =
+                          savingCategoryVisitId === activeVisit.visitId;
 
                         return (
                           <button
                             key={category.id}
                             type="button"
+                            aria-pressed={isSelected}
+                            disabled={isSavingCategory}
                             onClick={() => toggleActiveVisitCategory(category.id)}
-                            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+                            className={`flex items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-muted-foreground/40 focus-visible:ring-offset-1 focus-visible:ring-offset-background ${
                               isSelected
-                                ? 'border-primary bg-primary/10 text-primary'
+                                ? 'border-primary bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.35)]'
                                 : 'border-border hover:bg-secondary'
-                            }`}
+                            } disabled:cursor-not-allowed disabled:opacity-60`}
                           >
                             <span
                               className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${
                                 isSelected
                                   ? 'border-primary bg-primary'
-                                  : 'border-primary/50'
+                                  : 'border-muted-foreground/40'
                               }`}
                             >
                               {isSelected && (
@@ -1253,8 +2305,8 @@ export default function AdminPage() {
                               )}
                             </span>
                             <span>{category.name}</span>
-                          </button>
-                        );
+	                          </button>
+	                        );
                       })}
                       {visitCategories.length === 0 && (
                         <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground sm:col-span-2">
@@ -1276,13 +2328,17 @@ export default function AdminPage() {
                           placeholder="Номер ключа"
                           inputMode="numeric"
                           value={activeVisit.keyNumber}
+                          disabled={issuingKeyVisitId === activeVisit.visitId}
                           onChange={(event) =>
                             handleKeyInput(activeVisit.id, event.target.value)
                           }
                         />
                         <Button
                           type="button"
-                          disabled={!activeVisit.keyNumber.trim()}
+                          disabled={
+                            !activeVisit.keyNumber.trim() ||
+                            issuingKeyVisitId === activeVisit.visitId
+                          }
                           onClick={() =>
                             void handleIssueKey(
                               activeVisit.visitId,
@@ -1291,7 +2347,9 @@ export default function AdminPage() {
                             )
                           }
                         >
-                          Выдать ключ
+                          {issuingKeyVisitId === activeVisit.visitId
+                            ? 'Выдаем...'
+                            : 'Выдать ключ'}
                         </Button>
                       </div>
                     )}
@@ -1300,6 +2358,93 @@ export default function AdminPage() {
               )}
             </div>
           )}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={closeActiveVisit}>
+              {queuedVisits.length > 0 ? 'Следующий вход' : 'Закрыть'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* МОДАЛКА: ЖУРНАЛ СКАНЕРА */}
+      <Dialog open={isScannerJournalOpen} onOpenChange={setIsScannerJournalOpen}>
+        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[880px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-muted-foreground" />
+              Журнал сканера
+            </DialogTitle>
+            <DialogDescription>
+              Последние подключения, отключения, повторы и ошибки QR.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            {scannerEvents.length === 0 ? (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                Событий сканера пока нет.
+              </div>
+            ) : (
+              scannerEvents.map((event) => (
+                <div
+                  key={event.id}
+                  className="grid gap-3 rounded-md border p-3 text-sm md:grid-cols-[160px_minmax(0,1fr)_140px]"
+                >
+                  <div className="space-y-1">
+                    <Badge
+                      variant="outline"
+                      className={
+                        event.severity === 'error'
+                          ? 'border-destructive/40 text-destructive'
+                          : event.severity === 'warning'
+                            ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
+                            : ''
+                      }
+                    >
+                      {getScannerEventLabel(event.eventType)}
+                    </Badge>
+                    <div className="text-xs text-muted-foreground">
+                      {formatDateTime(event.createdAt)}
+                    </div>
+                  </div>
+                  <div className="min-w-0">
+                    <div
+                      className="whitespace-normal break-words font-medium leading-snug"
+                      title={event.message || event.status || ''}
+                    >
+                      {event.message || event.status || '-'}
+                    </div>
+	                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+	                      {event.user?.name && <span>Клиент: {event.user.name}</span>}
+	                      {event.qrPreview && (
+	                        <span>
+	                          QR: {event.qrPreview}
+	                          {event.qrHash
+	                            ? ` · hash ${event.qrHash.slice(0, 8)}`
+	                            : ''}
+	                        </span>
+	                      )}
+	                      {event.code && <span>Код: {event.code}</span>}
+	                    </div>
+                  </div>
+                  <div className="text-xs text-muted-foreground md:text-right">
+                    {event.account?.name || event.account?.email || 'CRM'}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void fetchScannerEvents()}
+            >
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              Обновить
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1307,14 +2452,38 @@ export default function AdminPage() {
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Удалить запись из списка?</DialogTitle>
+            <DialogTitle>Скрыть запись с экрана?</DialogTitle>
+            <DialogDescription>
+              Это уберет карточку только из текущего монитора. В истории
+              визитов запись останется.
+            </DialogDescription>
           </DialogHeader>
           <DialogFooter className="mt-4 gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
               Отмена
             </Button>
             <Button variant="destructive" onClick={handleDelete}>
-              Удалить
+              Скрыть
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* МОДАЛКА: ОТКЛЮЧЕНИЕ СКАНЕРА */}
+      <Dialog open={isDisconnectOpen} onOpenChange={setIsDisconnectOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Отключить сканер?</DialogTitle>
+            <DialogDescription>
+              Поток QR остановится, пока вы снова не подключите устройство.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="mt-4 gap-2 sm:gap-0">
+            <Button variant="outline" onClick={() => setIsDisconnectOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="destructive" onClick={() => void disconnectScanner()}>
+              Отключить
             </Button>
           </DialogFooter>
         </DialogContent>

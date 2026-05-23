@@ -31,7 +31,7 @@ class ShiftsController {
 
   async create(req, res) {
     try {
-      const shift = await shiftsService.create(req.body);
+      const shift = await shiftsService.create(req.body, req.account);
       res.json(shift);
     } catch (error) {
       sendError(res, error, 'Ошибка добавления смены');
@@ -43,7 +43,7 @@ class ShiftsController {
       const { id } = req.body;
       if (!id) return sendError(res, { statusCode: 400 }, 'Не указан ID смены');
 
-      const shift = await shiftsService.update(req.body);
+      const shift = await shiftsService.update(req.body, req.account);
       if (!shift) return sendError(res, { statusCode: 404 }, 'Смена не найдена');
 
       res.json(shift);
@@ -57,10 +57,10 @@ class ShiftsController {
       const { id } = req.body;
       if (!id) return sendError(res, { statusCode: 400 }, 'Не указан ID смены');
 
-      const deleted = await shiftsService.remove(id);
-      if (!deleted) return sendError(res, { statusCode: 404 }, 'Смена не найдена');
+      const shift = await shiftsService.remove(id, req.account, req.body?.reason);
+      if (!shift) return sendError(res, { statusCode: 404 }, 'Смена не найдена');
 
-      res.json({ status: 'ok' });
+      res.json({ status: 'ok', shift });
     } catch (error) {
       sendError(res, error, 'Ошибка удаления смены');
     }

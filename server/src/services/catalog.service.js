@@ -338,6 +338,50 @@ class CatalogService {
         409,
       );
     }
+    const financeRecords = await db.Finance.count({
+      where: {
+        category: {
+          [db.Sequelize.Op.in]: allNames,
+        },
+      },
+    });
+    if (financeRecords > 0) {
+      throw appError(
+        'Категорию нельзя удалить безвозвратно: по ней есть финансовая история. Оставьте ее в архиве.',
+        409,
+      );
+    }
+
+    const linkedRules = await db.CatalogRule.findAll({
+      attributes: ['itemName'],
+      where: {
+        category: {
+          [db.Sequelize.Op.in]: allNames,
+        },
+      },
+    });
+    const linkedItemNames = Array.from(
+      new Set(
+        linkedRules
+          .map((rule) => String(rule.itemName || '').trim())
+          .filter(Boolean),
+      ),
+    );
+    if (linkedItemNames.length > 0) {
+      const receiptItems = await db.ReceiptItem.count({
+        where: {
+          name: {
+            [db.Sequelize.Op.in]: linkedItemNames,
+          },
+        },
+      });
+      if (receiptItems > 0) {
+        throw appError(
+          'Категорию нельзя удалить безвозвратно: ее правила уже использовались в чеках. Оставьте ее в архиве.',
+          409,
+        );
+      }
+    }
 
     await db.CatalogRule.destroy({
       where: {

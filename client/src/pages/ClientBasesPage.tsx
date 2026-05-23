@@ -18,6 +18,7 @@ import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { HelpTooltip } from '@/components/dashboard-metric';
 import {
   Dialog,
   DialogContent,
@@ -76,6 +77,7 @@ interface ClientBase {
   lastCalculatedAt?: string | null;
   lastTaskClientCount?: number | null;
   lastTaskCreatedAt?: string | null;
+  slaDays?: number | null;
   recurrence?: {
     assignedTo?: {
       id: number;
@@ -141,6 +143,7 @@ interface BaseFormState {
   recurringTitle: string;
   recurringWeekday: string;
   segment: ClientSegment;
+  slaDays: string;
   source: string;
   sourceId: string;
   status: 'active' | 'archived' | 'all';
@@ -178,6 +181,7 @@ const EMPTY_FORM: BaseFormState = {
   recurringTitle: '',
   recurringWeekday: '1',
   segment: 'all',
+  slaDays: '',
   source: '',
   sourceId: '',
   status: 'active',
@@ -305,6 +309,7 @@ function formFromBase(base: ClientBase): BaseFormState {
       ? String(base.recurrence.weekday)
       : '1',
     segment: filters.segment || 'all',
+    slaDays: base.slaDays === null || base.slaDays === undefined ? '' : String(base.slaDays),
     source: filters.source || '',
     sourceId: String(filters.sourceId ?? ''),
     status: filters.status || 'active',
@@ -359,6 +364,27 @@ function describeRecurrence(base: ClientBase) {
     recurrence.scopeType === 'dynamic' ? 'автообновляемая' : 'фиксированная';
 
   return `${interval} в ${recurrence.time || '10:00'} · ${mode}`;
+}
+
+function describeCallDeadline(base: ClientBase) {
+  if (base.slaDays === null || base.slaDays === undefined) {
+    return 'Как у задачи';
+  }
+  if (base.slaDays === 0) return 'Сегодня';
+  return `${base.slaDays} дн.`;
+}
+
+function baseTargetsOnlyActiveClients(base: ClientBase) {
+  return (base.filters?.status || 'active') === 'active';
+}
+
+function getCallTaskBlockedReason(base: ClientBase) {
+  if (base.status !== 'active') return 'Архивную базу сначала нужно восстановить';
+  if (!baseTargetsOnlyActiveClients(base)) {
+    return 'Задачи создаются только по базам с активными клиентами';
+  }
+
+  return '';
 }
 
 export default function ClientBasesPage() {
@@ -471,12 +497,19 @@ export default function ClientBasesPage() {
       setFormError('Введите название базы не короче 2 символов.');
       return;
     }
+    if (form.recurringEnabled && form.status !== 'active') {
+      setFormError(
+        'Автозадачи можно включить только для базы с активными клиентами.',
+      );
+      return;
+    }
 
     const payload = {
       description: form.description.trim(),
       filters: buildFilters(form),
       name: form.name.trim(),
       recurrence: buildRecurrence(form),
+      slaDays: form.slaDays.trim() ? Number(form.slaDays) : null,
       status: editingBase?.status || 'active',
     };
     const res = await apiFetch(
@@ -592,6 +625,19 @@ export default function ClientBasesPage() {
   };
 
   const openCreateCallTask = (base: ClientBase) => {
+    const blockedReason = getCallTaskBlockedReason(base);
+    if (blockedReason) {
+      setPendingAction({
+        confirmLabel: 'Понятно',
+        description:
+          'Измените фильтр базы на статус клиентов «Активные» или восстановите базу, если она в архиве.',
+        hideCancel: true,
+        onConfirm: async () => {},
+        title: blockedReason,
+      });
+      return;
+    }
+
     setCallTaskBase(base);
     setCallTaskForm({
       ...EMPTY_CALL_TASK_FORM,
@@ -707,35 +753,45 @@ export default function ClientBasesPage() {
           <Badge variant="outline">{bases.length}</Badge>
         </div>
         <div className="overflow-x-auto">
-          <Table className="min-w-[980px] table-fixed">
+          <Table className="min-w-[1280px] table-fixed">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-[24%]">База</TableHead>
-                <TableHead className="w-[24%]">Фильтр</TableHead>
-                <TableHead className="w-[88px] text-right">Клиентов</TableHead>
+                <TableHead className="w-[22%]">Фильтр</TableHead>
+                <TableHead className="w-[96px] text-right">Клиентов</TableHead>
+                <TableHead className="w-[150px]">
+                  <span className="inline-flex items-center gap-1.5">
+                    Срок прозвона
+                    <HelpTooltip>
+                      Сколько дней дается на обработку каждого клиента после
+                      создания задачи. Если срок не задан, используется общий
+                      дедлайн задачи.
+                    </HelpTooltip>
+                  </span>
+                </TableHead>
                 <TableHead className="w-[18%]">Автозадача</TableHead>
                 <TableHead className="w-[18%]">Последняя задача</TableHead>
-                <TableHead className="w-[144px] text-right"></TableHead>
+                <TableHead className="w-[150px] text-right"></TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {loading && bases.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                     Загрузка баз...
                   </TableCell>
                 </TableRow>
               )}
               {!loading && bases.length === 0 && (
                 <TableRow>
-                  <TableCell colSpan={6} className="py-10 text-center text-muted-foreground">
+                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
                     Базы еще не созданы.
                   </TableCell>
                 </TableRow>
               )}
               {bases.map((base) => (
                 <TableRow key={base.id}>
-                  <TableCell>
+                  <TableCell className="whitespace-normal">
                     <div className="min-w-0">
                       <div className="truncate font-medium">{base.name}</div>
                       {base.description && (
@@ -745,13 +801,20 @@ export default function ClientBasesPage() {
                       )}
                     </div>
                   </TableCell>
-                  <TableCell className="text-muted-foreground">
-                    {describeFilters(base.filters)}
+                  <TableCell className="whitespace-normal text-muted-foreground">
+                    <div className="line-clamp-2 leading-5">
+                      {describeFilters(base.filters)}
+                    </div>
                   </TableCell>
                   <TableCell className="text-right font-medium">
                     {base.currentClientCount.toLocaleString('ru-RU')}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="whitespace-normal text-sm text-muted-foreground">
+                    <span title={describeCallDeadline(base)}>
+                      {describeCallDeadline(base)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
                     {base.recurrence?.enabled ? (
                       <div className="text-sm">
                         <div className="truncate">{describeRecurrence(base)}</div>
@@ -765,7 +828,7 @@ export default function ClientBasesPage() {
                       </span>
                     )}
                   </TableCell>
-                  <TableCell>
+                  <TableCell className="whitespace-normal">
                     {base.lastTaskCreatedAt ? (
                       <div className="text-sm">
                         <div>{formatDateTime(base.lastTaskCreatedAt)}</div>
@@ -801,7 +864,9 @@ export default function ClientBasesPage() {
                           size="icon-sm"
                           onClick={() => openCreateCallTask(base)}
                           aria-label={`Создать обзвон по базе ${base.name}`}
-                          title="Создать обзвон"
+                          title={
+                            getCallTaskBlockedReason(base) || 'Создать обзвон'
+                          }
                         >
                           <PhoneCall className="h-4 w-4" />
                         </Button>
@@ -907,6 +972,27 @@ export default function ClientBasesPage() {
                 }
                 className="min-h-[80px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
+            </div>
+
+            <div className="rounded-md border p-3">
+              <div className="text-sm font-medium">Срок прозвона</div>
+              <div className="mt-1 text-xs text-muted-foreground">
+                Сколько дней дается на обработку каждого клиента после создания
+                задачи. Если пусто, используется общий дедлайн задачи.
+              </div>
+              <div className="mt-3 max-w-[220px]">
+                <label className="mb-1 block text-xs font-medium">
+                  Дней на обработку
+                </label>
+                <Input
+                  inputMode="numeric"
+                  value={form.slaDays}
+                  onChange={(event) =>
+                    setForm({ ...form, slaDays: event.target.value })
+                  }
+                  placeholder="2"
+                />
+              </div>
             </div>
 
             <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
@@ -1362,7 +1448,8 @@ export default function ClientBasesPage() {
             <DialogTitle>Создать обзвон</DialogTitle>
             <DialogDescription>
               Задача создается из базы «{callTaskBase?.name}». Для обычного
-              обзвона список клиентов фиксируется на момент создания.
+              обзвона список клиентов фиксируется на момент создания. Срок
+              прозвона: {callTaskBase ? describeCallDeadline(callTaskBase) : '-'}.
             </DialogDescription>
           </DialogHeader>
 

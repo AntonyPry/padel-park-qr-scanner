@@ -19,6 +19,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -83,6 +87,10 @@ interface CurrentSalesResponse {
   paymentSummary?: Partial<PaymentSummary>;
   records: FinanceRecord[];
 }
+
+type PendingAction = ConfirmAction & {
+  onConfirm: () => Promise<void>;
+};
 
 interface BonusRecord extends FinanceRecord {
   bonusRuleIds: number[];
@@ -820,6 +828,8 @@ export default function AdminMotivationPage() {
   const [loading, setLoading] = useState(false);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(false);
 
   const rulesMap = useMemo(() => rulesToMap(rules), [rules]);
   const assignedRuleByCategoryId = useMemo(() => {
@@ -992,9 +1002,8 @@ export default function AdminMotivationPage() {
     void fetchFinances();
   };
 
-  const handleEndShift = async () => {
+  const executeEndShift = async () => {
     if (!activeShift || !shiftStart) return;
-    if (!confirm('Уверены, что хотите завершить смену?')) return;
 
     let latestStats = shiftStats;
     try {
@@ -1028,6 +1037,19 @@ export default function AdminMotivationPage() {
     setReportCopied(false);
     setActiveShift(null);
     void fetchFinances();
+  };
+
+  const handleEndShift = async () => {
+    if (!activeShift || !shiftStart) return;
+
+    setPendingAction({
+      confirmLabel: 'Завершить смену',
+      description:
+        'Перед закрытием CRM обновит продажи смены, рассчитает мотивацию и сформирует текстовый отчет для копирования.',
+      isDestructive: true,
+      onConfirm: executeEndShift,
+      title: 'Завершить текущую смену?',
+    });
   };
 
   const handleSaveRule = async (rule: MotivationRule) => {
@@ -1124,9 +1146,7 @@ export default function AdminMotivationPage() {
     closeBonusModal();
   };
 
-  const handleDeleteBonusRule = async (rule: MotivationBonusRule) => {
-    if (!confirm(`Удалить правило «${rule.name}»?`)) return;
-
+  const executeDeleteBonusRule = async (rule: MotivationBonusRule) => {
     const res = await apiFetch(`/api/motivation/bonus-rules/${rule.id}`, {
       method: 'DELETE',
     });
@@ -1142,6 +1162,28 @@ export default function AdminMotivationPage() {
       delete next[rule.id];
       return next;
     });
+  };
+
+  const handleDeleteBonusRule = async (rule: MotivationBonusRule) => {
+    setPendingAction({
+      confirmLabel: 'Удалить',
+      description: `Правило «${rule.name}» будет удалено из списка мотиваций и перестанет участвовать в новых расчетах.`,
+      isDestructive: true,
+      onConfirm: () => executeDeleteBonusRule(rule),
+      title: 'Удалить мотивацию?',
+    });
+  };
+
+  const confirmPendingAction = async () => {
+    if (!pendingAction) return;
+
+    setPendingActionLoading(true);
+    try {
+      await pendingAction.onConfirm();
+      setPendingAction(null);
+    } finally {
+      setPendingActionLoading(false);
+    }
   };
 
   const handleCopyReport = async () => {
@@ -1790,6 +1832,13 @@ export default function AdminMotivationPage() {
 
         </>
       )}
+
+      <ConfirmActionDialog
+        action={pendingAction}
+        loading={pendingActionLoading}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={confirmPendingAction}
+      />
     </div>
   );
 }

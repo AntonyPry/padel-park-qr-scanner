@@ -1,6 +1,7 @@
 import {
   Activity,
   BicepsFlexed,
+  CircleDollarSign,
   ContactRound,
   Database,
   Filter,
@@ -50,6 +51,11 @@ const items = [
     icon: ContactRound,
   },
   {
+    title: 'Тренерский кабинет',
+    url: '/admin/trainer',
+    icon: BicepsFlexed,
+  },
+  {
     title: 'Базы клиентов',
     url: '/admin/client-bases',
     icon: Filter,
@@ -80,9 +86,9 @@ const items = [
     icon: History,
   },
   {
-    title: 'Мотивацию поднимаем',
+    title: 'Мотивация',
     url: '/admin/motivation',
-    icon: BicepsFlexed,
+    icon: CircleDollarSign,
   },
   {
     title: 'Утилизация кортов',

@@ -46,8 +46,8 @@ function mapTrainingNote(note) {
     trainer: trainer
       ? {
           id: trainer.id,
-          email: trainer.email,
-          name: trainer.Staff?.name || trainer.email,
+          name: trainer.Staff?.name || 'Тренер',
+          role: trainer.role,
         }
       : null,
   };
@@ -74,7 +74,7 @@ async function listByClient(clientId) {
       {
         model: db.Account,
         as: 'trainerAccount',
-        attributes: ['id', 'email', 'role', 'staffId'],
+        attributes: ['id', 'role', 'staffId'],
         include: [{ model: db.Staff, attributes: ['id', 'name'] }],
       },
     ],
@@ -86,6 +86,45 @@ async function listByClient(clientId) {
   });
 
   return notes.map(mapTrainingNote);
+}
+
+async function getNoteOrFail(noteId) {
+  const note = await db.TrainingNote.findByPk(Number(noteId), {
+    include: [
+      {
+        model: db.User,
+        attributes: ['id', 'status', 'mergedIntoUserId'],
+      },
+      {
+        model: db.Account,
+        as: 'trainerAccount',
+        attributes: ['id', 'role', 'staffId'],
+        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+      },
+    ],
+  });
+
+  if (!note) throw appError('Запись тренировки не найдена', 404);
+  return note;
+}
+
+function assertCanChangeNote(note, actor) {
+  if (['owner', 'manager'].includes(actor?.role)) return;
+  if (actor?.role === 'trainer' && Number(note.trainerAccountId) === Number(actor.id)) {
+    return;
+  }
+
+  throw appError('Можно менять только свои тренировочные записи', 403);
+}
+
+function assertClientIsEditable(note) {
+  const client = note.User;
+  if (!client || client.mergedIntoUserId) {
+    throw appError('Клиент не найден', 404);
+  }
+  if (client.status === 'archived') {
+    throw appError('Архивный клиент доступен только для просмотра', 409);
+  }
 }
 
 async function create(clientId, data, actor) {
@@ -112,7 +151,46 @@ async function create(clientId, data, actor) {
   return listByClient(clientId);
 }
 
+async function update(noteId, data, actor) {
+  const note = await getNoteOrFail(noteId);
+  assertCanChangeNote(note, actor);
+  assertClientIsEditable(note);
+
+  const nextExercises =
+    data.exercises === undefined ? note.exercises : normalizeText(data.exercises);
+  const nextNote = data.note === undefined ? note.note : normalizeText(data.note);
+
+  if (!nextExercises && !nextNote) {
+    throw appError('Заполните упражнения или заметку');
+  }
+
+  await note.update({
+    exercises: nextExercises,
+    level:
+      data.level === undefined ? note.level : normalizeLevel(data.level),
+    note: nextNote,
+    trainedAt:
+      data.trainedAt === undefined
+        ? note.trainedAt
+        : normalizeDateOnly(data.trainedAt),
+  });
+
+  return listByClient(note.userId);
+}
+
+async function remove(noteId, actor) {
+  const note = await getNoteOrFail(noteId);
+  assertCanChangeNote(note, actor);
+  assertClientIsEditable(note);
+  const clientId = note.userId;
+
+  await note.destroy();
+  return listByClient(clientId);
+}
+
 module.exports = {
   create,
   listByClient,
+  remove,
+  update,
 };

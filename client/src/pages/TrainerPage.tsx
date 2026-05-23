@@ -1,0 +1,854 @@
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from 'react';
+import {
+  CalendarDays,
+  Dumbbell,
+  History,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldCheck,
+  Target,
+  Trash2,
+  UserRound,
+} from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
+import { HelpTooltip, MetricCard } from '@/components/dashboard-metric';
+import { Input } from '@/components/ui/input';
+import {
+  Pagination,
+  PaginationButton,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import { apiFetch } from '@/lib/api';
+import { useAuth } from '@/lib/useAuth';
+
+type TrainingLevel = 'D' | 'D+' | 'C' | 'C+' | 'B' | 'B+' | 'A';
+
+interface ClientStats {
+  firstVisitAt?: string | null;
+  lastVisitAt?: string | null;
+  visitCount: number;
+}
+
+interface ClientTrainingStats {
+  latestAt?: string | null;
+  latestLevel?: TrainingLevel | null;
+  notesCount: number;
+}
+
+interface Client {
+  id: number;
+  name: string;
+  note?: string | null;
+  segment: string;
+  source: string;
+  status: 'active' | 'archived';
+  stats: ClientStats;
+  training?: ClientTrainingStats;
+}
+
+interface ClientsResponse {
+  items: Client[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+interface TrainingNote {
+  createdAt: string;
+  exercises: string;
+  id: number;
+  level: TrainingLevel;
+  note: string;
+  trainedAt: string;
+  trainer?: {
+    id: number;
+    name: string;
+    role?: string;
+  } | null;
+  updatedAt: string;
+}
+
+interface ClientDetails {
+  client: Client;
+  trainingNotes: TrainingNote[];
+}
+
+interface TrainingFormState {
+  exercises: string;
+  level: TrainingLevel;
+  note: string;
+  trainedAt: string;
+}
+
+type PendingAction = ConfirmAction & {
+  onConfirm: () => Promise<boolean | void>;
+};
+
+const TRAINING_LEVELS: TrainingLevel[] = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
+const LEVEL_ORDER = new Map(TRAINING_LEVELS.map((level, index) => [level, index]));
+
+function getTodayDate() {
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+  return date.toISOString().slice(0, 10);
+}
+
+function getEmptyTrainingForm(): TrainingFormState {
+  return {
+    exercises: '',
+    level: 'D',
+    note: '',
+    trainedAt: getTodayDate(),
+  };
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' }).format(
+    new Date(value),
+  );
+}
+
+async function readError(response: Response, fallback: string) {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function getPaginationItems(currentPage: number, pageCount: number) {
+  const pages = new Set<number>([1, pageCount, currentPage]);
+  if (currentPage > 1) pages.add(currentPage - 1);
+  if (currentPage < pageCount) pages.add(currentPage + 1);
+
+  const sorted = Array.from(pages)
+    .filter((page) => page >= 1 && page <= pageCount)
+    .sort((a, b) => a - b);
+
+  return sorted.reduce<Array<number | 'ellipsis'>>((items, page, index) => {
+    if (index > 0 && page - sorted[index - 1] > 1) items.push('ellipsis');
+    items.push(page);
+    return items;
+  }, []);
+}
+
+function getLevelDelta(notes: TrainingNote[]) {
+  if (notes.length < 2) return null;
+  const chronological = [...notes].sort(
+    (a, b) =>
+      new Date(a.trainedAt || a.createdAt).getTime() -
+      new Date(b.trainedAt || b.createdAt).getTime(),
+  );
+  const first = chronological[0]?.level;
+  const last = chronological.at(-1)?.level;
+  if (!first || !last) return null;
+
+  const delta = (LEVEL_ORDER.get(last) || 0) - (LEVEL_ORDER.get(first) || 0);
+  if (delta > 0) return `+${delta}`;
+  return String(delta);
+}
+
+function getLatestNote(notes: TrainingNote[]) {
+  return notes[0] || null;
+}
+
+export default function TrainerPage() {
+  const { account } = useAuth();
+  const [clients, setClients] = useState<Client[]>([]);
+  const [clientsError, setClientsError] = useState<string | null>(null);
+  const [clientsLoading, setClientsLoading] = useState(true);
+  const [details, setDetails] = useState<ClientDetails | null>(null);
+  const [detailsError, setDetailsError] = useState<string | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
+  const [editingNote, setEditingNote] = useState<TrainingNote | null>(null);
+  const [form, setForm] = useState<TrainingFormState>(getEmptyTrainingForm);
+  const [page, setPage] = useState(1);
+  const [q, setQ] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [trainingLevel, setTrainingLevel] = useState<'all' | TrainingLevel>('all');
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const detailsPanelRef = useRef<HTMLElement | null>(null);
+  const detailsRequestIdRef = useRef(0);
+
+  const queryString = useMemo(() => {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: '10',
+      status: 'active',
+    });
+    if (q.trim()) params.set('q', q.trim());
+    if (trainingLevel !== 'all') params.set('trainingLevel', trainingLevel);
+    return params.toString();
+  }, [page, q, trainingLevel]);
+
+  const paginationItems = useMemo(
+    () => getPaginationItems(page, totalPages),
+    [page, totalPages],
+  );
+  const selectedClientId = details?.client.id || null;
+  const latestNote = useMemo(
+    () => getLatestNote(details?.trainingNotes || []),
+    [details?.trainingNotes],
+  );
+  const levelDelta = useMemo(
+    () => getLevelDelta(details?.trainingNotes || []),
+    [details?.trainingNotes],
+  );
+
+  const fetchClients = useCallback(async () => {
+    setClientsLoading(true);
+    setClientsError(null);
+    try {
+      const response = await apiFetch(`/api/clients?${queryString}`);
+      if (!response.ok) {
+        setClientsError(await readError(response, 'Не удалось загрузить клиентов'));
+        return;
+      }
+
+      const data = (await response.json()) as ClientsResponse;
+      setClients(data.items);
+      setTotal(data.total);
+      setTotalPages(data.totalPages);
+    } catch {
+      setClientsError('Не удалось загрузить клиентов. Проверьте сервер.');
+    } finally {
+      setClientsLoading(false);
+    }
+  }, [queryString]);
+
+  const loadDetails = useCallback(async (clientId: number) => {
+    const requestId = detailsRequestIdRef.current + 1;
+    detailsRequestIdRef.current = requestId;
+
+    setDetailsLoading(true);
+    setDetailsError(null);
+    setDetails(null);
+    try {
+      const response = await apiFetch(`/api/clients/${clientId}`);
+      if (requestId !== detailsRequestIdRef.current) return;
+      if (!response.ok) {
+        setDetailsError(await readError(response, 'Не удалось открыть клиента'));
+        return;
+      }
+
+      setDetails((await response.json()) as ClientDetails);
+      setEditingNote(null);
+      setForm(getEmptyTrainingForm());
+      if (window.innerWidth < 1024) {
+        window.setTimeout(() => {
+          if (requestId === detailsRequestIdRef.current) {
+            detailsPanelRef.current?.scrollIntoView({
+              behavior: 'smooth',
+              block: 'start',
+            });
+          }
+        }, 0);
+      }
+    } catch {
+      if (requestId !== detailsRequestIdRef.current) return;
+      setDetailsError('Не удалось открыть клиента. Проверьте сервер.');
+    } finally {
+      if (requestId === detailsRequestIdRef.current) {
+        setDetailsLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      void fetchClients();
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [fetchClients]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [q, trainingLevel]);
+
+  const canChangeNote = useCallback(
+    (note: TrainingNote) => {
+      if (account?.role === 'owner' || account?.role === 'manager') return true;
+      return account?.role === 'trainer' && note.trainer?.id === account.id;
+    },
+    [account?.id, account?.role],
+  );
+
+  const resetForm = () => {
+    setEditingNote(null);
+    setForm(getEmptyTrainingForm());
+  };
+
+  const startEdit = (note: TrainingNote) => {
+    setEditingNote(note);
+    setForm({
+      exercises: note.exercises,
+      level: note.level,
+      note: note.note,
+      trainedAt: note.trainedAt,
+    });
+  };
+
+  const submitTraining = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!details?.client) return;
+
+    setSaving(true);
+    try {
+      const response = await apiFetch(
+        editingNote
+          ? `/api/training-notes/${editingNote.id}`
+          : `/api/clients/${details.client.id}/training-notes`,
+        {
+          method: editingNote ? 'PUT' : 'POST',
+          body: JSON.stringify(form),
+        },
+      );
+
+      if (!response.ok) {
+        alert(await readError(response, 'Не удалось сохранить тренировку'));
+        return;
+      }
+
+      const trainingNotes = (await response.json()) as TrainingNote[];
+      setDetails({ ...details, trainingNotes });
+      resetForm();
+      void fetchClients();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteNote = (note: TrainingNote) => {
+    setPendingAction({
+      confirmLabel: 'Удалить',
+      description:
+        'Запись исчезнет из дневника тренировок клиента и истории прогресса.',
+      isDestructive: true,
+      title: 'Удалить тренировочную запись?',
+      onConfirm: async () => {
+        const response = await apiFetch(`/api/training-notes/${note.id}`, {
+          method: 'DELETE',
+        });
+
+        if (!response.ok) {
+          alert(await readError(response, 'Не удалось удалить тренировку'));
+          return false;
+        }
+
+        const trainingNotes = (await response.json()) as TrainingNote[];
+        setDetails((current) =>
+          current ? { ...current, trainingNotes } : current,
+        );
+        if (editingNote?.id === note.id) resetForm();
+        void fetchClients();
+      },
+    });
+  };
+
+  const confirmPendingAction = async () => {
+    if (!pendingAction) return;
+    setPendingActionLoading(true);
+    try {
+      const shouldClose = await pendingAction.onConfirm();
+      if (shouldClose !== false) setPendingAction(null);
+    } finally {
+      setPendingActionLoading(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-3 sm:p-4 lg:p-6">
+      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Тренерский кабинет
+          </h1>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Без телефонов и CRM-администрирования: только клиенты, уровень,
+            упражнения и дневник тренировок.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => void fetchClients()}
+          disabled={clientsLoading}
+        >
+          <RefreshCw className="mr-2 h-4 w-4" />
+          Обновить
+        </Button>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        <MetricCard
+          icon={<UserRound className="h-3.5 w-3.5" />}
+          label="Клиенты в подборке"
+          tooltip="Количество активных клиентов, которые подходят под текущий поиск и фильтр по уровню."
+          value={total}
+        />
+        <MetricCard
+          icon={<Dumbbell className="h-3.5 w-3.5" />}
+          label="Записей на странице"
+          tooltip="Сколько тренировочных записей есть у клиентов, показанных в текущей таблице."
+          value={clients.reduce(
+            (sum, client) => sum + (client.training?.notesCount || 0),
+            0,
+          )}
+        />
+        <MetricCard
+          icon={<ShieldCheck className="h-3.5 w-3.5" />}
+          label="Безопасный режим"
+          tooltip="На этой странице тренер не видит телефон, Telegram, VK и webId клиента и не может создавать или редактировать клиентов."
+          value="Включен"
+        />
+      </div>
+
+      <div className="grid gap-4 lg:min-h-[620px] lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]">
+        <section className="rounded-md border bg-card lg:min-h-[620px]">
+          <div className="border-b p-4">
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+              <div className="min-w-0 flex-1">
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  Поиск клиента
+                  <HelpTooltip>
+                    Поиск идет по имени клиента. Телефоны в тренерском режиме не
+                    используются и не показываются.
+                  </HelpTooltip>
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={q}
+                    onChange={(event) => setQ(event.target.value)}
+                    className="pl-9"
+                    placeholder="Имя клиента"
+                  />
+                </div>
+              </div>
+              <div className="w-full xl:w-48">
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                  Уровень
+                  <HelpTooltip>
+                    Фильтр показывает клиентов по последнему уровню из дневника
+                    тренировок.
+                  </HelpTooltip>
+                </label>
+                <Select
+                  value={trainingLevel}
+                  onValueChange={(value) =>
+                    setTrainingLevel(value as 'all' | TrainingLevel)
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все уровни</SelectItem>
+                    {TRAINING_LEVELS.map((level) => (
+                      <SelectItem key={level} value={level}>
+                        {level}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+          </div>
+
+          {clientsError && (
+            <div className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {clientsError}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Клиент</TableHead>
+                  <TableHead>Визиты</TableHead>
+                  <TableHead>Последний визит</TableHead>
+                  <TableHead>Уровень</TableHead>
+                  <TableHead className="text-right">Дневник</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {clientsLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="h-40 text-center">
+                      Загружаем клиентов...
+                    </TableCell>
+                  </TableRow>
+                ) : clients.length === 0 ? (
+                  <TableRow>
+                    <TableCell
+                      colSpan={5}
+                      className="h-40 text-center text-muted-foreground"
+                    >
+                      Клиентов по текущему фильтру нет.
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  clients.map((client) => {
+                    const isSelected = selectedClientId === client.id;
+
+                    return (
+                      <TableRow
+                        key={client.id}
+                        className={`cursor-pointer ${isSelected ? 'bg-muted/70' : ''}`}
+                        onClick={() => void loadDetails(client.id)}
+                      >
+                        <TableCell>
+                          <div className="min-w-44">
+                            <div className="font-medium">{client.name}</div>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              <Badge variant="outline">{client.segment}</Badge>
+                              {client.source && (
+                                <Badge variant="secondary">{client.source}</Badge>
+                              )}
+                            </div>
+                          </div>
+                        </TableCell>
+                        <TableCell>{client.stats.visitCount}</TableCell>
+                        <TableCell>{formatDate(client.stats.lastVisitAt)}</TableCell>
+                        <TableCell>
+                          {client.training?.latestLevel ? (
+                            <Badge>{client.training.latestLevel}</Badge>
+                          ) : (
+                            <span className="text-muted-foreground">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {client.training?.notesCount || 0}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-muted-foreground">
+              Страница {page} из {totalPages}
+            </div>
+            <Pagination className="justify-end sm:w-auto">
+              <PaginationContent>
+                <PaginationItem>
+                  <PaginationPrevious
+                    onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    disabled={page <= 1 || clientsLoading}
+                  />
+                </PaginationItem>
+                {paginationItems.map((item, index) => (
+                  <PaginationItem key={`${item}-${index}`}>
+                    {item === 'ellipsis' ? (
+                      <PaginationEllipsis />
+                    ) : (
+                      <PaginationButton
+                        isActive={item === page}
+                        onClick={() => setPage(item)}
+                        disabled={clientsLoading}
+                      >
+                        {item}
+                      </PaginationButton>
+                    )}
+                  </PaginationItem>
+                ))}
+                <PaginationItem>
+                  <PaginationNext
+                    onClick={() =>
+                      setPage((value) => Math.min(totalPages, value + 1))
+                    }
+                    disabled={page >= totalPages || clientsLoading}
+                  />
+                </PaginationItem>
+              </PaginationContent>
+            </Pagination>
+          </div>
+        </section>
+
+        <section
+          ref={detailsPanelRef}
+          className="scroll-mt-14 rounded-md border bg-card lg:min-h-[620px]"
+        >
+          {detailsError && (
+            <div className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {detailsError}
+            </div>
+          )}
+          {!details && !detailsLoading ? (
+            <div className="flex min-h-[360px] flex-col items-center justify-center p-8 text-center lg:min-h-[620px]">
+              <Dumbbell className="mb-3 h-8 w-8 text-muted-foreground" />
+              <div className="font-medium">
+                {detailsError ? 'Клиент не открыт' : 'Выберите клиента'}
+              </div>
+              <div className="mt-1 max-w-sm text-sm text-muted-foreground">
+                {detailsError
+                  ? 'Выберите клиента заново или обновите список.'
+                  : 'Откроется дневник тренировок, история уровней и форма новой записи.'}
+              </div>
+            </div>
+          ) : detailsLoading ? (
+            <div className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground lg:min-h-[620px]">
+              Открываем карточку...
+            </div>
+          ) : (
+            <div className="flex min-h-[360px] flex-col lg:min-h-[620px]">
+              <div className="border-b p-4">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-xl font-semibold">
+                        {details?.client.name}
+                      </h2>
+                      {latestNote && <Badge>{latestNote.level}</Badge>}
+                    </div>
+                    <div className="mt-2 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+                      <span className="flex items-center gap-1.5">
+                        <CalendarDays className="h-4 w-4" />
+                        Последний визит: {formatDate(details?.client.stats.lastVisitAt)}
+                      </span>
+                      <span className="flex items-center gap-1.5">
+                        <Target className="h-4 w-4" />
+                        Визитов всего: {details?.client.stats.visitCount}
+                      </span>
+                    </div>
+                  </div>
+                  <Button type="button" variant="outline" onClick={resetForm}>
+                    <Plus className="mr-2 h-4 w-4" />
+                    Новая запись
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-3 border-b p-4 sm:grid-cols-3">
+                <MetricCard
+                  icon={<History className="h-3.5 w-3.5" />}
+                  label="Записей"
+                  tooltip="Количество записей в дневнике тренировок выбранного клиента."
+                  value={details?.trainingNotes.length || 0}
+                />
+                <MetricCard
+                  icon={<Dumbbell className="h-3.5 w-3.5" />}
+                  label="Последний уровень"
+                  tooltip="Последний уровень клиента по самой свежей тренировочной записи."
+                  value={latestNote?.level || '-'}
+                />
+                <MetricCard
+                  icon={<Target className="h-3.5 w-3.5" />}
+                  label="Прогресс"
+                  tooltip="Разница между первым и последним уровнем в дневнике. Положительное число означает рост."
+                  value={levelDelta || '-'}
+                />
+              </div>
+
+              <form className="border-b p-4" onSubmit={submitTraining}>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-medium">
+                      {editingNote ? 'Редактировать запись' : 'Новая тренировка'}
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      Дата, уровень, упражнения и заметка тренера.
+                    </div>
+                  </div>
+                  {editingNote && (
+                    <Button type="button" variant="ghost" onClick={resetForm}>
+                      Отменить
+                    </Button>
+                  )}
+                </div>
+                <div className="grid gap-3 sm:grid-cols-[150px_120px_1fr]">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Дата
+                    </label>
+                    <Input
+                      type="date"
+                      value={form.trainedAt}
+                      onChange={(event) =>
+                        setForm({ ...form, trainedAt: event.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Уровень
+                    </label>
+                    <Select
+                      value={form.level}
+                      onValueChange={(value) =>
+                        setForm({ ...form, level: value as TrainingLevel })
+                      }
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {TRAINING_LEVELS.map((level) => (
+                          <SelectItem key={level} value={level}>
+                            {level}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                      Упражнения
+                    </label>
+                    <Input
+                      value={form.exercises}
+                      onChange={(event) =>
+                        setForm({ ...form, exercises: event.target.value })
+                      }
+                      placeholder="Например: свечи, выход к сетке, bandeja"
+                    />
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                    Заметка
+                  </label>
+                  <textarea
+                    value={form.note}
+                    onChange={(event) =>
+                      setForm({ ...form, note: event.target.value })
+                    }
+                    className="min-h-[96px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    placeholder="Что получилось, что закрепить, что сделать в следующий раз"
+                  />
+                </div>
+                <Button type="submit" className="mt-3" disabled={saving}>
+                  <Save className="mr-2 h-4 w-4" />
+                  {saving ? 'Сохраняем...' : editingNote ? 'Сохранить' : 'Добавить'}
+                </Button>
+              </form>
+
+              <div className="flex-1 p-4">
+                <div className="mb-3 flex items-center gap-1.5">
+                  <div className="font-medium">История прогресса</div>
+                  <HelpTooltip>
+                    Записи отсортированы от новых к старым. Цветной бейдж
+                    показывает уровень клиента на дату тренировки.
+                  </HelpTooltip>
+                </div>
+
+                {details?.trainingNotes.length === 0 ? (
+                  <div className="rounded-md border border-dashed py-10 text-center text-sm text-muted-foreground">
+                    Дневник тренировок пока пуст.
+                  </div>
+                ) : (
+                  <div className="divide-y rounded-md border">
+                    {details?.trainingNotes.map((note) => (
+                      <article key={note.id} className="p-3">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Badge>{note.level}</Badge>
+                              <span className="font-medium">
+                                {formatDate(note.trainedAt)}
+                              </span>
+                              <span className="text-sm text-muted-foreground">
+                                {note.trainer?.name || 'Тренер'}
+                              </span>
+                            </div>
+                            {note.exercises && (
+                              <div className="mt-2 text-sm">
+                                <span className="text-muted-foreground">
+                                  Упражнения:{' '}
+                                </span>
+                                {note.exercises}
+                              </div>
+                            )}
+                            {note.note && (
+                              <div className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
+                                {note.note}
+                              </div>
+                            )}
+                          </div>
+                          {canChangeNote(note) && (
+                            <div className="flex shrink-0 gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => startEdit(note)}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Изменить
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => deleteNote(note)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Удалить
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+
+      <ConfirmActionDialog
+        action={pendingAction}
+        loading={pendingActionLoading}
+        onCancel={() => setPendingAction(null)}
+        onConfirm={confirmPendingAction}
+      />
+    </div>
+  );
+}

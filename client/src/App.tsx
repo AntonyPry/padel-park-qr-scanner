@@ -18,6 +18,7 @@ import ClientBasesPage from './pages/ClientBasesPage';
 import CallTasksPage from './pages/CallTasksPage';
 import ReferencesPage from './pages/ReferencesPage';
 import AuditLogPage from './pages/AuditLogPage';
+import TrainerPage from './pages/TrainerPage';
 
 function App() {
   return (
@@ -41,6 +42,14 @@ function App() {
                   element={
                     <RequireRoles roles={ROUTE_ACCESS['/admin/clients']}>
                       <ClientsPage />
+                    </RequireRoles>
+                  }
+                />
+                <Route
+                  path="/admin/trainer"
+                  element={
+                    <RequireRoles roles={ROUTE_ACCESS['/admin/trainer']}>
+                      <TrainerPage />
                     </RequireRoles>
                   }
                 />
