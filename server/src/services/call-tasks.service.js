@@ -317,14 +317,15 @@ async function countCurrentBaseClients(task) {
   return clientsService.countClients(filters);
 }
 
-async function mapTask(task, metricsByTask = new Map()) {
+async function mapTask(task, metricsByTask = new Map(), options = {}) {
   const raw = task.toJSON ? task.toJSON() : task;
   const metrics = metricsByTask.get(raw.id) || {
     counts: emptyCounts(),
     overdueCount: 0,
     total: raw.snapshotClientCount || 0,
   };
-  const currentBaseClientCount = raw.clientBase
+  const includeCurrentBaseCount = options.includeCurrentBaseCount === true;
+  const currentBaseClientCount = includeCurrentBaseCount && raw.clientBase
     ? await countCurrentBaseClients(raw)
     : null;
 
@@ -748,26 +749,11 @@ async function list(actor, query = {}) {
     ],
   });
 
-  await Promise.all(
-    tasks
-      .filter((task) => task.scopeType === 'dynamic')
-      .map((task) => syncDynamicTask(task)),
-  );
-
-  const syncedTasks = await db.CallTask.findAll({
-    where,
-    include: taskInclude(),
-    order: [
-      [db.Sequelize.literal("CASE WHEN `CallTask`.`status` = 'in_progress' THEN 0 WHEN `CallTask`.`status` = 'backlog' THEN 1 WHEN `CallTask`.`status` = 'done' THEN 2 ELSE 3 END"), 'ASC'],
-      ['dueAt', 'ASC'],
-      ['createdAt', 'DESC'],
-    ],
-  });
   const metricsByTask = await getTaskClientMetrics(
-    syncedTasks.map((task) => task.id),
+    tasks.map((task) => task.id),
   );
 
-  return Promise.all(syncedTasks.map((task) => mapTask(task, metricsByTask)));
+  return Promise.all(tasks.map((task) => mapTask(task, metricsByTask)));
 }
 
 async function createFromBase(actor, baseId, data = {}) {
@@ -792,7 +778,9 @@ async function getOne(actor, id) {
 
   const metricsByTask = await getTaskClientMetrics([task.id]);
   const freshTask = await getTaskOrFail(id);
-  const mapped = await mapTask(freshTask, metricsByTask);
+  const mapped = await mapTask(freshTask, metricsByTask, {
+    includeCurrentBaseCount: true,
+  });
   mapped.membershipDiff = await getTaskMembershipDiff(freshTask);
   return mapped;
 }
@@ -1161,23 +1149,11 @@ async function getReport(actor, query = {}) {
   }
 
   const tasks = await db.CallTask.findAll({
+    attributes: ['id'],
     where,
-    include: taskInclude(),
+    raw: true,
   });
-
-  await Promise.all(
-    tasks
-      .filter((task) => task.scopeType === 'dynamic')
-      .map((task) => syncDynamicTask(task)),
-  );
-
-  const taskIds = (
-    await db.CallTask.findAll({
-      attributes: ['id'],
-      raw: true,
-      where,
-    })
-  ).map((task) => Number(task.id));
+  const taskIds = tasks.map((task) => Number(task.id));
 
   if (taskIds.length === 0) {
     return {

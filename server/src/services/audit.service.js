@@ -151,27 +151,43 @@ async function list(query = {}) {
   }
   if (query.accountId) where.accountId = Number(query.accountId);
 
-  const { count, rows } = await db.AuditLog.findAndCountAll({
-    where,
-    include: [
-      {
-        model: db.Account,
-        as: 'account',
-        attributes: ['id', 'email', 'role', 'staffId'],
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
-      },
-    ],
-    limit: pageSize,
-    offset: (page - 1) * pageSize,
-    order: [['createdAt', 'DESC']],
-  });
+  const [count, rows] = await Promise.all([
+    db.AuditLog.count({ where }),
+    db.AuditLog.findAll({
+      attributes: [
+        'id',
+        'accountId',
+        'role',
+        'action',
+        'entityType',
+        'entityId',
+        'method',
+        'path',
+        'statusCode',
+        'summary',
+        'createdAt',
+        'updatedAt',
+      ],
+      where,
+      include: [
+        {
+          model: db.Account,
+          as: 'account',
+          attributes: ['id', 'email', 'role', 'staffId'],
+          include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        },
+      ],
+      limit: pageSize,
+      offset: (page - 1) * pageSize,
+      order: [['createdAt', 'DESC']],
+    }),
+  ]);
 
   return {
     items: rows.map((row) => {
       const raw = row.toJSON();
       return {
         ...raw,
-        metadata: parseMetadata(raw.metadata),
         account: raw.account
           ? {
               id: raw.account.id,

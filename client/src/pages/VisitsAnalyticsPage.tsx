@@ -304,7 +304,7 @@ export default function VisitsAnalyticsPage() {
                     Нет данных
                   </div>
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height={280} minWidth={240}>
                     <PieChart>
                       <Pie
                         data={aggregatedSources}
@@ -349,7 +349,7 @@ export default function VisitsAnalyticsPage() {
                     Нет данных
                   </div>
                 ) : (
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height={280} minWidth={240}>
                     <PieChart>
                       <Pie
                         data={data.categories}

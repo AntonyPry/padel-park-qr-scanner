@@ -643,7 +643,7 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent className="h-[250px]">
             {incomePieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={250} minWidth={240}>
                 <PieChart>
                   <Pie
                     data={incomePieData}
@@ -682,7 +682,7 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent className="h-[250px]">
             {expensePieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
+              <ResponsiveContainer width="100%" height={250} minWidth={240}>
                 <PieChart>
                   <Pie
                     data={expensePieData}

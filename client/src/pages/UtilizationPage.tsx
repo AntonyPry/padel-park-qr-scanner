@@ -579,7 +579,7 @@ export default function UtilizationPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="h-[350px] pl-0">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height={350} minWidth={280}>
                     <ComposedChart data={stats.chartData}>
                       <CartesianGrid
                         strokeDasharray="3 3"
