@@ -17,6 +17,7 @@ router.get(
   bookingsController.getSchedule,
 );
 router.get('/bookings/courts', viewBookings, bookingsController.getCourts);
+router.get('/bookings/responsibles', viewBookings, bookingsController.getResponsibles);
 router.get(
   '/bookings/analytics',
   viewBookings,

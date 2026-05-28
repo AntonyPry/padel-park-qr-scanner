@@ -26,6 +26,7 @@ export const apiEndpoints = {
   "audit.list": { method: "GET", path: "/audit-logs", responseType: "json" },
   "bookings.schedule": { method: "GET", path: "/bookings/schedule", responseType: "json" },
   "bookings.courts": { method: "GET", path: "/bookings/courts", responseType: "json" },
+  "bookings.responsibles": { method: "GET", path: "/bookings/responsibles", responseType: "json" },
   "bookings.analytics": { method: "GET", path: "/bookings/analytics", responseType: "json" },
   "bookings.settings": { method: "GET", path: "/bookings/settings", responseType: "json" },
   "bookings.settingsUpdate": { method: "PUT", path: "/bookings/settings", responseType: "json" },
@@ -377,6 +378,7 @@ export type BookingsSeriesQuery = {
   [key: string]: unknown;
 };
 export type BookingsSeriesPreviewBody = {
+  bookingType?: "game" | "tournament" | "personal_training" | "master_class" | "group_training" | "corporate";
   client?: {
     name: string;
     note?: string | "" | null;
@@ -393,6 +395,7 @@ export type BookingsSeriesPreviewBody = {
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
   price?: number | string | "" | null;
+  responsibleStaffId?: number | string | "" | null;
   source?: "phone" | "admin" | "walk_in" | "other";
   startTime: string;
   startsOn: string;
@@ -402,6 +405,7 @@ export type BookingsSeriesPreviewBody = {
   [key: string]: unknown;
 };
 export type BookingsSeriesCreateBody = {
+  bookingType?: "game" | "tournament" | "personal_training" | "master_class" | "group_training" | "corporate";
   client?: {
     name: string;
     note?: string | "" | null;
@@ -418,6 +422,7 @@ export type BookingsSeriesCreateBody = {
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
   price?: number | string | "" | null;
+  responsibleStaffId?: number | string | "" | null;
   source?: "phone" | "admin" | "walk_in" | "other";
   startTime: string;
   startsOn: string;
@@ -435,6 +440,7 @@ export type BookingsSeriesArchiveBody = {
   [key: string]: unknown;
 };
 export type BookingsCreateBody = {
+  bookingType?: "game" | "tournament" | "personal_training" | "master_class" | "group_training" | "corporate";
   cancellationReason?: string | "" | null;
   changeReason?: string | "" | null;
   client?: {
@@ -453,6 +459,7 @@ export type BookingsCreateBody = {
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
   price?: number | string | "" | null;
+  responsibleStaffId?: number | string | "" | null;
   source?: "phone" | "admin" | "walk_in" | "other";
   startTime?: string;
   startsAt?: string | string | "" | null;
@@ -467,6 +474,7 @@ export type BookingsUpdateParams = {
   id: number | string;
 };
 export type BookingsUpdateBody = {
+  bookingType?: "game" | "tournament" | "personal_training" | "master_class" | "group_training" | "corporate";
   cancellationReason?: string | "" | null;
   changeReason?: string | "" | null;
   client?: {
@@ -485,6 +493,7 @@ export type BookingsUpdateBody = {
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
   price?: number | string | "" | null;
+  responsibleStaffId?: number | string | "" | null;
   source?: "phone" | "admin" | "walk_in" | "other";
   startTime?: string;
   startsAt?: string | string | "" | null;
@@ -1118,6 +1127,7 @@ export interface ApiEndpointRequestMap {
   "audit.list": ApiEndpointRequest<undefined, AuditListQuery, undefined>;
   "bookings.schedule": ApiEndpointRequest<undefined, BookingsScheduleQuery, undefined>;
   "bookings.courts": ApiEndpointRequest<undefined, undefined, undefined>;
+  "bookings.responsibles": ApiEndpointRequest<undefined, undefined, undefined>;
   "bookings.analytics": ApiEndpointRequest<undefined, BookingsAnalyticsQuery, undefined>;
   "bookings.settings": ApiEndpointRequest<undefined, undefined, undefined>;
   "bookings.settingsUpdate": ApiEndpointRequest<undefined, undefined, BookingsSettingsUpdateBody>;

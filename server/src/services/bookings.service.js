@@ -17,6 +17,14 @@ const BOOKING_STATUSES = new Set([
 const PAYMENT_STATUSES = new Set(['unpaid', 'partial', 'paid', 'refunded']);
 const PAYMENT_METHODS = new Set(['unknown', 'cash', 'cashless', 'mixed']);
 const BOOKING_SOURCES = new Set(['phone', 'admin', 'walk_in', 'other']);
+const BOOKING_TYPES = new Set([
+  'game',
+  'tournament',
+  'personal_training',
+  'master_class',
+  'group_training',
+  'corporate',
+]);
 const MAX_DURATION_MINUTES = 720;
 const SERIES_STATUSES = new Set(['active', 'archived']);
 const MAX_SERIES_DAYS = 370;
@@ -89,6 +97,17 @@ function normalizeEnum(value, allowedValues, fallback, label) {
     throw appError(`Некорректное значение поля «${label}»`);
   }
   return normalized;
+}
+
+function normalizeNullableId(value, label) {
+  if (value === undefined || value === null || value === '' || value === 'none') {
+    return null;
+  }
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw appError(`${label} указан некорректно`);
+  }
+  return id;
 }
 
 function normalizeDuration(value) {
@@ -254,6 +273,18 @@ function mapClient(client) {
   };
 }
 
+function mapStaff(staff) {
+  if (!staff) return null;
+  const raw = staff.toJSON ? staff.toJSON() : staff;
+  return {
+    id: raw.id,
+    name: raw.name,
+    phone: raw.phone || null,
+    position: raw.position || raw.role || null,
+    status: raw.status,
+  };
+}
+
 function mapCourt(court) {
   if (!court) return null;
   const raw = court.toJSON ? court.toJSON() : court;
@@ -281,6 +312,10 @@ function mapBooking(booking) {
     startsAt: raw.startsAt,
     endsAt: raw.endsAt,
     durationMinutes: Number(raw.durationMinutes || 0),
+    bookingType: raw.bookingType || 'game',
+    responsibleStaffId: raw.responsibleStaffId || null,
+    responsibleStaff: mapStaff(raw.responsibleStaff),
+    isFirstBooking: Boolean(raw.isFirstBooking),
     status: raw.status,
     paymentStatus: raw.paymentStatus,
     paymentMethod: raw.paymentMethod,
@@ -312,6 +347,9 @@ function mapSeries(series) {
     weekday: Number(raw.weekday),
     startTime: raw.startTime,
     durationMinutes: Number(raw.durationMinutes || 0),
+    bookingType: raw.bookingType || 'game',
+    responsibleStaffId: raw.responsibleStaffId || null,
+    responsibleStaff: mapStaff(raw.responsibleStaff),
     startsOn: raw.startsOn,
     endsOn: raw.endsOn,
     status: raw.status,
@@ -345,6 +383,92 @@ function mapChangeLog(row) {
   };
 }
 
+function getBookingIncludes() {
+  return [
+    db.Court,
+    db.User,
+    { as: 'series', model: db.BookingSeries },
+    { as: 'responsibleStaff', model: db.Staff },
+    { as: 'createdBy', model: db.Account, include: [db.Staff] },
+    { as: 'updatedBy', model: db.Account, include: [db.Staff] },
+  ];
+}
+
+function getSeriesIncludes() {
+  return [
+    db.Court,
+    db.User,
+    { as: 'responsibleStaff', model: db.Staff },
+    { as: 'createdBy', model: db.Account, include: [db.Staff] },
+    { as: 'updatedBy', model: db.Account, include: [db.Staff] },
+  ];
+}
+
+async function markFirstBookingFlags(bookings, transaction) {
+  const rows = Array.isArray(bookings) ? bookings : [bookings].filter(Boolean);
+  const userIds = Array.from(
+    new Set(rows.map((booking) => Number(booking.userId)).filter(Boolean)),
+  );
+  if (userIds.length === 0) return bookings;
+
+  const firstBookings = await db.Booking.findAll({
+    attributes: ['id', 'userId'],
+    order: [
+      ['userId', 'ASC'],
+      ['startsAt', 'ASC'],
+      ['id', 'ASC'],
+    ],
+    transaction,
+    where: {
+      status: { [Op.ne]: 'canceled' },
+      userId: { [Op.in]: userIds },
+    },
+  });
+  const firstBookingIdByUserId = new Map();
+  firstBookings.forEach((booking) => {
+    const userId = Number(booking.userId);
+    if (!firstBookingIdByUserId.has(userId)) {
+      firstBookingIdByUserId.set(userId, Number(booking.id));
+    }
+  });
+  const visits = await db.Visit.findAll({
+    attributes: ['userId', 'scannedAt'],
+    order: [
+      ['userId', 'ASC'],
+      ['scannedAt', 'ASC'],
+      ['id', 'ASC'],
+    ],
+    transaction,
+    where: {
+      userId: { [Op.in]: userIds },
+    },
+  });
+  const firstVisitAtByUserId = new Map();
+  visits.forEach((visit) => {
+    const userId = Number(visit.userId);
+    if (!firstVisitAtByUserId.has(userId)) {
+      firstVisitAtByUserId.set(userId, new Date(visit.scannedAt).getTime());
+    }
+  });
+
+  rows.forEach((booking) => {
+    const bookingStartTime = new Date(booking.startsAt).getTime();
+    const firstVisitAt = firstVisitAtByUserId.get(Number(booking.userId));
+    const hasEarlierVisit = Number.isFinite(firstVisitAt) && firstVisitAt < bookingStartTime;
+    const isFirstBooking =
+      booking.status !== 'canceled' &&
+      !hasEarlierVisit &&
+      firstBookingIdByUserId.get(Number(booking.userId)) === Number(booking.id);
+    if (typeof booking.setDataValue === 'function') {
+      booking.setDataValue('isFirstBooking', isFirstBooking);
+    } else {
+      booking.isFirstBooking = isFirstBooking;
+    }
+  });
+
+  return bookings;
+}
+
 async function lockCourtsForBooking(courtIds, transaction) {
   const ids = Array.from(
     new Set(courtIds.map((courtId) => Number(courtId)).filter(Boolean)),
@@ -368,17 +492,12 @@ async function lockCourtsForBooking(courtIds, transaction) {
 
 async function getBookingOrFail(id, transaction) {
   const booking = await db.Booking.findByPk(Number(id), {
-    include: [
-      db.Court,
-      db.User,
-      { as: 'series', model: db.BookingSeries },
-      { as: 'createdBy', model: db.Account, include: [db.Staff] },
-      { as: 'updatedBy', model: db.Account, include: [db.Staff] },
-    ],
+    include: getBookingIncludes(),
     lock: transaction ? transaction.LOCK.UPDATE : undefined,
     transaction,
   });
   if (!booking) throw appError('Бронь не найдена', 404);
+  await markFirstBookingFlags(booking, transaction);
   return booking;
 }
 
@@ -438,6 +557,21 @@ async function resolveClient(data, transaction) {
     },
     { transaction },
   );
+}
+
+async function resolveResponsibleStaffId(data, currentBooking = null, transaction) {
+  const rawValue =
+    data.responsibleStaffId !== undefined
+      ? data.responsibleStaffId
+      : currentBooking?.responsibleStaffId || null;
+  const responsibleStaffId = normalizeNullableId(rawValue, 'Ответственный сотрудник');
+  if (!responsibleStaffId) return null;
+
+  const staff = await db.Staff.findByPk(responsibleStaffId, { transaction });
+  if (!staff || staff.status !== 'active') {
+    throw appError('Ответственный сотрудник не найден или в архиве', 404);
+  }
+  return staff.id;
 }
 
 async function assertNoConflict({
@@ -512,6 +646,12 @@ function buildBookingPayload(data, account, client, timing, currentBooking = nul
     currentBooking?.source || 'phone',
     'источник брони',
   );
+  const bookingType = normalizeEnum(
+    data.bookingType,
+    BOOKING_TYPES,
+    currentBooking?.bookingType || 'game',
+    'тип брони',
+  );
   const cancellationReason = normalizeText(data.cancellationReason);
   const nextStatus = status;
   if (nextStatus === 'canceled' && !cancellationReason && !currentBooking?.cancellationReason) {
@@ -558,10 +698,15 @@ function buildBookingPayload(data, account, client, timing, currentBooking = nul
     courtId: Number(data.courtId || currentBooking?.courtId),
     durationMinutes: timing.durationMinutes,
     endsAt: timing.endsAt,
+    bookingType,
     paidAmount,
     paymentMethod,
     paymentStatus,
     price,
+    responsibleStaffId:
+      data.responsibleStaffId !== undefined
+        ? data.responsibleStaffId
+        : currentBooking?.responsibleStaffId || null,
     source,
     startsAt: timing.startsAt,
     status,
@@ -581,6 +726,17 @@ async function listCourts() {
   return courts.map(mapCourt);
 }
 
+async function listResponsibleStaff() {
+  const staff = await db.Staff.findAll({
+    order: [
+      ['name', 'ASC'],
+      ['id', 'ASC'],
+    ],
+    where: { status: 'active' },
+  });
+  return staff.map(mapStaff);
+}
+
 async function listBookings(query = {}) {
   const range = getDayRange(query.date);
   const where = {
@@ -595,19 +751,14 @@ async function listBookings(query = {}) {
   }
 
   const bookings = await db.Booking.findAll({
-    include: [
-      db.Court,
-      db.User,
-      { as: 'series', model: db.BookingSeries },
-      { as: 'createdBy', model: db.Account, include: [db.Staff] },
-      { as: 'updatedBy', model: db.Account, include: [db.Staff] },
-    ],
+    include: getBookingIncludes(),
     order: [
       ['startsAt', 'ASC'],
       [db.Court, 'sortOrder', 'ASC'],
     ],
     where,
   });
+  await markFirstBookingFlags(bookings);
 
   return bookings.map(mapBooking);
 }
@@ -723,7 +874,7 @@ async function getBookingAnalytics(query = {}) {
   const courts = await listCourts();
   const bookings = (
     await db.Booking.findAll({
-      include: [db.Court, db.User, { as: 'series', model: db.BookingSeries }],
+      include: getBookingIncludes(),
       order: [
         ['startsAt', 'ASC'],
         [db.Court, 'sortOrder', 'ASC'],
@@ -856,6 +1007,7 @@ function buildSeriesConfig(data) {
     'способ оплаты',
   );
   const source = normalizeEnum(data.source, BOOKING_SOURCES, 'phone', 'источник брони');
+  const bookingType = normalizeEnum(data.bookingType, BOOKING_TYPES, 'game', 'тип брони');
   const status = normalizeEnum(
     data.status,
     new Set(['new', 'confirmed']),
@@ -864,6 +1016,7 @@ function buildSeriesConfig(data) {
   );
 
   return {
+    bookingType,
     comment: normalizeText(data.comment),
     courtId: Number(data.courtId),
     durationMinutes,
@@ -964,6 +1117,7 @@ async function inspectSeriesOccurrence(config, date, transaction) {
 async function buildSeriesPreview(data, transaction) {
   const config = buildSeriesConfig(data);
   await lockCourtsForBooking([config.courtId], transaction);
+  await resolveResponsibleStaffId(data, null, transaction);
   const dates = getSeriesDates(config);
   const occurrences = [];
   for (const date of dates) {
@@ -988,6 +1142,7 @@ async function previewBookingSeries(data) {
 async function createBookingSeries(data, account) {
   return db.sequelize.transaction(async (transaction) => {
     const config = buildSeriesConfig(data);
+    const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
     const courtsById = await lockCourtsForBooking([config.courtId], transaction);
     const court = courtsById.get(config.courtId);
     const preview = await buildSeriesPreview({ ...data, courtId: config.courtId }, transaction);
@@ -1003,6 +1158,7 @@ async function createBookingSeries(data, account) {
       {
         clientName: client.name,
         clientPhone: client.phone,
+        bookingType: config.bookingType,
         comment: config.comment,
         courtId: court.id,
         createdByAccountId: account?.id || null,
@@ -1013,6 +1169,7 @@ async function createBookingSeries(data, account) {
         paymentMethod: config.paymentMethod,
         paymentStatus: config.paymentStatus,
         price: config.price,
+        responsibleStaffId,
         source: config.source,
         startTime: config.startTime,
         startsOn: config.startsOn,
@@ -1037,6 +1194,7 @@ async function createBookingSeries(data, account) {
           ...buildBookingPayload(
             {
               bookingSeriesId: series.id,
+              bookingType: config.bookingType,
               comment: config.comment,
               courtId: court.id,
               durationMinutes: config.durationMinutes,
@@ -1044,6 +1202,7 @@ async function createBookingSeries(data, account) {
               paymentMethod: config.paymentMethod,
               paymentStatus: config.paymentStatus,
               price: paymentPrice,
+              responsibleStaffId,
               source: config.source,
               startsAt: occurrence.startsAt,
               status: config.status,
@@ -1062,12 +1221,7 @@ async function createBookingSeries(data, account) {
     }
 
     const fullSeries = await db.BookingSeries.findByPk(series.id, {
-      include: [
-        db.Court,
-        db.User,
-        { as: 'createdBy', model: db.Account, include: [db.Staff] },
-        { as: 'updatedBy', model: db.Account, include: [db.Staff] },
-      ],
+      include: getSeriesIncludes(),
       transaction,
     });
     return {
@@ -1084,12 +1238,7 @@ async function listBookingSeries(query = {}) {
     where.status = SERIES_STATUSES.has(query.status) ? query.status : 'active';
   }
   const rows = await db.BookingSeries.findAll({
-    include: [
-      db.Court,
-      db.User,
-      { as: 'createdBy', model: db.Account, include: [db.Staff] },
-      { as: 'updatedBy', model: db.Account, include: [db.Staff] },
-    ],
+    include: getSeriesIncludes(),
     order: [
       ['status', 'ASC'],
       ['weekday', 'ASC'],
@@ -1176,12 +1325,7 @@ async function archiveBookingSeries(id, data = {}, account) {
     }
 
     const fullSeries = await db.BookingSeries.findByPk(series.id, {
-      include: [
-        db.Court,
-        db.User,
-        { as: 'createdBy', model: db.Account, include: [db.Staff] },
-        { as: 'updatedBy', model: db.Account, include: [db.Staff] },
-      ],
+      include: getSeriesIncludes(),
       transaction,
     });
 
@@ -1240,11 +1384,17 @@ async function createBooking(data, account) {
       transaction,
     });
     const client = await resolveClient(data, transaction);
+    const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
     const pricedData = await applyAutomaticPrice(data, court.id, timing);
 
     const booking = await db.Booking.create(
       {
-        ...buildBookingPayload(pricedData, account, client, timing),
+        ...buildBookingPayload(
+          { ...pricedData, responsibleStaffId },
+          account,
+          client,
+          timing,
+        ),
         createdByAccountId: account?.id || null,
       },
       { transaction },
@@ -1285,9 +1435,10 @@ async function updateBooking(id, data, account) {
     }
 
     const before = mapBooking(booking);
+    const responsibleStaffId = await resolveResponsibleStaffId(data, booking, transaction);
     const pricedData = await applyAutomaticPrice(data, courtId, timing, booking);
     const payload = buildBookingPayload(
-      { ...pricedData, courtId },
+      { ...pricedData, courtId, responsibleStaffId },
       account,
       client,
       timing,
@@ -1367,6 +1518,7 @@ module.exports = {
   listBookingHistory,
   listBookings,
   listCourts,
+  listResponsibleStaff,
   previewBookingSeries,
   updateBooking,
 };

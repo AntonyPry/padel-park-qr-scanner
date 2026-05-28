@@ -32,6 +32,22 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false,
     },
+    bookingType: {
+      type: DataTypes.ENUM(
+        'game',
+        'tournament',
+        'personal_training',
+        'master_class',
+        'group_training',
+        'corporate',
+      ),
+      allowNull: false,
+      defaultValue: 'game',
+    },
+    responsibleStaffId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     startsOn: {
       type: DataTypes.DATEONLY,
       allowNull: false,
@@ -100,6 +116,10 @@ module.exports = (sequelize, DataTypes) => {
     BookingSeries.belongsTo(models.Account, {
       as: 'updatedBy',
       foreignKey: 'updatedByAccountId',
+    });
+    BookingSeries.belongsTo(models.Staff, {
+      as: 'responsibleStaff',
+      foreignKey: 'responsibleStaffId',
     });
     BookingSeries.hasMany(models.Booking, {
       as: 'bookings',

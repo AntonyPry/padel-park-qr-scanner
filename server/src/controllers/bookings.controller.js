@@ -22,6 +22,14 @@ class BookingsController {
     }
   }
 
+  async getResponsibles(_req, res) {
+    try {
+      res.json(await bookingsService.listResponsibleStaff());
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения ответственных сотрудников');
+    }
+  }
+
   async getAnalytics(req, res) {
     try {
       res.json(await bookingsService.getBookingAnalytics(req.query));

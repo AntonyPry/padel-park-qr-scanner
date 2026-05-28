@@ -67,6 +67,7 @@ const endpointContracts: EndpointContract[] = [
 
   { id: 'bookings.schedule', method: 'get', path: '/bookings/schedule', query: apiSchemas.bookings.scheduleQuery, summary: 'Booking schedule by day', tags: ['Bookings'] },
   { id: 'bookings.courts', method: 'get', path: '/bookings/courts', summary: 'List active courts', tags: ['Bookings'] },
+  { id: 'bookings.responsibles', method: 'get', path: '/bookings/responsibles', summary: 'List staff available as booking responsibles', tags: ['Bookings'] },
   { id: 'bookings.analytics', method: 'get', path: '/bookings/analytics', query: apiSchemas.bookings.analyticsQuery, summary: 'Booking analytics report', tags: ['Bookings'] },
   { id: 'bookings.settings', method: 'get', path: '/bookings/settings', summary: 'Get booking settings', tags: ['Bookings'] },
   { id: 'bookings.settingsUpdate', method: 'put', path: '/bookings/settings', body: apiSchemas.bookings.settingsBody, summary: 'Update booking settings', tags: ['Bookings'] },

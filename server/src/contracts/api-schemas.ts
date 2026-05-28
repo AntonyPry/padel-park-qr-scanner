@@ -196,6 +196,14 @@ const requiredBookingDateTime = z.union([
   }),
 ]);
 const bookingDateTime = z.union([requiredBookingDateTime, z.literal(''), z.null()]).optional();
+const bookingType = z.enum([
+  'game',
+  'tournament',
+  'personal_training',
+  'master_class',
+  'group_training',
+  'corporate',
+]);
 const bookingSettingsBody = z
   .object({
     cancellationDeadlineHours: optionalNonNegativeNumberValue,
@@ -240,6 +248,7 @@ const bookingExceptionBody = z
   .passthrough();
 const bookingSeriesBody = z
   .object({
+    bookingType: bookingType.optional(),
     client: bookingClientBody.optional(),
     comment: optionalString,
     courtId: id,
@@ -249,6 +258,7 @@ const bookingSeriesBody = z
     paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
     paymentStatus: z.enum(['unpaid', 'partial', 'paid', 'refunded']).optional(),
     price: optionalNonNegativeNumberValue,
+    responsibleStaffId: nullableId,
     source: z.enum(['phone', 'admin', 'walk_in', 'other']).optional(),
     startTime: z
       .string()
@@ -268,6 +278,7 @@ const bookingSeriesArchiveBody = z
   .passthrough();
 
 const bookingShape = {
+  bookingType: bookingType.optional(),
   cancellationReason: optionalString,
   changeReason: optionalString,
   client: bookingClientBody.optional(),
@@ -279,6 +290,7 @@ const bookingShape = {
   paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
   paymentStatus: z.enum(['unpaid', 'partial', 'paid', 'refunded']).optional(),
   price: optionalNonNegativeNumberValue,
+  responsibleStaffId: nullableId,
   source: z.enum(['phone', 'admin', 'walk_in', 'other']).optional(),
   startTime: z
     .string()

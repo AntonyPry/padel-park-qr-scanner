@@ -48,6 +48,7 @@ import {
   getBookingQuote,
   getBookingSchedule,
   getBookingSettings,
+  listBookingResponsibles,
   listBookingHistory,
   listBookingExceptions,
   listBookingPriceRules,
@@ -67,12 +68,14 @@ import {
   type BookingPaymentMethod,
   type BookingPaymentStatus,
   type BookingPriceRulePayload,
+  type BookingResponsibleStaff,
   type BookingSeries,
   type BookingSeriesPayload,
   type BookingSeriesPreview,
   type BookingSource,
   type BookingStatus,
   type BookingSettingsPayload,
+  type BookingType,
   type CourtBlockPayload,
 } from '@/api/bookings';
 import { queryKeys } from '@/api/query-keys';
@@ -155,6 +158,22 @@ const SOURCE_LABELS: Record<BookingSource, string> = {
   phone: 'Телефон',
   walk_in: 'На месте',
 };
+const BOOKING_TYPE_LABELS: Record<BookingType, string> = {
+  corporate: 'Корпоративный клиент',
+  game: 'Игра',
+  group_training: 'Групповая тренировка',
+  master_class: 'Мастер-класс',
+  personal_training: 'Персональная тренировка',
+  tournament: 'Турнир',
+};
+const BOOKING_TYPE_SHORT_LABELS: Record<BookingType, string> = {
+  corporate: 'Корпоратив',
+  game: 'Игра',
+  group_training: 'Группа',
+  master_class: 'Мастер-класс',
+  personal_training: 'Тренировка',
+  tournament: 'Турнир',
+};
 const COURT_TYPE_LABELS: Record<BookingCourtType, string> = {
   all: 'Все корты',
   other: 'Другие',
@@ -173,6 +192,14 @@ const WEEKDAYS = [
 
 const bookingFormSchema = z
   .object({
+    bookingType: z.enum([
+      'game',
+      'tournament',
+      'personal_training',
+      'master_class',
+      'group_training',
+      'corporate',
+    ]),
     cancellationReason: z.string(),
     clientName: z.string(),
     comment: z.string(),
@@ -190,6 +217,7 @@ const bookingFormSchema = z
     price: z.string().refine((value) => !value || Number(value) >= 0, {
       message: 'Цена не может быть отрицательной',
     }),
+    responsibleStaffId: z.string(),
     source: z.enum(['phone', 'admin', 'walk_in', 'other']),
     startTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Укажите время'),
     status: z.enum(['new', 'confirmed', 'canceled', 'arrived', 'no_show']),
@@ -304,6 +332,7 @@ interface ExceptionDraft {
 }
 
 interface SeriesDraft {
+  bookingType: BookingType;
   clientName: string;
   comment: string;
   courtId: string;
@@ -314,6 +343,7 @@ interface SeriesDraft {
   paymentStatus: BookingPaymentStatus;
   phone: string;
   price: string;
+  responsibleStaffId: string;
   source: BookingSource;
   startTime: string;
   startsOn: string;
@@ -329,6 +359,7 @@ function getEmptyForm(
   durationMinutes: BookingDurationValue = '60',
 ): BookingFormValues {
   return {
+    bookingType: 'game',
     cancellationReason: '',
     clientName: '',
     comment: '',
@@ -340,6 +371,7 @@ function getEmptyForm(
     paymentStatus: 'unpaid',
     phone: '',
     price: '',
+    responsibleStaffId: 'none',
     source: 'phone',
     startTime,
     status: 'new',
@@ -387,6 +419,7 @@ function getEmptySeriesDraft(
   const endsOn = format(addDays(new Date(`${date}T00:00:00`), 28), 'yyyy-MM-dd');
   const weekday = String(getIsoWeekdayFromDate(date));
   return {
+    bookingType: 'game',
     clientName: '',
     comment: '',
     courtId,
@@ -397,6 +430,7 @@ function getEmptySeriesDraft(
     paymentStatus: 'unpaid',
     phone: '',
     price: '',
+    responsibleStaffId: 'none',
     source: 'phone',
     startTime: '10:00',
     startsOn: date,
@@ -598,6 +632,11 @@ function getPaymentBadgeClass(status: BookingPaymentStatus) {
   return 'bg-muted text-muted-foreground';
 }
 
+function formatResponsibleStaff(staff?: BookingResponsibleStaff | null) {
+  if (!staff) return 'Не выбран';
+  return staff.position ? `${staff.name} · ${staff.position}` : staff.name;
+}
+
 function isBookingActive(booking: Booking) {
   return booking.status !== 'canceled';
 }
@@ -619,6 +658,9 @@ function getBookingSearchText(booking: Booking) {
     STATUS_LABELS[booking.status],
     PAYMENT_STATUS_LABELS[booking.paymentStatus],
     PAYMENT_METHOD_LABELS[booking.paymentMethod],
+    BOOKING_TYPE_LABELS[booking.bookingType],
+    booking.responsibleStaff?.name,
+    booking.responsibleStaff?.position,
     booking.comment,
   ]
     .filter(Boolean)
@@ -779,8 +821,16 @@ export default function BookingsPage() {
     queryFn: () => getBookingAnalytics({ from: analyticsFrom, to: analyticsTo }),
     queryKey: queryKeys.bookings.analytics({ from: analyticsFrom, to: analyticsTo }),
   });
+  const responsiblesQuery = useQuery({
+    queryFn: listBookingResponsibles,
+    queryKey: queryKeys.bookings.responsibles(),
+  });
   const schedule = scheduleQuery.data;
   const analytics = analyticsQuery.data;
+  const responsibles = useMemo(
+    () => responsiblesQuery.data ?? [],
+    [responsiblesQuery.data],
+  );
   const bookings = useMemo(() => schedule?.bookings ?? [], [schedule?.bookings]);
   const courts = useMemo(() => schedule?.courts ?? [], [schedule?.courts]);
   const workingHours = schedule?.workingHours;
@@ -892,6 +942,14 @@ export default function BookingsPage() {
   const sourceValue = useWatch({
     control: bookingForm.control,
     name: 'source',
+  });
+  const bookingTypeValue = useWatch({
+    control: bookingForm.control,
+    name: 'bookingType',
+  });
+  const responsibleStaffIdValue = useWatch({
+    control: bookingForm.control,
+    name: 'responsibleStaffId',
   });
   const paymentStatusValue = useWatch({
     control: bookingForm.control,
@@ -1211,6 +1269,7 @@ export default function BookingsPage() {
     setLookupState('idle');
     setLookupError('');
     bookingForm.reset({
+      bookingType: booking.bookingType || 'game',
       cancellationReason: booking.cancellationReason || '',
       clientName: booking.clientName,
       comment: booking.comment || '',
@@ -1222,6 +1281,7 @@ export default function BookingsPage() {
       paymentStatus: booking.paymentStatus,
       phone: booking.clientPhone,
       price: booking.price ? String(booking.price) : '',
+      responsibleStaffId: booking.responsibleStaffId ? String(booking.responsibleStaffId) : 'none',
       source: booking.source,
       startTime: toTimeInput(booking.startsAt),
       status: booking.status,
@@ -1233,6 +1293,7 @@ export default function BookingsPage() {
   const submitBooking = bookingForm.handleSubmit(async (values) => {
     const startsAt = buildStartsAtIso(values.date, values.startTime);
     const payload = {
+      bookingType: values.bookingType,
       cancellationReason: values.cancellationReason.trim() || undefined,
       client: values.userId
         ? undefined
@@ -1248,6 +1309,10 @@ export default function BookingsPage() {
       paymentMethod: values.paymentMethod,
       paymentStatus: values.paymentStatus,
       price: values.price ? Number(values.price) : undefined,
+      responsibleStaffId:
+        values.responsibleStaffId && values.responsibleStaffId !== 'none'
+          ? Number(values.responsibleStaffId)
+          : null,
       source: values.source,
       startsAt,
       status: values.status,
@@ -1512,6 +1577,7 @@ export default function BookingsPage() {
   };
 
   const buildSeriesPayload = (): BookingSeriesPayload => ({
+    bookingType: seriesDraft.bookingType,
     client: seriesDraft.userId
       ? undefined
       : {
@@ -1527,6 +1593,10 @@ export default function BookingsPage() {
     paymentMethod: seriesDraft.paymentMethod,
     paymentStatus: seriesDraft.paymentStatus,
     price: seriesDraft.price ? Number(seriesDraft.price) : undefined,
+    responsibleStaffId:
+      seriesDraft.responsibleStaffId && seriesDraft.responsibleStaffId !== 'none'
+        ? Number(seriesDraft.responsibleStaffId)
+        : null,
     source: seriesDraft.source,
     startTime: seriesDraft.startTime,
     startsOn: seriesDraft.startsOn,
@@ -1820,6 +1890,11 @@ export default function BookingsPage() {
           <div>
             <div className="flex flex-wrap items-center gap-1.5 font-medium">
               {row.original.clientName}
+              {row.original.isFirstBooking && (
+                <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200">
+                  Впервые
+                </Badge>
+              )}
               {row.original.bookingSeriesId && (
                 <Badge variant="outline" className="text-[10px]">
                   Постоянка
@@ -1827,6 +1902,21 @@ export default function BookingsPage() {
               )}
             </div>
             <div className="text-xs text-muted-foreground">{row.original.clientPhone}</div>
+          </div>
+        ),
+      },
+      {
+        header: 'Тип',
+        cell: ({ row }) => (
+          <div className="space-y-1">
+            <div className="text-sm font-medium">
+              {BOOKING_TYPE_LABELS[row.original.bookingType] || 'Игра'}
+            </div>
+            {row.original.responsibleStaff && (
+              <div className="text-xs text-muted-foreground">
+                {formatResponsibleStaff(row.original.responsibleStaff)}
+              </div>
+            )}
           </div>
         ),
       },
@@ -2236,6 +2326,15 @@ export default function BookingsPage() {
                             getStatusClass(booking.status),
                           )}
                           style={{ height, top: top + 2 }}
+                          title={[
+                            `${formatTime(booking.startsAt)}-${formatTime(booking.endsAt)}`,
+                            booking.clientName,
+                            BOOKING_TYPE_LABELS[booking.bookingType] || 'Игра',
+                            booking.isFirstBooking ? 'Первый визит' : null,
+                            booking.responsibleStaff
+                              ? `Ответственный: ${formatResponsibleStaff(booking.responsibleStaff)}`
+                              : null,
+                          ].filter(Boolean).join('\n')}
                           onClick={() => openEdit(booking)}
                           onPointerDown={(event) => handleBookingDragStart(event, booking)}
                         >
@@ -2245,10 +2344,25 @@ export default function BookingsPage() {
                             </span>
                             <span>{booking.bookingSeriesId ? 'Постоянка' : STATUS_LABELS[booking.status]}</span>
                           </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {booking.isFirstBooking && (
+                              <span className="rounded-sm bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-50">
+                                Впервые
+                              </span>
+                            )}
+                            <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
+                              {BOOKING_TYPE_SHORT_LABELS[booking.bookingType] || 'Игра'}
+                            </span>
+                          </div>
                           <div className="mt-1 truncate font-medium">{booking.clientName}</div>
                           <div className="truncate opacity-80">
                             {PAYMENT_STATUS_LABELS[booking.paymentStatus]} · {formatCurrency(booking.price)}
                           </div>
+                          {height > 96 && booking.responsibleStaff && (
+                            <div className="mt-1 truncate opacity-75">
+                              {formatResponsibleStaff(booking.responsibleStaff)}
+                            </div>
+                          )}
                           {height > 86 && booking.comment && (
                             <div className="mt-1 truncate opacity-70">{booking.comment}</div>
                           )}
@@ -2472,6 +2586,55 @@ export default function BookingsPage() {
                   placeholder="Имя нового клиента"
                 />
                 <FormError message={bookingForm.formState.errors.clientName?.message} />
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
+              <div className="space-y-2">
+                <Label>Тип брони</Label>
+                <Select
+                  value={bookingTypeValue}
+                  disabled={!canEditBookings}
+                  onValueChange={(value) =>
+                    bookingForm.setValue('bookingType', value as BookingType)
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {Object.entries(BOOKING_TYPE_LABELS).map(([value, label]) => (
+                      <SelectItem key={value} value={value}>
+                        {label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Ответственный сотрудник</Label>
+                <Select
+                  value={responsibleStaffIdValue}
+                  disabled={!canEditBookings || responsiblesQuery.isLoading}
+                  onValueChange={(value) => bookingForm.setValue('responsibleStaffId', value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Не выбран" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Не выбран</SelectItem>
+                    {responsibles.map((staff) => (
+                      <SelectItem key={staff.id} value={String(staff.id)}>
+                        {formatResponsibleStaff(staff)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {responsiblesQuery.isError && (
+                  <div className="text-xs text-destructive">
+                    {getApiErrorMessage(responsiblesQuery.error, 'Не удалось загрузить сотрудников')}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -3028,6 +3191,50 @@ export default function BookingsPage() {
 
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="space-y-2">
+                  <Label>Тип брони</Label>
+                  <Select
+                    value={seriesDraft.bookingType}
+                    onValueChange={(value) => setSeriesDraft((current) => ({
+                      ...current,
+                      bookingType: value as BookingType,
+                    }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(BOOKING_TYPE_LABELS).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Ответственный</Label>
+                  <Select
+                    value={seriesDraft.responsibleStaffId}
+                    disabled={responsiblesQuery.isLoading}
+                    onValueChange={(value) => setSeriesDraft((current) => ({
+                      ...current,
+                      responsibleStaffId: value,
+                    }))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Не выбран</SelectItem>
+                      {responsibles.map((staff) => (
+                        <SelectItem key={staff.id} value={String(staff.id)}>
+                          {formatResponsibleStaff(staff)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label>Корт</Label>
                   <Select
                     value={seriesDraft.courtId}
@@ -3063,6 +3270,9 @@ export default function BookingsPage() {
                     </SelectContent>
                   </Select>
                 </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-4">
                 <div className="space-y-2">
                   <Label>Время</Label>
                   <Input
@@ -3090,9 +3300,6 @@ export default function BookingsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-4">
                 <div className="space-y-2">
                   <Label>Начало</Label>
                   <Input
@@ -3277,6 +3484,8 @@ export default function BookingsPage() {
                     <div className="mt-2 grid gap-1 text-muted-foreground sm:grid-cols-2">
                       <div>{series.startsOn} - {series.endsOn}</div>
                       <div>{series.durationMinutes} мин · {series.generatedBookingsCount || 0} броней</div>
+                      <div>{BOOKING_TYPE_LABELS[series.bookingType] || 'Игра'}</div>
+                      <div>{formatResponsibleStaff(series.responsibleStaff)}</div>
                       <div>{formatCurrency(series.price || 0)} {series.price ? '' : 'по тарифам'}</div>
                       <div>Будущих активных: {series.futureActiveBookingsCount || 0}</div>
                     </div>

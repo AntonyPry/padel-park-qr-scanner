@@ -150,11 +150,13 @@ test('accepts booking payload used by the phone booking page', () => {
     { body: apiSchemas.bookings.body },
     {
       body: {
+        bookingType: 'personal_training',
         courtId: 1,
         durationMinutes: 90,
         paymentMethod: 'cashless',
         paymentStatus: 'partial',
         price: 4500,
+        responsibleStaffId: 1,
         source: 'phone',
         startsAt: '2026-05-26T10:00:00.000Z',
         status: 'confirmed',

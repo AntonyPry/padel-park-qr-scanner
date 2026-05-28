@@ -15,6 +15,7 @@ const PUBLIC_CHECKS = [
 const CHECKS = [
   ['auth.me', '/auth/me'],
   ['bookings.schedule', `/bookings/schedule?date=${new Date().toISOString().slice(0, 10)}`],
+  ['bookings.responsibles', '/bookings/responsibles'],
   ['bookings.analytics', '/bookings/analytics'],
   ['clients.list', '/clients?limit=10'],
   ['clientBases.list', '/client-bases?status=active'],

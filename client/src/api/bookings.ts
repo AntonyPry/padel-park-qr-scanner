@@ -4,6 +4,13 @@ export type BookingStatus = 'new' | 'confirmed' | 'canceled' | 'arrived' | 'no_s
 export type BookingPaymentStatus = 'unpaid' | 'partial' | 'paid' | 'refunded';
 export type BookingPaymentMethod = 'unknown' | 'cash' | 'cashless' | 'mixed';
 export type BookingSource = 'phone' | 'admin' | 'walk_in' | 'other';
+export type BookingType =
+  | 'game'
+  | 'tournament'
+  | 'personal_training'
+  | 'master_class'
+  | 'group_training'
+  | 'corporate';
 export type BookingDurationMinutes = number;
 export type BookingRuleStatus = 'active' | 'archived';
 export type BookingCourtType = 'all' | 'padel_double' | 'padel_single' | 'other';
@@ -23,7 +30,16 @@ export interface BookingClient {
   status: 'active' | 'archived';
 }
 
+export interface BookingResponsibleStaff {
+  id: number;
+  name: string;
+  phone?: string | null;
+  position?: string | null;
+  status?: 'active' | 'inactive' | 'archived';
+}
+
 export interface Booking {
+  bookingType: BookingType;
   canceledAt?: string | null;
   cancellationReason?: string | null;
   bookingSeriesId?: number | null;
@@ -37,10 +53,13 @@ export interface Booking {
   durationMinutes: number;
   endsAt: string;
   id: number;
+  isFirstBooking?: boolean;
   paidAmount: number;
   paymentMethod: BookingPaymentMethod;
   paymentStatus: BookingPaymentStatus;
   price: number;
+  responsibleStaff?: BookingResponsibleStaff | null;
+  responsibleStaffId?: number | null;
   source: BookingSource;
   startsAt: string;
   status: BookingStatus;
@@ -51,6 +70,7 @@ export interface Booking {
 export interface BookingSeries {
   archiveReason?: string | null;
   archivedAt?: string | null;
+  bookingType: BookingType;
   client?: BookingClient | null;
   clientName: string;
   clientPhone: string;
@@ -68,6 +88,8 @@ export interface BookingSeries {
   paymentMethod: BookingPaymentMethod;
   paymentStatus: BookingPaymentStatus;
   price?: number | null;
+  responsibleStaff?: BookingResponsibleStaff | null;
+  responsibleStaffId?: number | null;
   source: BookingSource;
   startTime: string;
   startsOn: string;
@@ -186,6 +208,7 @@ export interface BookingChangeLog {
 }
 
 export interface BookingPayload {
+  bookingType?: BookingType;
   cancellationReason?: string;
   changeReason?: string;
   client?: {
@@ -202,6 +225,7 @@ export interface BookingPayload {
   paymentMethod?: BookingPaymentMethod;
   paymentStatus?: BookingPaymentStatus;
   price?: number;
+  responsibleStaffId?: number | null;
   source?: BookingSource;
   startsAt: string;
   status?: BookingStatus;
@@ -209,6 +233,7 @@ export interface BookingPayload {
 }
 
 export interface BookingSeriesPayload {
+  bookingType?: BookingType;
   client?: {
     name: string;
     note?: string;
@@ -224,6 +249,7 @@ export interface BookingSeriesPayload {
   paymentMethod?: BookingPaymentMethod;
   paymentStatus?: BookingPaymentStatus;
   price?: number;
+  responsibleStaffId?: number | null;
   source?: BookingSource;
   startTime: string;
   startsOn: string;
@@ -319,6 +345,14 @@ export async function getBookingSchedule(date: string) {
     `/api/bookings/schedule?date=${encodeURIComponent(date)}`,
     {},
     'Не удалось получить расписание',
+  );
+}
+
+export async function listBookingResponsibles() {
+  return apiRequest<BookingResponsibleStaff[]>(
+    '/api/bookings/responsibles',
+    {},
+    'Не удалось получить ответственных сотрудников',
   );
 }
 
