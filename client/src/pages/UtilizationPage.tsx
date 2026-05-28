@@ -1,6 +1,18 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import {
+  listUtilization,
+  saveUtilization,
+  type UtilizationRecord,
+} from '@/api/utilization';
+import { queryKeys } from '@/api/query-keys';
+import { ErrorState } from '@/components/error-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/input';
 import {
   Table,
@@ -23,6 +35,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import {
   Bar,
   XAxis,
@@ -48,21 +61,13 @@ import { format, startOfMonth, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
-import { apiFetch } from '@/lib/api';
 import { canManageUtilization } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import { getApiErrorMessage } from '@/lib/api';
 
 const CAP_15 = 15 * 5; // 75 часов (5 кортов 2х2 по 15 часов)
 const CAP_6 = 15; // 15 часов (1 корт 1х1)
 const TOTAL_CAPACITY = CAP_15 + CAP_6;
-
-interface UtilizationRecord {
-  date: string;
-  booked1: number | string;
-  booked2: number | string;
-  sessions1?: number | string;
-  sessions2?: number | string;
-}
 
 interface WeekdayStat {
   name: string;
@@ -71,11 +76,49 @@ interface WeekdayStat {
 
 type CourtFilter = 'all' | '2x2' | '1x1';
 
+const optionalHoursSchema = z
+  .string()
+  .trim()
+  .refine((value) => !value || Number(value) >= 0, {
+    message: 'Введите число не меньше 0',
+  });
+
+const optionalSessionsSchema = z
+  .string()
+  .trim()
+  .refine((value) => !value || Number.isInteger(Number(value)), {
+    message: 'Введите целое число',
+  })
+  .refine((value) => !value || Number(value) >= 0, {
+    message: 'Введите число не меньше 0',
+  });
+
+const utilizationFormSchema = z.object({
+  batchText: z.string(),
+  booked1: optionalHoursSchema,
+  booked2: optionalHoursSchema,
+  date: z.string().min(1, 'Укажите дату'),
+  sessions1: optionalSessionsSchema,
+  sessions2: optionalSessionsSchema,
+});
+
+type UtilizationFormValues = z.infer<typeof utilizationFormSchema>;
+
+function getEmptyUtilizationForm(): UtilizationFormValues {
+  return {
+    batchText: '',
+    booked1: '',
+    booked2: '',
+    date: format(new Date(), 'yyyy-MM-dd'),
+    sessions1: '',
+    sessions2: '',
+  };
+}
+
 export default function UtilizationPage() {
   const { account } = useAuth();
+  const queryClient = useQueryClient();
   const canEditUtilization = canManageUtilization(account?.role);
-  const [data, setData] = useState<UtilizationRecord[]>([]);
-  const [loading, setLoading] = useState(true);
   const [isOpen, setIsOpen] = useState(false);
   const [courtFilter, setCourtFilter] = useState<CourtFilter>('all');
 
@@ -85,30 +128,28 @@ export default function UtilizationPage() {
   });
 
   const [addMode, setAddMode] = useState<'single' | 'batch'>('single');
-  const [batchText, setBatchText] = useState('');
-  const [form, setForm] = useState({
-    date: format(new Date(), 'yyyy-MM-dd'),
-    booked2: '',
-    sessions2: '',
-    booked1: '',
-    sessions1: '',
+  const utilizationForm = useForm<UtilizationFormValues>({
+    defaultValues: getEmptyUtilizationForm(),
+    resolver: zodResolver(utilizationFormSchema),
   });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await apiFetch('/api/utilization');
-      if (res.ok) setData((await res.json()) as UtilizationRecord[]);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
+  const utilizationQuery = useQuery({
+    queryFn: listUtilization,
+    queryKey: queryKeys.utilization.list(),
+  });
+  const data = useMemo(
+    () => utilizationQuery.data || [],
+    [utilizationQuery.data],
+  );
+  const loading = utilizationQuery.isLoading || utilizationQuery.isFetching;
+  const errorText = utilizationQuery.isError
+    ? getApiErrorMessage(utilizationQuery.error, 'Не удалось загрузить утилизацию кортов')
+    : '';
+  const saveUtilizationMutation = useMutation({
+    mutationFn: saveUtilization,
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.utilization.all }),
+  });
 
   const parseBatchData = (text: string): UtilizationRecord[] => {
     const year = new Date().getFullYear();
@@ -134,29 +175,40 @@ export default function UtilizationPage() {
     return parsed.filter((item): item is UtilizationRecord => item !== null);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const payload = addMode === 'single' ? [form] : parseBatchData(batchText);
-    if (!payload.length) return alert('Не удалось распознать данные.');
+  const handleSubmit = utilizationForm.handleSubmit(async (values) => {
+    const payload =
+      addMode === 'single'
+        ? [
+            {
+              booked1: values.booked1 || 0,
+              booked2: values.booked2 || 0,
+              date: values.date,
+              sessions1: values.sessions1 || 0,
+              sessions2: values.sessions2 || 0,
+            },
+          ]
+        : parseBatchData(values.batchText);
+    if (!payload.length) {
+      toast.error('Не удалось распознать данные');
+      return;
+    }
 
-    const res = await apiFetch('/api/utilization', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) {
+    try {
+      await saveUtilizationMutation.mutateAsync(payload);
       setIsOpen(false);
-      setBatchText('');
-      setForm({
-        ...form,
+      utilizationForm.reset({
+        ...utilizationForm.getValues(),
+        batchText: '',
         booked2: '',
         sessions2: '',
         booked1: '',
         sessions1: '',
       });
-      void fetchData();
+      toast.success('Данные загрузки сохранены');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось сохранить данные загрузки'));
     }
-  };
+  });
 
   const stats = useMemo(() => {
     const from = dateRange?.from || startOfMonth(new Date());
@@ -310,7 +362,7 @@ export default function UtilizationPage() {
           <Button
             variant="outline"
             size="icon"
-            onClick={fetchData}
+            onClick={() => void utilizationQuery.refetch()}
             disabled={loading}
           >
             <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
@@ -351,40 +403,58 @@ export default function UtilizationPage() {
                     <Input
                       type="date"
                       required
-                      value={form.date}
-                      onChange={(e) =>
-                        setForm({ ...form, date: e.target.value })
-                      }
+                      aria-invalid={Boolean(
+                        utilizationForm.formState.errors.date,
+                      )}
+                      {...utilizationForm.register('date')}
                     />
+                    {utilizationForm.formState.errors.date && (
+                      <div className="text-xs text-destructive">
+                        {utilizationForm.formState.errors.date.message}
+                      </div>
+                    )}
                     <div className="space-y-3">
                       <div className="text-sm font-semibold border-b pb-1">
                         Корты 2x2
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">
+                          <Label className="text-xs text-muted-foreground">
                             Занято часов
-                          </label>
+                          </Label>
                           <Input
                             type="number"
                             step="0.5"
-                            value={form.booked2}
-                            onChange={(e) =>
-                              setForm({ ...form, booked2: e.target.value })
-                            }
+                            aria-invalid={Boolean(
+                              utilizationForm.formState.errors.booked2,
+                            )}
+                            {...utilizationForm.register('booked2')}
                           />
+                          {utilizationForm.formState.errors.booked2 && (
+                            <div className="text-xs text-destructive">
+                              {utilizationForm.formState.errors.booked2.message}
+                            </div>
+                          )}
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">
+                          <Label className="text-xs text-muted-foreground">
                             Кол-во сессий
-                          </label>
+                          </Label>
                           <Input
                             type="number"
-                            value={form.sessions2}
-                            onChange={(e) =>
-                              setForm({ ...form, sessions2: e.target.value })
-                            }
+                            aria-invalid={Boolean(
+                              utilizationForm.formState.errors.sessions2,
+                            )}
+                            {...utilizationForm.register('sessions2')}
                           />
+                          {utilizationForm.formState.errors.sessions2 && (
+                            <div className="text-xs text-destructive">
+                              {
+                                utilizationForm.formState.errors.sessions2
+                                  .message
+                              }
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -394,48 +464,64 @@ export default function UtilizationPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">
+                          <Label className="text-xs text-muted-foreground">
                             Занято часов
-                          </label>
+                          </Label>
                           <Input
                             type="number"
                             step="0.5"
-                            value={form.booked1}
-                            onChange={(e) =>
-                              setForm({ ...form, booked1: e.target.value })
-                            }
+                            aria-invalid={Boolean(
+                              utilizationForm.formState.errors.booked1,
+                            )}
+                            {...utilizationForm.register('booked1')}
                           />
+                          {utilizationForm.formState.errors.booked1 && (
+                            <div className="text-xs text-destructive">
+                              {utilizationForm.formState.errors.booked1.message}
+                            </div>
+                          )}
                         </div>
                         <div className="space-y-1">
-                          <label className="text-xs text-muted-foreground">
+                          <Label className="text-xs text-muted-foreground">
                             Кол-во сессий
-                          </label>
+                          </Label>
                           <Input
                             type="number"
-                            value={form.sessions1}
-                            onChange={(e) =>
-                              setForm({ ...form, sessions1: e.target.value })
-                            }
+                            aria-invalid={Boolean(
+                              utilizationForm.formState.errors.sessions1,
+                            )}
+                            {...utilizationForm.register('sessions1')}
                           />
+                          {utilizationForm.formState.errors.sessions1 && (
+                            <div className="text-xs text-destructive">
+                              {
+                                utilizationForm.formState.errors.sessions1
+                                  .message
+                              }
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>
                   </>
                 ) : (
                   <div className="space-y-2">
-                    <label className="text-xs text-muted-foreground">
+                    <Label className="text-xs text-muted-foreground">
                       Формат: ДД.ММ [Часы 2х2]/[Сессии 2х2] [Часы 1х1]/[Сессии
                       1х1]
-                    </label>
+                    </Label>
                     <textarea
                       required
                       className="flex min-h-[150px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm"
-                      value={batchText}
-                      onChange={(e) => setBatchText(e.target.value)}
+                      {...utilizationForm.register('batchText')}
                     />
                   </div>
                 )}
-                <Button type="submit" className="w-full">
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={saveUtilizationMutation.isPending}
+                >
                   Сохранить
                 </Button>
               </form>
@@ -443,6 +529,14 @@ export default function UtilizationPage() {
           </Dialog>
         </div>
       </div>
+
+      {errorText && data.length === 0 && (
+        <ErrorState
+          message={errorText}
+          onRetry={() => void utilizationQuery.refetch()}
+          title="Утилизация не загрузилась"
+        />
+      )}
 
       {stats && (
         <>
@@ -618,7 +712,7 @@ export default function UtilizationPage() {
                         stroke="#ef4444"
                         strokeWidth={3}
                         dot={false}
-                        name="Тред (7д)"
+                        name="Тренд (7д)"
                       />
                     </ComposedChart>
                   </ResponsiveContainer>

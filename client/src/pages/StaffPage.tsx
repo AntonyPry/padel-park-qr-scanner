@@ -1,4 +1,8 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import {
   Table,
   TableBody,
@@ -9,6 +13,7 @@ import {
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
@@ -47,7 +52,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import {
   canApprovePayroll,
   canManageShifts,
@@ -60,6 +65,8 @@ import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { DataTable } from '@/components/data-table';
+import { ErrorState } from '@/components/error-state';
 import { MetricCard } from '@/components/dashboard-metric';
 
 interface AdminStat {
@@ -86,9 +93,11 @@ interface ShiftRecord {
   id: number | string;
   isDraft: boolean;
   date: string;
+  endedAt?: string | null;
   status?: string;
   staffId?: number | null;
   adminName: string | null;
+  startedAt?: string | null;
   hours: number;
   dailyRevenue: number;
   basePay: number;
@@ -135,11 +144,58 @@ type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<void>;
 };
 
-const emptyStaffForm = {
+const staffFormSchema = z.object({
+  name: z.string().trim().min(2, 'Минимум 2 символа'),
+  phone: z.string(),
+  position: z.string().trim().min(2, 'Укажите должность'),
+  status: z.enum(['active', 'inactive', 'archived']),
+});
+type StaffFormValues = z.infer<typeof staffFormSchema>;
+
+const shiftFormSchema = z
+  .object({
+    adminName: z.string(),
+    comment: z.string(),
+    date: z.string().min(1, 'Укажите дату'),
+    hours: z
+      .string()
+      .min(1, 'Укажите часы')
+      .refine((value) => Number(value) > 0, {
+        message: 'Часы должны быть больше 0',
+      }),
+    id: z.string(),
+    manualAdjustment: z
+      .string()
+      .refine((value) => value === '' || Number.isFinite(Number(value)), {
+        message: 'Введите число',
+      }),
+    staffId: z.string().min(1, 'Выберите сотрудника'),
+  })
+  .superRefine((value, ctx) => {
+    if (Number(value.manualAdjustment || 0) !== 0 && !value.comment.trim()) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Укажите причину ручной корректировки',
+        path: ['comment'],
+      });
+    }
+  });
+type ShiftFormValues = z.infer<typeof shiftFormSchema>;
+
+const emptyStaffForm: StaffFormValues = {
   name: '',
   phone: '',
   position: 'Администратор',
   status: 'active',
+};
+const emptyShiftForm: ShiftFormValues = {
+  adminName: '',
+  comment: '',
+  date: '',
+  hours: '',
+  id: '',
+  manualAdjustment: '',
+  staffId: '',
 };
 
 function getStaffPosition(staff: StaffMember) {
@@ -154,6 +210,20 @@ function formatActor(actor?: PayrollActor | null) {
 function formatDateTime(value?: string | null) {
   if (!value) return '-';
   return format(new Date(value), 'dd.MM.yyyy HH:mm');
+}
+
+function formatTime(value?: string | null) {
+  if (!value) return '';
+  return format(new Date(value), 'HH:mm');
+}
+
+function formatShiftTimeRange(shift: ShiftRecord) {
+  if (shift.startedAt && shift.endedAt) {
+    return `${formatTime(shift.startedAt)}-${formatTime(shift.endedAt)}`;
+  }
+  if (shift.startedAt) return `с ${formatTime(shift.startedAt)}`;
+  if (shift.endedAt) return `до ${formatTime(shift.endedAt)}`;
+  return '';
 }
 
 export default function StaffPage() {
@@ -186,21 +256,22 @@ export default function StaffPage() {
     shift: ShiftRecord | null;
   }>({ isOpen: false, shift: null });
 
-  const [form, setForm] = useState({
-    id: '',
-    date: '',
-    staffId: '',
-    adminName: '',
-    hours: '',
-    manualAdjustment: '',
-    comment: '',
-  });
-  const [staffForm, setStaffForm] = useState(emptyStaffForm);
   const [staffStatus, setStaffStatus] = useState<'active' | 'archived' | 'all'>(
     'active',
   );
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const shiftForm = useForm<ShiftFormValues>({
+    defaultValues: emptyShiftForm,
+    resolver: zodResolver(shiftFormSchema),
+  });
+  const staffForm = useForm<StaffFormValues>({
+    defaultValues: emptyStaffForm,
+    resolver: zodResolver(staffFormSchema),
+  });
+  const shiftFormId = shiftForm.watch('id');
+  const shiftFormStaffId = shiftForm.watch('staffId');
+  const staffFormStatus = staffForm.watch('status');
 
   const fetchPayroll = useCallback(async () => {
     setLoading(true);
@@ -213,6 +284,7 @@ export default function StaffPage() {
         apiFetch(`/api/finance/payroll?from=${fromStr}&to=${toStr}`),
         apiFetch('/api/staff'),
       ]);
+      const errors: string[] = [];
 
       if (payrollRes.ok) {
         const data = await payrollRes.json();
@@ -225,15 +297,25 @@ export default function StaffPage() {
         const data = (await payrollRes.json().catch(() => ({}))) as {
           error?: string;
         };
-        setErrorMessage(data.error || 'Не удалось загрузить payroll');
+        errors.push(data.error || 'Не удалось загрузить payroll');
       }
 
       if (staffRes.ok) {
         setStaff((await staffRes.json()) as StaffMember[]);
+      } else {
+        const apiError = await readApiError(
+          staffRes,
+          'Не удалось загрузить сотрудников',
+        );
+        errors.push(apiError.message);
+      }
+
+      if (errors.length > 0) {
+        setErrorMessage(errors.join(' '));
       }
     } catch (e) {
       console.error(e);
-      setErrorMessage('Не удалось загрузить payroll');
+      setErrorMessage(getApiErrorMessage(e, 'Не удалось загрузить payroll'));
     } finally {
       setLoading(false);
     }
@@ -243,36 +325,35 @@ export default function StaffPage() {
     void fetchPayroll();
   }, [fetchPayroll]);
 
-  const handleSaveShift = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveShift = shiftForm.handleSubmit(async (values) => {
     if (payrollLocked) {
       setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
       return;
     }
 
-    const selectedStaff = staff.find((item) => String(item.id) === form.staffId);
+    const selectedStaff = staff.find(
+      (item) => String(item.id) === values.staffId,
+    );
 
     if (!selectedStaff) {
-      setErrorMessage('Выберите сотрудника смены');
-      return;
-    }
-
-    if (Number(form.manualAdjustment) !== 0 && !form.comment.trim()) {
-      setErrorMessage('Для ручной корректировки зарплаты нужно указать причину.');
+      shiftForm.setError('staffId', {
+        message: 'Выберите сотрудника смены',
+        type: 'manual',
+      });
       return;
     }
 
     try {
       setErrorMessage('');
       const method =
-        String(form.id).startsWith('draft-') || !form.id ? 'POST' : 'PUT';
+        String(values.id).startsWith('draft-') || !values.id ? 'POST' : 'PUT';
       const payload = {
-        ...form,
-        id: String(form.id).startsWith('draft-') ? undefined : form.id,
+        ...values,
+        id: String(values.id).startsWith('draft-') ? undefined : values.id,
         staffId: selectedStaff.id,
         adminName: selectedStaff.name,
-        hours: Number(form.hours) || 0,
-        manualAdjustment: Number(form.manualAdjustment) || 0,
+        hours: Number(values.hours) || 0,
+        manualAdjustment: Number(values.manualAdjustment) || 0,
       };
 
       const res = await apiFetch('/api/shifts', {
@@ -291,7 +372,7 @@ export default function StaffPage() {
       console.error(e);
       setErrorMessage('Не удалось сохранить смену');
     }
-  };
+  });
 
   const handleDelete = async (id: number | string) => {
     if (String(id).startsWith('draft-')) return;
@@ -338,7 +419,7 @@ export default function StaffPage() {
         staff.find((item) => item.name === shift.adminName)?.id ||
         '';
 
-      setForm({
+      shiftForm.reset({
         id: String(shift.id),
         date: shift.date,
         staffId: matchedStaff ? String(matchedStaff) : '',
@@ -348,14 +429,9 @@ export default function StaffPage() {
         comment: shift.comment || '',
       });
     } else {
-      setForm({
-        id: '',
+      shiftForm.reset({
+        ...emptyShiftForm,
         date: format(new Date(), 'yyyy-MM-dd'),
-        staffId: '',
-        adminName: '',
-        hours: '',
-        manualAdjustment: '',
-        comment: '',
       });
     }
     setIsModalOpen(true);
@@ -469,17 +545,17 @@ export default function StaffPage() {
   const openStaffForm = (item?: StaffMember) => {
     if (item) {
       setEditingStaff(item);
-      setStaffForm({
+      staffForm.reset({
         name: item.name,
         phone: item.phone || '',
         position: getStaffPosition(item),
         status: ['active', 'inactive', 'archived'].includes(item.status)
-          ? item.status
+          ? (item.status as StaffFormValues['status'])
           : 'active',
       });
     } else {
       setEditingStaff(null);
-      setStaffForm(emptyStaffForm);
+      staffForm.reset(emptyStaffForm);
     }
 
     setIsStaffModalOpen(true);
@@ -488,24 +564,25 @@ export default function StaffPage() {
   const closeStaffForm = () => {
     setIsStaffModalOpen(false);
     setEditingStaff(null);
-    setStaffForm(emptyStaffForm);
+    staffForm.reset(emptyStaffForm);
   };
 
-  const handleSaveStaff = async (e: React.FormEvent) => {
-    e.preventDefault();
-
+  const saveStaff = async (
+    values: StaffFormValues,
+    target: StaffMember | null,
+  ) => {
     try {
       const payload = {
-        name: staffForm.name.trim(),
-        position: staffForm.position.trim(),
-        phone: staffForm.phone.trim() || undefined,
-        status: staffForm.status,
+        name: values.name.trim(),
+        position: values.position.trim(),
+        phone: values.phone.trim() || undefined,
+        status: values.status,
       };
 
       const res = await apiFetch(
-        editingStaff ? `/api/staff/${editingStaff.id}` : '/api/staff',
+        target ? `/api/staff/${target.id}` : '/api/staff',
         {
-          method: editingStaff ? 'PUT' : 'POST',
+          method: target ? 'PUT' : 'POST',
           body: JSON.stringify(payload),
         },
       );
@@ -520,8 +597,35 @@ export default function StaffPage() {
       fetchPayroll();
     } catch (e) {
       console.error(e);
+      setErrorMessage('Не удалось сохранить сотрудника');
     }
   };
+
+  const handleSaveStaff = staffForm.handleSubmit(async (values) => {
+    const changesArchiveState =
+      editingStaff &&
+      values.status !== editingStaff.status &&
+      (values.status === 'archived' || editingStaff.status === 'archived');
+
+    if (changesArchiveState) {
+      const target = editingStaff;
+      const goesToArchive = values.status === 'archived';
+      setPendingAction({
+        confirmLabel: goesToArchive ? 'В архив' : 'Восстановить',
+        description: goesToArchive
+          ? `Сотрудник «${target.name}» будет убран из активного списка. Остальные изменения формы тоже будут сохранены.`
+          : `Сотрудник «${target.name}» снова появится в активной операционной базе. Остальные изменения формы тоже будут сохранены.`,
+        isDestructive: goesToArchive,
+        onConfirm: () => saveStaff(values, target),
+        title: goesToArchive
+          ? 'Архивировать сотрудника?'
+          : 'Восстановить сотрудника?',
+      });
+      return;
+    }
+
+    await saveStaff(values, editingStaff);
+  });
 
   const executeArchiveStaff = async (item: StaffMember) => {
     try {
@@ -654,6 +758,362 @@ export default function StaffPage() {
     : 'bg-muted text-muted-foreground';
 
   const canChangeShifts = canEditShifts && !payrollLocked;
+  const staffColumns: ColumnDef<StaffMember>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Имя',
+      size: 220,
+      meta: {
+        cellClassName: 'truncate font-medium',
+      },
+    },
+    {
+      id: 'position',
+      header: 'Должность',
+      size: 220,
+      meta: {
+        cellClassName: 'truncate',
+      },
+      cell: ({ row }) => getStaffPosition(row.original),
+    },
+    {
+      accessorKey: 'phone',
+      header: 'Телефон',
+      size: 170,
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+      cell: ({ row }) => row.original.phone || '-',
+    },
+    {
+      accessorKey: 'status',
+      header: 'Статус',
+      size: 120,
+      cell: ({ row }) => (
+        <Badge variant="outline">
+          {row.original.status === 'active'
+            ? 'Активен'
+            : row.original.status === 'archived'
+              ? 'Архив'
+              : 'Отключен'}
+        </Badge>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 120,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const item = row.original;
+
+        if (!canEditStaff) return null;
+
+        return (
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => openStaffForm(item)}
+              title="Редактировать сотрудника"
+              aria-label={`Редактировать сотрудника ${item.name}`}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => requestArchiveStaff(item)}
+              title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
+              aria-label={
+                item.status === 'archived'
+                  ? `Восстановить сотрудника ${item.name}`
+                  : `Архивировать сотрудника ${item.name}`
+              }
+            >
+              {item.status === 'archived' ? (
+                <ArchiveRestore className="h-4 w-4" />
+              ) : (
+                <Archive className="h-4 w-4" />
+              )}
+            </Button>
+            {item.status === 'archived' && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => requestPermanentDeleteStaff(item)}
+                title="Удалить навсегда"
+                aria-label={`Удалить сотрудника ${item.name} навсегда`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+  const shiftColumns: ColumnDef<ShiftRecord>[] = [
+    {
+      accessorKey: 'date',
+      header: 'Дата',
+      meta: {
+        cellClassName: 'font-medium',
+      },
+      cell: ({ row }) => {
+        const shift = row.original;
+        const timeRange = formatShiftTimeRange(shift);
+
+        return (
+          <div>
+            <div>{shift.date}</div>
+            {timeRange ? (
+              <div className="mt-0.5 text-xs font-normal text-muted-foreground">
+                {timeRange}
+              </div>
+            ) : !shift.isDraft ? (
+              <div className="mt-0.5 text-xs font-normal text-muted-foreground">
+                Смена #{shift.id}
+              </div>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
+      id: 'status',
+      header: 'Статус',
+      cell: ({ row }) =>
+        row.original.isDraft ? (
+          <Badge
+            variant="outline"
+            className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+          >
+            <AlertTriangle className="mr-1 h-3 w-3" /> Черновик
+          </Badge>
+        ) : (
+          <Badge
+            variant="outline"
+            className="border-transparent bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+          >
+            <CheckCircle2 className="mr-1 h-3 w-3" /> Заполнено
+          </Badge>
+        ),
+    },
+    {
+      id: 'admin',
+      header: 'Администратор',
+      cell: ({ row }) =>
+        row.original.isDraft ? (
+          <span className="text-xs text-muted-foreground">Не указано</span>
+        ) : (
+          row.original.adminName
+        ),
+    },
+    {
+      accessorKey: 'hours',
+      header: 'Часы',
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => row.original.hours || '—',
+    },
+    {
+      accessorKey: 'dailyRevenue',
+      header: 'Выручка',
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => `${row.original.dailyRevenue.toLocaleString('ru-RU')} ₽`,
+    },
+    {
+      id: 'bonus',
+      header: 'Бонус',
+      meta: {
+        cellClassName: 'text-right text-muted-foreground',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const bonus = Number(row.original.calculatedBonus || 0);
+
+        if (bonus > 0) return `+${bonus.toLocaleString('ru-RU')} ₽`;
+        if (bonus === 0) return '—';
+        return `${bonus.toLocaleString('ru-RU')} ₽`;
+      },
+    },
+    {
+      id: 'adjustment',
+      header: 'Корр.',
+      meta: {
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const adjustment = Number(row.original.manualAdjustment || 0);
+
+        return (
+          <span
+            className={
+              adjustment < 0 ? 'text-destructive' : 'text-muted-foreground'
+            }
+          >
+            {adjustment === 0
+              ? '—'
+              : `${adjustment > 0 ? '+' : ''}${adjustment.toLocaleString(
+                  'ru-RU',
+                )} ₽`}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'total',
+      header: 'Итого',
+      meta: {
+        cellClassName: 'text-right text-base font-bold',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) =>
+        row.original.total > 0
+          ? `${row.original.total.toLocaleString('ru-RU')} ₽`
+          : '—',
+    },
+    {
+      id: 'actions',
+      header: '',
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const shift = row.original;
+
+        return (
+          <div
+            className="flex justify-end gap-2"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {canEditShifts && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!canChangeShifts}
+                title={
+                  canChangeShifts
+                    ? 'Изменить смену'
+                    : 'Payroll-период закрыт, смены менять нельзя'
+                }
+                onClick={() => openForm(shift)}
+              >
+                Изменить
+              </Button>
+            )}
+            {canEditShifts && !shift.isDraft && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                disabled={!canChangeShifts}
+                title={
+                  canChangeShifts
+                    ? 'Архивировать смену'
+                    : 'Payroll-период закрыт, смены менять нельзя'
+                }
+                onClick={() => requestDeleteShift(shift)}
+              >
+                В архив
+              </Button>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+  const adminColumns: ColumnDef<AdminStat>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Администратор',
+      meta: {
+        cellClassName: 'text-base font-medium',
+      },
+    },
+    {
+      accessorKey: 'totalShifts',
+      header: 'Смен',
+      meta: {
+        cellClassName: 'text-right font-medium',
+        headerClassName: 'text-right',
+      },
+    },
+    {
+      accessorKey: 'totalHours',
+      header: 'Часы',
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+    },
+    {
+      accessorKey: 'basePay',
+      header: 'База',
+      meta: {
+        cellClassName: 'text-right text-muted-foreground',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => `${row.original.basePay.toLocaleString('ru-RU')} ₽`,
+    },
+    {
+      id: 'bonusPay',
+      header: 'Бонусы',
+      meta: {
+        cellClassName: 'text-right text-muted-foreground',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) =>
+        `${Number(
+          row.original.calculatedBonusPay ?? row.original.bonusPay,
+        ).toLocaleString('ru-RU')} ₽`,
+    },
+    {
+      id: 'manualAdjustmentTotal',
+      header: 'Корр.',
+      meta: {
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const adjustment = Number(row.original.manualAdjustmentTotal || 0);
+
+        return (
+          <span
+            className={
+              adjustment < 0 ? 'text-destructive' : 'text-muted-foreground'
+            }
+          >
+            {adjustment.toLocaleString('ru-RU')} ₽
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'totalPay',
+      header: 'Итого',
+      meta: {
+        cellClassName: 'text-right text-lg font-bold',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => `${row.original.totalPay.toLocaleString('ru-RU')} ₽`,
+    },
+  ];
+  const sortedAdmins = useMemo(
+    () => admins.toSorted((a, b) => b.totalPay - a.totalPay),
+    [admins],
+  );
 
   return (
     <div className="min-w-0 p-4 md:p-8 space-y-6">
@@ -668,13 +1128,13 @@ export default function StaffPage() {
             операции. Здесь живут сотрудники, смены и расчет начислений.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
           <Popover>
             <PopoverTrigger asChild>
               <Button
                 variant={'outline'}
                 className={cn(
-                  'w-full sm:w-[260px] justify-start text-left font-normal bg-card',
+                  'w-full justify-start bg-card text-left font-normal sm:w-[240px]',
                   !dateRange && 'text-muted-foreground',
                 )}
               >
@@ -739,9 +1199,12 @@ export default function StaffPage() {
       </div>
 
       {errorMessage && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-          {errorMessage}
-        </div>
+        <ErrorState
+          compact
+          title="Payroll не загрузился полностью"
+          message={errorMessage}
+          onRetry={() => void fetchPayroll()}
+        />
       )}
 
       <div className="border rounded-md bg-card p-4">
@@ -785,10 +1248,16 @@ export default function StaffPage() {
               </div>
             )}
             {payrollWarnings.length > 0 && (
-              <div className="mt-2 space-y-1 text-xs text-amber-500">
-                {payrollWarnings.slice(0, 3).map((warning) => (
-                  <div key={warning}>{warning}</div>
-                ))}
+              <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-300">
+                <div className="mb-1 flex items-center gap-2 font-medium">
+                  <AlertTriangle className="h-4 w-4" />
+                  Проверьте расчет
+                </div>
+                <div className="space-y-1">
+                  {payrollWarnings.slice(0, 3).map((warning) => (
+                    <div key={warning}>{warning}</div>
+                  ))}
+                </div>
               </div>
             )}
           </div>
@@ -934,224 +1403,35 @@ export default function StaffPage() {
             )}
           </div>
         </div>
-        <Table className="min-w-[760px] table-fixed">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[28%]">Имя</TableHead>
-              <TableHead className="w-[26%]">Должность</TableHead>
-              <TableHead className="w-[20%]">Телефон</TableHead>
-              <TableHead className="w-[14%]">Статус</TableHead>
-              <TableHead className="w-[12%] text-right"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {displayedStaff.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  Сотрудники еще не добавлены
-                </TableCell>
-              </TableRow>
-            )}
-            {displayedStaff.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="font-medium truncate">
-                  {item.name}
-                </TableCell>
-                <TableCell className="truncate">
-                  {getStaffPosition(item)}
-                </TableCell>
-                <TableCell className="text-muted-foreground truncate">
-                  {item.phone || '-'}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline">
-                    {item.status === 'active'
-                      ? 'Активен'
-                      : item.status === 'archived'
-                        ? 'Архив'
-                        : 'Отключен'}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  {canEditStaff && (
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => openStaffForm(item)}
-                        title="Редактировать сотрудника"
-                        aria-label={`Редактировать сотрудника ${item.name}`}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        onClick={() => requestArchiveStaff(item)}
-                        title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
-                        aria-label={
-                          item.status === 'archived'
-                            ? `Восстановить сотрудника ${item.name}`
-                            : `Архивировать сотрудника ${item.name}`
-                        }
-                      >
-                        {item.status === 'archived' ? (
-                          <ArchiveRestore className="h-4 w-4" />
-                        ) : (
-                          <Archive className="h-4 w-4" />
-                        )}
-                      </Button>
-                      {item.status === 'archived' && (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => requestPermanentDeleteStaff(item)}
-                          title="Удалить навсегда"
-                          aria-label={`Удалить сотрудника ${item.name} навсегда`}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
-                    </div>
-                  )}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataTable
+          columns={staffColumns}
+          data={displayedStaff}
+          emptyText="Сотрудники еще не добавлены"
+          minWidthClassName="min-w-[760px] table-fixed"
+        />
       </div>
 
       {/* ЖУРНАЛ СМЕН */}
       <div className="border rounded-md bg-card overflow-x-auto">
-        <Table className="min-w-[1120px]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Дата</TableHead>
-              <TableHead>Статус</TableHead>
-              <TableHead>Администратор</TableHead>
-              <TableHead className="text-right">Часы</TableHead>
-              <TableHead className="text-right">Выручка</TableHead>
-              <TableHead className="text-right">Бонус</TableHead>
-              <TableHead className="text-right">Корр.</TableHead>
-              <TableHead className="text-right">Итого</TableHead>
-              <TableHead></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {shifts.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={9}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  Нет данных за этот период
-                </TableCell>
-              </TableRow>
-            )}
-            {shifts.map((s) => (
-              <TableRow
-                key={s.id}
-                className="cursor-pointer hover:bg-muted/50"
-                onClick={() => setDetailModal({ isOpen: true, shift: s })}
-              >
-                <TableCell className="font-medium">{s.date}</TableCell>
-                <TableCell>
-                  {s.isDraft ? (
-                    <Badge
-                      variant="outline"
-                      className="bg-amber-100 text-amber-800 border-transparent dark:bg-amber-900/30 dark:text-amber-300"
-                    >
-                      <AlertTriangle className="w-3 h-3 mr-1" /> Черновик
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="bg-green-100 text-green-800 border-transparent dark:bg-green-900/30 dark:text-green-300"
-                    >
-                      <CheckCircle2 className="w-3 h-3 mr-1" /> Заполнено
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {s.isDraft ? (
-                    <span className="text-muted-foreground text-xs">
-                      Не указано
-                    </span>
-                  ) : (
-                    s.adminName
-                  )}
-                </TableCell>
-                <TableCell className="text-right">{s.hours || '—'}</TableCell>
-                <TableCell className="text-right">
-                  {s.dailyRevenue.toLocaleString('ru-RU')} ₽
-                </TableCell>
-                <TableCell className="text-right text-muted-foreground">
-                  {Number(s.calculatedBonus || 0) > 0
-                    ? `+${Number(s.calculatedBonus || 0).toLocaleString('ru-RU')}`
-                    : Number(s.calculatedBonus || 0) === 0
-                      ? '—'
-                      : Number(s.calculatedBonus || 0).toLocaleString('ru-RU') + ' ₽'}
-                  {Number(s.calculatedBonus || 0) > 0 ? ' ₽' : ''}
-                </TableCell>
-                <TableCell
-                  className={`text-right ${Number(s.manualAdjustment || 0) < 0 ? 'text-destructive' : 'text-muted-foreground'}`}
-                >
-                  {Number(s.manualAdjustment || 0) === 0
-                    ? '—'
-                    : `${Number(s.manualAdjustment || 0) > 0 ? '+' : ''}${Number(
-                        s.manualAdjustment || 0,
-                      ).toLocaleString('ru-RU')} ₽`}
-                </TableCell>
-                <TableCell className="text-right font-bold text-base">
-                  {s.total > 0 ? s.total.toLocaleString('ru-RU') + ' ₽' : '—'}
-                </TableCell>
-                <TableCell className="text-right">
-                  <div
-                    className="flex justify-end gap-2"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    {canEditShifts && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        disabled={!canChangeShifts}
-                        title={
-                          canChangeShifts
-                            ? 'Изменить смену'
-                            : 'Payroll-период закрыт, смены менять нельзя'
-                        }
-                        onClick={() => openForm(s)}
-                      >
-                        Изменить
-                      </Button>
-                    )}
-                    {canEditShifts && !s.isDraft && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                        disabled={!canChangeShifts}
-                        title={
-                          canChangeShifts
-                            ? 'Архивировать смену'
-                            : 'Payroll-период закрыт, смены менять нельзя'
-                        }
-                        onClick={() => requestDeleteShift(s)}
-                      >
-                        В архив
-                      </Button>
-                    )}
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <div className="border-b px-4 py-3">
+          <div className="font-semibold">Журнал смен</div>
+          <div className="text-xs text-muted-foreground">
+            Показаны смены выбранного периода. Откройте строку для детализации
+            продаж и бонусов.
+          </div>
+        </div>
+        <DataTable
+          columns={shiftColumns}
+          data={shifts}
+          emptyText="Нет данных за этот период"
+          getRowProps={(row) => ({
+            className: 'cursor-pointer hover:bg-muted/50',
+            onClick: () =>
+              setDetailModal({ isOpen: true, shift: row.original }),
+          })}
+          minWidthClassName="min-w-[1120px]"
+          pageSize={15}
+        />
       </div>
 
       <div className="text-xs text-muted-foreground">
@@ -1168,64 +1448,12 @@ export default function StaffPage() {
 
       {/* ТАБЛИЦА АГРЕГАЦИИ ПО АДМИНАМ */}
       <div className="border rounded-md bg-card mt-8 overflow-x-auto">
-        <Table className="min-w-[860px]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Администратор</TableHead>
-              <TableHead className="text-right">Смен</TableHead>
-              <TableHead className="text-right">Часы</TableHead>
-              <TableHead className="text-right">База</TableHead>
-              <TableHead className="text-right">Бонусы</TableHead>
-              <TableHead className="text-right">Корр.</TableHead>
-              <TableHead className="text-right">Итого</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {admins.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  Нет заполненных смен за выбранный период
-                </TableCell>
-              </TableRow>
-            )}
-            {admins
-              .toSorted((a, b) => b.totalPay - a.totalPay)
-              .map((a) => (
-                <TableRow key={a.staffId || a.name}>
-                  <TableCell className="font-medium text-base">
-                    {a.name}
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    {a.totalShifts}
-                  </TableCell>
-                  <TableCell className="text-right">{a.totalHours}</TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {a.basePay.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {Number(
-                      a.calculatedBonusPay ?? a.bonusPay,
-                    ).toLocaleString('ru-RU')}{' '}
-                    ₽
-                  </TableCell>
-                  <TableCell
-                    className={`text-right ${Number(a.manualAdjustmentTotal || 0) < 0 ? 'text-destructive' : 'text-muted-foreground'}`}
-                  >
-                    {Number(a.manualAdjustmentTotal || 0).toLocaleString(
-                      'ru-RU',
-                    )}{' '}
-                    ₽
-                  </TableCell>
-                  <TableCell className="text-right font-bold text-lg">
-                    {a.totalPay.toLocaleString('ru-RU')} ₽
-                  </TableCell>
-                </TableRow>
-              ))}
-          </TableBody>
-        </Table>
+        <DataTable
+          columns={adminColumns}
+          data={sortedAdmins}
+          emptyText="Нет заполненных смен за выбранный период"
+          minWidthClassName="min-w-[860px]"
+        />
       </div>
 
       <Dialog
@@ -1244,42 +1472,44 @@ export default function StaffPage() {
           </DialogHeader>
           <form onSubmit={handleSaveStaff} className="space-y-4 pt-2">
             <div>
-              <label className="text-xs font-medium mb-1 block">Имя</label>
+              <Label className="mb-1 block text-xs">Имя</Label>
               <Input
-                required
-                value={staffForm.name}
-                onChange={(e) =>
-                  setStaffForm({ ...staffForm, name: e.target.value })
-                }
+                {...staffForm.register('name')}
+                aria-invalid={Boolean(staffForm.formState.errors.name)}
               />
+              {staffForm.formState.errors.name && (
+                <p className="mt-1 text-xs text-destructive">
+                  {staffForm.formState.errors.name.message}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">
+              <Label className="mb-1 block text-xs">
                 Должность
-              </label>
+              </Label>
               <Input
-                required
-                value={staffForm.position}
-                onChange={(e) =>
-                  setStaffForm({ ...staffForm, position: e.target.value })
-                }
+                {...staffForm.register('position')}
+                aria-invalid={Boolean(staffForm.formState.errors.position)}
               />
+              {staffForm.formState.errors.position && (
+                <p className="mt-1 text-xs text-destructive">
+                  {staffForm.formState.errors.position.message}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">Телефон</label>
-              <Input
-                value={staffForm.phone}
-                onChange={(e) =>
-                  setStaffForm({ ...staffForm, phone: e.target.value })
-                }
-              />
+              <Label className="mb-1 block text-xs">Телефон</Label>
+              <Input {...staffForm.register('phone')} />
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">Статус</label>
+              <Label className="mb-1 block text-xs">Статус</Label>
               <Select
-                value={staffForm.status}
+                value={staffFormStatus}
                 onValueChange={(status) =>
-                  setStaffForm({ ...staffForm, status })
+                  staffForm.setValue('status', status as StaffFormValues['status'], {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
                 }
               >
                 <SelectTrigger className="w-full">
@@ -1304,7 +1534,7 @@ export default function StaffPage() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {form.id && !String(form.id).startsWith('draft-')
+              {shiftFormId && !String(shiftFormId).startsWith('draft-')
                 ? 'Редактирование смены'
                 : 'Заполнение черновика / Новая смена'}
             </DialogTitle>
@@ -1314,32 +1544,37 @@ export default function StaffPage() {
           </DialogHeader>
           <form onSubmit={handleSaveShift} className="space-y-4 pt-2">
             <div>
-              <label className="text-xs font-medium mb-1 block">Дата</label>
+              <Label className="mb-1 block text-xs">Дата</Label>
               <Input
                 type="date"
-                required
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-                disabled={String(form.id).startsWith('draft-')}
+                {...shiftForm.register('date')}
+                aria-invalid={Boolean(shiftForm.formState.errors.date)}
+                disabled={String(shiftFormId).startsWith('draft-')}
               />
+              {shiftForm.formState.errors.date && (
+                <p className="mt-1 text-xs text-destructive">
+                  {shiftForm.formState.errors.date.message}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">
+              <Label className="mb-1 block text-xs">
                 Администратор
-              </label>
+              </Label>
               <Select
-                value={form.staffId}
+                value={shiftFormStaffId}
                 onValueChange={(staffId) => {
                   const selectedStaff = staff.find(
                     (item) => String(item.id) === staffId,
                   );
-                  setForm({
-                    ...form,
-                    staffId,
-                    adminName: selectedStaff?.name || '',
+                  shiftForm.setValue('staffId', staffId, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  });
+                  shiftForm.setValue('adminName', selectedStaff?.name || '', {
+                    shouldDirty: true,
                   });
                 }}
-                required
               >
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="Выберите сотрудника" />
@@ -1357,44 +1592,63 @@ export default function StaffPage() {
                   )}
                 </SelectContent>
               </Select>
+              {shiftForm.formState.errors.staffId && (
+                <p className="mt-1 text-xs text-destructive">
+                  {shiftForm.formState.errors.staffId.message}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">Часы</label>
+              <Label className="mb-1 block text-xs">Часы</Label>
               <Input
                 type="number"
                 step="0.5"
-                required
                 placeholder="12"
-                value={form.hours}
-                onChange={(e) => setForm({ ...form, hours: e.target.value })}
+                {...shiftForm.register('hours')}
+                aria-invalid={Boolean(shiftForm.formState.errors.hours)}
               />
+              {shiftForm.formState.errors.hours && (
+                <p className="mt-1 text-xs text-destructive">
+                  {shiftForm.formState.errors.hours.message}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">
+              <Label className="mb-1 block text-xs">
                 Корректировка зарплаты
-              </label>
+              </Label>
               <Input
                 type="number"
                 step="1"
                 placeholder="0"
-                value={form.manualAdjustment}
-                onChange={(e) =>
-                  setForm({ ...form, manualAdjustment: e.target.value })
-                }
+                {...shiftForm.register('manualAdjustment')}
+                aria-invalid={Boolean(
+                  shiftForm.formState.errors.manualAdjustment,
+                )}
               />
               <div className="mt-1 text-xs text-muted-foreground">
                 Можно указать премию или штраф вручную.
               </div>
+              {shiftForm.formState.errors.manualAdjustment && (
+                <p className="mt-1 text-xs text-destructive">
+                  {shiftForm.formState.errors.manualAdjustment.message}
+                </p>
+              )}
             </div>
             <div>
-              <label className="text-xs font-medium mb-1 block">
+              <Label className="mb-1 block text-xs">
                 Комментарий
-              </label>
+              </Label>
               <Input
                 placeholder="По необходимости"
-                value={form.comment}
-                onChange={(e) => setForm({ ...form, comment: e.target.value })}
+                {...shiftForm.register('comment')}
+                aria-invalid={Boolean(shiftForm.formState.errors.comment)}
               />
+              {shiftForm.formState.errors.comment && (
+                <p className="mt-1 text-xs text-destructive">
+                  {shiftForm.formState.errors.comment.message}
+                </p>
+              )}
             </div>
             <Button type="submit" className="w-full" disabled={payrollLocked}>
               Сохранить

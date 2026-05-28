@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
+const cacheService = require('./cache.service');
 
 const REFERENCE_CONFIG = {
   'client-sources': {
@@ -37,6 +38,10 @@ function normalizeName(value, label = 'Значение') {
   return name;
 }
 
+function normalizeLookupName(value) {
+  return normalizeName(value).toLowerCase();
+}
+
 function normalizeStatus(status = 'active') {
   if (!['active', 'archived'].includes(status)) {
     throw appError('Некорректный статус справочника');
@@ -55,6 +60,16 @@ function mapReference(row) {
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
+}
+
+function getListCacheKey(type, query = {}) {
+  return cacheService.cacheKey(`references:${type}:list`, {
+    status: query.status || 'active',
+  });
+}
+
+async function invalidateReferenceCache(type) {
+  await cacheService.deleteByPrefix(`references:${type}:`);
 }
 
 function parseFilters(filters) {
@@ -84,7 +99,7 @@ async function assertNameAvailable(type, name, id = null) {
   }
 }
 
-async function list(type, query = {}) {
+async function listFromDb(type, query = {}) {
   const Model = getModel(type);
   const where = {};
 
@@ -105,6 +120,15 @@ async function list(type, query = {}) {
   return rows.map(mapReference);
 }
 
+async function list(type, query = {}) {
+  getConfig(type);
+  return cacheService.rememberJson(
+    getListCacheKey(type, query),
+    () => listFromDb(type, query),
+    { ttlSeconds: 300 },
+  );
+}
+
 async function create(type, data) {
   const config = getConfig(type);
   const Model = getModel(type);
@@ -121,6 +145,7 @@ async function create(type, data) {
         : Number(data.sortOrder) || 0,
   });
 
+  await invalidateReferenceCache(type);
   return mapReference(row);
 }
 
@@ -144,6 +169,7 @@ async function update(type, id, data) {
   }
 
   await row.update(payload);
+  await invalidateReferenceCache(type);
   return mapReference(row);
 }
 
@@ -208,23 +234,25 @@ async function removeArchived(type, id) {
 
   await assertReferenceNotUsed(type, row);
   await row.destroy();
+  await invalidateReferenceCache(type);
   return { success: true };
 }
 
 async function getClientSourceByInput({ sourceId, source, allowArchived = false }) {
-  const where = {};
+  const rows = await list('client-sources', {
+    status: allowArchived ? 'all' : 'active',
+  });
 
   if (sourceId) {
-    where.id = Number(sourceId);
-  } else {
-    where.name = normalizeName(source || 'Ресепшн (Админ)', 'Источник клиента');
+    const rowById = rows.find((row) => Number(row.id) === Number(sourceId));
+    if (!rowById) throw appError('Источник клиента не найден в справочнике', 404);
+    return rowById;
   }
 
-  if (!allowArchived) where.status = 'active';
-
-  const row = await db.ClientSource.findOne({ where });
+  const name = normalizeLookupName(source || 'Ресепшн (Админ)');
+  const row = rows.find((item) => normalizeLookupName(item.name) === name);
   if (!row) throw appError('Источник клиента не найден в справочнике', 404);
-  return mapReference(row);
+  return row;
 }
 
 async function getVisitCategoriesByIds(categoryIds, { allowArchived = false } = {}) {
@@ -238,47 +266,37 @@ async function getVisitCategoriesByIds(categoryIds, { allowArchived = false } = 
 
   if (ids.length === 0) return [];
 
-  const where = { id: { [Op.in]: ids } };
-  if (!allowArchived) where.status = 'active';
-
-  const rows = await db.VisitCategory.findAll({
-    where,
-    order: [
-      ['sortOrder', 'ASC'],
-      ['name', 'ASC'],
-    ],
+  const rows = await list('visit-categories', {
+    status: allowArchived ? 'all' : 'active',
   });
+  const matchedRows = rows.filter((row) => ids.includes(Number(row.id)));
 
-  if (rows.length !== ids.length) {
+  if (matchedRows.length !== ids.length) {
     throw appError('Одна или несколько категорий визита не найдены', 404);
   }
 
-  return rows.map(mapReference);
+  return matchedRows;
 }
 
 async function getVisitCategoriesByNames(names, { allowArchived = false } = {}) {
   const normalizedNames = Array.from(
-    new Set((names || []).map((name) => normalizeName(name, 'Категория визита'))),
+    new Set((names || []).map((name) => normalizeLookupName(name))),
   );
 
   if (normalizedNames.length === 0) return [];
 
-  const where = { name: { [Op.in]: normalizedNames } };
-  if (!allowArchived) where.status = 'active';
-
-  const rows = await db.VisitCategory.findAll({
-    where,
-    order: [
-      ['sortOrder', 'ASC'],
-      ['name', 'ASC'],
-    ],
+  const rows = await list('visit-categories', {
+    status: allowArchived ? 'all' : 'active',
   });
+  const matchedRows = rows.filter((row) =>
+    normalizedNames.includes(normalizeLookupName(row.name)),
+  );
 
-  if (rows.length !== normalizedNames.length) {
+  if (matchedRows.length !== normalizedNames.length) {
     throw appError('Одна или несколько категорий визита не найдены', 404);
   }
 
-  return rows.map(mapReference);
+  return matchedRows;
 }
 
 module.exports = {

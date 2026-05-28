@@ -1,6 +1,7 @@
 const db = require('../../models');
 const { DEFAULT_MOTIVATION_RULES } = require('../constants/motivation-rules');
 const { resolveStoredReceiptPayments } = require('../utils/payments');
+const catalogService = require('./catalog.service');
 
 const DEFAULT_BASE_RULES = DEFAULT_MOTIVATION_RULES.filter(
   (rule) => rule.group === 'base',
@@ -107,13 +108,8 @@ function normalizeBonusRule(rule) {
 }
 
 async function getAvailableCategories() {
-  const categories = await db.Category.findAll({
-    where: {
-      isActive: true,
-      type: 'income',
-    },
-    order: [['name', 'ASC']],
-  });
+  const categories = (await catalogService.getCategories({ status: 'active' }))
+    .filter((category) => category.type === 'income');
 
   return categories.map(normalizeCategory);
 }
@@ -369,16 +365,12 @@ async function getCurrentShiftSales(options = {}) {
     };
   }
 
-  const rules = await db.CatalogRule.findAll({
-    where: { status: 'active' },
-  });
+  const rules = await catalogService.getRules({ status: 'active' });
   const rulesMap = {};
   rules.forEach((rule) => {
     rulesMap[String(rule.itemName).toLowerCase().trim()] = rule.category;
   });
-  const categories = await db.Category.findAll({
-    where: { isActive: true },
-  });
+  const categories = await catalogService.getCategories({ status: 'active' });
   const categoryByName = new Map(
     categories.map((category) => [
       String(category.name).toLowerCase(),

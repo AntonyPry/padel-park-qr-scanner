@@ -1,4 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import {
   Table,
   TableBody,
@@ -8,7 +12,11 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { DataTable } from '@/components/data-table';
+import { ErrorState } from '@/components/error-state';
+import { toast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -54,7 +62,7 @@ import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import { canExportFinance, canManageFinance } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import { MetricCard } from '@/components/dashboard-metric';
@@ -139,13 +147,19 @@ interface FinanceHistoryItem {
   } | null;
 }
 
-interface ManualFinanceForm {
-  date: string;
-  category: string;
-  amount: string;
-  type: 'income' | 'expense';
-  comment: string;
-}
+const manualFinanceFormSchema = z.object({
+  amount: z
+    .string()
+    .min(1, 'Укажите сумму')
+    .refine((value) => Number(value) > 0, {
+      message: 'Сумма должна быть больше 0',
+    }),
+  category: z.string().min(1, 'Выберите категорию'),
+  comment: z.string(),
+  date: z.string().min(1, 'Укажите дату'),
+  type: z.enum(['income', 'expense']),
+});
+type ManualFinanceForm = z.infer<typeof manualFinanceFormSchema>;
 
 const formatCurrencyValue = (val: unknown) => {
   const rawValue = Array.isArray(val) ? val[0] : val;
@@ -173,6 +187,15 @@ function getFinanceActionLabel(action: string) {
   return FINANCE_ACTION_LABELS[action] || action;
 }
 
+async function readError(response: Response, fallback: string) {
+  try {
+    const data = (await response.json()) as { error?: string };
+    return data.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function FinancePage() {
   const { account } = useAuth();
   const canEditFinance = canManageFinance(account?.role);
@@ -192,13 +215,18 @@ export default function FinancePage() {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const todayStr = now.toISOString().split('T')[0];
-  const [form, setForm] = useState<ManualFinanceForm>({
-    date: todayStr,
-    category: '',
-    amount: '',
-    type: 'expense',
-    comment: '',
+  const manualForm = useForm<ManualFinanceForm>({
+    defaultValues: {
+      amount: '',
+      category: '',
+      comment: '',
+      date: todayStr,
+      type: 'expense',
+    },
+    resolver: zodResolver(manualFinanceFormSchema),
   });
+  const manualType = manualForm.watch('type');
+  const manualCategory = manualForm.watch('category');
 
   const fetchFinances = useCallback(async () => {
     setLoading(true);
@@ -245,42 +273,55 @@ export default function FinancePage() {
     void fetchFinances();
   }, [fetchFinances]); // Автоматически перезапрашиваем при смене дат
 
-  const handleAddManual = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAddManual = manualForm.handleSubmit(async (values) => {
     try {
       const res = await apiFetch('/api/finance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify(values),
       });
       if (res.ok) {
         setIsModalOpen(false);
-        setForm({ ...form, category: '', amount: '', comment: '' });
+        manualForm.reset({
+          amount: '',
+          category: '',
+          comment: '',
+          date: values.date,
+          type: values.type,
+        });
         void fetchFinances();
+      } else {
+        setErrorMessage(await readError(res, 'Не удалось добавить операцию'));
       }
     } catch (e) {
       console.error(e);
+      setErrorMessage('Не удалось добавить операцию');
     }
-  };
+  });
 
   const handleExport = async () => {
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : '';
-    const res = await apiFetch(`/api/finance/export?from=${fromStr}&to=${toStr}`);
+    try {
+      const res = await apiFetch(`/api/finance/export?from=${fromStr}&to=${toStr}`);
 
-    if (!res.ok) {
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      setErrorMessage(data.error || 'Не удалось выгрузить финансовый отчет');
-      return;
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setErrorMessage(data.error || 'Не удалось выгрузить финансовый отчет');
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `pnl-${fromStr || 'start'}-${toStr || 'end'}.xlsx`;
+      link.click();
+      URL.revokeObjectURL(url);
+      toast.success('Финансовый отчет выгружен');
+    } catch (error) {
+      setErrorMessage(getApiErrorMessage(error, 'Не удалось выгрузить финансовый отчет'));
     }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `pnl-${fromStr || 'start'}-${toStr || 'end'}.xlsx`;
-    link.click();
-    URL.revokeObjectURL(url);
   };
 
   if (!report) {
@@ -292,9 +333,21 @@ export default function FinancePage() {
             P&L: прибыль, расходы, касса и ручные операции.
           </p>
         </div>
-        <div className="rounded-md border bg-card px-4 py-8 text-center text-muted-foreground">
-          {loading ? 'Загрузка финансового отчета...' : errorMessage || 'Нет данных для отчета'}
-        </div>
+        {loading ? (
+          <div className="rounded-md border bg-card px-4 py-8 text-center text-muted-foreground">
+            Загрузка финансового отчета...
+          </div>
+        ) : errorMessage ? (
+          <ErrorState
+            message={errorMessage}
+            onRetry={() => void fetchFinances()}
+            title="Финансовый отчет не загрузился"
+          />
+        ) : (
+          <div className="rounded-md border bg-card px-4 py-8 text-center text-muted-foreground">
+            Нет данных для отчета
+          </div>
+        )}
       </div>
     );
   }
@@ -424,6 +477,52 @@ export default function FinancePage() {
       </>
     );
   };
+  const historyColumns: ColumnDef<FinanceHistoryItem>[] = [
+    {
+      accessorKey: 'createdAt',
+      header: 'Дата',
+      meta: {
+        cellClassName: 'whitespace-nowrap',
+      },
+      cell: ({ row }) => format(new Date(row.original.createdAt), 'dd.MM.yyyy HH:mm'),
+    },
+    {
+      accessorKey: 'action',
+      header: 'Действие',
+      meta: {
+        cellClassName: 'font-medium',
+      },
+      cell: ({ row }) => getFinanceActionLabel(row.original.action),
+    },
+    {
+      id: 'period',
+      header: 'Период/операция',
+      meta: {
+        cellClassName: 'text-muted-foreground',
+      },
+      cell: ({ row }) => {
+        const item = row.original;
+
+        return item.fromDate && item.toDate
+          ? `${item.fromDate} — ${item.toDate}`
+          : item.date || item.entityId || '-';
+      },
+    },
+    {
+      id: 'actor',
+      header: 'Кто',
+      cell: ({ row }) =>
+        row.original.account?.name || row.original.account?.email || '-',
+    },
+    {
+      accessorKey: 'reason',
+      header: 'Причина',
+      meta: {
+        cellClassName: 'max-w-[260px] truncate',
+      },
+      cell: ({ row }) => row.original.reason || '-',
+    },
+  ];
 
   return (
     <div className="p-6 md:p-8 space-y-6">
@@ -505,79 +604,119 @@ export default function FinancePage() {
                 <div className="grid grid-cols-2 gap-4">
                   <Button
                     type="button"
-                    variant={form.type === 'income' ? 'default' : 'outline'}
+                    variant={manualType === 'income' ? 'default' : 'outline'}
                     className={
-                      form.type === 'income'
+                      manualType === 'income'
                         ? 'bg-green-600 hover:bg-green-700'
                         : ''
                     }
-                    onClick={() =>
-                      setForm({ ...form, type: 'income', category: '' })
-                    }
+                    onClick={() => {
+                      manualForm.setValue('type', 'income', {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                      manualForm.setValue('category', '', {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
                   >
                     Доход
                   </Button>
                   <Button
                     type="button"
-                    variant={form.type === 'expense' ? 'default' : 'outline'}
+                    variant={manualType === 'expense' ? 'default' : 'outline'}
                     className={
-                      form.type === 'expense'
+                      manualType === 'expense'
                         ? 'bg-destructive hover:bg-destructive/90'
                         : ''
                     }
-                    onClick={() =>
-                      setForm({ ...form, type: 'expense', category: '' })
-                    }
+                    onClick={() => {
+                      manualForm.setValue('type', 'expense', {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                      manualForm.setValue('category', '', {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      });
+                    }}
                   >
                     Расход
                   </Button>
                 </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Дата</Label>
                 <Input
                   type="date"
-                  value={form.date}
-                  onChange={(e) => setForm({ ...form, date: e.target.value })}
-                  required
+                    {...manualForm.register('date')}
+                    aria-invalid={Boolean(manualForm.formState.errors.date)}
                 />
+                  {manualForm.formState.errors.date && (
+                    <p className="text-xs text-destructive">
+                      {manualForm.formState.errors.date.message}
+                    </p>
+                  )}
+                </div>
 
+                <div className="space-y-1">
+                  <Label className="text-xs">Категория</Label>
                 <Select
-                  value={form.category}
-                  onValueChange={(val) => setForm({ ...form, category: val })}
-                  required
+                    value={manualCategory}
+                    onValueChange={(value) =>
+                      manualForm.setValue('category', value, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
+                    }
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Выберите категорию из базы" />
                   </SelectTrigger>
                   <SelectContent>
                     {categories
-                      .filter((c) => c.type === form.type)
+                        .filter((category) => category.type === manualType)
                       .map((c) => (
                         <SelectItem key={c.id} value={c.name}>
                           {c.name}
                         </SelectItem>
                       ))}
-                    {categories.filter((c) => c.type === form.type).length ===
-                      0 && (
+                      {categories.filter((category) => category.type === manualType)
+                        .length === 0 && (
                       <SelectItem value="empty" disabled>
                         Нет созданных категорий
                       </SelectItem>
                     )}
                   </SelectContent>
                 </Select>
+                  {manualForm.formState.errors.category && (
+                    <p className="text-xs text-destructive">
+                      {manualForm.formState.errors.category.message}
+                    </p>
+                  )}
+                </div>
 
+                <div className="space-y-1">
+                  <Label className="text-xs">Сумма</Label>
                 <Input
                   type="number"
                   placeholder="Сумма"
-                  value={form.amount}
-                  onChange={(e) => setForm({ ...form, amount: e.target.value })}
-                  required
+                    {...manualForm.register('amount')}
+                    aria-invalid={Boolean(manualForm.formState.errors.amount)}
                 />
+                  {manualForm.formState.errors.amount && (
+                    <p className="text-xs text-destructive">
+                      {manualForm.formState.errors.amount.message}
+                    </p>
+                  )}
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Комментарий</Label>
                 <Input
                   placeholder="Комментарий"
-                  value={form.comment}
-                  onChange={(e) =>
-                    setForm({ ...form, comment: e.target.value })
-                  }
+                    {...manualForm.register('comment')}
                 />
+                </div>
                 <Button type="submit" className="w-full">
                   Сохранить
                 </Button>
@@ -845,45 +984,12 @@ export default function FinancePage() {
             </div>
           </div>
         </div>
-        <Table className="min-w-[760px]">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Дата</TableHead>
-              <TableHead>Действие</TableHead>
-              <TableHead>Период/операция</TableHead>
-              <TableHead>Кто</TableHead>
-              <TableHead>Причина</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {history.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                  Изменений за период пока нет
-                </TableCell>
-              </TableRow>
-            )}
-            {history.map((item) => (
-              <TableRow key={item.id}>
-                <TableCell className="whitespace-nowrap">
-                  {format(new Date(item.createdAt), 'dd.MM.yyyy HH:mm')}
-                </TableCell>
-                <TableCell className="font-medium">
-                  {getFinanceActionLabel(item.action)}
-                </TableCell>
-                <TableCell className="text-muted-foreground">
-                  {item.fromDate && item.toDate
-                    ? `${item.fromDate} — ${item.toDate}`
-                    : item.date || item.entityId || '-'}
-                </TableCell>
-                <TableCell>{item.account?.name || item.account?.email || '-'}</TableCell>
-                <TableCell className="max-w-[260px] truncate">
-                  {item.reason || '-'}
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+        <DataTable
+          columns={historyColumns}
+          data={history}
+          emptyText="Изменений за период пока нет"
+          minWidthClassName="min-w-[760px]"
+        />
       </div>
       {/* МОДАЛЬНОЕ ОКНО ДЕТАЛИЗАЦИИ */}
       <Dialog

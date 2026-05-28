@@ -1,4 +1,11 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import {
+  getVisitsAnalytics,
+  type ChartDatum,
+} from '@/api/visits-analytics';
+import { queryKeys } from '@/api/query-keys';
+import { ErrorState } from '@/components/error-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -9,6 +16,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import {
   Popover,
   PopoverContent,
@@ -28,7 +36,7 @@ import { format, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 
 // Палитра для кольца Источников
 const COLORS = [
@@ -59,77 +67,55 @@ const CATEGORY_COLORS = [
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
 
-interface ChartDatum {
-  name: string;
-  value: number;
-}
-
-interface TopGuest {
-  name: string;
-  phone?: string;
-  visits: number;
-}
-
-interface VisitsAnalytics {
-  totalVisits: number;
-  uniqueGuests: number;
-  sources: ChartDatum[];
-  categories: ChartDatum[];
-  topGuests: TopGuest[];
-  heatMap: Record<string, number>;
-}
-
 export default function VisitsAnalyticsPage() {
-  const [data, setData] = useState<VisitsAnalytics | null>(null);
-  const [loading, setLoading] = useState(true);
-
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
   });
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
+  const analyticsParams = useMemo(() => {
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
-
-    try {
-      const res = await apiFetch(
-        `/api/analytics/visits?from=${fromStr}&to=${toStr}`,
-      );
-      if (res.ok) {
-        setData((await res.json()) as VisitsAnalytics);
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+    return { from: fromStr, to: toStr };
   }, [dateRange]);
-
-  useEffect(() => {
-    void fetchData();
-  }, [fetchData]);
+  const analyticsQuery = useQuery({
+    queryFn: () => getVisitsAnalytics(analyticsParams),
+    queryKey: queryKeys.visitsAnalytics.detail(analyticsParams),
+  });
+  const data = analyticsQuery.data;
+  const loading = analyticsQuery.isLoading || analyticsQuery.isFetching;
+  const errorText = analyticsQuery.isError
+    ? getApiErrorMessage(analyticsQuery.error, 'Не удалось загрузить аналитику посещений')
+    : '';
 
   // ЭКСПОРТ В EXCEL
   const handleExport = async () => {
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
-    const response = await apiFetch(
-      `/api/export/visits?from=${fromStr}&to=${toStr}`,
-    );
+    try {
+      const response = await apiFetch(
+        `/api/export/visits?from=${fromStr}&to=${toStr}`,
+      );
 
-    if (!response.ok) return;
+      if (!response.ok) {
+        const apiError = await readApiError(response, 'Не удалось выгрузить аналитику');
+        toast.error(apiError.message);
+        return;
+      }
 
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `visits-${fromStr || 'all'}-${toStr || 'all'}.xlsx`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `visits-${fromStr || 'all'}-${toStr || 'all'}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Аналитика выгружена');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось выгрузить аналитику'));
+    }
   };
 
   // Агрегируем источники
@@ -224,7 +210,13 @@ export default function VisitsAnalyticsPage() {
         </div>
       </div>
 
-      {!data || loading ? (
+      {errorText && !data ? (
+        <ErrorState
+          message={errorText}
+          onRetry={() => void analyticsQuery.refetch()}
+          title="Аналитика не загрузилась"
+        />
+      ) : !data || loading ? (
         <div className="flex justify-center py-12 text-muted-foreground animate-pulse">
           Загрузка аналитики...
         </div>

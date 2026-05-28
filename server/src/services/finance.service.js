@@ -2,6 +2,7 @@
 const { Op } = require('sequelize');
 const xlsx = require('xlsx');
 const db = require('../../models');
+const catalogService = require('./catalog.service');
 const motivationService = require('./motivation.service');
 const payrollService = require('./payroll.service');
 const { FINANCE_TYPES } = require('../constants/catalog');
@@ -62,9 +63,7 @@ class FinanceService {
       }
     }
 
-    const categories = await db.Category.findAll({
-      where: { isActive: true },
-    });
+    const categories = await catalogService.getCategories({ status: 'active' });
     const catMap = {};
     const catById = {};
     categories.forEach((c) => {
@@ -72,9 +71,7 @@ class FinanceService {
       catById[c.id] = c;
     });
 
-    const rules = await db.CatalogRule.findAll({
-      where: { status: 'active' },
-    });
+    const rules = await catalogService.getRules({ status: 'active' });
     const rulesMap = {};
     rules.forEach((r) => {
       rulesMap[String(r.itemName).toLowerCase().trim()] = r.category;

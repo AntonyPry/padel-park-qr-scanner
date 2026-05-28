@@ -1,40 +1,5 @@
-const ACCESS_MATRIX = {
-  accessOperate: ['owner', 'manager', 'admin'],
-  auditView: ['owner', 'manager'],
-  clientsManage: ['owner', 'manager', 'admin'],
-  clientsMerge: ['owner', 'manager'],
-  clientsView: ['owner', 'manager', 'admin', 'viewer', 'trainer'],
-  clientBasesManage: ['owner', 'manager'],
-  clientBasesView: ['owner', 'manager'],
-  callTasksManage: ['owner', 'manager'],
-  callTasksView: ['owner', 'manager', 'admin'],
-  callTasksWork: ['owner', 'manager', 'admin'],
-  catalogManage: ['owner', 'accountant'],
-  catalogView: ['owner', 'manager', 'accountant', 'viewer'],
-  financeManage: ['owner', 'accountant'],
-  financeView: ['owner', 'manager', 'accountant', 'viewer'],
-  financeExport: ['owner', 'manager', 'accountant'],
-  motivationManage: ['owner', 'manager'],
-  motivationView: ['owner', 'manager', 'admin'],
-  payrollApprove: ['owner', 'manager'],
-  payrollExport: ['owner', 'manager', 'accountant'],
-  payrollPay: ['owner', 'accountant'],
-  payrollReview: ['owner', 'manager', 'accountant'],
-  payrollView: ['owner', 'manager', 'accountant'],
-  referencesManage: ['owner', 'manager'],
-  referencesView: ['owner', 'manager', 'admin', 'accountant', 'viewer'],
-  reportsView: ['owner', 'manager', 'accountant', 'viewer'],
-  shiftsManage: ['owner', 'manager'],
-  shiftsOperate: ['owner', 'manager', 'admin'],
-  staffManage: ['owner', 'manager'],
-  staffView: ['owner', 'manager', 'accountant', 'viewer'],
-  systemUsersManage: ['owner', 'manager'],
-  trainingNotesManage: ['owner', 'manager', 'trainer'],
-  trainingNotesView: ['owner', 'manager', 'trainer'],
-  utilizationManage: ['owner', 'manager'],
-  utilizationView: ['owner', 'manager', 'accountant', 'viewer'],
-};
+const { registerTypeScript } = require('../register-ts');
 
-module.exports = {
-  ACCESS_MATRIX,
-};
+registerTypeScript();
+
+module.exports = require('./access-matrix.ts');

@@ -1,4 +1,4 @@
-import { apiFetch } from '@/lib/api';
+import { listReferences } from '@/api/references';
 
 export type ReferenceStatus = 'active' | 'archived';
 export type ReferenceType = 'client-sources' | 'visit-categories';
@@ -16,10 +16,7 @@ export async function fetchReferences(
   type: ReferenceType,
   status: ReferenceStatus | 'all' = 'active',
 ) {
-  const params = new URLSearchParams({ status });
-  const res = await apiFetch(`/api/references/${type}?${params.toString()}`);
-  if (!res.ok) throw new Error('Не удалось загрузить справочник');
-  return (await res.json()) as ReferenceItem[];
+  return listReferences(type, status);
 }
 
 export function getReferenceName(items: ReferenceItem[], id?: number | null) {

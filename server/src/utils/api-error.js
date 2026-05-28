@@ -1,18 +1,5 @@
-function sendError(res, error, fallback = 'Ошибка сервера') {
-  const status = error?.statusCode || 500;
-  const exposeMessage = status < 500;
-  const payload = {
-    error: exposeMessage ? error?.message || fallback : fallback,
-    status,
-  };
+const { registerTypeScript } = require('../register-ts');
 
-  if (error?.code) payload.code = error.code;
-  if (error?.details) payload.details = error.details;
-  if (error?.client) payload.client = error.client;
+registerTypeScript();
 
-  res.status(status).json(payload);
-}
-
-module.exports = {
-  sendError,
-};
+module.exports = require('./api-error.ts');

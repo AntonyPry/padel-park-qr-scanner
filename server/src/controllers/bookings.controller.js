@@ -1,0 +1,120 @@
+const bookingsService = require('../services/bookings.service');
+const { sendError } = require('../utils/api-error');
+
+function handleError(res, error, fallback) {
+  sendError(res, error, fallback);
+}
+
+class BookingsController {
+  async getSchedule(req, res) {
+    try {
+      res.json(await bookingsService.getSchedule(req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения расписания');
+    }
+  }
+
+  async getCourts(_req, res) {
+    try {
+      res.json(await bookingsService.listCourts());
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения кортов');
+    }
+  }
+
+  async getAnalytics(req, res) {
+    try {
+      res.json(await bookingsService.getBookingAnalytics(req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения отчета по бронированиям');
+    }
+  }
+
+  async getOne(req, res) {
+    try {
+      res.json(await bookingsService.getBooking(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения брони');
+    }
+  }
+
+  async create(req, res) {
+    try {
+      res.status(201).json(await bookingsService.createBooking(req.body, req.account));
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания брони');
+    }
+  }
+
+  async update(req, res) {
+    try {
+      res.json(
+        await bookingsService.updateBooking(req.params.id, req.body, req.account),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка обновления брони');
+    }
+  }
+
+  async updateStatus(req, res) {
+    try {
+      res.json(
+        await bookingsService.changeBookingStatus(
+          req.params.id,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка изменения статуса брони');
+    }
+  }
+
+  async getHistory(req, res) {
+    try {
+      res.json(await bookingsService.listBookingHistory(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения истории брони');
+    }
+  }
+
+  async listSeries(req, res) {
+    try {
+      res.json(await bookingsService.listBookingSeries(req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения постоянных броней');
+    }
+  }
+
+  async previewSeries(req, res) {
+    try {
+      res.json(await bookingsService.previewBookingSeries(req.body));
+    } catch (error) {
+      handleError(res, error, 'Ошибка проверки серии броней');
+    }
+  }
+
+  async createSeries(req, res) {
+    try {
+      res.status(201).json(await bookingsService.createBookingSeries(req.body, req.account));
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания серии броней');
+    }
+  }
+
+  async archiveSeries(req, res) {
+    try {
+      res.json(
+        await bookingsService.archiveBookingSeries(
+          req.params.id,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка архивирования серии броней');
+    }
+  }
+}
+
+module.exports = new BookingsController();

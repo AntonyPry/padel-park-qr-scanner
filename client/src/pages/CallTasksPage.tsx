@@ -5,12 +5,15 @@ import {
   useRef,
   useState,
 } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Archive,
   ArchiveRestore,
   BarChart3,
   CheckCircle2,
   Clock,
+  Eye,
   ListChecks,
   MessageSquareText,
   Pencil,
@@ -20,8 +23,14 @@ import {
   Save,
   Trash2,
 } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { useNavigate } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
+import { DataTable } from '@/components/data-table';
+import { ErrorState } from '@/components/error-state';
 import {
   Dialog,
   DialogContent,
@@ -57,19 +66,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
   HelpTooltip,
   MetricCard,
   MetricLabel,
 } from '@/components/dashboard-metric';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import { canManageCallTasks } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 
@@ -255,6 +256,31 @@ const EMPTY_TASK_FORM: TaskFormState = {
   scopeType: 'snapshot',
   title: '',
 };
+const attemptFormSchema = z.object({
+  deadlineAt: z.string(),
+  status: z.enum(['new', 'no_answer', 'callback', 'doubting', 'booked', 'refused']),
+  summary: z.string(),
+});
+const bulkFormSchema = z.object({
+  deadlineAt: z.string(),
+  status: z.enum([
+    'keep',
+    'new',
+    'no_answer',
+    'callback',
+    'doubting',
+    'booked',
+    'refused',
+  ]),
+  summary: z.string(),
+});
+const taskFormSchema = z.object({
+  assignedToAccountId: z.string(),
+  description: z.string(),
+  dueAt: z.string(),
+  scopeType: z.enum(['snapshot', 'dynamic']),
+  title: z.string().trim().min(2, 'Введите название задачи'),
+});
 
 function formatDateTime(value?: string | null) {
   if (!value) return '-';
@@ -342,16 +368,19 @@ function getTaskStatusActionCopy(task: CallTask, nextStatus: CallTaskStatus) {
 
 export default function CallTasksPage() {
   const { account } = useAuth();
+  const navigate = useNavigate();
   const canManage = canManageCallTasks(account?.role);
   const [tasks, setTasks] = useState<CallTask[]>([]);
   const [report, setReport] = useState<CallTasksReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [tasksError, setTasksError] = useState('');
   const [status, setStatus] = useState<TaskFilterStatus>('active');
   const [selectedTask, setSelectedTask] = useState<CallTask | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [clients, setClients] = useState<CallTaskClient[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsError, setClientsError] = useState('');
   const [clientStatus, setClientStatus] = useState<ClientFilterStatus>('all');
   const [clientQuery, setClientQuery] = useState('');
   const [page, setPage] = useState(1);
@@ -359,49 +388,108 @@ export default function CallTasksPage() {
   const [totalClients, setTotalClients] = useState(0);
   const [selectedClientIds, setSelectedClientIds] = useState<number[]>([]);
   const [editingClient, setEditingClient] = useState<CallTaskClient | null>(null);
-  const [attemptForm, setAttemptForm] =
-    useState<AttemptFormState>(EMPTY_ATTEMPT_FORM);
   const [savingAttempt, setSavingAttempt] = useState(false);
   const [bulkDialogOpen, setBulkDialogOpen] = useState(false);
-  const [bulkForm, setBulkForm] = useState<BulkFormState>(EMPTY_BULK_FORM);
   const [savingBulk, setSavingBulk] = useState(false);
   const [confirmAction, setConfirmAction] =
     useState<ConfirmActionState | null>(null);
   const [confirmingAction, setConfirmingAction] = useState(false);
   const [editingTask, setEditingTask] = useState<CallTask | null>(null);
-  const [taskForm, setTaskForm] = useState<TaskFormState>(EMPTY_TASK_FORM);
   const [savingTask, setSavingTask] = useState(false);
   const [syncingTask, setSyncingTask] = useState(false);
   const tasksRequestIdRef = useRef(0);
   const reportRequestIdRef = useRef(0);
   const clientsRequestIdRef = useRef(0);
   const taskDetailsRequestIdRef = useRef(0);
+  const selectedTaskIdRef = useRef<number | null>(selectedTaskId);
+  const attemptFormControl = useForm<AttemptFormState>({
+    defaultValues: EMPTY_ATTEMPT_FORM,
+    resolver: zodResolver(attemptFormSchema),
+  });
+  const bulkFormControl = useForm<BulkFormState>({
+    defaultValues: EMPTY_BULK_FORM,
+    resolver: zodResolver(bulkFormSchema),
+  });
+  const taskFormControl = useForm<TaskFormState>({
+    defaultValues: EMPTY_TASK_FORM,
+    resolver: zodResolver(taskFormSchema),
+  });
+  const attemptForm = attemptFormControl.watch();
+  const bulkForm = bulkFormControl.watch();
+  const taskForm = taskFormControl.watch();
+  const setAttemptForm = (nextForm: AttemptFormState) => {
+    attemptFormControl.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
+  const setBulkForm = (nextForm: BulkFormState) => {
+    bulkFormControl.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
+  const setTaskForm = (nextForm: TaskFormState) => {
+    taskFormControl.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
 
   const fetchTasks = useCallback(async () => {
     const requestId = tasksRequestIdRef.current + 1;
     tasksRequestIdRef.current = requestId;
     setLoading(true);
+    setTasksError('');
     try {
       const res = await apiFetch(`/api/call-tasks?status=${status}`);
       if (requestId !== tasksRequestIdRef.current) return;
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось загрузить задачи обзвона'));
+        const message = await readError(res, 'Не удалось загрузить задачи обзвона');
+        setTasks([]);
+        setTasksError(message);
+        toast.error(message);
         return;
       }
       const data = (await res.json()) as CallTask[];
       if (requestId !== tasksRequestIdRef.current) return;
       setTasks(data);
-      setSelectedTask(
-        selectedTaskId
-          ? data.find((task) => task.id === selectedTaskId) || null
-          : null,
-      );
+      const latestSelectedTaskId = selectedTaskIdRef.current;
+      setSelectedTask((current) => {
+        const currentTaskId = current?.id ?? latestSelectedTaskId;
+        if (!currentTaskId) return null;
+        return data.find((task) => task.id === currentTaskId) || null;
+      });
+      if (
+        latestSelectedTaskId &&
+        !data.some((task) => task.id === latestSelectedTaskId)
+      ) {
+        selectedTaskIdRef.current = null;
+        setSelectedTaskId(null);
+        setClients([]);
+        setTotalClients(0);
+        setTotalPages(1);
+        setSelectedClientIds([]);
+      }
+    } catch (error) {
+      if (requestId !== tasksRequestIdRef.current) return;
+      const message = getApiErrorMessage(error, 'Не удалось загрузить задачи обзвона');
+      setTasks([]);
+      setTasksError(message);
+      toast.error(message);
     } finally {
       if (requestId === tasksRequestIdRef.current) {
         setLoading(false);
       }
     }
-  }, [selectedTaskId, status]);
+  }, [status]);
+
+  useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId;
+  }, [selectedTaskId]);
 
   const fetchReport = useCallback(async () => {
     const requestId = reportRequestIdRef.current + 1;
@@ -438,6 +526,7 @@ export default function CallTasksPage() {
   const openTask = useCallback(async (task: CallTask) => {
     const requestId = taskDetailsRequestIdRef.current + 1;
     taskDetailsRequestIdRef.current = requestId;
+    selectedTaskIdRef.current = task.id;
     setSelectedTaskId(task.id);
     setSelectedTask(task);
     setClients([]);
@@ -486,6 +575,7 @@ export default function CallTasksPage() {
     setClientsLoading(true);
     setClients([]);
     setTotalClients(0);
+    setClientsError('');
     const params = new URLSearchParams({
       page: String(page),
       pageSize: '25',
@@ -499,7 +589,9 @@ export default function CallTasksPage() {
         `/api/call-tasks/${selectedTask.id}/clients?${params.toString()}`,
       );
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось загрузить клиентов задачи'));
+        const message = await readError(res, 'Не удалось загрузить клиентов задачи');
+        setClientsError(message);
+        toast.error(message);
         return;
       }
       const data = (await res.json()) as TaskClientsResponse;
@@ -507,6 +599,11 @@ export default function CallTasksPage() {
       setClients(data.items);
       setTotalPages(data.totalPages);
       setTotalClients(data.total);
+    } catch (error) {
+      if (requestId !== clientsRequestIdRef.current) return;
+      const message = getApiErrorMessage(error, 'Не удалось загрузить клиентов задачи');
+      setClientsError(message);
+      toast.error(message);
     } finally {
       if (requestId === clientsRequestIdRef.current) {
         setClientsLoading(false);
@@ -544,38 +641,44 @@ export default function CallTasksPage() {
     });
   };
 
-  const saveAttempt = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const saveAttempt = attemptFormControl.handleSubmit(async (values) => {
     if (!editingClient) return;
 
     setSavingAttempt(true);
-    const res = await apiFetch(
-      `/api/call-task-clients/${editingClient.id}/attempts`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          deadlineAt: attemptForm.deadlineAt || null,
-          status: attemptForm.status,
-          summary: attemptForm.summary.trim(),
-        }),
-      },
-    );
-    setSavingAttempt(false);
+    try {
+      const res = await apiFetch(
+        `/api/call-task-clients/${editingClient.id}/attempts`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            deadlineAt: values.deadlineAt || null,
+            status: values.status,
+            summary: values.summary.trim(),
+          }),
+        },
+      );
 
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось сохранить результат звонка'));
-      return;
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось сохранить результат звонка'));
+        return;
+      }
+
+      const saved = (await res.json()) as CallTaskClient;
+      setClients((prev) =>
+        prev.map((client) => (client.id === saved.id ? saved : client)),
+      );
+      setEditingClient(null);
+      await fetchTasks();
+      if (selectedTask) await refreshTaskDetails(selectedTask.id);
+      await fetchReport();
+      toast.success('Результат звонка сохранен');
+    } catch (error) {
+      console.error(error);
+      toast.error('Не удалось сохранить результат звонка');
+    } finally {
+      setSavingAttempt(false);
     }
-
-    const saved = (await res.json()) as CallTaskClient;
-    setClients((prev) =>
-      prev.map((client) => (client.id === saved.id ? saved : client)),
-    );
-    setEditingClient(null);
-    await fetchTasks();
-    if (selectedTask) await refreshTaskDetails(selectedTask.id);
-    await fetchReport();
-  };
+  });
 
   const selectedClientsOnPage = useMemo(
     () => clients.filter((client) => selectedClientIds.includes(client.id)),
@@ -610,8 +713,7 @@ export default function CallTasksPage() {
     setBulkDialogOpen(true);
   };
 
-  const saveBulkAction = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const saveBulkAction = bulkFormControl.handleSubmit(async (values) => {
     if (!selectedTask || selectedClientIds.length === 0) return;
 
     const payload: {
@@ -622,9 +724,9 @@ export default function CallTasksPage() {
     } = {
       taskClientIds: selectedClientIds,
     };
-    if (bulkForm.status !== 'keep') payload.status = bulkForm.status;
-    if (bulkForm.deadlineAt) payload.deadlineAt = bulkForm.deadlineAt;
-    if (bulkForm.summary.trim()) payload.summary = bulkForm.summary.trim();
+    if (values.status !== 'keep') payload.status = values.status;
+    if (values.deadlineAt) payload.deadlineAt = values.deadlineAt;
+    if (values.summary.trim()) payload.summary = values.summary.trim();
 
     setSavingBulk(true);
     try {
@@ -637,7 +739,7 @@ export default function CallTasksPage() {
       );
 
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось массово обновить клиентов'));
+        toast.error(await readError(res, 'Не удалось массово обновить клиентов'));
         return;
       }
 
@@ -647,10 +749,11 @@ export default function CallTasksPage() {
       await fetchTasks();
       await refreshTaskDetails(selectedTask.id);
       await fetchReport();
+      toast.success('Клиенты задачи обновлены');
     } finally {
       setSavingBulk(false);
     }
-  };
+  });
 
   const openEditTask = (task: CallTask) => {
     setEditingTask(task);
@@ -665,39 +768,49 @@ export default function CallTasksPage() {
     });
   };
 
-  const saveTask = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const saveTask = taskFormControl.handleSubmit(async (values) => {
     if (!editingTask) return;
 
     setSavingTask(true);
-    const res = await apiFetch(`/api/call-tasks/${editingTask.id}`, {
-      method: 'PUT',
-      body: JSON.stringify({
-        assignedToAccountId:
-          taskForm.assignedToAccountId === 'none'
-            ? null
-            : Number(taskForm.assignedToAccountId),
-        description: taskForm.description.trim(),
-        dueAt: taskForm.dueAt || null,
-        scopeType: taskForm.scopeType,
-        title: taskForm.title.trim(),
-      }),
-    });
-    setSavingTask(false);
+    try {
+      const res = await apiFetch(`/api/call-tasks/${editingTask.id}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          assignedToAccountId:
+            values.assignedToAccountId === 'none'
+              ? null
+              : Number(values.assignedToAccountId),
+          description: values.description.trim(),
+          dueAt: values.dueAt || null,
+          scopeType: values.scopeType,
+          title: values.title.trim(),
+        }),
+      });
 
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось сохранить задачу'));
-      return;
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось сохранить задачу'));
+        return;
+      }
+
+      const saved = (await res.json()) as CallTask;
+      setEditingTask(null);
+      selectedTaskIdRef.current = saved.id;
+      setSelectedTask(saved);
+      setSelectedTaskId(saved.id);
+      await fetchTasks();
+      await refreshTaskDetails(saved.id);
+      await fetchReport();
+      toast.success('Задача обновлена');
+    } catch (error) {
+      console.error(error);
+      toast.error('Не удалось сохранить задачу');
+    } finally {
+      setSavingTask(false);
     }
-
-    const saved = (await res.json()) as CallTask;
-    setEditingTask(null);
-    setSelectedTask(saved);
-    setSelectedTaskId(saved.id);
-    await fetchTasks();
-    await refreshTaskDetails(saved.id);
-    await fetchReport();
-  };
+  }, (errors) => {
+    const firstError = Object.values(errors)[0];
+    toast.error(firstError?.message || 'Проверьте поля задачи');
+  });
 
   const syncSelectedTask = async () => {
     if (!selectedTask) return;
@@ -708,7 +821,7 @@ export default function CallTasksPage() {
         method: 'POST',
       });
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось синхронизировать задачу'));
+        toast.error(await readError(res, 'Не удалось синхронизировать задачу'));
         return;
       }
       const result = (await res.json()) as {
@@ -719,9 +832,9 @@ export default function CallTasksPage() {
         updatedCount: number;
       };
       setSelectedTask(result.task);
-      alert(
-        `Добавлено: ${result.addedCount}. Убрано без истории: ${result.removedCount}. Обновлено: ${result.updatedCount}. Осталось вне базы с историей: ${result.keptRemovedCount}.`,
-      );
+      toast.success('Задача синхронизирована', {
+        description: `Добавлено: ${result.addedCount}. Убрано без истории: ${result.removedCount}. Обновлено: ${result.updatedCount}. Осталось вне базы с историей: ${result.keptRemovedCount}.`,
+      });
       await fetchTasks();
       await fetchClients();
       await fetchReport();
@@ -739,12 +852,13 @@ export default function CallTasksPage() {
       body: JSON.stringify({ status: nextStatus }),
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось обновить статус задачи'));
+      toast.error(await readError(res, 'Не удалось обновить статус задачи'));
       return;
     }
     await fetchTasks();
     await refreshTaskDetails(task.id);
     await fetchReport();
+    toast.success('Статус задачи обновлен');
   };
 
   const requestTaskStatusUpdate = (
@@ -763,15 +877,17 @@ export default function CallTasksPage() {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить задачу из архива'));
+      toast.error(await readError(res, 'Не удалось удалить задачу из архива'));
       return;
     }
 
     setSelectedTask(null);
+    selectedTaskIdRef.current = null;
     setSelectedTaskId(null);
     setClients([]);
     await fetchTasks();
     await fetchReport();
+    toast.success('Задача удалена из архива');
   };
 
   const requestPermanentDelete = (task: CallTask) => {
@@ -868,6 +984,171 @@ export default function CallTasksPage() {
   );
   const selectedTaskIsReadOnly =
     selectedTask?.status === 'archived' || selectedTask?.status === 'done';
+  const clientColumns: ColumnDef<CallTaskClient>[] = [
+    {
+      id: 'select',
+      header: () => (
+        <input
+          type="checkbox"
+          checked={allClientsOnPageSelected}
+          disabled={clients.length === 0 || selectedTaskIsReadOnly}
+          onChange={toggleAllClientsOnPage}
+          className="h-4 w-4"
+          aria-label="Выбрать всех клиентов на странице"
+        />
+      ),
+      size: 44,
+      cell: ({ row }) => {
+        const client = row.original;
+
+        return (
+          <input
+            type="checkbox"
+            checked={selectedClientIds.includes(client.id)}
+            disabled={selectedTaskIsReadOnly}
+            onChange={() => toggleClientSelection(client.id)}
+            className="h-4 w-4"
+            aria-label={`Выбрать ${client.clientName}`}
+          />
+        );
+      },
+    },
+    {
+      accessorKey: 'clientName',
+      header: 'Клиент',
+      size: 240,
+      cell: ({ row }) => {
+        const client = row.original;
+
+        return (
+          <div className="min-w-0">
+            <div className="truncate font-medium">{client.clientName}</div>
+            <div className="truncate text-xs text-muted-foreground">
+              {client.source || 'Источник не указан'}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      accessorKey: 'clientPhone',
+      header: 'Телефон',
+      size: 160,
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+      cell: ({ row }) => row.original.clientPhone || '-',
+    },
+    {
+      id: 'visits',
+      header: () => (
+        <MetricLabel tooltip="Сверху количество визитов клиента, ниже дата последнего визита.">
+          Визиты
+        </MetricLabel>
+      ),
+      size: 130,
+      cell: ({ row }) => (
+        <>
+          <div className="text-sm">{row.original.visitCount}</div>
+          <div className="text-xs text-muted-foreground">
+            {formatDate(row.original.lastVisitAt)}
+          </div>
+        </>
+      ),
+    },
+    {
+      accessorKey: 'status',
+      header: () => (
+        <MetricLabel tooltip="Текущий результат работы по клиенту в этой задаче обзвона.">
+          Статус
+        </MetricLabel>
+      ),
+      size: 160,
+      cell: ({ row }) => (
+        <Badge variant="outline">{CLIENT_STATUS_LABELS[row.original.status]}</Badge>
+      ),
+    },
+    {
+      id: 'deadline',
+      header: () => (
+        <MetricLabel tooltip="Срок, до которого нужно обработать конкретного клиента. Может быть задан сроком прозвона базы, дедлайном задачи или вручную.">
+          Дедлайн
+        </MetricLabel>
+      ),
+      size: 150,
+      cell: ({ row }) => {
+        const client = row.original;
+
+        return (
+          <span
+            className={
+              isClientOverdue(client)
+                ? 'font-medium text-destructive'
+                : 'text-muted-foreground'
+            }
+          >
+            {formatDateTime(client.deadlineAt)}
+          </span>
+        );
+      },
+    },
+    {
+      id: 'summary',
+      header: () => (
+        <MetricLabel tooltip="Последнее саммари по клиенту в этой задаче. Полная история открывается через кнопку результата звонка.">
+          Комментарий
+        </MetricLabel>
+      ),
+      size: 160,
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+      cell: ({ row }) =>
+        row.original.summary || row.original.lastAttempt?.summary || '-',
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 112,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const crmClientId = row.original.client?.id;
+
+        return (
+          <div className="flex justify-end gap-1">
+            {crmClientId ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => navigate(`/admin/clients?clientId=${crmClientId}`)}
+                title="Открыть карточку клиента"
+                aria-label={`Открыть карточку клиента ${row.original.clientName}`}
+              >
+                <Eye className="h-4 w-4" />
+              </Button>
+            ) : null}
+            {selectedTaskIsReadOnly ? null : (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => openClientResult(row.original)}
+                title="Результат звонка"
+                aria-label={`Результат звонка ${row.original.clientName}`}
+              >
+                <MessageSquareText className="h-4 w-4" />
+              </Button>
+            )}
+            {selectedTaskIsReadOnly && !crmClientId ? (
+              <span className="text-xs text-muted-foreground">Только просмотр</span>
+            ) : null}
+          </div>
+        );
+      },
+    },
+  ];
 
   const renderTaskCard = (task: CallTask) => {
     const progress = getTaskProgress(task);
@@ -876,9 +1157,16 @@ export default function CallTasksPage() {
     return (
       <ContextMenu key={task.id}>
         <ContextMenuTrigger asChild>
-          <button
-            type="button"
+          <div
+            role="button"
+            tabIndex={0}
             onClick={() => void openTask(task)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                void openTask(task);
+              }
+            }}
             className={`block w-full rounded-md px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
               isSelected ? 'bg-muted' : ''
             }`}
@@ -932,7 +1220,7 @@ export default function CallTasksPage() {
                 +{task.newInBaseCount} новых клиентов в базе
               </div>
             ) : null}
-          </button>
+          </div>
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuLabel>Действия с задачей</ContextMenuLabel>
@@ -1037,7 +1325,16 @@ export default function CallTasksPage() {
             <Badge variant="outline">{tasks.length}</Badge>
           </div>
           <div className="divide-y">
-            {tasks.length === 0 && (
+            {tasksError && tasks.length === 0 ? (
+              <div className="p-4">
+                <ErrorState
+                  compact
+                  message={tasksError}
+                  onRetry={() => void fetchTasks()}
+                  title="Задачи не загрузились"
+                />
+              </div>
+            ) : tasks.length === 0 && (
               <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                 Активных задач обзвона пока нет.
               </div>
@@ -1050,7 +1347,15 @@ export default function CallTasksPage() {
           {!selectedTask ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
               <PhoneCall className="h-8 w-8" />
-              <div className="text-sm">Выберите задачу, чтобы начать обзвон.</div>
+              <div>
+                <div className="font-medium text-foreground">
+                  Выберите задачу слева
+                </div>
+                <div className="mt-1 max-w-[360px] text-sm">
+                  Здесь откроется список клиентов, дедлайны, статусы звонков и
+                  история попыток по выбранной задаче.
+                </div>
+              </div>
             </div>
           ) : (
             <>
@@ -1321,135 +1626,16 @@ export default function CallTasksPage() {
               )}
 
               <div className="overflow-x-auto">
-                <Table className="min-w-[980px] table-fixed">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-[44px]">
-                        <input
-                          type="checkbox"
-                          checked={allClientsOnPageSelected}
-                          disabled={clients.length === 0 || selectedTaskIsReadOnly}
-                          onChange={toggleAllClientsOnPage}
-                          className="h-4 w-4"
-                          aria-label="Выбрать всех клиентов на странице"
-                        />
-                      </TableHead>
-                      <TableHead className="w-[24%]">Клиент</TableHead>
-                      <TableHead className="w-[16%]">Телефон</TableHead>
-                      <TableHead className="w-[13%]">
-                        <MetricLabel tooltip="Сверху количество визитов клиента, ниже дата последнего визита.">
-                          Визиты
-                        </MetricLabel>
-                      </TableHead>
-                      <TableHead className="w-[16%]">
-                        <MetricLabel tooltip="Текущий результат работы по клиенту в этой задаче обзвона.">
-                          Статус
-                        </MetricLabel>
-                      </TableHead>
-                      <TableHead className="w-[15%]">
-                        <MetricLabel tooltip="Срок, до которого нужно обработать конкретного клиента. Может быть задан сроком прозвона базы, дедлайном задачи или вручную.">
-                          Дедлайн
-                        </MetricLabel>
-                      </TableHead>
-                      <TableHead className="w-[16%]">
-                        <MetricLabel tooltip="Последнее саммари по клиенту в этой задаче. Полная история открывается через кнопку результата звонка.">
-                          Комментарий
-                        </MetricLabel>
-                      </TableHead>
-                      <TableHead className="w-[92px] text-right"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {clientsLoading && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={8}
-                          className="py-10 text-center text-muted-foreground"
-                        >
-                          Загрузка клиентов...
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {!clientsLoading && clients.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={8}
-                          className="py-10 text-center text-muted-foreground"
-                        >
-                          Клиенты не найдены.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                    {!clientsLoading &&
-                      clients.map((client) => (
-                        <TableRow key={client.id}>
-                          <TableCell>
-                            <input
-                              type="checkbox"
-                              checked={selectedClientIds.includes(client.id)}
-                              disabled={selectedTaskIsReadOnly}
-                              onChange={() => toggleClientSelection(client.id)}
-                              className="h-4 w-4"
-                              aria-label={`Выбрать ${client.clientName}`}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            <div className="min-w-0">
-                              <div className="truncate font-medium">
-                                {client.clientName}
-                              </div>
-                              <div className="truncate text-xs text-muted-foreground">
-                                {client.source || 'Источник не указан'}
-                              </div>
-                            </div>
-                          </TableCell>
-                          <TableCell className="truncate text-muted-foreground">
-                            {client.clientPhone || '-'}
-                          </TableCell>
-                          <TableCell>
-                            <div className="text-sm">{client.visitCount}</div>
-                            <div className="text-xs text-muted-foreground">
-                              {formatDate(client.lastVisitAt)}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline">
-                              {CLIENT_STATUS_LABELS[client.status]}
-                            </Badge>
-                          </TableCell>
-                          <TableCell
-                            className={
-                              isClientOverdue(client)
-                                ? 'font-medium text-destructive'
-                                : 'text-muted-foreground'
-                            }
-                          >
-                            {formatDateTime(client.deadlineAt)}
-                          </TableCell>
-                          <TableCell className="truncate text-muted-foreground">
-                            {client.summary || client.lastAttempt?.summary || '-'}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            {selectedTaskIsReadOnly ? (
-                              <span className="text-xs text-muted-foreground">
-                                Только просмотр
-                              </span>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                onClick={() => openClientResult(client)}
-                                title="Результат звонка"
-                                aria-label={`Результат звонка ${client.clientName}`}
-                              >
-                                <MessageSquareText className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  columns={clientColumns}
+                  data={clients}
+                  emptyText="Клиенты не найдены."
+                  errorText={clientsError}
+                  loading={clientsLoading}
+                  loadingText="Загрузка клиентов..."
+                  minWidthClassName="min-w-[980px] table-fixed"
+                  onRetry={() => void fetchClients()}
+                />
               </div>
 
               <div className="border-t px-4 py-3">

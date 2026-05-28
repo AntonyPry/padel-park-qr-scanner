@@ -1,6 +1,7 @@
 import {
   Activity,
   BicepsFlexed,
+  CalendarDays,
   CircleDollarSign,
   ContactRound,
   Database,
@@ -49,6 +50,11 @@ const items = [
     title: 'Клиенты',
     url: '/admin/clients',
     icon: ContactRound,
+  },
+  {
+    title: 'Бронирование',
+    url: '/admin/bookings',
+    icon: CalendarDays,
   },
   {
     title: 'Тренерский кабинет',

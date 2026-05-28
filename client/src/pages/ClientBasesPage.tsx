@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Archive,
   ArchiveRestore,
@@ -12,8 +14,11 @@ import {
   Trash2,
   Users,
 } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
@@ -26,6 +31,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataTable } from '@/components/data-table';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -34,15 +40,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
 import { useNavigate } from 'react-router-dom';
@@ -198,6 +196,61 @@ const EMPTY_CALL_TASK_FORM: CallTaskFormState = {
   scopeType: 'snapshot',
   title: '',
 };
+const numberString = (label: string, allowZero = false) =>
+  z.string().refine(
+    (value) => {
+      if (!value.trim()) return true;
+      const number = Number(value);
+      return Number.isFinite(number) && (allowZero ? number >= 0 : number > 0);
+    },
+    {
+      message: allowZero
+        ? `${label}: укажите число не меньше 0`
+        : `${label}: укажите число больше 0`,
+    },
+  );
+const baseFormSchema = z
+  .object({
+    description: z.string(),
+    lastVisitDaysFrom: numberString('Не были от'),
+    lastVisitDaysTo: numberString('Не были до'),
+    name: z.string().trim().min(2, 'Введите название базы не короче 2 символов.'),
+    q: z.string(),
+    recurringAssignedToAccountId: z.string(),
+    recurringDescription: z.string(),
+    recurringDueDays: numberString('Дней на обработку', true),
+    recurringEnabled: z.boolean(),
+    recurringInterval: z.enum(['none', 'daily', 'weekly']),
+    recurringScopeType: z.enum(['snapshot', 'dynamic']),
+    recurringTime: z.string(),
+    recurringTitle: z.string(),
+    recurringWeekday: numberString('День недели'),
+    segment: z.enum(['all', 'new', 'regular', 'inactive', 'no_visits']),
+    slaDays: numberString('Срок прозвона', true),
+    source: z.string(),
+    sourceId: z.string(),
+    status: z.enum(['active', 'archived', 'all']),
+    visitCategory: z.string(),
+    visitCategoryId: z.string(),
+    visitCountMax: numberString('Визитов до', true),
+    visitCountMin: numberString('Визитов от'),
+  })
+  .superRefine((value, ctx) => {
+    if (value.recurringEnabled && value.status !== 'active') {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Автозадачи можно включить только для базы с активными клиентами.',
+        path: ['recurringEnabled'],
+      });
+    }
+  });
+const callTaskFormSchema = z.object({
+  assignedToAccountId: z.string(),
+  description: z.string(),
+  dueAt: z.string(),
+  scopeType: z.enum(['snapshot', 'dynamic']),
+  title: z.string().trim().min(2, 'Введите название задачи'),
+});
 
 const SEGMENT_LABELS: Record<ClientSegment, string> = {
   all: 'Все сегменты',
@@ -352,6 +405,34 @@ function describeFilters(filters: ClientBaseFilters) {
   return parts.length > 0 ? parts.join(' · ') : 'Все активные клиенты';
 }
 
+function buildClientsUrl(filters: ClientBaseFilters) {
+  const params = new URLSearchParams();
+
+  if (filters.q) params.set('q', filters.q);
+  if (filters.segment && filters.segment !== 'all') {
+    params.set('segment', filters.segment);
+  }
+  params.set('status', filters.status || 'active');
+  if (filters.sourceId) params.set('sourceId', String(filters.sourceId));
+  if (filters.visitCategoryId) {
+    params.set('visitCategoryId', String(filters.visitCategoryId));
+  }
+  if (filters.visitCountMin !== undefined) {
+    params.set('visitCountMin', String(filters.visitCountMin));
+  }
+  if (filters.visitCountMax !== undefined) {
+    params.set('visitCountMax', String(filters.visitCountMax));
+  }
+  if (filters.lastVisitDaysFrom !== undefined) {
+    params.set('lastVisitDaysFrom', String(filters.lastVisitDaysFrom));
+  }
+  if (filters.lastVisitDaysTo !== undefined) {
+    params.set('lastVisitDaysTo', String(filters.lastVisitDaysTo));
+  }
+
+  return `/admin/clients?${params.toString()}`;
+}
+
 function describeRecurrence(base: ClientBase) {
   const recurrence = base.recurrence;
   if (!recurrence?.enabled) return 'Не настроена';
@@ -391,11 +472,11 @@ export default function ClientBasesPage() {
   const navigate = useNavigate();
   const [bases, setBases] = useState<ClientBase[]>([]);
   const [loading, setLoading] = useState(true);
+  const [basesError, setBasesError] = useState('');
   const [baseStatus, setBaseStatus] = useState<ClientBaseStatus>('active');
   const [formOpen, setFormOpen] = useState(false);
   const [formError, setFormError] = useState('');
   const [editingBase, setEditingBase] = useState<ClientBase | null>(null);
-  const [form, setForm] = useState<BaseFormState>(EMPTY_FORM);
   const [clientSources, setClientSources] = useState<ReferenceItem[]>([]);
   const [visitCategories, setVisitCategories] = useState<ReferenceItem[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
@@ -403,25 +484,57 @@ export default function ClientBasesPage() {
   const [previewClients, setPreviewClients] = useState<ClientPreview[]>([]);
   const [previewTotal, setPreviewTotal] = useState(0);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState('');
   const [callTaskBase, setCallTaskBase] = useState<ClientBase | null>(null);
-  const [callTaskForm, setCallTaskForm] =
-    useState<CallTaskFormState>(EMPTY_CALL_TASK_FORM);
   const [callTaskError, setCallTaskError] = useState('');
   const [callTaskSaving, setCallTaskSaving] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const [runningRecurring, setRunningRecurring] = useState(false);
+  const baseForm = useForm<BaseFormState>({
+    defaultValues: EMPTY_FORM,
+    resolver: zodResolver(baseFormSchema),
+  });
+  const callTaskFormControl = useForm<CallTaskFormState>({
+    defaultValues: EMPTY_CALL_TASK_FORM,
+    resolver: zodResolver(callTaskFormSchema),
+  });
+  const form = baseForm.watch();
+  const callTaskForm = callTaskFormControl.watch();
+  const setForm = (nextForm: BaseFormState) => {
+    baseForm.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
+  const setCallTaskForm = (nextForm: CallTaskFormState) => {
+    callTaskFormControl.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
 
   const fetchBases = useCallback(async () => {
     setLoading(true);
+    setBasesError('');
     try {
       const res = await apiFetch(`/api/client-bases?status=${baseStatus}`);
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось загрузить базы'));
+        const message = await readError(res, 'Не удалось загрузить базы');
+        setBases([]);
+        setBasesError(message);
+        toast.error(message);
         return;
       }
 
       setBases((await res.json()) as ClientBase[]);
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Не удалось загрузить базы');
+      setBases([]);
+      setBasesError(message);
+      toast.error(message);
     } finally {
       setLoading(false);
     }
@@ -465,7 +578,7 @@ export default function ClientBasesPage() {
 
   const openCreate = () => {
     setEditingBase(null);
-    setForm(EMPTY_FORM);
+    baseForm.reset(EMPTY_FORM);
     setFormError('');
     setFormOpen(true);
   };
@@ -484,32 +597,20 @@ export default function ClientBasesPage() {
           ?.id || '',
       );
     }
-    setForm(nextForm);
+    baseForm.reset(nextForm);
     setFormError('');
     setFormOpen(true);
   };
 
-  const handleSave = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const handleSave = baseForm.handleSubmit(async (values) => {
     setFormError('');
 
-    if (form.name.trim().length < 2) {
-      setFormError('Введите название базы не короче 2 символов.');
-      return;
-    }
-    if (form.recurringEnabled && form.status !== 'active') {
-      setFormError(
-        'Автозадачи можно включить только для базы с активными клиентами.',
-      );
-      return;
-    }
-
     const payload = {
-      description: form.description.trim(),
-      filters: buildFilters(form),
-      name: form.name.trim(),
-      recurrence: buildRecurrence(form),
-      slaDays: form.slaDays.trim() ? Number(form.slaDays) : null,
+      description: values.description.trim(),
+      filters: buildFilters(values),
+      name: values.name.trim(),
+      recurrence: buildRecurrence(values),
+      slaDays: values.slaDays.trim() ? Number(values.slaDays) : null,
       status: editingBase?.status || 'active',
     };
     const res = await apiFetch(
@@ -527,18 +628,23 @@ export default function ClientBasesPage() {
 
     setFormOpen(false);
     await fetchBases();
-  };
+    toast.success(editingBase ? 'База обновлена' : 'База создана');
+  }, (errors) => {
+    const firstError = Object.values(errors)[0];
+    setFormError(firstError?.message || 'Проверьте поля базы');
+  });
 
   const executeArchiveBase = async (base: ClientBase) => {
     const res = await apiFetch(`/api/client-bases/${base.id}`, {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось архивировать базу'));
+      toast.error(await readError(res, 'Не удалось архивировать базу'));
       return;
     }
 
     await fetchBases();
+    toast.success('База отправлена в архив');
   };
 
   const executeRestoreBase = async (base: ClientBase) => {
@@ -546,11 +652,12 @@ export default function ClientBasesPage() {
       method: 'POST',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось восстановить базу'));
+      toast.error(await readError(res, 'Не удалось восстановить базу'));
       return;
     }
 
     await fetchBases();
+    toast.success('База восстановлена');
   };
 
   const requestBaseStatusChange = (base: ClientBase) => {
@@ -573,11 +680,12 @@ export default function ClientBasesPage() {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить базу из архива'));
+      toast.error(await readError(res, 'Не удалось удалить базу из архива'));
       return;
     }
 
     await fetchBases();
+    toast.success('База удалена из архива');
   };
 
   const requestPermanentDelete = (base: ClientBase) => {
@@ -606,19 +714,26 @@ export default function ClientBasesPage() {
     setPreviewBase(base);
     setPreviewClients([]);
     setPreviewTotal(0);
+    setPreviewError('');
     setPreviewLoading(true);
     try {
       const res = await apiFetch(
         `/api/client-bases/${base.id}/clients?page=1&pageSize=20`,
       );
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось открыть базу'));
+        const message = await readError(res, 'Не удалось открыть базу');
+        setPreviewError(message);
+        toast.error(message);
         return;
       }
 
       const data = (await res.json()) as ClientsResponse;
       setPreviewClients(data.items);
       setPreviewTotal(data.total);
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Не удалось открыть базу');
+      setPreviewError(message);
+      toast.error(message);
     } finally {
       setPreviewLoading(false);
     }
@@ -639,7 +754,7 @@ export default function ClientBasesPage() {
     }
 
     setCallTaskBase(base);
-    setCallTaskForm({
+    callTaskFormControl.reset({
       ...EMPTY_CALL_TASK_FORM,
       title: `${base.name}: обзвон`,
     });
@@ -653,47 +768,335 @@ export default function ClientBasesPage() {
         method: 'POST',
       });
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось запустить автозадачи'));
+        toast.error(await readError(res, 'Не удалось запустить автозадачи'));
         return;
       }
       const result = (await res.json()) as { processed: number };
-      alert(`Проверено автозадач: ${result.processed}`);
+      toast.success(`Проверено автозадач: ${result.processed}`);
       await fetchBases();
     } finally {
       setRunningRecurring(false);
     }
   };
 
-  const handleCreateCallTask = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const handleCreateCallTask = callTaskFormControl.handleSubmit(async (values) => {
     if (!callTaskBase) return;
 
     setCallTaskSaving(true);
     setCallTaskError('');
-    const res = await apiFetch(`/api/client-bases/${callTaskBase.id}/call-tasks`, {
-      method: 'POST',
-      body: JSON.stringify({
-        assignedToAccountId:
-          callTaskForm.assignedToAccountId === 'none'
-            ? null
-            : Number(callTaskForm.assignedToAccountId),
-        description: callTaskForm.description.trim(),
-        dueAt: callTaskForm.dueAt || null,
-        scopeType: callTaskForm.scopeType,
-        title: callTaskForm.title.trim(),
-      }),
-    });
+    try {
+      const res = await apiFetch(`/api/client-bases/${callTaskBase.id}/call-tasks`, {
+        method: 'POST',
+        body: JSON.stringify({
+          assignedToAccountId:
+            values.assignedToAccountId === 'none'
+              ? null
+              : Number(values.assignedToAccountId),
+          description: values.description.trim(),
+          dueAt: values.dueAt || null,
+          scopeType: values.scopeType,
+          title: values.title.trim(),
+        }),
+      });
 
-    setCallTaskSaving(false);
-    if (!res.ok) {
-      setCallTaskError(await readError(res, 'Не удалось создать обзвон'));
-      return;
+      if (!res.ok) {
+        setCallTaskError(await readError(res, 'Не удалось создать обзвон'));
+        return;
+      }
+
+      setCallTaskBase(null);
+      toast.success('Задача обзвона создана');
+      navigate('/admin/call-tasks');
+      void fetchBases().catch(() => {
+        toast.error('Задача создана, но список баз не обновился');
+      });
+    } catch {
+      setCallTaskError('Не удалось создать обзвон. Проверьте подключение к серверу.');
+    } finally {
+      setCallTaskSaving(false);
     }
+  }, (errors) => {
+    const firstError = Object.values(errors)[0];
+    setCallTaskError(firstError?.message || 'Проверьте поля задачи');
+  });
 
-    setCallTaskBase(null);
-    await fetchBases();
-    navigate('/admin/call-tasks');
+  const openBaseInClients = (base: ClientBase) => {
+    navigate(buildClientsUrl(base.filters || {}));
   };
+
+  const baseColumns: ColumnDef<ClientBase>[] = [
+    {
+      accessorKey: 'name',
+      header: 'База',
+      size: 260,
+      meta: {
+        cellClassName: 'whitespace-normal',
+      },
+      cell: ({ row }) => {
+        const base = row.original;
+
+        return (
+          <div className="min-w-0">
+            <div className="truncate font-medium">{base.name}</div>
+            {base.description && (
+              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                {base.description}
+              </div>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      id: 'filters',
+      header: 'Фильтр',
+      size: 250,
+      meta: {
+        cellClassName: 'whitespace-normal text-muted-foreground',
+      },
+      cell: ({ row }) => (
+        <div className="line-clamp-2 leading-5">
+          {describeFilters(row.original.filters)}
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'currentClientCount',
+      header: 'Клиентов',
+      size: 90,
+      meta: {
+        cellClassName: 'text-right font-medium',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) =>
+        row.original.currentClientCount.toLocaleString('ru-RU'),
+    },
+    {
+      id: 'deadline',
+      header: () => (
+        <span className="inline-flex items-center gap-1.5">
+          Срок прозвона
+          <HelpTooltip>
+            Сколько дней дается на обработку каждого клиента после создания
+            задачи. Если срок не задан, используется общий дедлайн задачи.
+          </HelpTooltip>
+        </span>
+      ),
+      size: 140,
+      meta: {
+        cellClassName: 'whitespace-normal text-sm text-muted-foreground',
+      },
+      cell: ({ row }) => (
+        <span title={describeCallDeadline(row.original)}>
+          {describeCallDeadline(row.original)}
+        </span>
+      ),
+    },
+    {
+      id: 'recurrence',
+      header: 'Автозадача',
+      size: 190,
+      meta: {
+        cellClassName: 'whitespace-normal',
+      },
+      cell: ({ row }) => {
+        const base = row.original;
+
+        return base.recurrence?.enabled ? (
+          <div className="text-sm">
+            <div className="truncate">{describeRecurrence(base)}</div>
+            <div className="text-xs text-muted-foreground">
+              след.: {formatDateTime(base.recurrence.nextRunAt)}
+            </div>
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">Не настроена</span>
+        );
+      },
+    },
+    {
+      id: 'lastTask',
+      header: 'Последняя задача',
+      size: 190,
+      meta: {
+        cellClassName: 'whitespace-normal',
+      },
+      cell: ({ row }) => {
+        const base = row.original;
+
+        return base.lastTaskCreatedAt ? (
+          <div className="text-sm">
+            <div>{formatDateTime(base.lastTaskCreatedAt)}</div>
+            <div className="text-xs text-muted-foreground">
+              было {base.lastTaskClientCount || 0}, сейчас{' '}
+              {base.deltaSinceLastTask === null
+                ? '-'
+                : base.deltaSinceLastTask >= 0
+                  ? `+${base.deltaSinceLastTask}`
+                  : base.deltaSinceLastTask}
+            </div>
+          </div>
+        ) : (
+          <span className="text-sm text-muted-foreground">
+            Задач еще не было
+          </span>
+        );
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 180,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const base = row.original;
+
+        return (
+          <div className="flex shrink-0 justify-end gap-1 whitespace-nowrap">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void openPreview(base)}
+              aria-label={`Открыть базу ${base.name}`}
+              title="Открыть"
+            >
+              <Eye className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => openBaseInClients(base)}
+              aria-label={`Открыть клиентов базы ${base.name}`}
+              title="Открыть клиентов"
+            >
+              <Users className="h-4 w-4" />
+            </Button>
+            {base.status === 'active' && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => openCreateCallTask(base)}
+                aria-label={`Создать обзвон по базе ${base.name}`}
+                title={getCallTaskBlockedReason(base) || 'Создать обзвон'}
+              >
+                <PhoneCall className="h-4 w-4" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => openEdit(base)}
+              aria-label={`Редактировать базу ${base.name}`}
+              title="Редактировать"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            {base.status === 'active' ? (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => requestBaseStatusChange(base)}
+                aria-label={`Архивировать базу ${base.name}`}
+                title="Архивировать"
+              >
+                <Archive className="h-4 w-4" />
+              </Button>
+            ) : (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => requestBaseStatusChange(base)}
+                  aria-label={`Восстановить базу ${base.name}`}
+                  title="Восстановить"
+                >
+                  <ArchiveRestore className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => requestPermanentDelete(base)}
+                  aria-label={`Удалить навсегда базу ${base.name}`}
+                  title="Удалить навсегда"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
+  const previewColumns: ColumnDef<ClientPreview>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Клиент',
+      meta: {
+        cellClassName: 'truncate font-medium',
+      },
+    },
+    {
+      accessorKey: 'phone',
+      header: 'Телефон',
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+    },
+    {
+      accessorKey: 'source',
+      header: 'Источник',
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+    },
+    {
+      id: 'visitCount',
+      header: 'Визиты',
+      meta: {
+        cellClassName: 'text-right font-medium',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => row.original.stats.visitCount,
+    },
+    {
+      id: 'lastVisit',
+      header: 'Последний визит',
+      meta: {
+        cellClassName: 'text-muted-foreground',
+      },
+      cell: ({ row }) => formatDate(row.original.stats.lastVisitAt),
+    },
+    {
+      accessorKey: 'segment',
+      header: 'Сегмент',
+      cell: ({ row }) => <Badge variant="outline">{row.original.segment}</Badge>,
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 56,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          onClick={() => navigate(`/admin/clients?clientId=${row.original.id}`)}
+          aria-label={`Открыть карточку клиента ${row.original.name}`}
+          title="Открыть карточку"
+        >
+          <Eye className="h-4 w-4" />
+        </Button>
+      ),
+    },
+  ];
 
   return (
     <div className="min-w-0 space-y-4 p-4 md:p-6">
@@ -753,172 +1156,16 @@ export default function ClientBasesPage() {
           <Badge variant="outline">{bases.length}</Badge>
         </div>
         <div className="overflow-x-auto">
-          <Table className="min-w-[1280px] table-fixed">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[24%]">База</TableHead>
-                <TableHead className="w-[22%]">Фильтр</TableHead>
-                <TableHead className="w-[96px] text-right">Клиентов</TableHead>
-                <TableHead className="w-[150px]">
-                  <span className="inline-flex items-center gap-1.5">
-                    Срок прозвона
-                    <HelpTooltip>
-                      Сколько дней дается на обработку каждого клиента после
-                      создания задачи. Если срок не задан, используется общий
-                      дедлайн задачи.
-                    </HelpTooltip>
-                  </span>
-                </TableHead>
-                <TableHead className="w-[18%]">Автозадача</TableHead>
-                <TableHead className="w-[18%]">Последняя задача</TableHead>
-                <TableHead className="w-[150px] text-right"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading && bases.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
-                    Загрузка баз...
-                  </TableCell>
-                </TableRow>
-              )}
-              {!loading && bases.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={7} className="py-10 text-center text-muted-foreground">
-                    Базы еще не созданы.
-                  </TableCell>
-                </TableRow>
-              )}
-              {bases.map((base) => (
-                <TableRow key={base.id}>
-                  <TableCell className="whitespace-normal">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{base.name}</div>
-                      {base.description && (
-                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                          {base.description}
-                        </div>
-                      )}
-                    </div>
-                  </TableCell>
-                  <TableCell className="whitespace-normal text-muted-foreground">
-                    <div className="line-clamp-2 leading-5">
-                      {describeFilters(base.filters)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right font-medium">
-                    {base.currentClientCount.toLocaleString('ru-RU')}
-                  </TableCell>
-                  <TableCell className="whitespace-normal text-sm text-muted-foreground">
-                    <span title={describeCallDeadline(base)}>
-                      {describeCallDeadline(base)}
-                    </span>
-                  </TableCell>
-                  <TableCell className="whitespace-normal">
-                    {base.recurrence?.enabled ? (
-                      <div className="text-sm">
-                        <div className="truncate">{describeRecurrence(base)}</div>
-                        <div className="text-xs text-muted-foreground">
-                          след.: {formatDateTime(base.recurrence.nextRunAt)}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">
-                        Не настроена
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="whitespace-normal">
-                    {base.lastTaskCreatedAt ? (
-                      <div className="text-sm">
-                        <div>{formatDateTime(base.lastTaskCreatedAt)}</div>
-                        <div className="text-xs text-muted-foreground">
-                          было {base.lastTaskClientCount || 0}, сейчас{' '}
-                          {base.deltaSinceLastTask === null
-                            ? '-'
-                            : base.deltaSinceLastTask >= 0
-                              ? `+${base.deltaSinceLastTask}`
-                              : base.deltaSinceLastTask}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-sm text-muted-foreground">
-                        Задач еще не было
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => void openPreview(base)}
-                        aria-label={`Открыть базу ${base.name}`}
-                        title="Открыть"
-                      >
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      {base.status === 'active' && (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => openCreateCallTask(base)}
-                          aria-label={`Создать обзвон по базе ${base.name}`}
-                          title={
-                            getCallTaskBlockedReason(base) || 'Создать обзвон'
-                          }
-                        >
-                          <PhoneCall className="h-4 w-4" />
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => openEdit(base)}
-                        aria-label={`Редактировать базу ${base.name}`}
-                        title="Редактировать"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      {base.status === 'active' ? (
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => requestBaseStatusChange(base)}
-                          aria-label={`Архивировать базу ${base.name}`}
-                          title="Архивировать"
-                        >
-                          <Archive className="h-4 w-4" />
-                        </Button>
-                      ) : (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => requestBaseStatusChange(base)}
-                            aria-label={`Восстановить базу ${base.name}`}
-                            title="Восстановить"
-                          >
-                            <ArchiveRestore className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => requestPermanentDelete(base)}
-                            aria-label={`Удалить навсегда базу ${base.name}`}
-                            title="Удалить навсегда"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </>
-                      )}
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          <DataTable
+            columns={baseColumns}
+            data={bases}
+            emptyText="Базы еще не созданы."
+            errorText={basesError}
+            loading={loading}
+            loadingText="Загрузка баз..."
+            minWidthClassName="min-w-[1240px] table-fixed"
+            onRetry={() => void fetchBases()}
+          />
         </div>
       </div>
 
@@ -1374,67 +1621,41 @@ export default function ClientBasesPage() {
       <Dialog open={Boolean(previewBase)} onOpenChange={(open) => !open && setPreviewBase(null)}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5 text-muted-foreground" />
-              {previewBase?.name || 'База'}
-            </DialogTitle>
-            <DialogDescription>
-              Сейчас подходит клиентов: {previewTotal.toLocaleString('ru-RU')}.
-              Показаны первые 20.
-            </DialogDescription>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <DialogTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-muted-foreground" />
+                  {previewBase?.name || 'База'}
+                </DialogTitle>
+                <DialogDescription>
+                  Сейчас подходит клиентов: {previewTotal.toLocaleString('ru-RU')}.
+                  Показаны первые 20.
+                </DialogDescription>
+              </div>
+              {previewBase && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openBaseInClients(previewBase)}
+                >
+                  <Users className="mr-2 h-4 w-4" />
+                  Все в клиентах
+                </Button>
+              )}
+            </div>
           </DialogHeader>
 
           <div className="overflow-x-auto rounded-md border">
-            <Table className="min-w-[760px] table-fixed">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[28%]">Клиент</TableHead>
-                  <TableHead className="w-[18%]">Телефон</TableHead>
-                  <TableHead className="w-[18%]">Источник</TableHead>
-                  <TableHead className="w-[12%] text-right">Визиты</TableHead>
-                  <TableHead className="w-[16%]">Последний визит</TableHead>
-                  <TableHead className="w-[8%]">Сегмент</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {previewLoading && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                      Загрузка...
-                    </TableCell>
-                  </TableRow>
-                )}
-                {!previewLoading && previewClients.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                      Клиенты не найдены.
-                    </TableCell>
-                  </TableRow>
-                )}
-                {previewClients.map((client) => (
-                  <TableRow key={client.id}>
-                    <TableCell className="truncate font-medium">
-                      {client.name}
-                    </TableCell>
-                    <TableCell className="truncate text-muted-foreground">
-                      {client.phone}
-                    </TableCell>
-                    <TableCell className="truncate text-muted-foreground">
-                      {client.source}
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {client.stats.visitCount}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(client.stats.lastVisitAt)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{client.segment}</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={previewColumns}
+              data={previewClients}
+              emptyText="Клиенты не найдены."
+              errorText={previewError}
+              loading={previewLoading}
+              loadingText="Загрузка..."
+              minWidthClassName="min-w-[820px] table-fixed"
+              onRetry={() => previewBase && void openPreview(previewBase)}
+            />
           </div>
         </DialogContent>
       </Dialog>

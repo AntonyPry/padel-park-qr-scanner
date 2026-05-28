@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Archive,
   ArchiveRestore,
@@ -9,8 +11,11 @@ import {
   Trash2,
   UserCog,
 } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import { Card, CardContent } from '@/components/ui/card';
 import {
   ConfirmActionDialog,
@@ -23,7 +28,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataTable } from '@/components/data-table';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -31,15 +38,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import {
   ACCOUNT_ROLES,
   getAccountRoleDescription,
@@ -70,14 +69,6 @@ interface SystemAccount {
   Staff?: StaffOption | null;
 }
 
-interface AccountFormState {
-  email: string;
-  password: string;
-  role: AccountRole;
-  staffId: string;
-  status: AccountStatus;
-}
-
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<void>;
 };
@@ -88,6 +79,20 @@ const MANAGER_MANAGED_ROLES: AccountRole[] = [
   'viewer',
   'trainer',
 ];
+const accountFormSchema = z.object({
+  email: z.string().trim().email('Введите корректный email'),
+  password: z
+    .string()
+    .optional()
+    .refine((value) => !value || value.length >= 6, {
+      message: 'Минимум 6 символов',
+    }),
+  role: z.enum(['owner', 'manager', 'admin', 'accountant', 'viewer', 'trainer']),
+  staffId: z.string(),
+  status: z.enum(['active', 'inactive', 'archived']),
+});
+type AccountFormState = z.infer<typeof accountFormSchema>;
+
 const EMPTY_FORM: AccountFormState = {
   email: '',
   password: '',
@@ -123,16 +128,23 @@ export default function SystemUsersPage() {
   const [accounts, setAccounts] = useState<SystemAccount[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<SystemAccount | null>(
     null,
   );
-  const [form, setForm] = useState<AccountFormState>(EMPTY_FORM);
   const [accountStatus, setAccountStatus] = useState<
     'active' | 'archived' | 'all'
   >('active');
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const accountForm = useForm<AccountFormState>({
+    defaultValues: EMPTY_FORM,
+    resolver: zodResolver(accountFormSchema),
+  });
+  const selectedRole = accountForm.watch('role');
+  const selectedStaffId = accountForm.watch('staffId');
+  const selectedStatus = accountForm.watch('status');
 
   const availableRoles = useMemo(() => {
     if (account?.role === 'owner') return ACCOUNT_ROLES;
@@ -165,6 +177,7 @@ export default function SystemUsersPage() {
 
   const fetchData = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const [accountsRes, staffRes] = await Promise.all([
         apiFetch('/api/accounts'),
@@ -173,10 +186,22 @@ export default function SystemUsersPage() {
 
       if (accountsRes.ok) {
         setAccounts((await accountsRes.json()) as SystemAccount[]);
+      } else {
+        setAccounts([]);
+        setLoadError(await readError(accountsRes, 'Не удалось загрузить пользователей'));
       }
       if (staffRes.ok) {
         setStaff((await staffRes.json()) as StaffOption[]);
+      } else {
+        setStaff([]);
+        setLoadError((current) =>
+          current || 'Не удалось загрузить сотрудников для привязки',
+        );
       }
+    } catch (error) {
+      setAccounts([]);
+      setStaff([]);
+      setLoadError(getApiErrorMessage(error, 'Не удалось загрузить пользователей'));
     } finally {
       setLoading(false);
     }
@@ -196,7 +221,7 @@ export default function SystemUsersPage() {
 
   const openCreate = () => {
     setEditingAccount(null);
-    setForm({
+    accountForm.reset({
       ...EMPTY_FORM,
       role: availableRoles[0]?.value || 'admin',
     });
@@ -205,7 +230,7 @@ export default function SystemUsersPage() {
 
   const openEdit = (target: SystemAccount) => {
     setEditingAccount(target);
-    setForm({
+    accountForm.reset({
       email: target.email,
       password: '',
       role: target.role,
@@ -215,38 +240,74 @@ export default function SystemUsersPage() {
     setIsModalOpen(true);
   };
 
-  const handleSave = async (event: React.FormEvent) => {
-    event.preventDefault();
-
+  const saveAccount = async (
+    values: AccountFormState,
+    target: SystemAccount | null,
+  ) => {
     const payload = {
-      email: form.email.trim(),
-      password: form.password || undefined,
-      role: form.role,
-      staffId: form.staffId === 'none' ? null : Number(form.staffId),
-      status: form.status,
+      email: values.email.trim(),
+      password: values.password || undefined,
+      role: values.role,
+      staffId: values.staffId === 'none' ? null : Number(values.staffId),
+      status: values.status,
     };
 
     const response = await apiFetch(
-      editingAccount ? `/api/accounts/${editingAccount.id}` : '/api/accounts',
+      target ? `/api/accounts/${target.id}` : '/api/accounts',
       {
-        method: editingAccount ? 'PUT' : 'POST',
+        method: target ? 'PUT' : 'POST',
         body: JSON.stringify(payload),
       },
     );
 
     if (!response.ok) {
-      alert(await readError(response, 'Не удалось сохранить пользователя'));
+      toast.error(await readError(response, 'Не удалось сохранить пользователя'));
       return;
     }
 
     const saved = (await response.json()) as SystemAccount;
     setAccounts((prev) =>
-      editingAccount
+      target
         ? prev.map((item) => (item.id === saved.id ? saved : item))
         : [saved, ...prev],
     );
     setIsModalOpen(false);
+    toast.success(target ? 'Пользователь обновлен' : 'Пользователь создан');
   };
+
+  const handleSave = accountForm.handleSubmit(async (values) => {
+    if (!editingAccount && !values.password) {
+      accountForm.setError('password', {
+        message: 'Укажите пароль для нового пользователя',
+        type: 'manual',
+      });
+      return;
+    }
+
+    const changesArchiveState =
+      editingAccount &&
+      values.status !== editingAccount.status &&
+      (values.status === 'archived' || editingAccount.status === 'archived');
+
+    if (changesArchiveState) {
+      const target = editingAccount;
+      const goesToArchive = values.status === 'archived';
+      setPendingAction({
+        confirmLabel: goesToArchive ? 'В архив' : 'Восстановить',
+        description: goesToArchive
+          ? `Пользователь ${target.email} не сможет войти в CRM. Остальные изменения формы тоже будут сохранены.`
+          : `Пользователь ${target.email} снова сможет войти в CRM. Остальные изменения формы тоже будут сохранены.`,
+        isDestructive: goesToArchive,
+        onConfirm: () => saveAccount(values, target),
+        title: goesToArchive
+          ? 'Архивировать пользователя?'
+          : 'Восстановить пользователя?',
+      });
+      return;
+    }
+
+    await saveAccount(values, editingAccount);
+  });
 
   const executeArchive = async (target: SystemAccount) => {
     const response = await apiFetch(`/api/accounts/${target.id}`, {
@@ -254,7 +315,7 @@ export default function SystemUsersPage() {
     });
 
     if (!response.ok) {
-      alert(await readError(response, 'Не удалось отключить пользователя'));
+      toast.error(await readError(response, 'Не удалось отключить пользователя'));
       return;
     }
 
@@ -262,6 +323,7 @@ export default function SystemUsersPage() {
     setAccounts((prev) =>
       prev.map((item) => (item.id === saved.id ? saved : item)),
     );
+    toast.success('Пользователь отправлен в архив');
   };
 
   const executeRestore = async (target: SystemAccount) => {
@@ -269,13 +331,14 @@ export default function SystemUsersPage() {
       method: 'POST',
     });
     if (!response.ok) {
-      alert(await readError(response, 'Не удалось восстановить пользователя'));
+      toast.error(await readError(response, 'Не удалось восстановить пользователя'));
       return;
     }
     const saved = (await response.json()) as SystemAccount;
     setAccounts((prev) =>
       prev.map((item) => (item.id === saved.id ? saved : item)),
     );
+    toast.success('Пользователь восстановлен');
   };
 
   const executePermanentDelete = async (target: SystemAccount) => {
@@ -283,10 +346,11 @@ export default function SystemUsersPage() {
       method: 'DELETE',
     });
     if (!response.ok) {
-      alert(await readError(response, 'Не удалось удалить пользователя из архива'));
+      toast.error(await readError(response, 'Не удалось удалить пользователя из архива'));
       return;
     }
     setAccounts((prev) => prev.filter((item) => item.id !== target.id));
+    toast.success('Пользователь удален из архива');
   };
 
   const requestArchive = (target: SystemAccount) => {
@@ -332,6 +396,155 @@ export default function SystemUsersPage() {
     }),
     [accounts],
   );
+  const accountColumns: ColumnDef<SystemAccount>[] = [
+      {
+        id: 'user',
+        header: 'Пользователь',
+        size: 230,
+        cell: ({ row }) => {
+          const item = row.original;
+
+          return (
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-md bg-muted">
+                <UserCog className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <div className="min-w-0">
+                <div className="truncate font-medium">{item.email}</div>
+                <div className="text-xs text-muted-foreground">ID {item.id}</div>
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        accessorKey: 'role',
+        header: 'Роль CRM',
+        size: 140,
+        cell: ({ row }) => (
+          <Badge variant="outline">
+            {getAccountRoleLabel(row.original.role)}
+          </Badge>
+        ),
+      },
+      {
+        id: 'staff',
+        header: 'Сотрудник',
+        size: 170,
+        cell: ({ row }) => {
+          const item = row.original;
+
+          return item.Staff ? (
+            <div className="min-w-0">
+              <div className="truncate font-medium">{item.Staff.name}</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {getStaffPosition(item.Staff)}
+              </div>
+            </div>
+          ) : (
+            <span className="text-muted-foreground">Не привязан</span>
+          );
+        },
+      },
+      {
+        accessorKey: 'status',
+        header: 'Статус',
+        size: 120,
+        cell: ({ row }) => {
+          const item = row.original;
+
+          return (
+            <Badge
+              variant="outline"
+              className={
+                item.status === 'active'
+                  ? 'border-transparent bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                  : ''
+              }
+            >
+              {item.status === 'active'
+                ? 'Активен'
+                : item.status === 'archived'
+                  ? 'Архив'
+                  : 'Отключен'}
+            </Badge>
+          );
+        },
+      },
+      {
+        id: 'lastLogin',
+        header: 'Последний вход',
+        size: 140,
+        meta: {
+          cellClassName: 'hidden text-muted-foreground xl:table-cell',
+          headerClassName: 'hidden xl:table-cell',
+        },
+        cell: ({ row }) => formatDateTime(row.original.lastLoginAt),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 110,
+        meta: {
+          cellClassName: 'text-right',
+          headerClassName: 'text-right',
+        },
+        cell: ({ row }) => {
+          const item = row.original;
+          const manageable = canManageAccount(item);
+
+          if (!manageable) {
+            return (
+              <span className="text-xs text-muted-foreground">Недоступно</span>
+            );
+          }
+
+          return (
+            <div className="flex justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => openEdit(item)}
+                aria-label={`Редактировать пользователя ${item.email}`}
+                title="Редактировать"
+              >
+                <Pencil className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                onClick={() => requestArchive(item)}
+                aria-label={
+                  item.status === 'archived'
+                    ? `Восстановить пользователя ${item.email}`
+                    : `Архивировать пользователя ${item.email}`
+                }
+                title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
+              >
+                {item.status === 'archived' ? (
+                  <ArchiveRestore className="h-4 w-4" />
+                ) : (
+                  <Archive className="h-4 w-4" />
+                )}
+              </Button>
+              {item.status === 'archived' && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => requestPermanentDelete(item)}
+                  aria-label={`Удалить пользователя ${item.email} навсегда`}
+                  title="Удалить навсегда"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          );
+        },
+      },
+    ];
 
   return (
     <div className="min-w-0 p-4 md:p-8 space-y-6">
@@ -399,134 +612,16 @@ export default function SystemUsersPage() {
       </div>
 
       <div className="border rounded-md bg-card overflow-x-auto">
-        <Table className="min-w-[760px] table-fixed">
-          <TableHeader>
-            <TableRow>
-              <TableHead className="w-[30%]">Пользователь</TableHead>
-              <TableHead className="w-[18%]">Роль CRM</TableHead>
-              <TableHead className="w-[22%]">Сотрудник</TableHead>
-              <TableHead className="w-[14%]">Статус</TableHead>
-              <TableHead className="hidden xl:table-cell w-[16%]">
-                Последний вход
-              </TableHead>
-              <TableHead className="w-[92px] text-right"></TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {displayedAccounts.length === 0 && (
-              <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center text-muted-foreground py-10"
-                >
-                  Пользователи еще не созданы
-                </TableCell>
-              </TableRow>
-            )}
-            {displayedAccounts.map((item) => {
-              const manageable = canManageAccount(item);
-
-              return (
-                <TableRow key={item.id}>
-                  <TableCell>
-                    <div className="flex min-w-0 items-center gap-3">
-                      <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center">
-                        <UserCog className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">
-                          {item.email}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          ID {item.id}
-                        </div>
-                      </div>
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant="outline">
-                      {getAccountRoleLabel(item.role)}
-                    </Badge>
-                  </TableCell>
-                  <TableCell>
-                    {item.Staff ? (
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">
-                          {item.Staff.name}
-                        </div>
-                        <div className="text-xs text-muted-foreground truncate">
-                          {getStaffPosition(item.Staff)}
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-muted-foreground">Не привязан</span>
-                    )}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={
-                        item.status === 'active'
-                          ? 'bg-green-100 text-green-800 border-transparent dark:bg-green-900/30 dark:text-green-300'
-                          : ''
-                      }
-                    >
-                      {item.status === 'active'
-                        ? 'Активен'
-                        : item.status === 'archived'
-                          ? 'Архив'
-                          : 'Отключен'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="hidden xl:table-cell text-muted-foreground">
-                    {formatDateTime(item.lastLoginAt)}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {manageable ? (
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => openEdit(item)}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => requestArchive(item)}
-                          title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
-                        >
-                          {item.status === 'archived' ? (
-                            <ArchiveRestore className="h-4 w-4" />
-                          ) : (
-                            <Archive className="h-4 w-4" />
-                          )}
-                        </Button>
-                        {item.status === 'archived' && (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => requestPermanentDelete(item)}
-                            title="Удалить навсегда"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        Недоступно
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+        <DataTable
+          columns={accountColumns}
+          data={displayedAccounts}
+          emptyText="Пользователи еще не созданы"
+          errorText={loadError}
+          loading={loading}
+          loadingText="Загрузка пользователей..."
+          minWidthClassName="min-w-[760px] table-fixed"
+          onRetry={() => void fetchData()}
+        />
       </div>
 
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
@@ -542,40 +637,46 @@ export default function SystemUsersPage() {
           <form onSubmit={handleSave} className="space-y-4 pt-2">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium mb-1 block">Email</label>
+                <Label className="mb-1 block text-xs">Email</Label>
                 <Input
                   type="email"
-                  required
-                  value={form.email}
-                  onChange={(event) =>
-                    setForm({ ...form, email: event.target.value })
-                  }
+                  {...accountForm.register('email')}
+                  aria-invalid={Boolean(accountForm.formState.errors.email)}
                 />
+                {accountForm.formState.errors.email && (
+                  <p className="mt-1 text-xs text-destructive">
+                    {accountForm.formState.errors.email.message}
+                  </p>
+                )}
               </div>
               <div>
-                <label className="text-xs font-medium mb-1 block">
+                <Label className="mb-1 block text-xs">
                   {editingAccount ? 'Новый пароль' : 'Пароль'}
-                </label>
+                </Label>
                 <Input
                   type="password"
-                  minLength={6}
-                  required={!editingAccount}
                   placeholder={editingAccount ? 'Оставьте пустым' : ''}
-                  value={form.password}
-                  onChange={(event) =>
-                    setForm({ ...form, password: event.target.value })
-                  }
+                  {...accountForm.register('password')}
+                  aria-invalid={Boolean(accountForm.formState.errors.password)}
                 />
+                {accountForm.formState.errors.password && (
+                  <p className="mt-1 text-xs text-destructive">
+                    {accountForm.formState.errors.password.message}
+                  </p>
+                )}
               </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium mb-1 block">Роль</label>
+                <Label className="mb-1 block text-xs">Роль</Label>
                 <Select
-                  value={form.role}
+                  value={selectedRole}
                   onValueChange={(role) =>
-                    setForm({ ...form, role: role as AccountRole })
+                    accountForm.setValue('role', role as AccountRole, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
                   }
                 >
                   <SelectTrigger>
@@ -590,15 +691,18 @@ export default function SystemUsersPage() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {getAccountRoleDescription(form.role)}
+                  {getAccountRoleDescription(selectedRole)}
                 </p>
               </div>
               <div>
-                <label className="text-xs font-medium mb-1 block">Статус</label>
+                <Label className="mb-1 block text-xs">Статус</Label>
                 <Select
-                  value={form.status}
+                  value={selectedStatus}
                   onValueChange={(status) =>
-                    setForm({ ...form, status: status as AccountStatus })
+                    accountForm.setValue('status', status as AccountStatus, {
+                      shouldDirty: true,
+                      shouldValidate: true,
+                    })
                   }
                 >
                   <SelectTrigger>
@@ -614,12 +718,17 @@ export default function SystemUsersPage() {
             </div>
 
             <div>
-              <label className="text-xs font-medium mb-1 block">
+              <Label className="mb-1 block text-xs">
                 Сотрудник
-              </label>
+              </Label>
               <Select
-                value={form.staffId}
-                onValueChange={(staffId) => setForm({ ...form, staffId })}
+                value={selectedStaffId}
+                onValueChange={(staffId) =>
+                  accountForm.setValue('staffId', staffId, {
+                    shouldDirty: true,
+                    shouldValidate: true,
+                  })
+                }
               >
                 <SelectTrigger>
                   <SelectValue />

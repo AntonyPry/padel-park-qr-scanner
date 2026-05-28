@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import type { ColumnDef } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import {
+  AlertTriangle,
   CheckCircle2,
   Clock,
   Copy,
@@ -22,6 +24,9 @@ import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { DataTable } from '@/components/data-table';
+import { ErrorState } from '@/components/error-state';
+import { toast } from '@/components/ui/toast';
 import {
   Dialog,
   DialogContent,
@@ -37,15 +42,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import {
   calculateBasePay,
   formatRuleValue,
@@ -89,7 +86,7 @@ interface CurrentSalesResponse {
 }
 
 type PendingAction = ConfirmAction & {
-  onConfirm: () => Promise<void>;
+  onConfirm: () => Promise<boolean | void> | boolean | void;
 };
 
 interface BonusRecord extends FinanceRecord {
@@ -810,6 +807,9 @@ export default function AdminMotivationPage() {
   const [categories, setCategories] = useState<MotivationCategory[]>([]);
   const [ruleDrafts, setRuleDrafts] = useState<Record<string, string>>({});
   const [settingsError, setSettingsError] = useState('');
+  const [hourlyRulesError, setHourlyRulesError] = useState('');
+  const [salesError, setSalesError] = useState('');
+  const [shiftStatusError, setShiftStatusError] = useState('');
   const [bonusDrafts, setBonusDrafts] = useState<Record<number, BonusRuleDraft>>(
     {},
   );
@@ -849,6 +849,8 @@ export default function AdminMotivationPage() {
   const shiftStart = activeShift?.startedAt
     ? new Date(activeShift.startedAt).getTime()
     : null;
+  const shiftDurationMs = shiftStart ? now - shiftStart : 0;
+  const isLongShift = isShiftActive && shiftDurationMs > 16 * 3600000;
 
   const fetchCurrentSalesSnapshot = useCallback(async () => {
     const res = await apiFetch(
@@ -878,8 +880,12 @@ export default function AdminMotivationPage() {
       const snapshot = await fetchCurrentSalesSnapshot();
       setRecords(snapshot.records);
       setPaymentSummary(snapshot.paymentSummary);
+      setSalesError('');
     } catch (e) {
       console.error(e);
+      setRecords([]);
+      setPaymentSummary(emptyPaymentSummary);
+      setSalesError(getApiErrorMessage(e, 'Не удалось загрузить продажи смены'));
     } finally {
       setLoading(false);
     }
@@ -891,14 +897,19 @@ export default function AdminMotivationPage() {
       if (res.ok) {
         const data = (await res.json()) as { shift: ShiftSession | null };
         setActiveShift(data.shift);
+        setShiftStatusError('');
+      } else {
+        setShiftStatusError(await readError(res, 'Не удалось проверить активную смену'));
       }
     } catch (e) {
       console.error(e);
+      setShiftStatusError(getApiErrorMessage(e, 'Не удалось проверить активную смену'));
     }
   }, []);
 
   const fetchMotivationSettings = useCallback(async () => {
     setRulesLoading(true);
+    setHourlyRulesError('');
     setSettingsError('');
     try {
       const [rulesRes, bonusRulesRes, categoriesRes] = await Promise.all([
@@ -906,6 +917,7 @@ export default function AdminMotivationPage() {
         apiFetch('/api/motivation/bonus-rules'),
         apiFetch('/api/motivation/categories'),
       ]);
+      const settingsErrors: string[] = [];
 
       if (rulesRes.ok) {
         const data = (await rulesRes.json()) as MotivationRule[];
@@ -915,6 +927,10 @@ export default function AdminMotivationPage() {
             acc[rule.key] = String(Number(rule.value));
             return acc;
           }, {}),
+        );
+      } else {
+        setHourlyRulesError(
+          await readError(rulesRes, 'Не удалось загрузить правила почасовой оплаты'),
         );
       }
 
@@ -928,7 +944,7 @@ export default function AdminMotivationPage() {
           }, {}),
         );
       } else {
-        setSettingsError(
+        settingsErrors.push(
           await readError(
             bonusRulesRes,
             'Не удалось загрузить бонусные правила. Проверьте, что backend перезапущен после обновления.',
@@ -939,15 +955,22 @@ export default function AdminMotivationPage() {
       if (categoriesRes.ok) {
         setCategories((await categoriesRes.json()) as MotivationCategory[]);
       } else {
-        setSettingsError(
+        settingsErrors.push(
           await readError(
             categoriesRes,
             'Не удалось загрузить категории мотивации. Проверьте, что backend перезапущен после обновления.',
           ),
         );
       }
+
+      if (settingsErrors.length > 0) {
+        setSettingsError(settingsErrors.join(' '));
+      }
     } catch (e) {
       console.error(e);
+      const message = getApiErrorMessage(e, 'Не удалось загрузить правила мотивации');
+      setHourlyRulesError(message);
+      setSettingsError(message);
     } finally {
       setRulesLoading(false);
     }
@@ -987,23 +1010,28 @@ export default function AdminMotivationPage() {
   }, [bonusRules, now, paymentSummary, records, rulesMap, shiftStart]);
 
   const handleStartShift = async () => {
-    const res = await apiFetch('/api/shifts/start', { method: 'POST' });
+    try {
+      const res = await apiFetch('/api/shifts/start', { method: 'POST' });
 
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось начать смену'));
-      return;
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось начать смену'));
+        return;
+      }
+
+      const data = (await res.json()) as { shift: ShiftSession };
+      setActiveShift(data.shift);
+      setPaymentSummary(emptyPaymentSummary);
+      setShiftReport('');
+      setReportCopied(false);
+      toast.success('Смена начата');
+      void fetchFinances();
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось начать смену'));
     }
-
-    const data = (await res.json()) as { shift: ShiftSession };
-    setActiveShift(data.shift);
-    setPaymentSummary(emptyPaymentSummary);
-    setShiftReport('');
-    setReportCopied(false);
-    void fetchFinances();
   };
 
   const executeEndShift = async () => {
-    if (!activeShift || !shiftStart) return;
+    if (!activeShift || !shiftStart) return false;
 
     let latestStats = shiftStats;
     try {
@@ -1020,23 +1048,30 @@ export default function AdminMotivationPage() {
       });
     } catch (error) {
       console.error(error);
-      alert('Не удалось обновить продажи перед закрытием смены');
-      return;
+      toast.error(getApiErrorMessage(error, 'Не удалось обновить продажи перед закрытием смены'));
+      return false;
     }
 
-    if (!latestStats) return;
+    if (!latestStats) return false;
 
-    const res = await apiFetch('/api/shifts/end', { method: 'POST' });
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось завершить смену'));
-      return;
+    try {
+      const res = await apiFetch('/api/shifts/end', { method: 'POST' });
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось завершить смену'));
+        return false;
+      }
+
+      const data = (await res.json()) as { shift: ShiftSession };
+      setShiftReport(buildShiftReport(data.shift, latestStats));
+      setReportCopied(false);
+      setActiveShift(null);
+      toast.success('Смена завершена, отчет сформирован');
+      void fetchFinances();
+      return true;
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось завершить смену'));
+      return false;
     }
-
-    const data = (await res.json()) as { shift: ShiftSession };
-    setShiftReport(buildShiftReport(data.shift, latestStats));
-    setReportCopied(false);
-    setActiveShift(null);
-    void fetchFinances();
   };
 
   const handleEndShift = async () => {
@@ -1054,22 +1089,30 @@ export default function AdminMotivationPage() {
 
   const handleSaveRule = async (rule: MotivationRule) => {
     const value = Number(ruleDrafts[rule.key]);
-    if (!Number.isFinite(value) || value < 0) return;
-
-    const res = await apiFetch(`/api/motivation/rules/${rule.key}`, {
-      method: 'PUT',
-      body: JSON.stringify({ value }),
-    });
-
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось сохранить правило'));
+    if (!Number.isFinite(value) || value < 0) {
+      toast.error('Укажите корректное значение правила');
       return;
     }
 
-    const updated = (await res.json()) as MotivationRule;
-    setRules((prev) =>
-      prev.map((item) => (item.key === updated.key ? updated : item)),
-    );
+    try {
+      const res = await apiFetch(`/api/motivation/rules/${rule.key}`, {
+        method: 'PUT',
+        body: JSON.stringify({ value }),
+      });
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось сохранить правило'));
+        return;
+      }
+
+      const updated = (await res.json()) as MotivationRule;
+      setRules((prev) =>
+        prev.map((item) => (item.key === updated.key ? updated : item)),
+      );
+      toast.success('Правило сохранено');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось сохранить правило'));
+    }
   };
 
   const openCreateBonusRule = () => {
@@ -1095,25 +1138,30 @@ export default function AdminMotivationPage() {
     try {
       payload = buildBonusPayload(newBonusDraft);
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Проверьте правило');
+      toast.error(getApiErrorMessage(error, 'Проверьте правило'));
       return;
     }
 
-    const res = await apiFetch('/api/motivation/bonus-rules', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
+    try {
+      const res = await apiFetch('/api/motivation/bonus-rules', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
 
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось создать правило'));
-      return;
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось создать правило'));
+        return;
+      }
+
+      const created = (await res.json()) as MotivationBonusRule;
+      setBonusRules((prev) => [...prev, created]);
+      setBonusDrafts((prev) => ({ ...prev, [created.id]: toBonusDraft(created) }));
+      setNewBonusDraft({ ...emptyBonusDraft });
+      closeBonusModal();
+      toast.success('Мотивация создана');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось создать правило'));
     }
-
-    const created = (await res.json()) as MotivationBonusRule;
-    setBonusRules((prev) => [...prev, created]);
-    setBonusDrafts((prev) => ({ ...prev, [created.id]: toBonusDraft(created) }));
-    setNewBonusDraft({ ...emptyBonusDraft });
-    closeBonusModal();
   };
 
   const handleSaveBonusRule = async (rule: MotivationBonusRule) => {
@@ -1124,44 +1172,56 @@ export default function AdminMotivationPage() {
     try {
       payload = buildBonusPayload(draft);
     } catch (error) {
-      alert(error instanceof Error ? error.message : 'Проверьте правило');
+      toast.error(getApiErrorMessage(error, 'Проверьте правило'));
       return;
     }
 
-    const res = await apiFetch(`/api/motivation/bonus-rules/${rule.id}`, {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    });
+    try {
+      const res = await apiFetch(`/api/motivation/bonus-rules/${rule.id}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
 
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось сохранить правило'));
-      return;
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось сохранить правило'));
+        return;
+      }
+
+      const updated = (await res.json()) as MotivationBonusRule;
+      setBonusRules((prev) =>
+        prev.map((item) => (item.id === updated.id ? updated : item)),
+      );
+      setBonusDrafts((prev) => ({ ...prev, [updated.id]: toBonusDraft(updated) }));
+      closeBonusModal();
+      toast.success('Мотивация сохранена');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось сохранить правило'));
     }
-
-    const updated = (await res.json()) as MotivationBonusRule;
-    setBonusRules((prev) =>
-      prev.map((item) => (item.id === updated.id ? updated : item)),
-    );
-    setBonusDrafts((prev) => ({ ...prev, [updated.id]: toBonusDraft(updated) }));
-    closeBonusModal();
   };
 
   const executeDeleteBonusRule = async (rule: MotivationBonusRule) => {
-    const res = await apiFetch(`/api/motivation/bonus-rules/${rule.id}`, {
-      method: 'DELETE',
-    });
+    try {
+      const res = await apiFetch(`/api/motivation/bonus-rules/${rule.id}`, {
+        method: 'DELETE',
+      });
 
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить правило'));
-      return;
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось удалить правило'));
+        return false;
+      }
+
+      setBonusRules((prev) => prev.filter((item) => item.id !== rule.id));
+      setBonusDrafts((prev) => {
+        const next = { ...prev };
+        delete next[rule.id];
+        return next;
+      });
+      toast.success('Мотивация удалена');
+      return true;
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось удалить правило'));
+      return false;
     }
-
-    setBonusRules((prev) => prev.filter((item) => item.id !== rule.id));
-    setBonusDrafts((prev) => {
-      const next = { ...prev };
-      delete next[rule.id];
-      return next;
-    });
   };
 
   const handleDeleteBonusRule = async (rule: MotivationBonusRule) => {
@@ -1179,40 +1239,231 @@ export default function AdminMotivationPage() {
 
     setPendingActionLoading(true);
     try {
-      await pendingAction.onConfirm();
-      setPendingAction(null);
+      const shouldClose = await pendingAction.onConfirm();
+      if (shouldClose !== false) setPendingAction(null);
     } finally {
       setPendingActionLoading(false);
     }
   };
 
   const handleCopyReport = async () => {
-    await navigator.clipboard.writeText(shiftReport);
-    setReportCopied(true);
-    window.setTimeout(() => setReportCopied(false), 1500);
+    try {
+      await navigator.clipboard.writeText(shiftReport);
+      setReportCopied(true);
+      toast.success('Отчет скопирован');
+      window.setTimeout(() => setReportCopied(false), 1500);
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось скопировать отчет'));
+    }
   };
+  const hourlyRuleColumns: ColumnDef<MotivationRule>[] = [
+    {
+      accessorKey: 'label',
+      header: 'Правило',
+      cell: ({ row }) => (
+        <div className="font-medium">
+          <div>{row.original.label}</div>
+          <div className="text-xs text-muted-foreground">
+            Сейчас: {formatRuleValue(row.original)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'description',
+      header: 'Описание',
+      meta: {
+        cellClassName: 'whitespace-normal text-sm text-muted-foreground',
+      },
+    },
+    {
+      id: 'value',
+      header: 'Значение',
+      size: 160,
+      cell: ({ row }) => {
+        const rule = row.original;
+
+        return (
+          <Input
+            type="number"
+            step="0.1"
+            min="0"
+            value={ruleDrafts[rule.key] || ''}
+            onChange={(event) =>
+              setRuleDrafts({
+                ...ruleDrafts,
+                [rule.key]: event.target.value,
+              })
+            }
+          />
+        );
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 110,
+      cell: ({ row }) => {
+        const rule = row.original;
+
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void handleSaveRule(rule)}
+            disabled={Number(ruleDrafts[rule.key]) === rule.value}
+          >
+            Сохранить
+          </Button>
+        );
+      },
+    },
+  ];
+  const salesColumns: ColumnDef<BonusRecord>[] = [
+    {
+      accessorKey: 'date',
+      header: 'Время',
+      meta: {
+        cellClassName: 'text-sm text-muted-foreground',
+      },
+      cell: ({ row }) => format(new Date(row.original.date), 'HH:mm:ss'),
+    },
+    {
+      accessorKey: 'category',
+      header: 'Категория',
+      meta: {
+        cellClassName: 'font-medium',
+      },
+    },
+    {
+      id: 'type',
+      header: 'Тип',
+      cell: ({ row }) =>
+        row.original.value < 0 ? (
+          <Badge variant="outline" className="text-destructive">
+            Возврат
+          </Badge>
+        ) : (
+          <Badge variant="outline">Продажа</Badge>
+        ),
+    },
+    {
+      id: 'payment',
+      header: 'Оплата',
+      cell: ({ row }) => {
+        const sale = row.original;
+
+        return (
+          <div className="flex flex-col gap-1">
+            <Badge variant="outline">{formatPaymentMethod(sale.paymentMethod)}</Badge>
+            {sale.paymentMethod === 'mixed' && (
+              <span className="text-xs text-muted-foreground">
+                нал {formatMoney(Number(sale.paymentCash) || 0)} · безнал{' '}
+                {formatMoney(Number(sale.paymentCashless) || 0)}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      id: 'rules',
+      header: 'Правило',
+      cell: ({ row }) =>
+        row.original.bonusRuleNames.length > 0 ? (
+          <div className="flex flex-wrap gap-1">
+            {row.original.bonusRuleNames.map((name) => (
+              <Badge key={name} variant="outline">
+                {name}
+              </Badge>
+            ))}
+          </div>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
+    {
+      accessorKey: 'value',
+      header: 'Сумма',
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => (
+        <span className={row.original.value < 0 ? 'text-destructive' : ''}>
+          {row.original.value > 0 ? '+' : ''}
+          {formatMoney(row.original.value)}
+        </span>
+      ),
+    },
+    {
+      accessorKey: 'earned',
+      header: 'Бонус',
+      meta: {
+        cellClassName: 'text-right font-bold',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const sale = row.original;
+
+        return (
+          <span
+            className={
+              sale.earned > 0 ? 'text-green-500' : 'text-muted-foreground'
+            }
+          >
+            {sale.rate > 0 && (
+              <span className="mr-2 rounded bg-green-500/10 px-1.5 py-0.5 text-xs text-green-600">
+                {sale.rate}%
+              </span>
+            )}
+            {sale.earned > 0 ? '+' : ''}
+            {formatMoney(sale.earned)}
+          </span>
+        );
+      },
+    },
+  ];
 
   return (
     <div className="p-6 md:p-8 space-y-6 max-w-[1200px] mx-auto">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">Моя смена</h1>
+          <h1 className="text-3xl font-bold tracking-tight">Мотивация</h1>
           <p className="text-muted-foreground mt-1">
-            Старт, завершение и отчет по текущей смене администратора
+            Смена администратора, правила начислений, прогресс бонусов и отчет
+            для копирования.
           </p>
         </div>
 
-        <div className="flex items-center gap-4 w-full sm:w-auto bg-card border rounded-lg p-2">
+        <div
+          className={`flex w-full items-center gap-4 rounded-lg border bg-card p-2 sm:w-auto ${
+            isLongShift ? 'border-amber-500/40 bg-amber-500/5' : ''
+          }`}
+        >
           {isShiftActive ? (
             <>
               <div className="flex flex-col px-2">
                 <span className="text-xs text-muted-foreground">
                   {activeShift?.adminName}
                 </span>
-                <span className="flex items-center gap-2 text-lg font-mono tracking-widest text-primary">
-                  <Clock className="w-5 h-5 animate-pulse" />
-                  {shiftStart ? formatDuration(now - shiftStart) : '00:00:00'}
+                <span
+                  className={`flex items-center gap-2 font-mono text-lg tracking-widest ${
+                    isLongShift ? 'text-amber-500' : 'text-primary'
+                  }`}
+                >
+                  {isLongShift ? (
+                    <AlertTriangle className="h-5 w-5" />
+                  ) : (
+                    <Clock className="h-5 w-5 animate-pulse" />
+                  )}
+                  {shiftStart ? formatDuration(shiftDurationMs) : '00:00:00'}
                 </span>
+                {isLongShift && (
+                  <span className="text-xs text-amber-500">
+                    Смена длится больше 16 часов
+                  </span>
+                )}
               </div>
               <Button
                 onClick={() => void handleEndShift()}
@@ -1233,6 +1484,15 @@ export default function AdminMotivationPage() {
         </div>
       </div>
 
+      {shiftStatusError && (
+        <ErrorState
+          compact
+          message={shiftStatusError}
+          onRetry={() => void fetchActiveShift()}
+          title="Статус смены не загрузился"
+        />
+      )}
+
       {canEditMotivation && (
         <>
           <Card>
@@ -1251,57 +1511,16 @@ export default function AdminMotivationPage() {
             </CardHeader>
             <CardContent className="pt-0 px-0">
               <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Правило</TableHead>
-                      <TableHead>Описание</TableHead>
-                      <TableHead className="w-[160px]">Значение</TableHead>
-                      <TableHead className="w-[110px]"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {rules.map((rule) => (
-                      <TableRow key={rule.key}>
-                        <TableCell className="font-medium">
-                          <div>{rule.label}</div>
-                          <div className="text-xs text-muted-foreground">
-                            Сейчас: {formatRuleValue(rule)}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground whitespace-normal">
-                          {rule.description}
-                        </TableCell>
-                        <TableCell>
-                          <Input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            value={ruleDrafts[rule.key] || ''}
-                            onChange={(event) =>
-                              setRuleDrafts({
-                                ...ruleDrafts,
-                                [rule.key]: event.target.value,
-                              })
-                            }
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => void handleSaveRule(rule)}
-                            disabled={
-                              Number(ruleDrafts[rule.key]) === rule.value
-                            }
-                          >
-                            Сохранить
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                <DataTable
+                  columns={hourlyRuleColumns}
+                  data={rules}
+                  errorText={hourlyRulesError || undefined}
+                  emptyText="Правила почасовой оплаты не настроены."
+                  loading={rulesLoading}
+                  loadingText="Загрузка правил почасовой оплаты..."
+                  minWidthClassName="min-w-[760px]"
+                  onRetry={() => void fetchMotivationSettings()}
+                />
               </div>
             </CardContent>
           </Card>
@@ -1321,9 +1540,13 @@ export default function AdminMotivationPage() {
             </CardHeader>
             <CardContent className="pt-4">
               {settingsError && (
-                <div className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-                  {settingsError}
-                </div>
+                <ErrorState
+                  compact
+                  className="mb-4"
+                  message={settingsError}
+                  onRetry={() => void fetchMotivationSettings()}
+                  title="Настройки мотивации не загрузились"
+                />
               )}
 
               {bonusRules.length === 0 ? (
@@ -1500,9 +1723,9 @@ export default function AdminMotivationPage() {
 
       {!isShiftActive ? (
         <Card className="border-dashed border-2 bg-muted/20">
-          <CardContent className="flex flex-col items-center justify-center py-20 text-center space-y-4">
-            <div className="p-4 rounded-full bg-primary/10">
-              <Wallet className="w-12 h-12 text-primary" />
+          <CardContent className="flex flex-col items-center justify-center py-12 text-center space-y-3">
+            <div className="p-3 rounded-full bg-primary/10">
+              <Wallet className="w-10 h-10 text-primary" />
             </div>
             <div>
               <h2 className="text-xl font-bold">Смена не начата</h2>
@@ -1590,7 +1813,15 @@ export default function AdminMotivationPage() {
               </div>
             </CardHeader>
             <CardContent className="pt-4 space-y-4">
-              {shiftStats?.ruleBreakdown.length === 0 ? (
+              {salesError && (
+                <ErrorState
+                  compact
+                  message={salesError}
+                  onRetry={() => void fetchFinances()}
+                  title="Продажи смены не загрузились"
+                />
+              )}
+              {salesError ? null : shiftStats?.ruleBreakdown.length === 0 ? (
                 <div className="rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
                   Активные мотивации не настроены.
                 </div>
@@ -1735,98 +1966,31 @@ export default function AdminMotivationPage() {
               </div>
             </CardHeader>
             <CardContent className="pt-0 px-0">
-              {shiftStats?.salesList.length === 0 ? (
+              {salesError && (
+                <div className="p-4">
+                  <ErrorState
+                    compact
+                    message={salesError}
+                    onRetry={() => void fetchFinances()}
+                    title="Операции смены не загрузились"
+                  />
+                </div>
+              )}
+              {!salesError && shiftStats?.salesList.length === 0 ? (
                 <div className="text-center text-muted-foreground py-12">
                   В эту смену продаж пока не было.
                 </div>
-              ) : (
+              ) : !salesError ? (
                 <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                  <Table>
-                    <TableHeader className="sticky top-0 bg-card z-10">
-                      <TableRow>
-                        <TableHead>Время</TableHead>
-                        <TableHead>Категория</TableHead>
-                        <TableHead>Тип</TableHead>
-                        <TableHead>Оплата</TableHead>
-                        <TableHead>Правило</TableHead>
-                        <TableHead className="text-right">Сумма</TableHead>
-                        <TableHead className="text-right">Бонус</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {shiftStats?.salesList.map((sale, idx) => (
-                        <TableRow key={idx} className="hover:bg-muted/50">
-                          <TableCell className="text-muted-foreground text-sm">
-                            {format(new Date(sale.date), 'HH:mm:ss')}
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            {sale.category}
-                          </TableCell>
-                          <TableCell>
-                            {sale.value < 0 ? (
-                              <Badge variant="outline" className="text-destructive">
-                                Возврат
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline">Продажа</Badge>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <div className="flex flex-col gap-1">
-                              <Badge variant="outline">
-                                {formatPaymentMethod(sale.paymentMethod)}
-                              </Badge>
-                              {sale.paymentMethod === 'mixed' && (
-                                <span className="text-xs text-muted-foreground">
-                                  нал {formatMoney(Number(sale.paymentCash) || 0)} ·
-                                  безнал{' '}
-                                  {formatMoney(Number(sale.paymentCashless) || 0)}
-                                </span>
-                              )}
-                            </div>
-                          </TableCell>
-                          <TableCell>
-                            {sale.bonusRuleNames.length > 0 ? (
-                              <div className="flex flex-wrap gap-1">
-                                {sale.bonusRuleNames.map((name) => (
-                                  <Badge key={name} variant="outline">
-                                    {name}
-                                  </Badge>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-muted-foreground">-</span>
-                            )}
-                          </TableCell>
-                          <TableCell
-                            className={`text-right ${
-                              sale.value < 0 ? 'text-destructive' : ''
-                            }`}
-                          >
-                            {sale.value > 0 ? '+' : ''}
-                            {formatMoney(sale.value)}
-                          </TableCell>
-                          <TableCell
-                            className={`text-right font-bold ${
-                              sale.earned > 0
-                                ? 'text-green-500'
-                                : 'text-muted-foreground'
-                            }`}
-                          >
-                            {sale.rate > 0 && (
-                              <span className="text-xs bg-green-500/10 text-green-600 px-1.5 py-0.5 rounded mr-2">
-                                {sale.rate}%
-                              </span>
-                            )}
-                            {sale.earned > 0 ? '+' : ''}
-                            {formatMoney(sale.earned)}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
+                  <DataTable
+                    columns={salesColumns}
+                    data={shiftStats?.salesList || []}
+                    emptyText="В эту смену продаж пока не было."
+                    minWidthClassName="min-w-[900px]"
+                    getRowClassName={() => 'hover:bg-muted/50'}
+                  />
                 </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
 

@@ -21,7 +21,7 @@ export function HelpTooltip({ children }: { children: ReactNode }) {
       <TooltipContent
         side="top"
         align="start"
-        className="max-w-[280px] leading-relaxed"
+        className="max-w-[280px] flex-col items-start leading-relaxed"
       >
         {children}
       </TooltipContent>

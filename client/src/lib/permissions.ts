@@ -3,6 +3,7 @@ import type { AccountRole } from '@/lib/roles';
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
   '/admin/audit': ['owner', 'manager'],
+  '/admin/bookings': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/trainer': ['owner', 'manager', 'trainer'],
   '/admin/client-bases': ['owner', 'manager'],
@@ -49,6 +50,10 @@ export function canExportFinance(role: AccountRole | null | undefined) {
 }
 
 export function canManageClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+}
+
+export function canManageBookings(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'admin']);
 }
 

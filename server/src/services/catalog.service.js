@@ -1,5 +1,6 @@
 const db = require('../../models');
 const { PNL_GROUPS, PNL_GROUP_VALUES } = require('../constants/catalog');
+const cacheService = require('./cache.service');
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -61,6 +62,29 @@ function serializeCategory(category) {
   };
 }
 
+function serializeRule(rule) {
+  const raw = rule.toJSON ? rule.toJSON() : rule;
+  return { ...raw };
+}
+
+function getCatalogListCacheKey(scope, query = {}) {
+  return cacheService.cacheKey(`catalog:${scope}:list`, {
+    status: query.status || 'active',
+  });
+}
+
+async function invalidateCatalogCategories() {
+  await cacheService.deleteByPrefix('catalog:categories:');
+}
+
+async function invalidateCatalogRules() {
+  await cacheService.deleteByPrefix('catalog:rules:');
+}
+
+async function invalidateCatalogCache() {
+  await Promise.all([invalidateCatalogCategories(), invalidateCatalogRules()]);
+}
+
 function getArchiveWhere(query = {}) {
   const status = query.status || 'active';
   if (status === 'all') return {};
@@ -95,12 +119,20 @@ async function assertCategoryNameAvailable(name, categoryId = null) {
 
 class CatalogService {
   // --- КАТЕГОРИИ ---
-  async getCategories(query = {}) {
+  async getCategoriesFromDb(query = {}) {
     const categories = await db.Category.findAll({
       where: getArchiveWhere(query),
       order: [['name', 'ASC']],
     });
     return categories.map(serializeCategory);
+  }
+
+  async getCategories(query = {}) {
+    return cacheService.rememberJson(
+      getCatalogListCacheKey('categories', query),
+      () => this.getCategoriesFromDb(query),
+      { ttlSeconds: 300 },
+    );
   }
 
   async createCategory(data) {
@@ -112,14 +144,16 @@ class CatalogService {
     await assertCategoryNameAvailable(name);
 
     try {
-      return serializeCategory(await db.Category.create({
+      const category = await db.Category.create({
         name,
         type,
         group,
         commissionPercent: normalizeCommissionPercent(data.commissionPercent),
         isActive: true,
         parentId: parent ? parent.id : null,
-      }));
+      });
+      await invalidateCatalogCategories();
+      return serializeCategory(category);
     } catch (error) {
       if (isUniqueError(error)) {
         throw appError('Категория с таким названием уже существует', 409);
@@ -196,7 +230,9 @@ class CatalogService {
     }
 
     try {
-      return serializeCategory(await category.update(payload));
+      const updatedCategory = await category.update(payload);
+      await invalidateCatalogCache();
+      return serializeCategory(updatedCategory);
     } catch (error) {
       if (isUniqueError(error)) {
         throw appError('Категория с таким названием уже существует', 409);
@@ -267,6 +303,7 @@ class CatalogService {
       }),
     );
 
+    await invalidateCatalogCache();
     return { success: true };
   }
 
@@ -313,6 +350,7 @@ class CatalogService {
       },
     );
 
+    await invalidateCatalogCache();
     return { success: true };
   }
 
@@ -397,14 +435,13 @@ class CatalogService {
         },
       },
     });
+    await invalidateCatalogCache();
     return { success: true };
   }
 
   // --- ПРАВИЛА (БЕЗ ХАРДКОДА!) ---
   async getUnmappedItems() {
-    const rules = await db.CatalogRule.findAll({
-      where: { status: 'active' },
-    });
+    const rules = await this.getRules({ status: 'active' });
     const mappedNames = new Set(
       rules.map((rule) => normalizeCategoryKey(rule.itemName)),
     );
@@ -426,11 +463,20 @@ class CatalogService {
     return unmapped;
   }
 
-  async getRules(query = {}) {
-    return await db.CatalogRule.findAll({
+  async getRulesFromDb(query = {}) {
+    const rules = await db.CatalogRule.findAll({
       order: [['createdAt', 'DESC']],
       where: getRuleArchiveWhere(query),
     });
+    return rules.map(serializeRule);
+  }
+
+  async getRules(query = {}) {
+    return cacheService.rememberJson(
+      getCatalogListCacheKey('rules', query),
+      () => this.getRulesFromDb(query),
+      { ttlSeconds: 300 },
+    );
   }
 
   async saveRule({ itemName, category }) {
@@ -447,12 +493,14 @@ class CatalogService {
       throw appError('Категория справочника не найдена', 404);
     }
 
-    return await db.CatalogRule.upsert({
+    const result = await db.CatalogRule.upsert({
       itemName: normalizedItemName,
       category: catalogCategory.name,
       status: 'active',
       archivedByCascadeCategoryId: null,
     });
+    await invalidateCatalogRules();
+    return result;
   }
 
   async deleteRule(id) {
@@ -462,6 +510,7 @@ class CatalogService {
       status: 'archived',
       archivedByCascadeCategoryId: null,
     });
+    await invalidateCatalogRules();
     return rule;
   }
 
@@ -480,6 +529,7 @@ class CatalogService {
       status: 'active',
       archivedByCascadeCategoryId: null,
     });
+    await invalidateCatalogRules();
     return rule;
   }
 
@@ -490,6 +540,7 @@ class CatalogService {
       throw appError('Удалять безвозвратно можно только правило из архива', 409);
     }
     await rule.destroy();
+    await invalidateCatalogRules();
     return { success: true };
   }
 }

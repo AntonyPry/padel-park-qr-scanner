@@ -90,6 +90,34 @@ module.exports = (sequelize, DataTypes) => {
       as: 'clientSavedViews',
       foreignKey: 'accountId',
     });
+    Account.hasMany(models.Booking, {
+      as: 'createdBookings',
+      foreignKey: 'createdByAccountId',
+    });
+    Account.hasMany(models.Booking, {
+      as: 'updatedBookings',
+      foreignKey: 'updatedByAccountId',
+    });
+    Account.hasMany(models.BookingChangeLog, {
+      as: 'bookingChangeLogs',
+      foreignKey: 'actorAccountId',
+    });
+    Account.hasMany(models.BookingSeries, {
+      as: 'createdBookingSeries',
+      foreignKey: 'createdByAccountId',
+    });
+    Account.hasMany(models.BookingSeries, {
+      as: 'updatedBookingSeries',
+      foreignKey: 'updatedByAccountId',
+    });
+    Account.hasMany(models.CourtBlock, {
+      as: 'createdCourtBlocks',
+      foreignKey: 'createdByAccountId',
+    });
+    Account.hasMany(models.CourtBlock, {
+      as: 'updatedCourtBlocks',
+      foreignKey: 'updatedByAccountId',
+    });
   };
 
   return Account;

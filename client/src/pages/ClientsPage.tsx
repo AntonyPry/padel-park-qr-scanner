@@ -1,9 +1,21 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  type ComponentProps,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   Activity,
   Archive,
   ArchiveRestore,
+  CalendarClock,
   CalendarDays,
+  Copy,
   Dumbbell,
   Eye,
   GitMerge,
@@ -11,14 +23,20 @@ import {
   MessageSquareText,
   Pencil,
   Phone,
+  PhoneCall,
   Plus,
   RefreshCw,
+  RotateCcw,
   Save,
   Search,
   Trash2,
   UserRoundCheck,
   Users,
+  Repeat2,
 } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -32,6 +50,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { DataTable } from '@/components/data-table';
+import { ErrorState } from '@/components/error-state';
 import { Input } from '@/components/ui/input';
 import {
   Pagination,
@@ -50,6 +70,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import { toast } from '@/components/ui/toast';
+import {
   Table,
   TableBody,
   TableCell,
@@ -57,6 +83,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
+import {
+  HelpTooltip,
+  MetricLabel,
+} from '@/components/dashboard-metric';
 import { apiFetch } from '@/lib/api';
 import {
   canManageClients,
@@ -71,11 +101,24 @@ import { useAuth } from '@/lib/useAuth';
 
 type ClientStatus = 'active' | 'archived';
 type ClientSegment = 'all' | 'new' | 'regular' | 'inactive' | 'no_visits';
+type CallTaskClientStatus =
+  | 'new'
+  | 'no_answer'
+  | 'callback'
+  | 'doubting'
+  | 'booked'
+  | 'refused';
 
 interface ClientStats {
   firstVisitAt?: string | null;
   lastVisitAt?: string | null;
   visitCount: number;
+}
+
+interface ClientTrainingSummary {
+  latestAt?: string | null;
+  latestLevel?: TrainingLevel | null;
+  notesCount: number;
 }
 
 interface Client {
@@ -96,6 +139,7 @@ interface Client {
   createdAt: string;
   updatedAt: string;
   stats: ClientStats;
+  training?: ClientTrainingSummary;
 }
 
 interface ClientVisit {
@@ -121,6 +165,10 @@ interface ClientsResponse {
 }
 
 interface ClientDetails {
+  activeCallTasks: ClientActiveCallTask[];
+  bookingSeries: ClientBookingSeries[];
+  bookingStats: ClientBookingStats;
+  bookings: ClientBooking[];
   client: Client;
   duplicateCandidates: Client[];
   mergedInto?: Client | null;
@@ -129,7 +177,32 @@ interface ClientDetails {
   visits: ClientVisit[];
 }
 
+interface ClientActiveCallTask {
+  assignedTo?: {
+    email?: string;
+    id: number;
+    name: string;
+    role?: string;
+  } | null;
+  clientBase?: {
+    id: number;
+    name: string;
+  } | null;
+  contactedAt?: string | null;
+  deadlineAt?: string | null;
+  description?: string;
+  id: number;
+  status: CallTaskClientStatus;
+  summary?: string;
+  taskClientId: number;
+  taskStatus?: 'backlog' | 'in_progress' | string | null;
+  title: string;
+  updatedAt?: string | null;
+}
+
 type ClientTimelineType =
+  | 'booking'
+  | 'booking_series'
   | 'call_attempt'
   | 'call_task'
   | 'client_change'
@@ -169,10 +242,74 @@ interface ClientSavedViewFilters {
   source?: string;
   sourceId?: number | string;
   status?: 'active' | 'archived' | 'all';
+  trainingLevel?: TrainingLevel | 'all';
   visitCategory?: string;
   visitCategoryId?: number;
   visitCountMax?: number;
   visitCountMin?: number;
+}
+
+interface ClientBookingCourt {
+  id: number;
+  name: string;
+  type: string;
+}
+
+interface ClientBookingSeries {
+  archiveReason?: string | null;
+  archivedAt?: string | null;
+  comment?: string | null;
+  court?: ClientBookingCourt | null;
+  courtId: number;
+  createdAt: string;
+  durationMinutes: number;
+  endsOn: string;
+  id: number;
+  name: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  price?: number | null;
+  startTime: string;
+  startsOn: string;
+  status: 'active' | 'archived';
+  updatedAt: string;
+  weekday: number;
+}
+
+interface ClientBooking {
+  bookingSeriesId?: number | null;
+  cancellationReason?: string | null;
+  canceledAt?: string | null;
+  comment?: string | null;
+  court?: ClientBookingCourt | null;
+  courtId: number;
+  createdAt: string;
+  durationMinutes: number;
+  endsAt: string;
+  id: number;
+  paidAmount: number;
+  paymentMethod: string;
+  paymentStatus: string;
+  price: number;
+  series?: {
+    id: number;
+    name: string;
+    status: string;
+  } | null;
+  source: string;
+  startsAt: string;
+  status: string;
+  updatedAt: string;
+}
+
+interface ClientBookingStats {
+  activeCount: number;
+  canceledCount: number;
+  nextBookingAt?: string | null;
+  paidAmount: number;
+  plannedAmount: number;
+  totalCount: number;
+  upcomingCount: number;
 }
 
 interface TrainingNote {
@@ -279,6 +416,24 @@ const EMPTY_CALL_TASK_FORM: ClientCallTaskFormState = {
   dueAt: '',
   title: '',
 };
+const clientFormSchema = z.object({
+  name: z.string().trim().min(2, 'Введите имя клиента'),
+  note: z.string(),
+  phone: z.string().refine((value) => getPhoneDigits(value).length === 10, {
+    message: 'Введите полный номер телефона',
+  }),
+  source: z.string(),
+  sourceId: z.string().min(1, 'Выберите источник'),
+  status: z.enum(['active', 'archived']),
+  telegramId: z.string(),
+  vkId: z.string(),
+  webId: z.string(),
+});
+const clientCallTaskFormSchema = z.object({
+  description: z.string(),
+  dueAt: z.string(),
+  title: z.string().trim().min(2, 'Введите название задачи'),
+});
 
 const CLIENT_SEGMENT_OPTIONS: Array<{
   value: ClientSegment;
@@ -313,11 +468,45 @@ const CLIENT_SEGMENT_OPTIONS: Array<{
 ];
 
 const TIMELINE_TYPE_LABELS: Record<ClientTimelineType, string> = {
+  booking: 'Бронь',
+  booking_series: 'Постоянка',
   call_attempt: 'Попытка',
   call_task: 'Обзвон',
   client_change: 'Изменение',
   training: 'Тренировка',
   visit: 'Визит',
+};
+
+const BOOKING_STATUS_LABELS: Record<string, string> = {
+  arrived: 'Клиент пришел',
+  canceled: 'Отменена',
+  confirmed: 'Подтверждена',
+  new: 'Новая',
+  no_show: 'Не пришел',
+};
+
+const PAYMENT_STATUS_LABELS: Record<string, string> = {
+  paid: 'Оплачено',
+  partial: 'Частично',
+  refunded: 'Возврат',
+  unpaid: 'Не оплачено',
+};
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  cash: 'Наличные',
+  cashless: 'Безнал',
+  mixed: 'Смешанная',
+  unknown: 'Не указан',
+};
+
+const WEEKDAY_LABELS: Record<number, string> = {
+  1: 'Пн',
+  2: 'Вт',
+  3: 'Ср',
+  4: 'Чт',
+  5: 'Пт',
+  6: 'Сб',
+  7: 'Вс',
 };
 
 const CALL_CLIENT_STATUS_LABELS: Record<string, string> = {
@@ -353,6 +542,11 @@ function formatClientPhone(value: string) {
   return formatted;
 }
 
+function getPhoneHref(value: string) {
+  const digits = getPhoneDigits(value);
+  return digits.length === 10 ? `tel:+7${digits}` : undefined;
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return '-';
   return new Intl.DateTimeFormat('ru-RU', {
@@ -366,6 +560,21 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat('ru-RU', {
     dateStyle: 'short',
   }).format(new Date(value));
+}
+
+function formatCurrency(value?: number | null) {
+  return `${Number(value || 0).toLocaleString('ru-RU')} ₽`;
+}
+
+function getLocalDateOnly(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0'),
+  ].join('-');
 }
 
 async function readError(response: Response, fallback: string) {
@@ -472,6 +681,8 @@ function getDuplicateGroupLabel(group: DuplicateGroup) {
 }
 
 function getTimelineIcon(type: ClientTimelineType) {
+  if (type === 'booking') return CalendarClock;
+  if (type === 'booking_series') return Repeat2;
   if (type === 'visit') return CalendarDays;
   if (type === 'training') return Dumbbell;
   if (type === 'call_task' || type === 'call_attempt') return MessageSquareText;
@@ -489,8 +700,30 @@ function getTimelineMeta(item: ClientTimelineItem) {
       ? String(meta.keyNumber)
       : '';
   const level = typeof meta.level === 'string' ? meta.level : '';
+  const courtName = typeof meta.courtName === 'string' ? meta.courtName : '';
+  const paymentStatus =
+    typeof meta.paymentStatus === 'string' ? meta.paymentStatus : '';
+  const durationMinutes =
+    typeof meta.durationMinutes === 'number' ? meta.durationMinutes : null;
 
-  if (status) parts.push(CALL_CLIENT_STATUS_LABELS[status] || status);
+  if (status) {
+    parts.push(
+      item.type === 'booking'
+        ? BOOKING_STATUS_LABELS[status] || status
+        : item.type === 'booking_series'
+          ? status === 'active'
+            ? 'Активна'
+            : status === 'archived'
+              ? 'Архив'
+              : status
+        : CALL_CLIENT_STATUS_LABELS[status] || status,
+    );
+  }
+  if (courtName) parts.push(courtName);
+  if (durationMinutes) parts.push(`${durationMinutes} мин`);
+  if (paymentStatus) {
+    parts.push(PAYMENT_STATUS_LABELS[paymentStatus] || paymentStatus);
+  }
   if (deadlineAt) parts.push(`дедлайн ${formatDateTime(deadlineAt)}`);
   if (keyNumber) parts.push(`ключ ${keyNumber}`);
   if (level) parts.push(`уровень ${level}`);
@@ -503,44 +736,172 @@ function normalizeSavedFilterValue(value?: string | number) {
   return String(value);
 }
 
+function normalizeNumericFilterInput(value?: string | number) {
+  if (value === undefined || value === null || value === '') return '';
+  const numberValue = Number(value);
+  return Number.isFinite(numberValue) ? String(numberValue) : '';
+}
+
+function appendNumericFilter(
+  params: URLSearchParams,
+  key: string,
+  value: string,
+) {
+  const numberValue = Number(value);
+  if (Number.isFinite(numberValue) && numberValue >= 0) {
+    params.set(key, String(numberValue));
+  }
+}
+
+function getQueryEnum<T extends string>(
+  params: URLSearchParams,
+  key: string,
+  allowedValues: readonly T[],
+  fallback: T,
+) {
+  const value = params.get(key);
+  return value && (allowedValues as readonly string[]).includes(value)
+    ? (value as T)
+    : fallback;
+}
+
+function getQueryPositiveInteger(value: string | null) {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function getQueryNumericInput(params: URLSearchParams, key: string) {
+  return normalizeNumericFilterInput(params.get(key) || undefined);
+}
+
+function getQuerySelectId(params: URLSearchParams, key: string) {
+  const id = getQueryPositiveInteger(params.get(key));
+  return id ? String(id) : 'all';
+}
+
+function getQueryText(params: URLSearchParams, key: string) {
+  return params.get(key)?.trim() || '';
+}
+
+function getComparableSavedFilters(filters: ClientSavedViewFilters) {
+  return {
+    lastVisitDaysFrom: normalizeNumericFilterInput(filters.lastVisitDaysFrom),
+    lastVisitDaysTo: normalizeNumericFilterInput(filters.lastVisitDaysTo),
+    q: filters.q || '',
+    segment: filters.segment || 'all',
+    sourceId: normalizeSavedFilterValue(filters.sourceId),
+    status: filters.status || 'active',
+    trainingLevel: filters.trainingLevel || 'all',
+    visitCategoryId: normalizeSavedFilterValue(filters.visitCategoryId),
+    visitCountMax: normalizeNumericFilterInput(filters.visitCountMax),
+    visitCountMin: normalizeNumericFilterInput(filters.visitCountMin),
+  };
+}
+
+function areSavedFiltersEqual(
+  left: ClientSavedViewFilters,
+  right: ClientSavedViewFilters,
+) {
+  return (
+    JSON.stringify(getComparableSavedFilters(left)) ===
+    JSON.stringify(getComparableSavedFilters(right))
+  );
+}
+
+function FieldError({ children }: { children?: ReactNode }) {
+  if (!children) return null;
+  return <div className="mt-1 text-xs text-destructive">{children}</div>;
+}
+
+function TooltipIconButton({
+  children,
+  label,
+  ...props
+}: ComponentProps<typeof Button> & { label: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button aria-label={label} title={label} {...props}>
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export default function ClientsPage() {
   const { account } = useAuth();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const canEdit = canManageClients(account?.role);
   const canCreateCallTask = canManageCallTasks(account?.role);
   const canMerge = canMergeClients(account?.role);
   const canViewTraining = canViewTrainingNotes(account?.role);
   const canEditTraining = canManageTrainingNotes(account?.role);
   const isTrainerAccount = account?.role === 'trainer';
-  const clientTableColSpan = isTrainerAccount ? 6 : 7;
 
   const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
   const [clients, setClients] = useState<Client[]>([]);
   const [sources, setSources] = useState<ReferenceItem[]>([]);
+  const [visitCategories, setVisitCategories] = useState<ReferenceItem[]>([]);
   const [savedViews, setSavedViews] = useState<ClientSavedView[]>([]);
   const [selectedSavedViewId, setSelectedSavedViewId] = useState('none');
   const [savedViewDialogOpen, setSavedViewDialogOpen] = useState(false);
   const [savedViewName, setSavedViewName] = useState('');
   const [savedViewSaving, setSavedViewSaving] = useState(false);
   const [callTaskDialogOpen, setCallTaskDialogOpen] = useState(false);
-  const [callTaskForm, setCallTaskForm] = useState<ClientCallTaskFormState>({
-    ...EMPTY_CALL_TASK_FORM,
-  });
   const [callTaskSaving, setCallTaskSaving] = useState(false);
   const [referencesLoading, setReferencesLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [q, setQ] = useState('');
-  const [sourceId, setSourceId] = useState('all');
-  const [segment, setSegment] = useState<ClientSegment>('all');
-  const [status, setStatus] = useState<'active' | 'archived' | 'all'>('active');
-  const [page, setPage] = useState(1);
+  const [q, setQ] = useState(() => getQueryText(searchParams, 'q'));
+  const [sourceId, setSourceId] = useState(() =>
+    getQuerySelectId(searchParams, 'sourceId'),
+  );
+  const [segment, setSegment] = useState<ClientSegment>(() =>
+    getQueryEnum(
+      searchParams,
+      'segment',
+      CLIENT_SEGMENT_OPTIONS.map((option) => option.value),
+      'all',
+    ),
+  );
+  const [status, setStatus] = useState<'active' | 'archived' | 'all'>(() =>
+    getQueryEnum(searchParams, 'status', ['active', 'archived', 'all'], 'active'),
+  );
+  const [trainingLevel, setTrainingLevel] = useState<TrainingLevel | 'all'>(() =>
+    getQueryEnum(
+      searchParams,
+      'trainingLevel',
+      ['all', ...TRAINING_LEVELS],
+      'all',
+    ),
+  );
+  const [visitCategoryId, setVisitCategoryId] = useState(() =>
+    getQuerySelectId(searchParams, 'visitCategoryId'),
+  );
+  const [visitCountMin, setVisitCountMin] = useState(() =>
+    getQueryNumericInput(searchParams, 'visitCountMin'),
+  );
+  const [visitCountMax, setVisitCountMax] = useState(() =>
+    getQueryNumericInput(searchParams, 'visitCountMax'),
+  );
+  const [lastVisitDaysFrom, setLastVisitDaysFrom] = useState(() =>
+    getQueryNumericInput(searchParams, 'lastVisitDaysFrom'),
+  );
+  const [lastVisitDaysTo, setLastVisitDaysTo] = useState(() =>
+    getQueryNumericInput(searchParams, 'lastVisitDaysTo'),
+  );
+  const [page, setPage] = useState(() => getQueryPositiveInteger(searchParams.get('page')) || 1);
+  const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
   const [details, setDetails] = useState<ClientDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
-  const [form, setForm] = useState<ClientFormState>(EMPTY_FORM);
   const [duplicateWarning, setDuplicateWarning] = useState<Client | null>(null);
   const [duplicateWarningMessage, setDuplicateWarningMessage] = useState<
     string | null
@@ -561,6 +922,31 @@ export default function ClientsPage() {
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const clientsRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
+  const previousFilterResetKeyRef = useRef<string | null>(null);
+  const clientForm = useForm<ClientFormState>({
+    defaultValues: EMPTY_FORM,
+    resolver: zodResolver(clientFormSchema),
+  });
+  const clientCallTaskForm = useForm<ClientCallTaskFormState>({
+    defaultValues: EMPTY_CALL_TASK_FORM,
+    resolver: zodResolver(clientCallTaskFormSchema),
+  });
+  const form = clientForm.watch();
+  const callTaskForm = clientCallTaskForm.watch();
+  const setForm = (nextForm: ClientFormState) => {
+    clientForm.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
+  const setCallTaskForm = (nextForm: ClientCallTaskFormState) => {
+    clientCallTaskForm.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  };
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -572,9 +958,27 @@ export default function ClientsPage() {
 
     if (q.trim()) params.set('q', q.trim());
     if (sourceId !== 'all') params.set('sourceId', sourceId);
+    if (visitCategoryId !== 'all') params.set('visitCategoryId', visitCategoryId);
+    if (trainingLevel !== 'all') params.set('trainingLevel', trainingLevel);
+    appendNumericFilter(params, 'visitCountMin', visitCountMin);
+    appendNumericFilter(params, 'visitCountMax', visitCountMax);
+    appendNumericFilter(params, 'lastVisitDaysFrom', lastVisitDaysFrom);
+    appendNumericFilter(params, 'lastVisitDaysTo', lastVisitDaysTo);
 
     return params.toString();
-  }, [page, q, segment, sourceId, status]);
+  }, [
+    lastVisitDaysFrom,
+    lastVisitDaysTo,
+    page,
+    q,
+    segment,
+    sourceId,
+    status,
+    trainingLevel,
+    visitCategoryId,
+    visitCountMax,
+    visitCountMin,
+  ]);
 
   const currentSavedViewFilters = useMemo<ClientSavedViewFilters>(() => {
     const filters: ClientSavedViewFilters = {
@@ -584,15 +988,67 @@ export default function ClientsPage() {
 
     if (q.trim()) filters.q = q.trim();
     if (sourceId !== 'all') filters.sourceId = Number(sourceId);
+    if (visitCategoryId !== 'all') filters.visitCategoryId = Number(visitCategoryId);
+    if (trainingLevel !== 'all') filters.trainingLevel = trainingLevel;
+    if (visitCountMin) filters.visitCountMin = Number(visitCountMin);
+    if (visitCountMax) filters.visitCountMax = Number(visitCountMax);
+    if (lastVisitDaysFrom) filters.lastVisitDaysFrom = Number(lastVisitDaysFrom);
+    if (lastVisitDaysTo) filters.lastVisitDaysTo = Number(lastVisitDaysTo);
 
     return filters;
-  }, [q, segment, sourceId, status]);
+  }, [
+    lastVisitDaysFrom,
+    lastVisitDaysTo,
+    q,
+    segment,
+    sourceId,
+    status,
+    trainingLevel,
+    visitCategoryId,
+    visitCountMax,
+    visitCountMin,
+  ]);
 
   const selectedSavedView = useMemo(
     () =>
       savedViews.find((view) => String(view.id) === selectedSavedViewId) ||
       null,
     [savedViews, selectedSavedViewId],
+  );
+  const selectedSavedViewDirty = useMemo(
+    () =>
+      Boolean(
+        selectedSavedView &&
+          !areSavedFiltersEqual(selectedSavedView.filters, currentSavedViewFilters),
+      ),
+    [currentSavedViewFilters, selectedSavedView],
+  );
+  const filterResetKey = useMemo(
+    () =>
+      JSON.stringify({
+        lastVisitDaysFrom,
+        lastVisitDaysTo,
+        q,
+        segment,
+        sourceId,
+        status,
+        trainingLevel,
+        visitCategoryId,
+        visitCountMax,
+        visitCountMin,
+      }),
+    [
+      lastVisitDaysFrom,
+      lastVisitDaysTo,
+      q,
+      segment,
+      sourceId,
+      status,
+      trainingLevel,
+      visitCategoryId,
+      visitCountMax,
+      visitCountMin,
+    ],
   );
 
   const fetchClients = useCallback(async () => {
@@ -611,6 +1067,7 @@ export default function ClientsPage() {
       const data = (await res.json()) as ClientsResponse;
       if (requestId !== clientsRequestIdRef.current) return;
       setClients(data.items);
+      setTotal(data.total);
       setTotalPages(data.totalPages);
     } catch {
       if (requestId !== clientsRequestIdRef.current) return;
@@ -625,9 +1082,15 @@ export default function ClientsPage() {
   const fetchClientSources = useCallback(async () => {
     setReferencesLoading(true);
     try {
-      setSources(await fetchReferences('client-sources', 'all'));
+      const [nextSources, nextVisitCategories] = await Promise.all([
+        fetchReferences('client-sources', 'all'),
+        fetchReferences('visit-categories', 'all'),
+      ]);
+      setSources(nextSources);
+      setVisitCategories(nextVisitCategories);
     } catch {
       setSources([]);
+      setVisitCategories([]);
     } finally {
       setReferencesLoading(false);
     }
@@ -689,8 +1152,15 @@ export default function ClientsPage() {
   }, [canMerge, fetchDuplicateGroups, viewMode]);
 
   useEffect(() => {
+    if (previousFilterResetKeyRef.current === null) {
+      previousFilterResetKeyRef.current = filterResetKey;
+      return;
+    }
+    if (previousFilterResetKeyRef.current === filterResetKey) return;
+
+    previousFilterResetKeyRef.current = filterResetKey;
     setPage(1);
-  }, [q, segment, sourceId, status]);
+  }, [filterResetKey]);
 
   useEffect(() => {
     const digits = getPhoneDigits(form.phone);
@@ -767,7 +1237,7 @@ export default function ClientsPage() {
 
   const openCreate = () => {
     setEditingClient(null);
-    setForm(getEmptyClientForm());
+    clientForm.reset(getEmptyClientForm());
     setDuplicateWarning(null);
     setDuplicateWarningMessage(null);
     setFormOpen(true);
@@ -775,7 +1245,7 @@ export default function ClientsPage() {
 
   const openEdit = (client: Client) => {
     setEditingClient(client);
-    setForm({
+    clientForm.reset({
       name: client.name,
       phone: client.phone,
       sourceId: client.sourceId
@@ -795,7 +1265,7 @@ export default function ClientsPage() {
 
   const openRestoreFromArchive = (client: Client) => {
     setEditingClient(client);
-    setForm({
+    clientForm.reset({
       name: client.name,
       phone: client.phone,
       sourceId: client.sourceId
@@ -819,6 +1289,12 @@ export default function ClientsPage() {
     setSourceId(normalizeSavedFilterValue(filters.sourceId));
     setSegment((filters.segment || 'all') as ClientSegment);
     setStatus((filters.status || 'active') as 'active' | 'archived' | 'all');
+    setTrainingLevel((filters.trainingLevel || 'all') as TrainingLevel | 'all');
+    setVisitCategoryId(normalizeSavedFilterValue(filters.visitCategoryId));
+    setVisitCountMin(normalizeNumericFilterInput(filters.visitCountMin));
+    setVisitCountMax(normalizeNumericFilterInput(filters.visitCountMax));
+    setLastVisitDaysFrom(normalizeNumericFilterInput(filters.lastVisitDaysFrom));
+    setLastVisitDaysTo(normalizeNumericFilterInput(filters.lastVisitDaysTo));
     setPage(1);
   };
 
@@ -830,6 +1306,21 @@ export default function ClientsPage() {
     if (view) applySavedView(view);
   };
 
+  const resetClientFilters = () => {
+    setQ('');
+    setSourceId('all');
+    setSegment('all');
+    setStatus('active');
+    setTrainingLevel('all');
+    setVisitCategoryId('all');
+    setVisitCountMin('');
+    setVisitCountMax('');
+    setLastVisitDaysFrom('');
+    setLastVisitDaysTo('');
+    setSelectedSavedViewId('none');
+    setPage(1);
+  };
+
   const openSavedViewDialog = () => {
     setSavedViewName(selectedSavedView?.name || '');
     setSavedViewDialogOpen(true);
@@ -837,7 +1328,7 @@ export default function ClientsPage() {
 
   const openCallTaskDialog = () => {
     if (!details?.client) return;
-    setCallTaskForm({
+    clientCallTaskForm.reset({
       description: '',
       dueAt: '',
       title: `Обзвон: ${details.client.name}`,
@@ -858,7 +1349,7 @@ export default function ClientsPage() {
       });
 
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось сохранить фильтр'));
+        toast.error(await readError(res, 'Не удалось сохранить фильтр'));
         return;
       }
 
@@ -868,6 +1359,7 @@ export default function ClientsPage() {
       );
       setSelectedSavedViewId(String(view.id));
       setSavedViewDialogOpen(false);
+      toast.success('Фильтр сохранен');
     } finally {
       setSavedViewSaving(false);
     }
@@ -878,12 +1370,13 @@ export default function ClientsPage() {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить фильтр'));
+      toast.error(await readError(res, 'Не удалось удалить фильтр'));
       return;
     }
 
     setSavedViews((prev) => prev.filter((item) => item.id !== view.id));
     setSelectedSavedViewId('none');
+    toast.success('Фильтр удален');
   };
 
   const updateSelectedSavedView = async (view: ClientSavedView) => {
@@ -896,7 +1389,7 @@ export default function ClientsPage() {
     });
 
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось обновить фильтр'));
+      toast.error(await readError(res, 'Не удалось обновить фильтр'));
       return;
     }
 
@@ -904,6 +1397,7 @@ export default function ClientsPage() {
     setSavedViews((prev) =>
       prev.map((item) => (item.id === updated.id ? updated : item)),
     );
+    toast.success('Фильтр обновлен');
   };
 
   const requestUpdateSavedView = (view: ClientSavedView) => {
@@ -926,7 +1420,7 @@ export default function ClientsPage() {
     });
   };
 
-  const loadDetails = async (clientId: number) => {
+  const loadDetails = useCallback(async (clientId: number) => {
     const requestId = detailsRequestIdRef.current + 1;
     detailsRequestIdRef.current = requestId;
     setDetailsLoading(true);
@@ -934,7 +1428,7 @@ export default function ClientsPage() {
       const res = await apiFetch(`/api/clients/${clientId}`);
       if (requestId !== detailsRequestIdRef.current) return;
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось открыть клиента'));
+        toast.error(await readError(res, 'Не удалось открыть клиента'));
         return;
       }
 
@@ -942,8 +1436,21 @@ export default function ClientsPage() {
       if (requestId !== detailsRequestIdRef.current) return;
       setDetails({
         ...data,
+        activeCallTasks: data.activeCallTasks || [],
+        bookingSeries: data.bookingSeries || [],
+        bookingStats: data.bookingStats || {
+          activeCount: 0,
+          canceledCount: 0,
+          nextBookingAt: null,
+          paidAmount: 0,
+          plannedAmount: 0,
+          totalCount: 0,
+          upcomingCount: 0,
+        },
+        bookings: data.bookings || [],
         timeline: data.timeline || [],
         trainingNotes: data.trainingNotes || [],
+        visits: data.visits || [],
       });
       setTrainingForm({ ...EMPTY_TRAINING_FORM, trainedAt: getTodayDate() });
       setSelectedMergeIds([]);
@@ -952,14 +1459,26 @@ export default function ClientsPage() {
         setDetailsLoading(false);
       }
     }
-  };
+  }, []);
 
   const closeDetails = () => {
     detailsRequestIdRef.current += 1;
     setDetailsLoading(false);
     setDetails(null);
     setSelectedMergeIds([]);
+    if (searchParams.has('clientId')) {
+      const nextSearchParams = new URLSearchParams(searchParams);
+      nextSearchParams.delete('clientId');
+      setSearchParams(nextSearchParams, { replace: true });
+    }
   };
+
+  const deepLinkedClientId = getQueryPositiveInteger(searchParams.get('clientId'));
+
+  useEffect(() => {
+    if (!deepLinkedClientId) return;
+    void loadDetails(deepLinkedClientId);
+  }, [deepLinkedClientId, loadDetails]);
 
   const saveClient = async (payload: ClientPayload) => {
     const res = await apiFetch(
@@ -982,29 +1501,28 @@ export default function ClientsPage() {
         return;
       }
 
-      alert(apiError.error);
+      toast.error(apiError.error);
       return;
     }
 
     const saved = (await res.json()) as ClientDetails;
     setFormOpen(false);
     setDetails(saved);
+    toast.success(editingClient ? 'Клиент обновлен' : 'Клиент создан');
     void fetchClients();
   };
 
-  const handleSave = async (event: React.FormEvent) => {
-    event.preventDefault();
-
+  const handleSave = clientForm.handleSubmit(async (values) => {
     const payload: ClientPayload = {
-      name: form.name.trim(),
-      phone: form.phone,
-      sourceId: form.sourceId ? Number(form.sourceId) : undefined,
-      source: form.source.trim(),
-      telegramId: form.telegramId.trim(),
-      vkId: form.vkId.trim(),
-      webId: form.webId.trim(),
-      note: form.note.trim(),
-      status: form.status,
+      name: values.name.trim(),
+      phone: values.phone,
+      sourceId: values.sourceId ? Number(values.sourceId) : undefined,
+      source: values.source.trim(),
+      telegramId: values.telegramId.trim(),
+      vkId: values.vkId.trim(),
+      webId: values.webId.trim(),
+      note: values.note.trim(),
+      status: values.status,
     };
 
     if (editingClient && editingClient.status !== payload.status) {
@@ -1026,7 +1544,10 @@ export default function ClientsPage() {
     }
 
     await saveClient(payload);
-  };
+  }, (errors) => {
+    const firstError = Object.values(errors)[0];
+    toast.error(firstError?.message || 'Проверьте поля клиента');
+  });
 
   const executeClientStatusUpdate = async (
     client: Client,
@@ -1039,7 +1560,7 @@ export default function ClientsPage() {
     });
 
     if (!res.ok) {
-      alert(
+      toast.error(
         await readError(
           res,
           isArchiving
@@ -1055,6 +1576,7 @@ export default function ClientsPage() {
       current?.client.id === client.id ? saved : current,
     );
     void fetchClients();
+    toast.success(isArchiving ? 'Клиент отправлен в архив' : 'Клиент восстановлен');
   };
 
   const requestClientStatusUpdate = (
@@ -1080,7 +1602,7 @@ export default function ClientsPage() {
     });
 
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить клиента из архива'));
+      toast.error(await readError(res, 'Не удалось удалить клиента из архива'));
       return;
     }
 
@@ -1088,6 +1610,7 @@ export default function ClientsPage() {
       setDetails(null);
     }
     await fetchClients();
+    toast.success('Клиент удален из архива');
   };
 
   const requestPermanentDelete = (client: Client) => {
@@ -1127,7 +1650,7 @@ export default function ClientsPage() {
       );
 
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось сохранить запись тренировки'));
+        toast.error(await readError(res, 'Не удалось сохранить запись тренировки'));
         return;
       }
 
@@ -1135,13 +1658,13 @@ export default function ClientsPage() {
       setDetails({ ...details, trainingNotes });
       setTrainingForm({ ...EMPTY_TRAINING_FORM, trainedAt: getTodayDate() });
       void loadDetails(details.client.id);
+      toast.success('Запись тренировки сохранена');
     } finally {
       setTrainingSaving(false);
     }
   };
 
-  const createClientCallTask = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const createClientCallTask = clientCallTaskForm.handleSubmit(async (values) => {
     if (!details?.client) return;
 
     setCallTaskSaving(true);
@@ -1151,23 +1674,43 @@ export default function ClientsPage() {
         {
           method: 'POST',
           body: JSON.stringify({
-            description: callTaskForm.description,
-            dueAt: callTaskForm.dueAt || null,
-            title: callTaskForm.title,
+            description: values.description,
+            dueAt: values.dueAt || null,
+            title: values.title,
           }),
         },
       );
 
       if (!res.ok) {
-        alert(await readError(res, 'Не удалось создать задачу обзвона'));
+        toast.error(await readError(res, 'Не удалось создать задачу обзвона'));
         return;
       }
 
       setCallTaskDialogOpen(false);
-      setCallTaskForm({ ...EMPTY_CALL_TASK_FORM });
+      clientCallTaskForm.reset({ ...EMPTY_CALL_TASK_FORM });
       void loadDetails(details.client.id);
+      toast.success('Задача обзвона создана');
     } finally {
       setCallTaskSaving(false);
+    }
+  }, (errors) => {
+    const firstError = Object.values(errors)[0];
+    toast.error(firstError?.message || 'Проверьте поля задачи');
+  });
+
+  const openBookingDay = (startsAt?: string | null) => {
+    const date = getLocalDateOnly(startsAt);
+    if (!date) return;
+    closeDetails();
+    navigate(`/admin/bookings?date=${date}`);
+  };
+
+  const copyClientPhone = async (phone: string) => {
+    try {
+      await navigator.clipboard.writeText(phone);
+      toast.success('Телефон скопирован');
+    } catch {
+      toast.error('Не удалось скопировать телефон');
     }
   };
 
@@ -1224,7 +1767,7 @@ export default function ClientsPage() {
     });
 
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось объединить клиентов'));
+      toast.error(await readError(res, 'Не удалось объединить клиентов'));
       return;
     }
 
@@ -1235,6 +1778,7 @@ export default function ClientsPage() {
     setSelectedMergeIds([]);
     void fetchClients();
     if (viewMode === 'duplicates') void fetchDuplicateGroups();
+    toast.success('Клиенты объединены');
   };
 
   const handleMerge = () => {
@@ -1254,7 +1798,7 @@ export default function ClientsPage() {
   const handleMergeDuplicateGroup = (group: DuplicateGroup) => {
     const selection = groupSelections[getDuplicateGroupKey(group)];
     if (!selection?.primaryId || selection.duplicateIds.length === 0) {
-      alert('Выберите основного клиента и хотя бы один дубль');
+      toast.error('Выберите основного клиента и хотя бы один дубль');
       return;
     }
 
@@ -1275,6 +1819,150 @@ export default function ClientsPage() {
       title: 'Объединить группу дублей?',
     });
   };
+  const clientColumns: ColumnDef<Client>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Клиент',
+      size: 230,
+      cell: ({ row }) => {
+        const client = row.original;
+
+        return (
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <UserRoundCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <span className="truncate font-medium">{client.name}</span>
+            </div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              <Badge
+                variant="outline"
+                className={getStatusBadgeClass(client.status)}
+              >
+                {client.statusLabel}
+              </Badge>
+              {client.note && <Badge variant="outline">Есть заметка</Badge>}
+            </div>
+          </div>
+        );
+      },
+    },
+    ...(!isTrainerAccount
+      ? ([
+          {
+            accessorKey: 'phone',
+            header: 'Телефон',
+            size: 170,
+            meta: {
+              cellClassName: 'truncate text-muted-foreground',
+            },
+          },
+        ] satisfies ColumnDef<Client>[])
+      : []),
+    {
+      accessorKey: 'source',
+      header: 'Источник',
+      size: 160,
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+    },
+    {
+      accessorKey: 'segment',
+      header: 'Сегмент',
+      size: 140,
+      cell: ({ row }) => <Badge variant="outline">{row.original.segment}</Badge>,
+    },
+    {
+      id: 'visitCount',
+      header: 'Визиты',
+      size: 90,
+      meta: {
+        cellClassName: 'text-right font-medium',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => row.original.stats.visitCount,
+    },
+    {
+      id: 'lastVisit',
+      header: 'Последний визит',
+      size: 130,
+      meta: {
+        cellClassName: 'text-muted-foreground',
+      },
+      cell: ({ row }) => formatDate(row.original.stats.lastVisitAt),
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 120,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const client = row.original;
+
+        return (
+          <div className="flex justify-end gap-1">
+            <TooltipIconButton
+              label="Открыть карточку"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void loadDetails(client.id)}
+            >
+              <Eye className="h-4 w-4" />
+            </TooltipIconButton>
+            {canEdit && !client.mergedIntoUserId && (
+              <>
+                <TooltipIconButton
+                  label="Редактировать клиента"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => openEdit(client)}
+                >
+                  <Pencil className="h-4 w-4" />
+                </TooltipIconButton>
+                {client.status === 'archived' ? (
+                  <>
+                    <TooltipIconButton
+                      label="Восстановить из архива"
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() =>
+                        requestClientStatusUpdate(client, 'active')
+                      }
+                    >
+                      <ArchiveRestore className="h-4 w-4" />
+                    </TooltipIconButton>
+                    <TooltipIconButton
+                      label="Удалить навсегда"
+                      variant="ghost"
+                      size="icon-sm"
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                      onClick={() => requestPermanentDelete(client)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </TooltipIconButton>
+                  </>
+                ) : (
+                  <TooltipIconButton
+                    label="Отправить в архив"
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() =>
+                      requestClientStatusUpdate(client, 'archived')
+                    }
+                  >
+                    <Archive className="h-4 w-4" />
+                  </TooltipIconButton>
+                )}
+              </>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
 
   return (
     <div className="min-w-0 space-y-4 p-4 md:p-6">
@@ -1333,7 +2021,13 @@ export default function ClientsPage() {
           <div className="rounded-md border bg-card p-3">
             <div className="mb-3 flex flex-col gap-2 border-b pb-3 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="text-sm font-medium">Представление</div>
+                <div className="flex items-center gap-1.5 text-sm font-medium">
+                  Представление
+                  <HelpTooltip>
+                    Сохраненный фильтр запоминает текущие условия списка только
+                    для вашего аккаунта.
+                  </HelpTooltip>
+                </div>
                 <Select
                   value={selectedSavedViewId}
                   onValueChange={handleSavedViewChange}
@@ -1350,6 +2044,14 @@ export default function ClientsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                {selectedSavedViewDirty && (
+                  <Badge variant="outline" className="w-fit">
+                    Изменено
+                  </Badge>
+                )}
+                <div className="text-sm text-muted-foreground">
+                  Найдено: {total.toLocaleString('ru-RU')}
+                </div>
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button
@@ -1360,6 +2062,14 @@ export default function ClientsPage() {
                   <Save className="mr-2 h-4 w-4" />
                   Сохранить фильтр
                 </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={resetClientFilters}
+                >
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Сбросить
+                </Button>
                 {selectedSavedView && (
                   <>
                     <Button
@@ -1368,7 +2078,7 @@ export default function ClientsPage() {
                       onClick={() => requestUpdateSavedView(selectedSavedView)}
                     >
                       <RefreshCw className="mr-2 h-4 w-4" />
-                      Обновить
+                      {selectedSavedViewDirty ? 'Обновить текущими' : 'Обновить'}
                     </Button>
                     <Button
                       type="button"
@@ -1384,210 +2094,253 @@ export default function ClientsPage() {
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_160px]">
-              <div className="relative">
-                <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Поиск
+                  <HelpTooltip>
+                    Ищет по имени, а для обычных ролей еще по телефону и
+                    нормализованным цифрам номера.
+                  </HelpTooltip>
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    value={q}
+                    onChange={(event) => setQ(event.target.value)}
+                    placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
+                    className="pl-9"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Источник
+                  <HelpTooltip>
+                    Откуда клиент пришел в базу: ресепшн, Instagram, сайт,
+                    рекомендация и другие справочные источники.
+                  </HelpTooltip>
+                </label>
+                <Select value={sourceId} onValueChange={setSourceId}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все источники</SelectItem>
+                    {sources.map((item) => (
+                      <SelectItem key={item.id} value={String(item.id)}>
+                        {item.status === 'archived'
+                          ? `${item.name} (архив)`
+                          : item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Сегмент
+                  <HelpTooltip>
+                    {CLIENT_SEGMENT_OPTIONS.map((option) => (
+                      <div key={option.value}>
+                        <span className="font-medium">{option.label}:</span>{' '}
+                        {option.condition}
+                      </div>
+                    ))}
+                  </HelpTooltip>
+                </label>
+                <Select
+                  value={segment}
+                  onValueChange={(value) => setSegment(value as ClientSegment)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CLIENT_SEGMENT_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Статус
+                  <HelpTooltip>
+                    Активные участвуют в рабочей базе. Архивные хранят историю,
+                    но скрыты из операционной работы до восстановления.
+                  </HelpTooltip>
+                </label>
+                <Select
+                  value={status}
+                  onValueChange={(value) =>
+                    setStatus(value as 'active' | 'archived' | 'all')
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Активные</SelectItem>
+                    <SelectItem value="archived">Архив</SelectItem>
+                    <SelectItem value="all">Все статусы</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Визитов от
+                  <HelpTooltip>
+                    Минимальное количество визитов за всю историю клиента.
+                  </HelpTooltip>
+                </label>
                 <Input
-                  value={q}
-                  onChange={(event) => setQ(event.target.value)}
-                  placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
-                  className="pl-9"
+                  min="0"
+                  type="number"
+                  value={visitCountMin}
+                  onChange={(event) => setVisitCountMin(event.target.value)}
+                  placeholder="0"
                 />
               </div>
-              <Select value={sourceId} onValueChange={setSourceId}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">Все источники</SelectItem>
-                  {sources.map((item) => (
-                    <SelectItem key={item.id} value={String(item.id)}>
-                      {item.status === 'archived'
-                        ? `${item.name} (архив)`
-                        : item.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={segment}
-                onValueChange={(value) => setSegment(value as ClientSegment)}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {CLIENT_SEGMENT_OPTIONS.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      title={option.condition}
-                    >
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Select
-                value={status}
-                onValueChange={(value) =>
-                  setStatus(value as 'active' | 'archived' | 'all')
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="active">Активные</SelectItem>
-                  <SelectItem value="archived">Архив</SelectItem>
-                  <SelectItem value="all">Все статусы</SelectItem>
-                </SelectContent>
-              </Select>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Визитов до
+                  <HelpTooltip>
+                    Максимальное количество визитов. Удобно для выборок “были
+                    1-2 раза”.
+                  </HelpTooltip>
+                </label>
+                <Input
+                  min="0"
+                  type="number"
+                  value={visitCountMax}
+                  onChange={(event) => setVisitCountMax(event.target.value)}
+                  placeholder="10"
+                />
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Не были от, дней
+                  <HelpTooltip>
+                    Показывает клиентов, чей последний визит был не позже
+                    указанного количества дней назад.
+                  </HelpTooltip>
+                </label>
+                <Input
+                  min="0"
+                  type="number"
+                  value={lastVisitDaysFrom}
+                  onChange={(event) => setLastVisitDaysFrom(event.target.value)}
+                  placeholder="7"
+                />
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Не были до, дней
+                  <HelpTooltip>
+                    Верхняя граница давности последнего визита. Например, 7-14
+                    дней даст клиентов, которые не были примерно одну-две недели.
+                  </HelpTooltip>
+                </label>
+                <Input
+                  min="0"
+                  type="number"
+                  value={lastVisitDaysTo}
+                  onChange={(event) => setLastVisitDaysTo(event.target.value)}
+                  placeholder="14"
+                />
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Уровень
+                  <HelpTooltip>
+                    Последняя оценка тренера в дневнике тренировок клиента.
+                  </HelpTooltip>
+                </label>
+                <Select
+                  value={trainingLevel}
+                  onValueChange={(value) =>
+                    setTrainingLevel(value as TrainingLevel | 'all')
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Любой</SelectItem>
+                    {TRAINING_LEVELS.map((level) => (
+                      <SelectItem key={level} value={level}>
+                        {level}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                  Цель визита
+                  <HelpTooltip>
+                    Категория визита из справочника: тренировка, игра, мастер
+                    класс и другие цели, которые выбирает администратор.
+                  </HelpTooltip>
+                </label>
+                <Select
+                  value={visitCategoryId}
+                  onValueChange={setVisitCategoryId}
+                  disabled={referencesLoading}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Любая</SelectItem>
+                    {visitCategories.map((item) => (
+                      <SelectItem key={item.id} value={String(item.id)}>
+                        {item.status === 'archived'
+                          ? `${item.name} (архив)`
+                          : item.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
           <div className="hidden overflow-x-auto rounded-md border bg-card lg:block">
-            <Table className="min-w-[960px] table-fixed">
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="w-[23%]">Клиент</TableHead>
-                  {!isTrainerAccount && (
-                    <TableHead className="w-[17%]">Телефон</TableHead>
-                  )}
-                  <TableHead className="w-[16%]">Источник</TableHead>
-                  <TableHead className="w-[14%]">Сегмент</TableHead>
-                  <TableHead className="w-[9%] text-right">Визиты</TableHead>
-                  <TableHead className="w-[12%]">Последний визит</TableHead>
-                  <TableHead className="w-[11%] text-right"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {(isInitialLoading || error || clients.length === 0) && (
-                  <TableRow>
-                    <TableCell
-                      colSpan={clientTableColSpan}
-                      className="py-10 text-center text-muted-foreground"
-                    >
-                      {isInitialLoading
-                        ? 'Загрузка клиентов...'
-                        : error || 'Клиенты не найдены'}
-                    </TableCell>
-                  </TableRow>
-                )}
-                {clients.map((client) => (
-                  <TableRow key={client.id}>
-                    <TableCell>
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <UserRoundCheck className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate font-medium">
-                            {client.name}
-                          </span>
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          <Badge
-                            variant="outline"
-                            className={getStatusBadgeClass(client.status)}
-                          >
-                            {client.statusLabel}
-                          </Badge>
-                          {client.note && (
-                            <Badge variant="outline">Есть заметка</Badge>
-                          )}
-                        </div>
-                      </div>
-                    </TableCell>
-                    {!isTrainerAccount && (
-                      <TableCell className="truncate text-muted-foreground">
-                        {client.phone}
-                      </TableCell>
-                    )}
-                    <TableCell className="truncate text-muted-foreground">
-                      {client.source}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{client.segment}</Badge>
-                    </TableCell>
-                    <TableCell className="text-right font-medium">
-                      {client.stats.visitCount}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {formatDate(client.stats.lastVisitAt)}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => void loadDetails(client.id)}
-                          aria-label={`Открыть клиента ${client.name}`}
-                          title="Открыть"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </Button>
-                        {canEdit && !client.mergedIntoUserId && (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => openEdit(client)}
-                              aria-label={`Редактировать клиента ${client.name}`}
-                              title="Редактировать"
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                            {client.status === 'archived' ? (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() =>
-                                    requestClientStatusUpdate(client, 'active')
-                                  }
-                                  aria-label={`Восстановить клиента ${client.name}`}
-                                  title="Восстановить"
-                                >
-                                  <ArchiveRestore className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                  onClick={() => requestPermanentDelete(client)}
-                                  aria-label={`Удалить навсегда клиента ${client.name}`}
-                                  title="Удалить навсегда"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                onClick={() =>
-                                  requestClientStatusUpdate(client, 'archived')
-                                }
-                                aria-label={`Архивировать клиента ${client.name}`}
-                                title="Архивировать"
-                              >
-                                <Archive className="h-4 w-4" />
-                              </Button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={clientColumns}
+              data={clients}
+              emptyText="Клиенты не найдены"
+              errorText={error || undefined}
+              loading={isInitialLoading}
+              loadingText="Загрузка клиентов..."
+              minWidthClassName="min-w-[960px] table-fixed"
+              onRetry={() => void fetchClients()}
+            />
           </div>
 
           <div className="space-y-3 lg:hidden">
-            {(isInitialLoading || error || clients.length === 0) && (
+            {isInitialLoading && (
               <div className="rounded-md border bg-card p-6 text-center text-muted-foreground">
-                {isInitialLoading
-                  ? 'Загрузка клиентов...'
-                  : error || 'Клиенты не найдены'}
+                Загрузка клиентов...
+              </div>
+            )}
+            {!isInitialLoading && error && (
+              <ErrorState
+                compact
+                title="Клиенты не загрузились"
+                message={error}
+                onRetry={() => void fetchClients()}
+              />
+            )}
+            {!isInitialLoading && !error && clients.length === 0 && (
+              <div className="rounded-md border bg-card p-6 text-center text-muted-foreground">
+                Клиенты не найдены
               </div>
             )}
             {clients.map((client) => (
@@ -1922,6 +2675,7 @@ export default function ClientsPage() {
                     setForm({ ...form, name: event.target.value })
                   }
                 />
+                <FieldError>{clientForm.formState.errors.name?.message}</FieldError>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium">
@@ -1939,6 +2693,7 @@ export default function ClientsPage() {
                   }
                   placeholder="+7 (999) 000-00-00"
                 />
+                <FieldError>{clientForm.formState.errors.phone?.message}</FieldError>
               </div>
             </div>
 
@@ -2010,6 +2765,7 @@ export default function ClientsPage() {
                     ))}
                   </SelectContent>
                 </Select>
+                <FieldError>{clientForm.formState.errors.sourceId?.message}</FieldError>
               </div>
               {editingClient && (
                 <div>
@@ -2144,6 +2900,18 @@ export default function ClientsPage() {
                       ?.name || sourceId
                   }`
                 : ''}
+              {visitCategoryId !== 'all'
+                ? `, цель визита ${
+                    visitCategories.find(
+                      (category) => String(category.id) === visitCategoryId,
+                    )?.name || visitCategoryId
+                  }`
+                : ''}
+              {trainingLevel !== 'all' ? `, уровень ${trainingLevel}` : ''}
+              {visitCountMin ? `, визитов от ${visitCountMin}` : ''}
+              {visitCountMax ? `, визитов до ${visitCountMax}` : ''}
+              {lastVisitDaysFrom ? `, не были от ${lastVisitDaysFrom} дн.` : ''}
+              {lastVisitDaysTo ? `, не были до ${lastVisitDaysTo} дн.` : ''}
               .
             </div>
             <Button type="submit" className="w-full" disabled={savedViewSaving}>
@@ -2178,6 +2946,9 @@ export default function ClientsPage() {
                   })
                 }
               />
+              <FieldError>
+                {clientCallTaskForm.formState.errors.title?.message}
+              </FieldError>
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">
@@ -2226,7 +2997,7 @@ export default function ClientsPage() {
               {details?.client.name || 'Клиент'}
             </DialogTitle>
             <DialogDescription>
-              Карточка клиента, история визитов и возможные дубли.
+              Карточка клиента, бронирования, история визитов и возможные дубли.
             </DialogDescription>
           </DialogHeader>
 
@@ -2238,6 +3009,71 @@ export default function ClientsPage() {
 
           {details && !detailsLoading && (
             <div className="space-y-5">
+              <div className="sticky top-0 z-20 -mx-3 flex flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={getStatusBadgeClass(details.client.status)}
+                    >
+                      {details.client.statusLabel}
+                    </Badge>
+                    <span className="truncate text-sm text-muted-foreground">
+                      {details.client.segment}
+                    </span>
+                    {details.client.training?.latestLevel && (
+                      <Badge variant="outline">
+                        Уровень {details.client.training.latestLevel}
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {!isTrainerAccount && getPhoneHref(details.client.phone) && (
+                    <Button asChild variant="outline" size="sm">
+                      <a href={getPhoneHref(details.client.phone)}>
+                        <PhoneCall className="mr-2 h-4 w-4" />
+                        Позвонить
+                      </a>
+                    </Button>
+                  )}
+                  {!isTrainerAccount && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void copyClientPhone(details.client.phone)}
+                    >
+                      <Copy className="mr-2 h-4 w-4" />
+                      Скопировать
+                    </Button>
+                  )}
+                  {canEdit &&
+                    canCreateCallTask &&
+                    details.client.status !== 'archived' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={openCallTaskDialog}
+                      >
+                        <MessageSquareText className="mr-2 h-4 w-4" />
+                        Задача
+                      </Button>
+                    )}
+                  {canEdit && !details.client.mergedIntoUserId && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openEdit(details.client)}
+                    >
+                      <Pencil className="mr-2 h-4 w-4" />
+                      Изменить
+                    </Button>
+                  )}
+                </div>
+              </div>
               {details.client.mergedIntoUserId && details.mergedInto ? (
                 <div className="rounded-md border border-blue-500/30 bg-blue-500/10 p-4 text-sm">
                   Этот клиент уже объединен с{' '}
@@ -2413,6 +3249,293 @@ export default function ClientsPage() {
                     </div>
                   </div>
 
+                  {!isTrainerAccount && (
+                    <div className="rounded-md border">
+                      <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 font-medium">
+                            <MessageSquareText className="h-4 w-4 text-muted-foreground" />
+                            Следующие действия
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {canCreateCallTask &&
+                            details.client.status !== 'archived' && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={openCallTaskDialog}
+                              >
+                                <Plus className="mr-2 h-4 w-4" />
+                                Задача
+                              </Button>
+                            )}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              closeDetails();
+                              navigate('/admin/call-tasks');
+                            }}
+                          >
+                            Все задачи
+                          </Button>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-1 gap-3 p-4 lg:grid-cols-[1fr_280px]">
+                        <div className="space-y-2">
+                          {details.activeCallTasks.length === 0 ? (
+                            <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                              Активных задач по клиенту сейчас нет.
+                            </div>
+                          ) : (
+                            details.activeCallTasks.map((task) => (
+                              <div
+                                key={`${task.id}-${task.taskClientId}`}
+                                className="rounded-md border p-3 text-sm"
+                              >
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <div className="min-w-0">
+                                    <div className="break-words font-medium">
+                                      {task.title}
+                                    </div>
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                      <Badge variant="outline">
+                                        {CALL_CLIENT_STATUS_LABELS[task.status] ||
+                                          task.status}
+                                      </Badge>
+                                      {task.clientBase && (
+                                        <Badge variant="outline">
+                                          {task.clientBase.name}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 text-muted-foreground">
+                                    {task.deadlineAt
+                                      ? formatDateTime(task.deadlineAt)
+                                      : 'Без дедлайна'}
+                                  </div>
+                                </div>
+                                {task.summary && (
+                                  <div className="mt-2 whitespace-pre-wrap text-muted-foreground">
+                                    {task.summary}
+                                  </div>
+                                )}
+                                {task.assignedTo && (
+                                  <div className="mt-2 text-xs text-muted-foreground">
+                                    Исполнитель: {task.assignedTo.name}
+                                  </div>
+                                )}
+                              </div>
+                            ))
+                          )}
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <MetricLabel
+                            tooltip="Ближайшая будущая бронь клиента без отмененных записей."
+                          >
+                            Ближайшая бронь
+                          </MetricLabel>
+                          <div className="mt-2 text-sm font-medium">
+                            {formatDateTime(details.bookingStats.nextBookingAt)}
+                          </div>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Всего будущих: {details.bookingStats.upcomingCount}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isTrainerAccount && (
+                    <div className="rounded-md border">
+                      <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 font-medium">
+                            <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                            Бронирования
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            Обычные брони, постоянки и деньги по броням клиента.
+                          </div>
+                        </div>
+                        <Badge variant="outline">
+                          {details.bookingStats.totalCount} всего ·{' '}
+                          {details.bookingStats.upcomingCount} будущих
+                        </Badge>
+                      </div>
+
+                      <div className="space-y-4 p-4">
+                        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">
+                              Активных
+                            </div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {details.bookingStats.activeCount}
+                            </div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">
+                              Следующая
+                            </div>
+                            <div className="mt-1 truncate text-sm font-medium">
+                              {formatDateTime(details.bookingStats.nextBookingAt)}
+                            </div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">
+                              План
+                            </div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {formatCurrency(details.bookingStats.plannedAmount)}
+                            </div>
+                          </div>
+                          <div className="rounded-md border p-3">
+                            <div className="text-xs text-muted-foreground">
+                              Оплачено
+                            </div>
+                            <div className="mt-1 text-xl font-semibold">
+                              {formatCurrency(details.bookingStats.paidAmount)}
+                            </div>
+                          </div>
+                        </div>
+
+                        {details.bookingSeries.length > 0 && (
+                          <div className="rounded-md border">
+                            <div className="border-b px-3 py-2 text-sm font-medium">
+                              Постоянки клиента
+                            </div>
+                            <div className="divide-y">
+                              {details.bookingSeries.slice(0, 5).map((series) => (
+                                <div
+                                  key={series.id}
+                                  className="flex flex-col gap-2 p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+                                >
+                                  <div className="min-w-0">
+                                    <div className="flex min-w-0 items-center gap-2">
+                                      <Repeat2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                                      <span className="truncate font-medium">
+                                        {series.name}
+                                      </span>
+                                      <Badge variant="outline">
+                                        {series.status === 'active'
+                                          ? 'Активна'
+                                          : 'Архив'}
+                                      </Badge>
+                                    </div>
+                                    <div className="mt-1 text-muted-foreground">
+                                      {series.court?.name || 'Корт не указан'} ·{' '}
+                                      {WEEKDAY_LABELS[series.weekday] ||
+                                        series.weekday}{' '}
+                                      {series.startTime} · {series.durationMinutes}{' '}
+                                      мин · {formatDate(series.startsOn)} -{' '}
+                                      {formatDate(series.endsOn)}
+                                    </div>
+                                  </div>
+                                  <div className="shrink-0 text-muted-foreground">
+                                    {series.price !== null && series.price !== undefined
+                                      ? formatCurrency(series.price)
+                                      : 'По тарифам'}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="overflow-x-auto rounded-md border">
+                          <Table className="min-w-[760px] table-fixed">
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead className="w-[170px]">Дата</TableHead>
+                                <TableHead className="w-[140px]">Корт</TableHead>
+                                <TableHead className="w-[140px]">Статус</TableHead>
+                                <TableHead className="w-[170px]">Оплата</TableHead>
+                                <TableHead>Комментарий</TableHead>
+                                <TableHead className="w-[90px] text-right"></TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {details.bookings.length === 0 && (
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={6}
+                                    className="py-8 text-center text-muted-foreground"
+                                  >
+                                    Бронирований пока нет
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                              {details.bookings.slice(0, 12).map((booking) => (
+                                <TableRow key={booking.id}>
+                                  <TableCell>
+                                    <div className="font-medium">
+                                      {formatDateTime(booking.startsAt)}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {booking.durationMinutes} мин
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="truncate">
+                                    {booking.court?.name || '-'}
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="flex flex-wrap gap-1">
+                                      <Badge variant="outline">
+                                        {BOOKING_STATUS_LABELS[booking.status] ||
+                                          booking.status}
+                                      </Badge>
+                                      {booking.bookingSeriesId && (
+                                        <Badge variant="outline">
+                                          Постоянка
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell>
+                                    <div className="text-sm">
+                                      {PAYMENT_STATUS_LABELS[
+                                        booking.paymentStatus
+                                      ] || booking.paymentStatus}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {formatCurrency(booking.paidAmount)} из{' '}
+                                      {formatCurrency(booking.price)} ·{' '}
+                                      {PAYMENT_METHOD_LABELS[
+                                        booking.paymentMethod
+                                      ] || booking.paymentMethod}
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="truncate text-muted-foreground">
+                                    {booking.comment ||
+                                      booking.cancellationReason ||
+                                      '-'}
+                                  </TableCell>
+                                  <TableCell className="text-right">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() =>
+                                        openBookingDay(booking.startsAt)
+                                      }
+                                    >
+                                      День
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="rounded-md border">
                     <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -2421,7 +3544,7 @@ export default function ClientsPage() {
                           Лента клиента
                         </div>
                         <div className="mt-1 text-sm text-muted-foreground">
-                          Визиты, обзвоны, тренировки и изменения карточки.
+                          Визиты, брони, обзвоны, тренировки и изменения карточки.
                         </div>
                       </div>
                       <Badge variant="outline">
@@ -2645,8 +3768,9 @@ export default function ClientsPage() {
                         <div>
                           <div className="font-medium">Возможные дубли</div>
                           <div className="text-sm text-muted-foreground">
-                            Совпадает нормализованный телефон. Выберите записи,
-                            которые нужно объединить с текущим клиентом.
+                            Совпадает телефон, Telegram, VK или WEB ID. Активные
+                            записи можно объединить, архивные показаны как
+                            предупреждение.
                           </div>
                         </div>
                         <Button
@@ -2660,12 +3784,17 @@ export default function ClientsPage() {
                         {details.duplicateCandidates.map((client) => (
                           <label
                             key={client.id}
-                            className="flex cursor-pointer flex-col gap-3 p-3 text-sm hover:bg-muted sm:flex-row sm:items-center sm:justify-between"
+                            className={`flex flex-col gap-3 p-3 text-sm sm:flex-row sm:items-center sm:justify-between ${
+                              client.status === 'active'
+                                ? 'cursor-pointer hover:bg-muted'
+                                : 'bg-muted/30'
+                            }`}
                           >
                             <span className="flex min-w-0 items-center gap-3 self-stretch">
                               <input
                                 type="checkbox"
                                 checked={selectedMergeIds.includes(client.id)}
+                                disabled={client.status !== 'active'}
                                 onChange={() => toggleMergeCandidate(client.id)}
                                 className="h-4 w-4 shrink-0"
                               />
@@ -2676,6 +3805,12 @@ export default function ClientsPage() {
                                 <span className="block break-words text-muted-foreground">
                                   {client.phone} · {client.stats.visitCount} визитов
                                 </span>
+                                {client.status === 'archived' && (
+                                  <span className="mt-1 block text-xs text-muted-foreground">
+                                    Архивная запись не объединяется напрямую.
+                                    Сначала восстановите ее при необходимости.
+                                  </span>
+                                )}
                               </span>
                             </span>
                             <Button

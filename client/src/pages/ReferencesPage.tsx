@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { type ColumnDef } from '@tanstack/react-table';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import {
   Archive,
   ArchiveRestore,
@@ -10,10 +15,12 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { DataTable } from '@/components/data-table';
 import {
   Dialog,
   DialogContent,
@@ -22,6 +29,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -30,21 +38,20 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import { apiFetch } from '@/lib/api';
+  createReference,
+  deleteArchivedReference,
+  listReferences,
+  updateReference,
+  updateReferenceStatus,
+} from '@/api/references';
+import { queryKeys } from '@/api/query-keys';
+import { getApiErrorMessage } from '@/lib/api';
 import { canManageReferences } from '@/lib/permissions';
 import type {
   ReferenceItem,
   ReferenceStatus,
   ReferenceType,
 } from '@/lib/references';
-import { fetchReferences } from '@/lib/references';
 import { useAuth } from '@/lib/useAuth';
 
 const REFERENCE_TABS: Array<{
@@ -67,28 +74,29 @@ const REFERENCE_TABS: Array<{
   },
 ];
 
-interface FormState {
-  name: string;
-  sortOrder: string;
-}
-
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<void>;
 };
 
-const EMPTY_FORM: FormState = {
+const referenceFormSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(2, 'Название должно быть не короче 2 символов'),
+  sortOrder: z
+    .string()
+    .trim()
+    .refine((value) => !value || /^\d+$/.test(value), {
+      message: 'Порядок должен быть целым числом',
+    }),
+});
+
+type ReferenceFormValues = z.infer<typeof referenceFormSchema>;
+
+const EMPTY_FORM: ReferenceFormValues = {
   name: '',
   sortOrder: '',
 };
-
-async function readError(response: Response, fallback: string) {
-  try {
-    const data = (await response.json()) as { error?: string };
-    return data.error || fallback;
-  } catch {
-    return fallback;
-  }
-}
 
 function getStatusBadgeClass(status: ReferenceStatus) {
   if (status === 'active') {
@@ -99,91 +107,108 @@ function getStatusBadgeClass(status: ReferenceStatus) {
 
 export default function ReferencesPage() {
   const { account } = useAuth();
+  const queryClient = useQueryClient();
   const canEditReferences = canManageReferences(account?.role);
   const [activeType, setActiveType] = useState<ReferenceType>('client-sources');
   const [status, setStatus] = useState<ReferenceStatus>('active');
-  const [items, setItems] = useState<ReferenceItem[]>([]);
-  const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ReferenceItem | null>(null);
-  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const referenceForm = useForm<ReferenceFormValues>({
+    defaultValues: EMPTY_FORM,
+    resolver: zodResolver(referenceFormSchema),
+  });
 
   const currentTab = REFERENCE_TABS.find((tab) => tab.type === activeType)!;
-
-  const loadItems = useCallback(async () => {
-    setLoading(true);
-    try {
-      setItems(await fetchReferences(activeType, status));
-    } catch {
-      alert('Не удалось загрузить справочник');
-    } finally {
-      setLoading(false);
-    }
-  }, [activeType, status]);
-
-  useEffect(() => {
-    void loadItems();
-  }, [loadItems]);
+  const referencesQuery = useQuery({
+    queryFn: () => listReferences(activeType, status),
+    queryKey: queryKeys.references.list(activeType, status),
+  });
+  const items = referencesQuery.data || [];
+  const loading = referencesQuery.isLoading || referencesQuery.isFetching;
+  const referenceErrorMessage = referencesQuery.isError
+    ? getApiErrorMessage(referencesQuery.error, 'Не удалось загрузить справочник')
+    : null;
+  const refreshReferences = () => referencesQuery.refetch();
+  const invalidateReferences = () =>
+    queryClient.invalidateQueries({ queryKey: queryKeys.references.all });
+  const saveReferenceMutation = useMutation({
+    mutationFn: (payload: {
+      id?: number;
+      type: ReferenceType;
+      values: { name: string; sortOrder?: number };
+    }) =>
+      payload.id
+        ? updateReference(payload.type, payload.id, payload.values)
+        : createReference(payload.type, payload.values),
+    onSuccess: invalidateReferences,
+  });
+  const statusMutation = useMutation({
+    mutationFn: (payload: {
+      id: number;
+      status: ReferenceStatus;
+      type: ReferenceType;
+    }) => updateReferenceStatus(payload.type, payload.id, payload.status),
+    onSuccess: invalidateReferences,
+  });
+  const permanentDeleteMutation = useMutation({
+    mutationFn: (payload: { id: number; type: ReferenceType }) =>
+      deleteArchivedReference(payload.type, payload.id),
+    onSuccess: invalidateReferences,
+  });
 
   const openCreate = () => {
     setEditingItem(null);
-    setForm(EMPTY_FORM);
+    referenceForm.reset(EMPTY_FORM);
     setFormOpen(true);
   };
 
   const openEdit = (item: ReferenceItem) => {
     setEditingItem(item);
-    setForm({
+    referenceForm.reset({
       name: item.name,
       sortOrder: String(item.sortOrder || ''),
     });
     setFormOpen(true);
   };
 
-  const handleSave = async (event: React.FormEvent) => {
-    event.preventDefault();
-
+  const handleSave = referenceForm.handleSubmit(async (values) => {
     const payload = {
-      name: form.name.trim(),
-      sortOrder: form.sortOrder.trim() ? Number(form.sortOrder) : undefined,
+      name: values.name,
+      sortOrder: values.sortOrder ? Number(values.sortOrder) : undefined,
     };
-    const res = await apiFetch(
-      editingItem
-        ? `/api/references/${activeType}/${editingItem.id}`
-        : `/api/references/${activeType}`,
-      {
-        method: editingItem ? 'PUT' : 'POST',
-        body: JSON.stringify(payload),
-      },
-    );
-
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось сохранить значение'));
-      return;
+    try {
+      await saveReferenceMutation.mutateAsync({
+        id: editingItem?.id,
+        type: activeType,
+        values: payload,
+      });
+      setFormOpen(false);
+      toast.success(editingItem ? 'Значение обновлено' : 'Значение создано');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось сохранить значение'));
     }
-
-    setFormOpen(false);
-    await loadItems();
-  };
+  });
 
   const executeStatusChange = async (
     item: ReferenceItem,
     nextStatus: ReferenceStatus,
   ) => {
-    const action = nextStatus === 'archived' ? 'archive' : 'restore';
-
-    const res = await apiFetch(`/api/references/${activeType}/${item.id}/${action}`, {
-      method: 'POST',
-    });
-
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось изменить статус'));
-      return;
+    try {
+      await statusMutation.mutateAsync({
+        id: item.id,
+        status: nextStatus,
+        type: activeType,
+      });
+      toast.success(
+        nextStatus === 'archived'
+          ? 'Значение отправлено в архив'
+          : 'Значение восстановлено',
+      );
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось изменить статус'));
     }
-
-    await loadItems();
   };
 
   const requestStatusChange = (
@@ -206,19 +231,15 @@ export default function ReferencesPage() {
   };
 
   const executePermanentDelete = async (item: ReferenceItem) => {
-    const res = await apiFetch(
-      `/api/references/${activeType}/${item.id}/permanent`,
-      {
-        method: 'DELETE',
-      },
-    );
-
-    if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить значение из архива'));
-      return;
+    try {
+      await permanentDeleteMutation.mutateAsync({
+        id: item.id,
+        type: activeType,
+      });
+      toast.success('Значение удалено из архива');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось удалить значение из архива'));
     }
-
-    await loadItems();
   };
 
   const requestPermanentDelete = (item: ReferenceItem) => {
@@ -243,6 +264,103 @@ export default function ReferencesPage() {
     }
   };
 
+  const referenceColumns: ColumnDef<ReferenceItem>[] = [
+      {
+        accessorKey: 'name',
+        cell: ({ row }) => (
+          <div className="truncate font-medium">{row.original.name}</div>
+        ),
+        header: 'Название',
+        size: 320,
+      },
+      {
+        accessorKey: 'status',
+        cell: ({ row }) => (
+          <Badge
+            variant="outline"
+            className={getStatusBadgeClass(row.original.status)}
+          >
+            {row.original.status === 'active' ? 'Активен' : 'Архив'}
+          </Badge>
+        ),
+        header: 'Статус',
+        size: 140,
+      },
+      {
+        accessorKey: 'sortOrder',
+        cell: ({ row }) => (
+          <div className="text-right text-muted-foreground">
+            {row.original.sortOrder || '-'}
+          </div>
+        ),
+        header: () => <div className="text-right">Порядок</div>,
+        size: 140,
+      },
+      {
+        id: 'actions',
+        cell: ({ row }) => {
+          const item = row.original;
+
+          return (
+            <div className="flex justify-end gap-1">
+              {canEditReferences ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    onClick={() => openEdit(item)}
+                    aria-label={`Редактировать ${item.name}`}
+                    title="Редактировать"
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  {item.status === 'active' ? (
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => requestStatusChange(item, 'archived')}
+                      aria-label={`Архивировать ${item.name}`}
+                      title="Архивировать"
+                    >
+                      <Archive className="h-4 w-4" />
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => requestStatusChange(item, 'active')}
+                        aria-label={`Восстановить ${item.name}`}
+                        title="Восстановить"
+                      >
+                        <ArchiveRestore className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => requestPermanentDelete(item)}
+                        aria-label={`Удалить навсегда ${item.name}`}
+                        title="Удалить навсегда"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </>
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  Только просмотр
+                </span>
+              )}
+            </div>
+          );
+        },
+        header: '',
+        size: 180,
+      },
+    ];
+
   return (
     <div className="min-w-0 space-y-4 p-4 md:p-6">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -257,7 +375,7 @@ export default function ReferencesPage() {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => void loadItems()}
+            onClick={() => void refreshReferences()}
             disabled={loading}
             aria-label="Обновить справочник"
             title="Обновить"
@@ -306,110 +424,17 @@ export default function ReferencesPage() {
             {currentTab.description}
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <Table className="min-w-[680px] table-fixed">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[45%]">Название</TableHead>
-                <TableHead className="w-[16%]">Статус</TableHead>
-                <TableHead className="w-[16%] text-right">Порядок</TableHead>
-                <TableHead className="w-[23%] text-right"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading && items.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className="py-10 text-center text-muted-foreground"
-                  >
-                    Загрузка справочника...
-                  </TableCell>
-                </TableRow>
-              )}
-              {!loading && items.length === 0 && (
-                <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className="py-10 text-center text-muted-foreground"
-                  >
-                    Значений пока нет.
-                  </TableCell>
-                </TableRow>
-              )}
-              {items.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="truncate font-medium">
-                    {item.name}
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={getStatusBadgeClass(item.status)}
-                    >
-                      {item.status === 'active' ? 'Активен' : 'Архив'}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-right text-muted-foreground">
-                    {item.sortOrder || '-'}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    {canEditReferences ? (
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => openEdit(item)}
-                          aria-label={`Редактировать ${item.name}`}
-                          title="Редактировать"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {item.status === 'active' ? (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() => requestStatusChange(item, 'archived')}
-                            aria-label={`Архивировать ${item.name}`}
-                            title="Архивировать"
-                          >
-                            <Archive className="h-4 w-4" />
-                          </Button>
-                        ) : (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() => requestStatusChange(item, 'active')}
-                              aria-label={`Восстановить ${item.name}`}
-                              title="Восстановить"
-                            >
-                              <ArchiveRestore className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                              onClick={() => requestPermanentDelete(item)}
-                              aria-label={`Удалить навсегда ${item.name}`}
-                              title="Удалить навсегда"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        Только просмотр
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
+        <DataTable
+          columns={referenceColumns}
+          data={items}
+          emptyText="Значений пока нет."
+          errorText={referenceErrorMessage || undefined}
+          loading={loading}
+          loadingText="Загрузка справочника..."
+          minWidthClassName="min-w-[680px]"
+          onRetry={() => void refreshReferences()}
+          tableClassName="table-fixed"
+        />
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
@@ -424,29 +449,38 @@ export default function ReferencesPage() {
           </DialogHeader>
           <form onSubmit={handleSave} className="space-y-4 pt-2">
             <div>
-              <label className="mb-1 block text-xs font-medium">Название</label>
+              <Label className="mb-1 text-xs">Название</Label>
               <Input
-                required
-                value={form.name}
-                onChange={(event) =>
-                  setForm({ ...form, name: event.target.value })
-                }
+                aria-invalid={Boolean(referenceForm.formState.errors.name)}
+                {...referenceForm.register('name')}
               />
+              {referenceForm.formState.errors.name && (
+                <div className="mt-1 text-xs text-destructive">
+                  {referenceForm.formState.errors.name.message}
+                </div>
+              )}
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium">
+              <Label className="mb-1 text-xs">
                 Порядок
-              </label>
+              </Label>
               <Input
                 inputMode="numeric"
-                value={form.sortOrder}
-                onChange={(event) =>
-                  setForm({ ...form, sortOrder: event.target.value })
-                }
+                aria-invalid={Boolean(referenceForm.formState.errors.sortOrder)}
                 placeholder="Чем меньше число, тем выше в списке"
+                {...referenceForm.register('sortOrder')}
               />
+              {referenceForm.formState.errors.sortOrder && (
+                <div className="mt-1 text-xs text-destructive">
+                  {referenceForm.formState.errors.sortOrder.message}
+                </div>
+              )}
             </div>
-            <Button type="submit" className="w-full">
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={saveReferenceMutation.isPending}
+            >
               <Save className="mr-2 h-4 w-4" />
               Сохранить
             </Button>

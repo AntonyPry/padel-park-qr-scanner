@@ -4,8 +4,9 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
 } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
 import {
   CalendarDays,
   Dumbbell,
@@ -20,12 +21,16 @@ import {
   Trash2,
   UserRound,
 } from 'lucide-react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { DataTable } from '@/components/data-table';
 import { HelpTooltip, MetricCard } from '@/components/dashboard-metric';
 import { Input } from '@/components/ui/input';
 import {
@@ -44,14 +49,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/useAuth';
 
@@ -136,6 +133,12 @@ function getEmptyTrainingForm(): TrainingFormState {
     trainedAt: getTodayDate(),
   };
 }
+const trainingFormSchema = z.object({
+  exercises: z.string().trim().min(1, 'Укажите упражнения'),
+  level: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']),
+  note: z.string(),
+  trainedAt: z.string().min(1, 'Укажите дату'),
+});
 
 function formatDate(value?: string | null) {
   if (!value) return '-';
@@ -198,7 +201,6 @@ export default function TrainerPage() {
   const [detailsError, setDetailsError] = useState<string | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [editingNote, setEditingNote] = useState<TrainingNote | null>(null);
-  const [form, setForm] = useState<TrainingFormState>(getEmptyTrainingForm);
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [saving, setSaving] = useState(false);
@@ -209,6 +211,18 @@ export default function TrainerPage() {
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const detailsPanelRef = useRef<HTMLElement | null>(null);
   const detailsRequestIdRef = useRef(0);
+  const trainingForm = useForm<TrainingFormState>({
+    defaultValues: getEmptyTrainingForm(),
+    resolver: zodResolver(trainingFormSchema),
+  });
+  const form = trainingForm.watch();
+  const setForm = useCallback((nextForm: TrainingFormState) => {
+    trainingForm.reset(nextForm, {
+      keepDirty: true,
+      keepErrors: true,
+      keepTouched: true,
+    });
+  }, [trainingForm]);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -292,7 +306,7 @@ export default function TrainerPage() {
         setDetailsLoading(false);
       }
     }
-  }, []);
+  }, [setForm]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -329,8 +343,7 @@ export default function TrainerPage() {
     });
   };
 
-  const submitTraining = async (event: FormEvent) => {
-    event.preventDefault();
+  const submitTraining = trainingForm.handleSubmit(async (values) => {
     if (!details?.client) return;
 
     setSaving(true);
@@ -341,12 +354,12 @@ export default function TrainerPage() {
           : `/api/clients/${details.client.id}/training-notes`,
         {
           method: editingNote ? 'PUT' : 'POST',
-          body: JSON.stringify(form),
+          body: JSON.stringify(values),
         },
       );
 
       if (!response.ok) {
-        alert(await readError(response, 'Не удалось сохранить тренировку'));
+        toast.error(await readError(response, 'Не удалось сохранить тренировку'));
         return;
       }
 
@@ -354,10 +367,14 @@ export default function TrainerPage() {
       setDetails({ ...details, trainingNotes });
       resetForm();
       void fetchClients();
+      toast.success(editingNote ? 'Тренировка обновлена' : 'Тренировка сохранена');
     } finally {
       setSaving(false);
     }
-  };
+  }, (errors) => {
+    const firstError = Object.values(errors)[0];
+    toast.error(firstError?.message || 'Проверьте поля тренировки');
+  });
 
   const deleteNote = (note: TrainingNote) => {
     setPendingAction({
@@ -372,7 +389,7 @@ export default function TrainerPage() {
         });
 
         if (!response.ok) {
-          alert(await readError(response, 'Не удалось удалить тренировку'));
+          toast.error(await readError(response, 'Не удалось удалить тренировку'));
           return false;
         }
 
@@ -382,6 +399,7 @@ export default function TrainerPage() {
         );
         if (editingNote?.id === note.id) resetForm();
         void fetchClients();
+        toast.success('Тренировка удалена');
       },
     });
   };
@@ -396,6 +414,54 @@ export default function TrainerPage() {
       setPendingActionLoading(false);
     }
   };
+  const clientColumns: ColumnDef<Client>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Клиент',
+      cell: ({ row }) => {
+        const client = row.original;
+
+        return (
+          <div className="min-w-44">
+            <div className="font-medium">{client.name}</div>
+            <div className="mt-1 flex flex-wrap gap-1">
+              <Badge variant="outline">{client.segment}</Badge>
+              {client.source && <Badge variant="secondary">{client.source}</Badge>}
+            </div>
+          </div>
+        );
+      },
+    },
+    {
+      id: 'visits',
+      header: 'Визиты',
+      cell: ({ row }) => row.original.stats.visitCount,
+    },
+    {
+      id: 'lastVisit',
+      header: 'Последний визит',
+      cell: ({ row }) => formatDate(row.original.stats.lastVisitAt),
+    },
+    {
+      id: 'level',
+      header: 'Уровень',
+      cell: ({ row }) =>
+        row.original.training?.latestLevel ? (
+          <Badge>{row.original.training.latestLevel}</Badge>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
+    {
+      id: 'notes',
+      header: 'Дневник',
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => row.original.training?.notesCount || 0,
+    },
+  ];
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-3 sm:p-4 lg:p-6">
@@ -496,78 +562,29 @@ export default function TrainerPage() {
             </div>
           </div>
 
-          {clientsError && (
+          {clientsError && clients.length > 0 && (
             <div className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
               {clientsError}
             </div>
           )}
 
           <div className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Клиент</TableHead>
-                  <TableHead>Визиты</TableHead>
-                  <TableHead>Последний визит</TableHead>
-                  <TableHead>Уровень</TableHead>
-                  <TableHead className="text-right">Дневник</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {clientsLoading ? (
-                  <TableRow>
-                    <TableCell colSpan={5} className="h-40 text-center">
-                      Загружаем клиентов...
-                    </TableCell>
-                  </TableRow>
-                ) : clients.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={5}
-                      className="h-40 text-center text-muted-foreground"
-                    >
-                      Клиентов по текущему фильтру нет.
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  clients.map((client) => {
-                    const isSelected = selectedClientId === client.id;
-
-                    return (
-                      <TableRow
-                        key={client.id}
-                        className={`cursor-pointer ${isSelected ? 'bg-muted/70' : ''}`}
-                        onClick={() => void loadDetails(client.id)}
-                      >
-                        <TableCell>
-                          <div className="min-w-44">
-                            <div className="font-medium">{client.name}</div>
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              <Badge variant="outline">{client.segment}</Badge>
-                              {client.source && (
-                                <Badge variant="secondary">{client.source}</Badge>
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
-                        <TableCell>{client.stats.visitCount}</TableCell>
-                        <TableCell>{formatDate(client.stats.lastVisitAt)}</TableCell>
-                        <TableCell>
-                          {client.training?.latestLevel ? (
-                            <Badge>{client.training.latestLevel}</Badge>
-                          ) : (
-                            <span className="text-muted-foreground">-</span>
-                          )}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {client.training?.notesCount || 0}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={clientColumns}
+              data={clients}
+              emptyText="Клиентов по текущему фильтру нет."
+              errorText={clientsError || undefined}
+              loading={clientsLoading}
+              loadingText="Загружаем клиентов..."
+              minWidthClassName="min-w-[720px]"
+              onRetry={() => void fetchClients()}
+              getRowProps={(row) => ({
+                className: `cursor-pointer ${
+                  selectedClientId === row.original.id ? 'bg-muted/70' : ''
+                }`,
+                onClick: () => void loadDetails(row.original.id),
+              })}
+            />
           </div>
 
           <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">

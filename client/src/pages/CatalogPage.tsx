@@ -1,14 +1,12 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { zodResolver } from '@hookform/resolvers/zod';
+import type { ColumnDef } from '@tanstack/react-table';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Button } from '@/components/ui/button';
+import { toast } from '@/components/ui/toast';
+import { ErrorState } from '@/components/error-state';
 import {
   Select,
   SelectContent,
@@ -25,12 +23,16 @@ import {
   Tag,
   Percent,
   ArchiveRestore,
+  Search,
+  RefreshCw,
 } from 'lucide-react';
-import { apiFetch } from '@/lib/api';
+import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import { DataTable } from '@/components/data-table';
+import { Label } from '@/components/ui/label';
 import type { MotivationBonusRule } from '@/lib/motivation';
 import {
   canManageCatalog,
@@ -68,6 +70,31 @@ type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<void>;
 };
 
+const categoryFormSchema = z.object({
+  commissionPercent: z
+    .string()
+    .refine((value) => value === '' || Number.isFinite(Number(value)), {
+      message: 'Введите число',
+    })
+    .refine((value) => value === '' || Number(value) >= 0, {
+      message: 'Не меньше 0',
+    })
+    .refine((value) => value === '' || Number(value) <= 100, {
+      message: 'Не больше 100',
+    }),
+  group: z.string().min(1, 'Выберите группу'),
+  name: z.string().trim().min(2, 'Минимум 2 символа'),
+  parentId: z.string(),
+});
+type CategoryFormValues = z.infer<typeof categoryFormSchema>;
+
+const EMPTY_CATEGORY_FORM: CategoryFormValues = {
+  commissionPercent: '',
+  group: 'OPEX',
+  name: '',
+  parentId: 'none',
+};
+
 async function readError(response: Response, fallback: string) {
   try {
     const data = (await response.json()) as { error?: string };
@@ -85,7 +112,8 @@ export default function CatalogPage() {
   const [rules, setRules] = useState<CatalogRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [bonusRules, setBonusRules] = useState<MotivationBonusRule[]>([]);
-  const [newCatParentId, setNewCatParentId] = useState<string>('none');
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState('');
 
   const [activeTab, setActiveTab] = useState<
     'unmapped' | 'rules' | 'categories'
@@ -93,16 +121,21 @@ export default function CatalogPage() {
   const [catalogStatus, setCatalogStatus] = useState<'active' | 'archived'>(
     'active',
   );
+  const [catalogSearch, setCatalogSearch] = useState('');
   const [selections, setSelections] = useState<Record<string, string>>({});
-
-  const [newCatName, setNewCatName] = useState('');
-  const [newCatGroup, setNewCatGroup] = useState('OPEX');
-  const [newCatPercent, setNewCatPercent] = useState('');
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const categoryForm = useForm<CategoryFormValues>({
+    defaultValues: EMPTY_CATEGORY_FORM,
+    resolver: zodResolver(categoryFormSchema),
+  });
+  const newCatParentId = categoryForm.watch('parentId');
+  const newCatGroup = categoryForm.watch('group');
 
   const fetchData = useCallback(async () => {
+    setCatalogLoading(true);
+    setCatalogError('');
     try {
       const [unmappedRes, rulesRes, catRes, bonusRulesRes] = await Promise.all([
         apiFetch('/api/catalog/unmapped'),
@@ -110,14 +143,48 @@ export default function CatalogPage() {
         apiFetch(`/api/catalog/categories?status=${catalogStatus}`),
         apiFetch('/api/motivation/bonus-rules'),
       ]);
-      setUnmapped(await unmappedRes.json());
-      setRules(await rulesRes.json());
-      setCategories(await catRes.json());
+
+      const errors: string[] = [];
+      if (unmappedRes.ok) {
+        setUnmapped(await unmappedRes.json());
+      } else {
+        setUnmapped([]);
+        errors.push(await readError(unmappedRes, 'Не удалось загрузить товары без правил'));
+      }
+
+      if (rulesRes.ok) {
+        setRules(await rulesRes.json());
+      } else {
+        setRules([]);
+        errors.push(await readError(rulesRes, 'Не удалось загрузить правила товаров'));
+      }
+
+      if (catRes.ok) {
+        setCategories(await catRes.json());
+      } else {
+        setCategories([]);
+        errors.push(await readError(catRes, 'Не удалось загрузить категории'));
+      }
+
       if (bonusRulesRes.ok) {
         setBonusRules((await bonusRulesRes.json()) as MotivationBonusRule[]);
+      } else {
+        setBonusRules([]);
+        errors.push(await readError(bonusRulesRes, 'Не удалось загрузить мотивации категорий'));
+      }
+
+      if (errors.length > 0) {
+        setCatalogError(errors.join('. '));
       }
     } catch (e) {
       console.error('Fetch error:', e);
+      setUnmapped([]);
+      setRules([]);
+      setCategories([]);
+      setBonusRules([]);
+      setCatalogError(getApiErrorMessage(e, 'Не удалось загрузить справочник товаров'));
+    } finally {
+      setCatalogLoading(false);
     }
   }, [catalogStatus]);
 
@@ -134,23 +201,55 @@ export default function CatalogPage() {
     });
     return map;
   }, [bonusRules]);
+  const normalizedCatalogSearch = catalogSearch.trim().toLowerCase();
+  const filteredUnmapped = useMemo(() => {
+    if (!normalizedCatalogSearch) return unmapped;
+    return unmapped.filter((itemName) =>
+      itemName.toLowerCase().includes(normalizedCatalogSearch),
+    );
+  }, [normalizedCatalogSearch, unmapped]);
+  const filteredRules = useMemo(() => {
+    if (!normalizedCatalogSearch) return rules;
+    return rules.filter((rule) =>
+      [rule.itemName, rule.category].some((value) =>
+        value.toLowerCase().includes(normalizedCatalogSearch),
+      ),
+    );
+  }, [normalizedCatalogSearch, rules]);
+  const filteredCategories = useMemo(() => {
+    if (!normalizedCatalogSearch) return categories;
+    return categories.filter((category) =>
+      [
+        category.name,
+        category.group,
+        PNL_GROUPS.find((group) => group.value === category.group)?.label || '',
+        motivationByCategoryId.get(category.id)?.name || '',
+      ].some((value) => value.toLowerCase().includes(normalizedCatalogSearch)),
+    );
+  }, [categories, motivationByCategoryId, normalizedCatalogSearch]);
 
   const handleSaveRule = async (itemName: string) => {
     const category = selections[itemName];
     if (!category) return;
 
-    await apiFetch('/api/catalog/rules', {
+    const res = await apiFetch('/api/catalog/rules', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ itemName, category }),
     });
+
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось сохранить правило товара'));
+      return;
+    }
 
     setSelections((prev) => {
       const next = { ...prev };
       delete next[itemName];
       return next;
     });
-    fetchData();
+    await fetchData();
+    toast.success('Правило товара сохранено');
   };
 
   const executeArchiveRule = async (rule: CatalogRule) => {
@@ -158,11 +257,12 @@ export default function CatalogPage() {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось архивировать правило'));
+      toast.error(await readError(res, 'Не удалось архивировать правило'));
       return;
     }
 
     await fetchData();
+    toast.success('Правило отправлено в архив');
   };
 
   const executeRestoreRule = async (rule: CatalogRule) => {
@@ -170,11 +270,12 @@ export default function CatalogPage() {
       method: 'POST',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось восстановить правило'));
+      toast.error(await readError(res, 'Не удалось восстановить правило'));
       return;
     }
 
     await fetchData();
+    toast.success('Правило восстановлено');
   };
 
   const executePermanentDeleteRule = async (rule: CatalogRule) => {
@@ -182,11 +283,12 @@ export default function CatalogPage() {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить правило из архива'));
+      toast.error(await readError(res, 'Не удалось удалить правило из архива'));
       return;
     }
 
     await fetchData();
+    toast.success('Правило удалено из архива');
   };
 
   const requestArchiveRule = (rule: CatalogRule) => {
@@ -219,49 +321,60 @@ export default function CatalogPage() {
   };
 
   const handleParentChange = (val: string) => {
-    setNewCatParentId(val);
+    categoryForm.setValue('parentId', val, {
+      shouldDirty: true,
+      shouldValidate: true,
+    });
     if (val !== 'none') {
       const parentCat = categories.find((c) => String(c.id) === val);
-      if (parentCat) setNewCatGroup(parentCat.group);
+      if (parentCat) {
+        categoryForm.setValue('group', parentCat.group, {
+          shouldDirty: true,
+          shouldValidate: true,
+        });
+      }
     }
   };
 
-  const handleAddCategory = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newCatName.trim()) return;
-
-    const selectedGroupDef = PNL_GROUPS.find((g) => g.value === newCatGroup);
+  const handleAddCategory = categoryForm.handleSubmit(async (values) => {
+    const selectedGroupDef = PNL_GROUPS.find((g) => g.value === values.group);
     const type = selectedGroupDef ? selectedGroupDef.type : 'expense';
 
-    await apiFetch('/api/catalog/categories', {
+    const res = await apiFetch('/api/catalog/categories', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: newCatName.trim(),
+        name: values.name.trim(),
         type: type,
-        group: newCatGroup,
-        commissionPercent: newCatPercent ? Number(newCatPercent) : 0,
-        parentId: newCatParentId === 'none' ? null : Number(newCatParentId),
+        group: values.group,
+        commissionPercent: values.commissionPercent
+          ? Number(values.commissionPercent)
+          : 0,
+        parentId: values.parentId === 'none' ? null : Number(values.parentId),
       }),
     });
 
-    setNewCatName('');
-    setNewCatPercent('');
-    setNewCatGroup('OPEX');
-    setNewCatParentId('none');
-    fetchData();
-  };
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось создать категорию'));
+      return;
+    }
+
+    categoryForm.reset(EMPTY_CATEGORY_FORM);
+    await fetchData();
+    toast.success('Категория создана');
+  });
 
   const executeArchiveCategory = async (category: Category) => {
     const res = await apiFetch(`/api/catalog/categories/${category.id}`, {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось архивировать категорию'));
+      toast.error(await readError(res, 'Не удалось архивировать категорию'));
       return;
     }
 
     await fetchData();
+    toast.success('Категория отправлена в архив');
   };
 
   const executeRestoreCategory = async (category: Category) => {
@@ -269,11 +382,12 @@ export default function CatalogPage() {
       method: 'POST',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось восстановить категорию'));
+      toast.error(await readError(res, 'Не удалось восстановить категорию'));
       return;
     }
 
     await fetchData();
+    toast.success('Категория восстановлена');
   };
 
   const executePermanentDeleteCategory = async (category: Category) => {
@@ -281,11 +395,12 @@ export default function CatalogPage() {
       method: 'DELETE',
     });
     if (!res.ok) {
-      alert(await readError(res, 'Не удалось удалить категорию из архива'));
+      toast.error(await readError(res, 'Не удалось удалить категорию из архива'));
       return;
     }
 
     await fetchData();
+    toast.success('Категория удалена из архива');
   };
 
   const requestArchiveCategory = (category: Category) => {
@@ -320,6 +435,12 @@ export default function CatalogPage() {
   const getGroupLabel = (groupVal: string) => {
     return PNL_GROUPS.find((g) => g.value === groupVal)?.label || groupVal;
   };
+  const activeTabLabel = {
+    categories: 'категориям',
+    rules: 'правилам',
+    unmapped: 'товарам без правил',
+  }[activeTab];
+  const hasCatalogData = unmapped.length > 0 || rules.length > 0 || categories.length > 0;
 
   // ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ РОДИТЕЛЯ ИЗ ТАБЛИЦЫ
   const handleUpdateParent = async (
@@ -334,9 +455,16 @@ export default function CatalogPage() {
           parentId: newParentId === 'none' ? null : Number(newParentId),
         }),
       });
-      if (res.ok) fetchData();
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось обновить родителя категории'));
+        return;
+      }
+
+      await fetchData();
+      toast.success('Родитель категории обновлен');
     } catch (e) {
       console.error('Update error:', e);
+      toast.error('Не удалось обновить родителя категории');
     }
   };
 
@@ -354,14 +482,15 @@ export default function CatalogPage() {
     if (!res.ok) {
       try {
         const data = (await res.json()) as { error?: string };
-        alert(data.error || 'Не удалось обновить мотивацию категории');
+        toast.error(data.error || 'Не удалось обновить мотивацию категории');
       } catch {
-        alert('Не удалось обновить мотивацию категории');
+        toast.error('Не удалось обновить мотивацию категории');
       }
       return;
     }
 
     setBonusRules((await res.json()) as MotivationBonusRule[]);
+    toast.success('Мотивация категории обновлена');
   };
 
   const confirmPendingAction = async () => {
@@ -395,6 +524,290 @@ export default function CatalogPage() {
       (c) => c.id !== catId && !isDescendant(c.id, catId),
     );
   };
+  const unmappedColumns: ColumnDef<string>[] = [
+    {
+      id: 'itemName',
+      header: 'Название в кассе Эвотор',
+      cell: ({ row }) => (
+        <span className="font-medium">{row.original}</span>
+      ),
+    },
+    {
+      id: 'category',
+      header: 'Категория P&L',
+      size: 280,
+      cell: ({ row }) => {
+        const itemName = row.original;
+
+        return (
+          <Select
+            onValueChange={(val) =>
+              setSelections({ ...selections, [itemName]: val })
+            }
+          >
+            <SelectTrigger className="w-[250px]">
+              <SelectValue placeholder="Выберите категорию..." />
+            </SelectTrigger>
+            <SelectContent>
+              {categories.map((category) => (
+                <SelectItem key={category.id} value={category.name}>
+                  {category.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 120,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const itemName = row.original;
+        const canSaveRule = canEditCatalog && Boolean(selections[itemName]);
+
+        return (
+          <Button
+            size="sm"
+            variant={canSaveRule ? 'default' : 'outline'}
+            disabled={!canSaveRule}
+            aria-label={`Сохранить правило для ${itemName}`}
+            title={
+              !canEditCatalog
+                ? 'Недостаточно прав для изменения справочника'
+                : !selections[itemName]
+                  ? 'Сначала выберите категорию'
+                  : 'Сохранить правило'
+            }
+            onClick={() => handleSaveRule(itemName)}
+          >
+            Сохранить
+          </Button>
+        );
+      },
+    },
+  ];
+  const ruleColumns: ColumnDef<CatalogRule>[] = [
+    {
+      accessorKey: 'itemName',
+      header: 'Товар из Эвотора',
+      cell: ({ row }) => (
+        <span className="font-medium">{row.original.itemName}</span>
+      ),
+    },
+    {
+      accessorKey: 'category',
+      header: 'Категория',
+      meta: {
+        cellClassName: 'text-muted-foreground',
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 90,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const rule = row.original;
+
+        return catalogStatus === 'archived' ? (
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => requestRestoreRule(rule)}
+              disabled={!canEditCatalog}
+              aria-label={`Восстановить правило для ${rule.itemName}`}
+              title="Восстановить"
+            >
+              <ArchiveRestore className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => requestPermanentDeleteRule(rule)}
+              disabled={!canEditCatalog}
+              aria-label={`Удалить навсегда правило для ${rule.itemName}`}
+              title="Удалить навсегда"
+            >
+              <Trash2 className="h-4 w-4 text-destructive" />
+            </Button>
+          </div>
+        ) : (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => requestArchiveRule(rule)}
+            disabled={!canEditCatalog}
+            aria-label={`Архивировать правило для ${rule.itemName}`}
+            title="В архив"
+          >
+            <Trash2 className="h-4 w-4 text-destructive" />
+          </Button>
+        );
+      },
+    },
+  ];
+  const categoryColumns: ColumnDef<Category>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Название',
+      size: 190,
+      cell: ({ row }) => (
+        <div className="flex min-w-0 items-center gap-2">
+          <Tag className="h-4 w-4 text-muted-foreground" />
+          <span className="truncate font-medium">{row.original.name}</span>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'group',
+      header: 'Группа отчета',
+      size: 180,
+      meta: {
+        cellClassName: 'truncate text-muted-foreground',
+      },
+      cell: ({ row }) => getGroupLabel(row.original.group),
+    },
+    {
+      accessorKey: 'commissionPercent',
+      header: 'Комиссия',
+      size: 120,
+      cell: ({ row }) =>
+        Number(row.original.commissionPercent) > 0 ? (
+          <span className="rounded-md bg-destructive/10 px-2 py-1 text-sm font-medium text-destructive">
+            {row.original.commissionPercent}%
+          </span>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
+    {
+      id: 'motivation',
+      header: 'Мотивация',
+      size: 180,
+      cell: ({ row }) => {
+        const category = row.original;
+
+        return category.type === 'income' ? (
+          <Select
+            value={
+              motivationByCategoryId.get(category.id)
+                ? String(motivationByCategoryId.get(category.id)?.id)
+                : 'none'
+            }
+            disabled={!canEditMotivation}
+            onValueChange={(val) => handleUpdateMotivation(category.id, val)}
+          >
+            <SelectTrigger className="w-full border-dashed bg-transparent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none" className="text-muted-foreground">
+                Без мотивации
+              </SelectItem>
+              {bonusRules.map((rule) => (
+                <SelectItem key={rule.id} value={String(rule.id)}>
+                  {rule.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        );
+      },
+    },
+    {
+      id: 'parent',
+      header: 'Родитель',
+      size: 180,
+      cell: ({ row }) => {
+        const category = row.original;
+
+        return (
+          <Select
+            value={category.parentId ? String(category.parentId) : 'none'}
+            disabled={!canEditCatalog}
+            onValueChange={(val) => handleUpdateParent(category.id, val)}
+          >
+            <SelectTrigger className="w-full border-dashed bg-transparent">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none" className="text-muted-foreground">
+                Нет (Корневая)
+              </SelectItem>
+              {getAvailableParents(category.id).map((parent) => (
+                <SelectItem key={parent.id} value={String(parent.id)}>
+                  {parent.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        );
+      },
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 80,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const category = row.original;
+
+        if (!canEditCatalog || category.isSystem) return null;
+
+        return (
+          <div className="flex justify-end gap-1">
+            {catalogStatus === 'archived' ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => requestRestoreCategory(category)}
+                  aria-label={`Восстановить категорию ${category.name}`}
+                  title="Восстановить"
+                >
+                  <ArchiveRestore className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => requestPermanentDeleteCategory(category)}
+                  aria-label={`Удалить навсегда категорию ${category.name}`}
+                  title="Удалить навсегда"
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => requestArchiveCategory(category)}
+                aria-label={`Архивировать категорию ${category.name}`}
+                title="В архив"
+              >
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            )}
+          </div>
+        );
+      },
+    },
+  ];
 
   return (
     <div className="p-6 md:p-8 space-y-6">
@@ -463,154 +876,97 @@ export default function CatalogPage() {
         </div>
       </div>
 
+      <div className="flex flex-col gap-2 rounded-md border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-lg">
+          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={catalogSearch}
+            onChange={(event) => setCatalogSearch(event.target.value)}
+            placeholder={`Поиск по ${activeTabLabel}`}
+            className="pl-9"
+          />
+        </div>
+        <div className="text-sm text-muted-foreground">
+          {activeTab === 'unmapped' &&
+            `Показано ${filteredUnmapped.length} из ${unmapped.length}`}
+          {activeTab === 'rules' &&
+            `Показано ${filteredRules.length} из ${rules.length}`}
+          {activeTab === 'categories' &&
+            `Показано ${filteredCategories.length} из ${categories.length}`}
+        </div>
+      </div>
+
+      {catalogError && (
+        <ErrorState
+          message={catalogError}
+          onRetry={() => void fetchData()}
+          title="Справочник товаров не загрузился полностью"
+        />
+      )}
+
       {/* ОСТАЛЬНАЯ ЧАСТЬ ИНТЕРФЕЙСА */}
-      {activeTab === 'unmapped' && (
+      {(!catalogError || hasCatalogData) && activeTab === 'unmapped' && (
         <Card
           className={
-            unmapped.length === 0
+            catalogLoading && unmapped.length === 0
+              ? 'border-border'
+              : unmapped.length === 0
               ? 'bg-green-500/5 border-green-500/20'
               : 'border-orange-500/20'
           }
         >
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              {unmapped.length === 0 ? (
+              {catalogLoading && unmapped.length === 0 ? (
+                <RefreshCw className="animate-spin text-muted-foreground" />
+              ) : unmapped.length === 0 ? (
                 <CheckCircle2 className="text-green-500" />
               ) : (
                 <AlertCircle className="text-orange-500" />
               )}
-              {unmapped.length === 0
+              {catalogLoading && unmapped.length === 0
+                ? 'Загрузка товаров из чеков'
+                : unmapped.length === 0
                 ? 'Все товары распределены'
                 : 'Найдены новые товары в чеках'}
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {unmapped.length > 0 && (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Название в кассе Эвотор</TableHead>
-                    <TableHead>Категория P&L</TableHead>
-                    <TableHead className="w-[100px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {unmapped.map((itemName) => (
-                    <TableRow key={itemName}>
-                      <TableCell className="font-medium">{itemName}</TableCell>
-                      <TableCell>
-                        <Select
-                          onValueChange={(val) =>
-                            setSelections({ ...selections, [itemName]: val })
-                          }
-                        >
-                          <SelectTrigger className="w-[250px]">
-                            <SelectValue placeholder="Выберите категорию..." />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {categories.map((c) => (
-                              <SelectItem key={c.id} value={c.name}>
-                                {c.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <Button
-                          size="sm"
-                          disabled={!canEditCatalog || !selections[itemName]}
-                          aria-label={`Сохранить правило для ${itemName}`}
-                          title={
-                            !canEditCatalog
-                              ? 'Недостаточно прав для изменения справочника'
-                              : !selections[itemName]
-                                ? 'Сначала выберите категорию'
-                                : 'Сохранить правило'
-                          }
-                          onClick={() => handleSaveRule(itemName)}
-                        >
-                          Сохранить
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
+            {(catalogLoading && unmapped.length === 0) || unmapped.length > 0 ? (
+              <DataTable
+                columns={unmappedColumns}
+                data={filteredUnmapped}
+                emptyText="По текущему поиску товаров не найдено."
+                loading={catalogLoading}
+                loadingText="Загрузка товаров..."
+                minWidthClassName="min-w-[680px]"
+                pageSize={25}
+              />
+            ) : null}
           </CardContent>
         </Card>
       )}
 
-      {activeTab === 'rules' && (
+      {(!catalogError || hasCatalogData) && activeTab === 'rules' && (
         <Card>
           <CardHeader>
             <CardTitle>Сохраненные правила</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Товар из Эвотора</TableHead>
-                  <TableHead>Категория</TableHead>
-                  <TableHead className="w-[50px]"></TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rules.map((rule) => (
-                  <TableRow key={rule.id}>
-                    <TableCell className="font-medium">
-                      {rule.itemName}
-                    </TableCell>
-                    <TableCell className="text-muted-foreground">
-                      {rule.category}
-                    </TableCell>
-                    <TableCell>
-                      {catalogStatus === 'archived' ? (
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => requestRestoreRule(rule)}
-                            disabled={!canEditCatalog}
-                            aria-label={`Восстановить правило для ${rule.itemName}`}
-                            title="Восстановить"
-                          >
-                            <ArchiveRestore className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => requestPermanentDeleteRule(rule)}
-                            disabled={!canEditCatalog}
-                            aria-label={`Удалить навсегда правило для ${rule.itemName}`}
-                            title="Удалить навсегда"
-                          >
-                            <Trash2 className="h-4 w-4 text-destructive" />
-                          </Button>
-                        </div>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => requestArchiveRule(rule)}
-                          disabled={!canEditCatalog}
-                          aria-label={`Архивировать правило для ${rule.itemName}`}
-                          title="В архив"
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      )}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={ruleColumns}
+              data={filteredRules}
+              emptyText="Сохраненных правил пока нет."
+              loading={catalogLoading}
+              loadingText="Загрузка правил..."
+              minWidthClassName="min-w-[640px]"
+              pageSize={25}
+            />
           </CardContent>
         </Card>
       )}
 
-      {activeTab === 'categories' && (
+      {(!catalogError || hasCatalogData) && activeTab === 'categories' && (
         <Card>
           <CardHeader>
             <CardTitle>Управление категориями P&L</CardTitle>
@@ -622,21 +978,30 @@ export default function CatalogPage() {
                 className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"
               >
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">
+                  <Label className="text-sm font-medium">
                     Название категории
-                  </label>
+                  </Label>
                   <Input
                     placeholder="Например: Лунда"
-                    value={newCatName}
-                    onChange={(e) => setNewCatName(e.target.value)}
-                    required
+                    {...categoryForm.register('name')}
+                    aria-invalid={Boolean(categoryForm.formState.errors.name)}
                   />
+                  {categoryForm.formState.errors.name && (
+                    <p className="text-xs text-destructive">
+                      {categoryForm.formState.errors.name.message}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Группа в отчете</label>
+                  <Label className="text-sm font-medium">Группа в отчете</Label>
                   <Select
                     value={newCatGroup}
-                    onValueChange={setNewCatGroup}
+                    onValueChange={(value) =>
+                      categoryForm.setValue('group', value, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
+                    }
                     disabled={newCatParentId !== 'none'}
                   >
                     <SelectTrigger
@@ -659,9 +1024,9 @@ export default function CatalogPage() {
                   )}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">
+                  <Label className="text-sm font-medium">
                     Авто-комиссия (%)
-                  </label>
+                  </Label>
                   <div className="relative">
                     <Input
                       type="number"
@@ -669,14 +1034,21 @@ export default function CatalogPage() {
                       min="0"
                       max="100"
                       placeholder="0"
-                      value={newCatPercent}
-                      onChange={(e) => setNewCatPercent(e.target.value)}
+                      {...categoryForm.register('commissionPercent')}
+                      aria-invalid={Boolean(
+                        categoryForm.formState.errors.commissionPercent,
+                      )}
                     />
                     <Percent className="w-4 h-4 text-muted-foreground absolute right-3 top-3" />
                   </div>
+                  {categoryForm.formState.errors.commissionPercent && (
+                    <p className="text-xs text-destructive">
+                      {categoryForm.formState.errors.commissionPercent.message}
+                    </p>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm font-medium">Родитель</label>
+                  <Label className="text-sm font-medium">Родитель</Label>
                   <Select
                     value={newCatParentId}
                     onValueChange={handleParentChange}
@@ -701,151 +1073,15 @@ export default function CatalogPage() {
             )}
 
             <div className="rounded-md border overflow-x-auto">
-              <Table className="min-w-[860px] table-fixed">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[22%]">Название</TableHead>
-                    <TableHead className="w-[20%]">Группа отчета</TableHead>
-                    <TableHead className="w-[13%]">Комиссия</TableHead>
-                    <TableHead className="w-[18%]">Мотивация</TableHead>
-                    <TableHead className="w-[18%]">Родитель</TableHead>
-                    <TableHead className="w-[54px]"></TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {categories.map((cat) => (
-                    <TableRow key={cat.id}>
-                      <TableCell className="font-medium">
-                        <div className="flex min-w-0 items-center gap-2">
-                        <Tag className="w-4 h-4 text-muted-foreground" />{' '}
-                          <span className="truncate">{cat.name}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-muted-foreground truncate">
-                        {getGroupLabel(cat.group)}
-                      </TableCell>
-                      <TableCell>
-                        {Number(cat.commissionPercent) > 0 ? (
-                          <span className="bg-destructive/10 text-destructive px-2 py-1 rounded-md text-sm font-medium">
-                            {cat.commissionPercent}%
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {cat.type === 'income' ? (
-                          <Select
-                            value={
-                              motivationByCategoryId.get(cat.id)
-                                ? String(motivationByCategoryId.get(cat.id)?.id)
-                                : 'none'
-                            }
-                            disabled={!canEditMotivation}
-                            onValueChange={(val) =>
-                              handleUpdateMotivation(cat.id, val)
-                            }
-                          >
-                            <SelectTrigger className="w-full bg-transparent border-dashed">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem
-                                value="none"
-                                className="text-muted-foreground"
-                              >
-                                Без мотивации
-                              </SelectItem>
-                              {bonusRules.map((rule) => (
-                                <SelectItem key={rule.id} value={String(rule.id)}>
-                                  {rule.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        ) : (
-                          <span className="text-muted-foreground">-</span>
-                        )}
-                      </TableCell>
-                      {/* ЖИВОЙ ВЫБОР РОДИТЕЛЯ ПРЯМО В ТАБЛИЦЕ */}
-                      <TableCell>
-                        <Select
-                          value={cat.parentId ? String(cat.parentId) : 'none'}
-                          disabled={!canEditCatalog}
-                          onValueChange={(val) =>
-                            handleUpdateParent(cat.id, val)
-                          }
-                        >
-                          <SelectTrigger className="w-full bg-transparent border-dashed">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem
-                              value="none"
-                              className="text-muted-foreground"
-                            >
-                              Нет (Корневая)
-                            </SelectItem>
-                            {getAvailableParents(cat.id).map((c) => (
-                              <SelectItem key={c.id} value={String(c.id)}>
-                                {c.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        {canEditCatalog && !cat.isSystem && (
-                          <div className="flex justify-end gap-1">
-                            {catalogStatus === 'archived' ? (
-                              <>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => requestRestoreCategory(cat)}
-                                  aria-label={`Восстановить категорию ${cat.name}`}
-                                  title="Восстановить"
-                                >
-                                  <ArchiveRestore className="h-4 w-4" />
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => requestPermanentDeleteCategory(cat)}
-                                  aria-label={`Удалить навсегда категорию ${cat.name}`}
-                                  title="Удалить навсегда"
-                                >
-                                  <Trash2 className="h-4 w-4 text-destructive" />
-                                </Button>
-                              </>
-                            ) : (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => requestArchiveCategory(cat)}
-                                aria-label={`Архивировать категорию ${cat.name}`}
-                                title="В архив"
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            )}
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                  {categories.length === 0 && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={6}
-                        className="text-center py-6 text-muted-foreground"
-                      >
-                        Нет созданных категорий
-                      </TableCell>
-                    </TableRow>
-                  )}
-                </TableBody>
-              </Table>
+              <DataTable
+                columns={categoryColumns}
+                data={filteredCategories}
+                emptyText="Нет созданных категорий"
+                loading={catalogLoading}
+                loadingText="Загрузка категорий..."
+                minWidthClassName="min-w-[860px] table-fixed"
+                pageSize={25}
+              />
             </div>
           </CardContent>
         </Card>

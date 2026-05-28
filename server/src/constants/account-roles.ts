@@ -1,0 +1,43 @@
+const ACCOUNT_ROLES = {
+  owner: {
+    label: 'Владелец',
+    description:
+      'Полный доступ: пользователи системы, настройки клуба, сотрудники, финансы, мотивация и SaaS-управление.',
+  },
+  manager: {
+    label: 'Менеджер',
+    description:
+      'Операционное управление: гости, смены, сотрудники, финансы на просмотр и пользователи без ролей владельца/менеджера.',
+  },
+  admin: {
+    label: 'Администратор',
+    description:
+      'Рабочая смена: входы гостей, ключи, цели визитов и собственная мотивация.',
+  },
+  accountant: {
+    label: 'Бухгалтер',
+    description:
+      'Финансовый контур: P&L, ручные операции, категории, экспорт и сверка начислений.',
+  },
+  viewer: {
+    label: 'Наблюдатель',
+    description:
+      'Только просмотр отчетов и аналитики без права менять операционные данные.',
+  },
+  trainer: {
+    label: 'Тренер',
+    description:
+      'Тренерский доступ: клиентская карточка без телефонов, дневник тренировок, упражнения и уровень игрока.',
+  },
+} as const;
+
+type AccountRole = keyof typeof ACCOUNT_ROLES;
+
+const ACCOUNT_ROLE_VALUES = Object.keys(ACCOUNT_ROLES) as AccountRole[];
+
+module.exports = {
+  ACCOUNT_ROLES,
+  ACCOUNT_ROLE_VALUES,
+};
+
+export type { AccountRole };

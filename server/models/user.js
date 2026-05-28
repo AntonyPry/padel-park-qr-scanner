@@ -19,6 +19,8 @@ module.exports = (sequelize, DataTypes) => {
         as: 'callTaskClients',
         foreignKey: 'userId',
       });
+      User.hasMany(models.Booking, { foreignKey: 'userId' });
+      User.hasMany(models.BookingSeries, { foreignKey: 'userId' });
     }
   }
 
