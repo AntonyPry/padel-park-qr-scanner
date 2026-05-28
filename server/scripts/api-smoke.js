@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const API_URL = process.env.API_SMOKE_URL || 'http://127.0.0.1:3004/api';
+require('dotenv').config();
+
+const DEFAULT_API_URL = `http://127.0.0.1:${process.env.PORT || 3004}/api`;
+const API_URL = process.env.API_SMOKE_URL || DEFAULT_API_URL;
 const EMAIL = process.env.API_SMOKE_EMAIL || 'owner@padelpark.demo';
 const PASSWORD = process.env.API_SMOKE_PASSWORD || 'Demo1234!';
 

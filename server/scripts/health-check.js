@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
-const API_URL = process.env.API_HEALTH_URL || 'http://127.0.0.1:3004/api';
+require('dotenv').config();
+
+const DEFAULT_API_URL = `http://127.0.0.1:${process.env.PORT || 3004}/api`;
+const API_URL = process.env.API_HEALTH_URL || DEFAULT_API_URL;
 
 async function main() {
   const response = await fetch(`${API_URL}/health`, {
