@@ -69,7 +69,7 @@ async function getVisitsAnalytics(from, to) {
           FROM Visits v
           LEFT JOIN Users u ON u.id = v.userId
           ${whereSql}
-          GROUP BY name
+          GROUP BY COALESCE(NULLIF(u.source, ''), 'Не указан')
           ORDER BY value DESC
         `,
         {
@@ -82,7 +82,7 @@ async function getVisitsAnalytics(from, to) {
           SELECT COALESCE(NULLIF(v.category, ''), 'Не указана') AS category, COUNT(*) AS value
           FROM Visits v
           ${whereSql}
-          GROUP BY category
+          GROUP BY COALESCE(NULLIF(v.category, ''), 'Не указана')
         `,
         {
           replacements,
@@ -115,7 +115,9 @@ async function getVisitsAnalytics(from, to) {
             COUNT(*) AS value
           FROM Visits v
           ${whereSql}
-          GROUP BY day, hour
+          GROUP BY
+            CASE WHEN DAYOFWEEK(v.createdAt) = 1 THEN 7 ELSE DAYOFWEEK(v.createdAt) - 1 END,
+            HOUR(v.createdAt)
         `,
         {
           replacements,
