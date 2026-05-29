@@ -8,7 +8,7 @@ function handleError(res, error, fallback) {
 class TelephonyController {
   async receiveBeelineEvent(req, res) {
     try {
-      res.status(202).json(
+      res.status(200).json(
         await telephonyService.receiveBeelineEvent({
           body: req.body,
           headers: req.headers,
