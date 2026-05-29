@@ -61,11 +61,6 @@ router.get('/openapi.json', (_req, res) => {
 
 router.use('/auth', authRoutes);
 router.use('/webhooks', webhookRoutes);
-router.post(
-  '/integrations/beeline/events',
-  express.json({ type: '*/*' }),
-  require('../controllers/telephony.controller').receiveBeelineEvent,
-);
 
 router.use(requireAuth);
 router.use(auditMutations);

@@ -51,6 +51,13 @@ function asObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function getHeaderValue(headers = {}, name) {
+  const wanted = String(name).toLowerCase();
+  const entry = Object.entries(headers).find(([key]) => key.toLowerCase() === wanted);
+  const value = entry?.[1];
+  return Array.isArray(value) ? value.join(', ') : normalizeText(value);
+}
+
 function parseJsonField(value) {
   if (!value || typeof value !== 'string') return value;
 
@@ -111,6 +118,131 @@ function sanitizeQuery(query = {}) {
   });
 
   return sanitized;
+}
+
+function decodeXmlEntities(value) {
+  return String(value || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .trim();
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getXmlTagText(xml, tagNames) {
+  for (const tagName of tagNames) {
+    const escaped = escapeRegExp(tagName);
+    const pattern = new RegExp(
+      `<(?:[\\w.-]+:)?${escaped}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${escaped}>`,
+      'i',
+    );
+    const match = String(xml || '').match(pattern);
+    if (match?.[1]) {
+      return decodeXmlEntities(match[1].replace(/<[^>]+>/g, ' '));
+    }
+  }
+
+  return null;
+}
+
+function getXmlAttribute(xml, attributeNames) {
+  for (const attributeName of attributeNames) {
+    const escaped = escapeRegExp(attributeName);
+    const pattern = new RegExp(
+      `(?:^|\\s|:)${escaped}\\s*=\\s*["']([^"']+)["']`,
+      'i',
+    );
+    const match = String(xml || '').match(pattern);
+    if (match?.[1]) return decodeXmlEntities(match[1]);
+  }
+
+  return null;
+}
+
+function normalizeXmlPhone(value) {
+  const text = normalizeText(value);
+  if (!text) return null;
+  return text
+    .replace(/^sip:/i, '')
+    .replace(/^tel:/i, '')
+    .replace(/@.+$/, '')
+    .trim();
+}
+
+function parseBeelineXmlPayload(xml, headers = {}) {
+  const rawBody = String(xml || '');
+  const eventType =
+    getXmlAttribute(rawBody, ['type']) ||
+    getXmlTagText(rawBody, ['eventType', 'event', 'eventDataType']) ||
+    'xsi.xml';
+  const state = getXmlTagText(rawBody, ['state', 'status', 'event']);
+  const personality = getXmlTagText(rawBody, ['personality', 'callType']);
+  const direction =
+    String(personality || '').toLowerCase() === 'originator'
+      ? 'outbound'
+      : String(personality || '').toLowerCase() === 'terminator'
+        ? 'inbound'
+        : undefined;
+
+  return {
+    rawBody,
+    contentType: getHeaderValue(headers, 'content-type'),
+    eventType,
+    status: state || eventType,
+    direction,
+    callId: getXmlTagText(rawBody, ['callId', 'callID', 'call_id']),
+    externalEventId: getXmlTagText(rawBody, ['eventID', 'eventId', 'event_id']),
+    externalTrackingId: getXmlTagText(rawBody, [
+      'externalTrackingId',
+      'extTrackingId',
+      'trackingId',
+    ]),
+    startDate: getXmlTagText(rawBody, ['startTime', 'startDate', 'startedAt', 'timestamp']),
+    endedAt: getXmlTagText(rawBody, ['endTime', 'endDate', 'endedAt']),
+    duration: getXmlTagText(rawBody, ['duration', 'callDuration']),
+    phone: normalizeXmlPhone(
+      getXmlTagText(rawBody, [
+        'remoteAddress',
+        'remotePartyAddress',
+        'address',
+        'phoneNumber',
+        'phone',
+      ]),
+    ),
+    employeePhone: normalizeXmlPhone(
+      getXmlTagText(rawBody, ['localAddress', 'primaryPhoneNumber']),
+    ),
+    extension: getXmlTagText(rawBody, ['extension', 'ext']),
+    userId: getXmlTagText(rawBody, ['userId', 'targetId', 'subscriberId']),
+  };
+}
+
+function parseIncomingBeelinePayload(body, headers = {}) {
+  if (Array.isArray(body)) return body;
+  if (body && typeof body === 'object') return [body];
+
+  const text = Buffer.isBuffer(body) ? body.toString('utf8') : String(body || '').trim();
+  if (!text) return [{}];
+
+  if (text.startsWith('<')) {
+    return [parseBeelineXmlPayload(text, headers)];
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    return [{
+      rawBody: text,
+      contentType: getHeaderValue(headers, 'content-type'),
+      eventType: 'beeline.raw',
+    }];
+  }
 }
 
 async function getConfig() {
@@ -190,9 +322,9 @@ function normalizeDirection(value) {
 
 function normalizeCallStatus(value, direction = 'unknown') {
   const normalized = String(value || '').toLowerCase();
-  if (['ringing', 'alerting', 'incoming'].includes(normalized)) return 'ringing';
-  if (['established', 'answered', 'received', 'recieved'].includes(normalized)) return 'answered';
-  if (['completed', 'complete', 'ended', 'finished', 'redirected'].includes(normalized)) {
+  if (['ringing', 'alerting', 'incoming', 'originating'].includes(normalized)) return 'ringing';
+  if (['active', 'established', 'answered', 'received', 'recieved'].includes(normalized)) return 'answered';
+  if (['completed', 'complete', 'ended', 'finished', 'redirected', 'released', 'disconnected'].includes(normalized)) {
     return 'completed';
   }
   if (['missed', 'no_answer', 'notanswered', 'not_answered'].includes(normalized)) return 'missed';
@@ -253,7 +385,11 @@ function getPhoneFromPayload(payload, direction) {
 }
 
 function getEmployeePhoneFromPayload(payload, direction) {
-  const abonentPhone = pickValue(payload, ['abonent.phone', 'abonent.number'], ['abonentPhone']);
+  const abonentPhone = pickValue(
+    payload,
+    ['abonent.phone', 'abonent.number', 'employeePhone'],
+    ['abonentPhone', 'employeePhone'],
+  );
   const phoneFrom = pickValue(payload, ['phone_from'], ['phone_from']);
   const phoneTo = pickValue(payload, ['phone_to'], ['phone_to']);
 
@@ -722,7 +858,7 @@ async function receiveBeelineEvent({
 }) {
   if (!skipSecret) assertWebhookAllowed(headers, query);
 
-  const items = Array.isArray(body) ? body : [body];
+  const items = parseIncomingBeelinePayload(body, headers);
   const results = [];
 
   for (const item of items) {
@@ -1490,6 +1626,7 @@ module.exports = {
   ignoreCall,
   listCalls,
   listRawEvents,
+  parseIncomingBeelinePayload,
   normalizeRecordingPayload,
   normalizeSubscriptionResponse,
   normalizePayload,

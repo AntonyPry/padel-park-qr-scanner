@@ -4,6 +4,7 @@ const {
   normalizePayload,
   normalizeRecordingPayload,
   normalizeSubscriptionResponse,
+  parseIncomingBeelinePayload,
 } = require('../../src/services/telephony.service');
 
 test('normalizes Beeline statistics payload into an inbound call', () => {
@@ -139,4 +140,32 @@ test('normalizes Beeline XSI subscription response', () => {
   assert.equal(normalized.expiresSeconds, 3600);
   assert.equal(normalized.subscriptionType, 'BASIC_CALL');
   assert.ok(normalized.expiresAt instanceof Date);
+});
+
+test('accepts Beeline XSI XML callback payloads', () => {
+  const [payload] = parseIncomingBeelinePayload(
+    `<?xml version="1.0" encoding="UTF-8"?>
+    <xsi:Event xmlns:xsi="http://schema.broadsoft.com/xsi">
+      <xsi:eventData xsi:type="xsi:CallEvent">
+        <xsi:callId>xsi-call-1</xsi:callId>
+        <xsi:extTrackingId>xsi-track-1</xsi:extTrackingId>
+        <xsi:personality>Terminator</xsi:personality>
+        <xsi:state>Alerting</xsi:state>
+        <xsi:startTime>2026-05-29T12:00:00+03:00</xsi:startTime>
+        <xsi:remoteAddress>tel:+79814271847</xsi:remoteAddress>
+        <xsi:extension>200</xsi:extension>
+      </xsi:eventData>
+    </xsi:Event>`,
+    { 'content-type': 'application/xml' },
+  );
+  const normalized = normalizePayload(payload);
+
+  assert.equal(payload.contentType, 'application/xml');
+  assert.equal(normalized.direction, 'inbound');
+  assert.equal(normalized.callStatus, 'ringing');
+  assert.equal(normalized.externalCallId, 'xsi-call-1');
+  assert.equal(normalized.externalTrackingId, 'xsi-track-1');
+  assert.equal(normalized.clientPhoneNormalized, '9814271847');
+  assert.equal(normalized.abonentExtension, '200');
+  assert.equal(normalized.startedAt.toISOString(), '2026-05-29T09:00:00.000Z');
 });
