@@ -169,3 +169,22 @@ test('accepts Beeline XSI XML callback payloads', () => {
   assert.equal(normalized.abonentExtension, '200');
   assert.equal(normalized.startedAt.toISOString(), '2026-05-29T09:00:00.000Z');
 });
+
+test('accepts Beeline XSI subscription XML as service event payload', () => {
+  const [payload] = parseIncomingBeelinePayload(
+    `<?xml version="1.0" encoding="UTF-8"?>
+    <xsi:Event xmlns:xsi="http://schema.broadsoft.com/xsi">
+      <xsi:eventData xsi:type="xsi:SubscriptionEvent">
+        <xsi:subscriptionId>deploy-check</xsi:subscriptionId>
+      </xsi:eventData>
+    </xsi:Event>`,
+    { 'content-type': 'application/xml' },
+  );
+  const normalized = normalizePayload(payload);
+
+  assert.equal(payload.eventType, 'xsi:SubscriptionEvent');
+  assert.equal(payload.contentType, 'application/xml');
+  assert.equal(normalized.eventType, 'xsi:SubscriptionEvent');
+  assert.equal(normalized.externalCallId, null);
+  assert.equal(normalized.clientPhoneNormalized, null);
+});

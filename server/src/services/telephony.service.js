@@ -659,6 +659,19 @@ function hasStableCallIdentity(normalized) {
   );
 }
 
+function isServiceXsiEvent(normalized, payload = {}) {
+  const eventType = String(normalized.eventType || payload.eventType || '').toLowerCase();
+  const contentType = String(payload.contentType || '').toLowerCase();
+
+  return Boolean(
+    eventType.includes('subscription') ||
+      eventType.includes('channel') ||
+      eventType.includes('heartbeat') ||
+      eventType.includes('keepalive') ||
+      (payload.rawBody && contentType.includes('xml') && !hasStableCallIdentity(normalized)),
+  );
+}
+
 function compactCallPayload(payload, { forUpdate = false } = {}) {
   const compacted = {};
 
@@ -904,6 +917,27 @@ async function receiveBeelineEvent({
 async function processRawEvent(rawEvent, transaction = undefined) {
   const payload = asObject(parseJsonField(rawEvent.payload));
   const normalized = normalizePayload(payload);
+
+  if (!hasStableCallIdentity(normalized) && isServiceXsiEvent(normalized, payload)) {
+    await rawEvent.update(
+      {
+        eventType: normalized.eventType || rawEvent.eventType || 'xsi.service',
+        externalEventId: normalized.externalEventId || rawEvent.externalEventId,
+        processingError: null,
+        processingStatus: 'processed',
+        telephonyCallId: null,
+      },
+      { transaction },
+    );
+
+    return {
+      callId: null,
+      rawEventId: rawEvent.id,
+      status: 'processed',
+      type: 'service_event',
+    };
+  }
+
   const call = await upsertCallFromNormalized(normalized, transaction);
 
   await rawEvent.update(
