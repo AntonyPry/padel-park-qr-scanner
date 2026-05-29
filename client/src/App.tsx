@@ -22,6 +22,7 @@ const AdminMotivationPage = lazy(() => import('./pages/AdminMotivationPage'));
 const SystemUsersPage = lazy(() => import('./pages/SystemUsersPage'));
 const ClientBasesPage = lazy(() => import('./pages/ClientBasesPage'));
 const CallTasksPage = lazy(() => import('./pages/CallTasksPage'));
+const TelephonyPage = lazy(() => import('./pages/TelephonyPage'));
 const ReferencesPage = lazy(() => import('./pages/ReferencesPage'));
 const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const TrainerPage = lazy(() => import('./pages/TrainerPage'));
@@ -90,6 +91,14 @@ function App() {
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/call-tasks']}>
                           <CallTasksPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/telephony"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/telephony']}>
+                          <TelephonyPage />
                         </RequireRoles>
                       }
                     />

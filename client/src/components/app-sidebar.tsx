@@ -12,6 +12,7 @@ import {
   LogOut,
   ListTree,
   PhoneCall,
+  PhoneIncoming,
   UserCog,
   Users,
   Wallet,
@@ -70,6 +71,11 @@ const items = [
     title: 'Задачи обзвона',
     url: '/admin/call-tasks',
     icon: PhoneCall,
+  },
+  {
+    title: 'Телефония',
+    url: '/admin/telephony',
+    icon: PhoneIncoming,
   },
   {
     title: 'Финансы (P&L)',

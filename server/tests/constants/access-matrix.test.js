@@ -25,3 +25,12 @@ test('admins can manage phone bookings without finance or catalog access', () =>
   assert.equal(ACCESS_MATRIX.financeView.includes('admin'), false);
   assert.equal(ACCESS_MATRIX.catalogManage.includes('admin'), false);
 });
+
+test('telephony separates setup from call processing', () => {
+  assert.equal(ACCESS_MATRIX.telephonyManage.includes('owner'), true);
+  assert.equal(ACCESS_MATRIX.telephonyManage.includes('manager'), true);
+  assert.equal(ACCESS_MATRIX.telephonyManage.includes('admin'), false);
+  assert.equal(ACCESS_MATRIX.telephonyWork.includes('admin'), true);
+  assert.equal(ACCESS_MATRIX.telephonyView.includes('viewer'), true);
+  assert.equal(ACCESS_MATRIX.telephonyWork.includes('viewer'), false);
+});

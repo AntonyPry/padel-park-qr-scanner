@@ -8,6 +8,7 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/trainer': ['owner', 'manager', 'trainer'],
   '/admin/client-bases': ['owner', 'manager'],
   '/admin/call-tasks': ['owner', 'manager', 'admin'],
+  '/admin/telephony': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant'],
@@ -75,6 +76,14 @@ export function canManageClientBases(role: AccountRole | null | undefined) {
 
 export function canManageCallTasks(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManageTelephony(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canWorkTelephony(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
 }
 
 export function canManageCatalog(role: AccountRole | null | undefined) {

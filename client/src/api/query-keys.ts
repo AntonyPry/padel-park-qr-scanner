@@ -25,6 +25,15 @@ export const queryKeys = {
     list: (type: ReferenceType, status: ReferenceStatus | 'all') =>
       [...queryKeys.references.all, 'list', type, status] as const,
   },
+  telephony: {
+    all: ['telephony'] as const,
+    calls: (params: Record<string, unknown>) =>
+      [...queryKeys.telephony.all, 'calls', params] as const,
+    config: () => [...queryKeys.telephony.all, 'config'] as const,
+    rawEvents: (params: Record<string, unknown>) =>
+      [...queryKeys.telephony.all, 'raw-events', params] as const,
+    stats: () => [...queryKeys.telephony.all, 'stats'] as const,
+  },
   utilization: {
     all: ['utilization'] as const,
     list: () => [...queryKeys.utilization.all, 'list'] as const,

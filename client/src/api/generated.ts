@@ -83,6 +83,21 @@ export const apiEndpoints = {
   "callTasks.clients": { method: "GET", path: "/call-tasks/{id}/clients", responseType: "json" },
   "callTasks.clientsBulk": { method: "PATCH", path: "/call-tasks/{id}/clients/bulk", responseType: "json" },
   "callTasks.addAttempt": { method: "POST", path: "/call-task-clients/{taskClientId}/attempts", responseType: "json" },
+  "telephony.config": { method: "GET", path: "/telephony/config", responseType: "json" },
+  "telephony.stats": { method: "GET", path: "/telephony/stats", responseType: "json" },
+  "telephony.calls": { method: "GET", path: "/telephony/calls", responseType: "json" },
+  "telephony.getCall": { method: "GET", path: "/telephony/calls/{id}", responseType: "json" },
+  "telephony.startCall": { method: "POST", path: "/telephony/calls/{id}/start", responseType: "json" },
+  "telephony.completeCall": { method: "POST", path: "/telephony/calls/{id}/complete", responseType: "json" },
+  "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json" },
+  "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json" },
+  "telephony.syncStatistics": { method: "POST", path: "/telephony/beeline/sync", responseType: "json" },
+  "telephony.syncRecordings": { method: "POST", path: "/telephony/beeline/records/sync", responseType: "json" },
+  "telephony.subscribe": { method: "POST", path: "/telephony/beeline/subscribe", responseType: "json" },
+  "telephony.checkSubscription": { method: "POST", path: "/telephony/beeline/subscription/check", responseType: "json" },
+  "telephony.rawEvents": { method: "GET", path: "/telephony/raw-events", responseType: "json" },
+  "telephony.reprocessRawEvent": { method: "POST", path: "/telephony/raw-events/{id}/reprocess", responseType: "json" },
+  "telephony.beelineWebhook": { method: "POST", path: "/integrations/beeline/events", responseType: "json" },
   "clients.list": { method: "GET", path: "/clients", responseType: "json" },
   "clients.lookup": { method: "GET", path: "/clients/lookup", responseType: "json" },
   "clients.duplicates": { method: "GET", path: "/clients/duplicates", responseType: "json" },
@@ -727,6 +742,45 @@ export type CallTasksAddAttemptParams = {
   taskClientId: number | string;
 };
 export type CallTasksAddAttemptBody = Record<string, unknown>;
+export type TelephonyCallsQuery = Record<string, unknown>;
+export type TelephonyGetCallParams = {
+  id: number | string;
+};
+export type TelephonyStartCallParams = {
+  id: number | string;
+};
+export type TelephonyCompleteCallParams = {
+  id: number | string;
+};
+export type TelephonyCompleteCallBody = Record<string, unknown>;
+export type TelephonyIgnoreCallParams = {
+  id: number | string;
+};
+export type TelephonyIgnoreCallBody = {
+  summary?: string | "" | null;
+  [key: string]: unknown;
+};
+export type TelephonyRecordingReferenceParams = {
+  id: number | string;
+};
+export type TelephonySyncStatisticsBody = Record<string, unknown>;
+export type TelephonySyncRecordingsBody = Record<string, unknown>;
+export type TelephonySubscribeBody = {
+  expires?: number | string | "" | null;
+  pattern?: string | "" | null;
+  subscriptionType?: "BASIC_CALL" | "ADVANCED_CALL";
+  url?: string | "" | null;
+  [key: string]: unknown;
+};
+export type TelephonyRawEventsQuery = {
+  page?: number | string | "";
+  pageSize?: number | string | "";
+  status?: "all" | "new" | "processed" | "failed";
+  [key: string]: unknown;
+};
+export type TelephonyReprocessRawEventParams = {
+  id: number | string;
+};
 export type ClientsListQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
@@ -1184,6 +1238,21 @@ export interface ApiEndpointRequestMap {
   "callTasks.clients": ApiEndpointRequest<CallTasksClientsParams, CallTasksClientsQuery, undefined>;
   "callTasks.clientsBulk": ApiEndpointRequest<CallTasksClientsBulkParams, undefined, CallTasksClientsBulkBody>;
   "callTasks.addAttempt": ApiEndpointRequest<CallTasksAddAttemptParams, undefined, CallTasksAddAttemptBody>;
+  "telephony.config": ApiEndpointRequest<undefined, undefined, undefined>;
+  "telephony.stats": ApiEndpointRequest<undefined, undefined, undefined>;
+  "telephony.calls": ApiEndpointRequest<undefined, TelephonyCallsQuery, undefined>;
+  "telephony.getCall": ApiEndpointRequest<TelephonyGetCallParams, undefined, undefined>;
+  "telephony.startCall": ApiEndpointRequest<TelephonyStartCallParams, undefined, undefined>;
+  "telephony.completeCall": ApiEndpointRequest<TelephonyCompleteCallParams, undefined, TelephonyCompleteCallBody>;
+  "telephony.ignoreCall": ApiEndpointRequest<TelephonyIgnoreCallParams, undefined, TelephonyIgnoreCallBody>;
+  "telephony.recordingReference": ApiEndpointRequest<TelephonyRecordingReferenceParams, undefined, undefined>;
+  "telephony.syncStatistics": ApiEndpointRequest<undefined, undefined, TelephonySyncStatisticsBody>;
+  "telephony.syncRecordings": ApiEndpointRequest<undefined, undefined, TelephonySyncRecordingsBody>;
+  "telephony.subscribe": ApiEndpointRequest<undefined, undefined, TelephonySubscribeBody>;
+  "telephony.checkSubscription": ApiEndpointRequest<undefined, undefined, undefined>;
+  "telephony.rawEvents": ApiEndpointRequest<undefined, TelephonyRawEventsQuery, undefined>;
+  "telephony.reprocessRawEvent": ApiEndpointRequest<TelephonyReprocessRawEventParams, undefined, undefined>;
+  "telephony.beelineWebhook": ApiEndpointRequest<undefined, undefined, undefined>;
   "clients.list": ApiEndpointRequest<undefined, ClientsListQuery, undefined>;
   "clients.lookup": ApiEndpointRequest<undefined, ClientsLookupQuery, undefined>;
   "clients.duplicates": ApiEndpointRequest<undefined, undefined, undefined>;

@@ -24,6 +24,7 @@ const visitsAnalyticsRoutes = require('./visits-analytics');
 const motivationRoutes = require('./motivation');
 const referencesRoutes = require('./references');
 const trainingNotesRoutes = require('./training-notes');
+const telephonyRoutes = require('./telephony');
 
 router.get('/health', async (_req, res) => {
   const services = {
@@ -60,6 +61,11 @@ router.get('/openapi.json', (_req, res) => {
 
 router.use('/auth', authRoutes);
 router.use('/webhooks', webhookRoutes);
+router.post(
+  '/integrations/beeline/events',
+  express.json({ type: '*/*' }),
+  require('../controllers/telephony.controller').receiveBeelineEvent,
+);
 
 router.use(requireAuth);
 router.use(auditMutations);
@@ -79,5 +85,6 @@ router.use(visitsAnalyticsRoutes);
 router.use(motivationRoutes);
 router.use(referencesRoutes);
 router.use(trainingNotesRoutes);
+router.use(telephonyRoutes);
 
 module.exports = router;

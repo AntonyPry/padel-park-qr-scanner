@@ -4,6 +4,8 @@ import {
   canManageBookings,
   canManageClients,
   canManageFinance,
+  canManageTelephony,
+  canWorkTelephony,
   canViewTrainingNotes,
   getDefaultPath,
 } from './permissions';
@@ -32,5 +34,13 @@ describe('permissions', () => {
     expect(canAccessPath('admin', '/admin/bookings')).toBe(true);
     expect(canManageBookings('admin')).toBe(true);
     expect(canManageBookings('viewer')).toBe(false);
+  });
+
+  it('allows admins to process calls but keeps telephony setup for managers', () => {
+    expect(canAccessPath('admin', '/admin/telephony')).toBe(true);
+    expect(canWorkTelephony('admin')).toBe(true);
+    expect(canManageTelephony('admin')).toBe(false);
+    expect(canManageTelephony('manager')).toBe(true);
+    expect(canWorkTelephony('viewer')).toBe(false);
   });
 });

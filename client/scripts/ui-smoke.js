@@ -21,6 +21,7 @@ const ROUTES = [
   '/admin/trainer',
   '/admin/client-bases',
   '/admin/call-tasks',
+  '/admin/telephony',
   '/admin/staff',
   '/admin/finances',
   '/admin/users',

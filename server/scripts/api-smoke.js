@@ -20,6 +20,8 @@ const CHECKS = [
   ['clients.list', '/clients?limit=10'],
   ['clientBases.list', '/client-bases?status=active'],
   ['callTasks.list', '/call-tasks?status=active'],
+  ['telephony.stats', '/telephony/stats'],
+  ['telephony.calls', '/telephony/calls?status=all&pageSize=5'],
   ['finance.list', '/finance'],
   ['visits.analytics', '/analytics/visits'],
   ['audit.list', '/audit-logs?limit=10'],

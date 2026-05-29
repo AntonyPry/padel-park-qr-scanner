@@ -538,6 +538,93 @@ const apiSchemas = {
     update: { body: callTaskUpdateBody, params: idParams },
     withId: { params: idParams },
   },
+  telephony: {
+    callsQuery: paginationQuery
+      .extend({
+        callStatus: z
+          .enum([
+            'ringing',
+            'answered',
+            'completed',
+            'missed',
+            'failed',
+            'unknown',
+          ])
+          .optional(),
+        direction: z.enum(['inbound', 'outbound', 'unknown']).optional(),
+        from: optionalDateTime,
+        q: optionalString,
+        recordingStatus: z.enum(['available', 'missing', 'pending', 'unknown']).optional(),
+        search: optionalString,
+        status: z
+          .enum(['active', 'all', 'new', 'in_progress', 'processed', 'ignored', 'missed'])
+          .optional(),
+        to: optionalDateTime,
+      })
+      .passthrough(),
+    complete: {
+      body: z
+        .object({
+          interest: z
+            .enum(['game', 'training', 'tournament', 'master_class', 'corporate', 'other'])
+            .optional()
+            .nullable(),
+          linkedBookingId: nullableId,
+          nextActionAt: optionalDateTime,
+          nextActionText: optionalString,
+          result: z.enum([
+            'booked',
+            'refused',
+            'thinking',
+            'callback',
+            'complaint',
+            'corporate',
+            'no_answer',
+            'other',
+          ]),
+          summary: optionalString,
+        })
+        .passthrough(),
+      params: idParams,
+    },
+    ignore: {
+      body: z
+        .object({
+          summary: optionalString,
+        })
+        .passthrough(),
+      params: idParams,
+    },
+    rawEventsQuery: paginationQuery
+      .extend({
+        status: z.enum(['all', 'new', 'processed', 'failed']).optional(),
+      })
+      .passthrough(),
+    recordsSyncBody: z
+      .object({
+        dateFrom: optionalDateTime,
+        dateTo: optionalDateTime,
+        id: optionalString,
+        userId: optionalString,
+      })
+      .passthrough(),
+    subscribeBody: z
+      .object({
+        expires: optionalNonNegativeNumberValue,
+        pattern: optionalString,
+        subscriptionType: z.enum(['BASIC_CALL', 'ADVANCED_CALL']).optional(),
+        url: optionalString,
+      })
+      .passthrough(),
+    syncBody: z
+      .object({
+        dateFrom: optionalDateTime,
+        dateTo: optionalDateTime,
+        pageSize: z.coerce.number().int().min(10).max(100).optional(),
+      })
+      .passthrough(),
+    withId: { params: idParams },
+  },
   catalog: {
     categoryBody: z
       .object({
