@@ -14,8 +14,9 @@ import {
   Save,
   Settings,
   TriangleAlert,
+  UserPlus,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -50,6 +51,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
+import { listClients, type ClientListItem } from '@/api/clients';
 import {
   HelpTooltip,
   MetricCard,
@@ -58,11 +60,14 @@ import {
 import {
   checkBeelineSubscription,
   completeTelephonyCall,
+  createTelephonyCallClient,
   getTelephonyCalls,
   getTelephonyConfig,
   getTelephonyRawEvents,
+  getTelephonyReport,
   getTelephonyStats,
   ignoreTelephonyCall,
+  linkTelephonyCallClient,
   refreshTelephonyRecordingReference,
   reprocessTelephonyRawEvent,
   subscribeBeelineEvents,
@@ -76,6 +81,7 @@ import {
   type TelephonyResult,
 } from '@/api/telephony';
 import { queryKeys } from '@/api/query-keys';
+import { fetchReferences } from '@/lib/references';
 import {
   canManageTelephony,
   canWorkTelephony,
@@ -84,6 +90,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { useAuth } from '@/lib/useAuth';
 
 const PAGE_SIZE = 20;
+const RECORDING_LINK_REFRESH_MS = 2 * 60 * 1000;
 
 const PROCESSING_LABELS: Record<TelephonyProcessingStatus, string> = {
   ignored: 'Скрыт',
@@ -147,12 +154,24 @@ interface CompletionForm {
   summary: string;
 }
 
+interface ClientCallForm {
+  name: string;
+  note: string;
+  sourceId: string;
+}
+
 const EMPTY_FORM: CompletionForm = {
   interest: 'none',
   nextActionAt: '',
   nextActionText: '',
   result: 'booked',
   summary: '',
+};
+
+const EMPTY_CLIENT_FORM: ClientCallForm = {
+  name: '',
+  note: '',
+  sourceId: '',
 };
 
 function formatDateTime(value?: string | null) {
@@ -167,10 +186,51 @@ function formatDateTime(value?: string | null) {
 }
 
 function formatDuration(seconds?: number | null) {
-  if (!seconds) return '0:00';
+  if (seconds === null || seconds === undefined) return 'Длительность неизвестна';
   const minutes = Math.floor(seconds / 60);
   const rest = seconds % 60;
   return `${minutes}:${String(rest).padStart(2, '0')}`;
+}
+
+function formatDurationCompact(seconds?: number | null) {
+  if (seconds === null || seconds === undefined) return 'длит. неизвестна';
+  return formatDuration(seconds);
+}
+
+function formatPercent(value?: number | null) {
+  return `${Math.round(Number(value || 0) * 100)}%`;
+}
+
+function toDateInputValue(value: Date) {
+  return [
+    value.getFullYear(),
+    String(value.getMonth() + 1).padStart(2, '0'),
+    String(value.getDate()).padStart(2, '0'),
+  ].join('-');
+}
+
+function toDateTimeInputValue(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
+  return offsetDate.toISOString().slice(0, 16);
+}
+
+function dateTimeInputToIso(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function getDefaultReportRange() {
+  const to = new Date();
+  const from = new Date(to);
+  from.setDate(from.getDate() - 29);
+  return {
+    from: toDateInputValue(from),
+    to: toDateInputValue(to),
+  };
 }
 
 function formatFileSize(bytes?: number | null) {
@@ -197,10 +257,18 @@ function formatPayloadPreview(payload: unknown) {
   return formatted.length > 900 ? `${formatted.slice(0, 900)}...` : formatted;
 }
 
+function shouldRefreshRecordingLink(call: TelephonyCall) {
+  if (!call.recordingUrl) return true;
+  if (!call.recordingExpiresAt) return false;
+
+  const expiresAt = new Date(call.recordingExpiresAt).getTime();
+  return Number.isFinite(expiresAt) && expiresAt <= Date.now() + RECORDING_LINK_REFRESH_MS;
+}
+
 function buildPayload(form: CompletionForm): CompleteTelephonyCallPayload {
   return {
     interest: form.interest === 'none' ? null : form.interest,
-    nextActionAt: form.nextActionAt || null,
+    nextActionAt: dateTimeInputToIso(form.nextActionAt),
     nextActionText: form.nextActionText || null,
     result: form.result,
     summary: form.summary || null,
@@ -212,27 +280,45 @@ function getDefaultForm(call: TelephonyCall | null): CompletionForm {
 
   return {
     interest: call.interest || 'none',
-    nextActionAt: call.nextActionAt
-      ? new Date(call.nextActionAt).toISOString().slice(0, 16)
-      : '',
+    nextActionAt: toDateTimeInputValue(call.nextActionAt),
     nextActionText: call.nextActionText || '',
     result: call.result || (call.callStatus === 'missed' ? 'no_answer' : 'booked'),
     summary: call.summary || '',
   };
 }
 
+function getClientSearchValue(call: TelephonyCall) {
+  return call.clientPhone || call.client?.phone || call.client?.name || '';
+}
+
+function getClientVisitSummary(client: ClientListItem) {
+  const visitCount = client.stats?.visitCount ?? 0;
+  const lastVisit = client.stats?.lastVisitAt
+    ? formatDateTime(client.stats.lastVisitAt)
+    : 'визитов не было';
+
+  return `${visitCount} визитов · последний: ${lastVisit}`;
+}
+
 export default function TelephonyPage() {
   const { account } = useAuth();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialQuery = searchParams.get('q') || '';
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('active');
   const [callStatus, setCallStatus] = useState('all');
   const [recordingStatus, setRecordingStatus] = useState('all');
   const [direction, setDirection] = useState('all');
-  const [query, setQuery] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  const [query, setQuery] = useState(initialQuery.trim());
+  const [searchInput, setSearchInput] = useState(initialQuery);
+  const [reportRange, setReportRange] = useState(getDefaultReportRange);
   const [selectedCall, setSelectedCall] = useState<TelephonyCall | null>(null);
   const [form, setForm] = useState<CompletionForm>(EMPTY_FORM);
+  const [clientDialogCall, setClientDialogCall] = useState<TelephonyCall | null>(null);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientSearchInput, setClientSearchInput] = useState('');
+  const [clientForm, setClientForm] = useState<ClientCallForm>(EMPTY_CLIENT_FORM);
 
   const canManage = canManageTelephony(account?.role);
   const canWork = canWorkTelephony(account?.role);
@@ -254,6 +340,17 @@ export default function TelephonyPage() {
     queryKey: queryKeys.telephony.calls(listParams),
     queryFn: () => getTelephonyCalls(listParams),
   });
+  const reportParams = useMemo(
+    () => ({
+      from: reportRange.from,
+      to: reportRange.to,
+    }),
+    [reportRange.from, reportRange.to],
+  );
+  const reportQuery = useQuery({
+    queryKey: queryKeys.telephony.report(reportParams),
+    queryFn: () => getTelephonyReport(reportParams),
+  });
   const statsQuery = useQuery({
     queryKey: queryKeys.telephony.stats(),
     queryFn: getTelephonyStats,
@@ -268,21 +365,81 @@ export default function TelephonyPage() {
     queryKey: queryKeys.telephony.rawEvents({ page: 1, pageSize: 5, status: 'all' }),
     queryFn: () => getTelephonyRawEvents({ page: 1, pageSize: 5, status: 'all' }),
   });
+  const clientSourcesQuery = useQuery({
+    enabled: canWork && Boolean(clientDialogCall),
+    queryKey: queryKeys.references.list('client-sources', 'active'),
+    queryFn: () => fetchReferences('client-sources', 'active'),
+  });
+  const clientSearchParams = useMemo(
+    () => ({
+      page: 1,
+      pageSize: 8,
+      q: clientSearch,
+      status: 'active' as const,
+    }),
+    [clientSearch],
+  );
+  const clientSearchQuery = useQuery({
+    enabled: canWork && Boolean(clientDialogCall) && clientSearch.trim().length > 0,
+    queryKey: queryKeys.clients.list(clientSearchParams),
+    queryFn: () => listClients(clientSearchParams),
+  });
   const beelineApiReady = Boolean(
     configQuery.data?.apiTokenConfigured && configQuery.data?.apiBaseUrl,
   );
+  const beelineXsiReady = Boolean(beelineApiReady && configQuery.data?.callbackUrl);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
+      const nextQuery = searchInput.trim();
       setPage(1);
-      setQuery(searchInput.trim());
+      setQuery(nextQuery);
+
+      if ((searchParams.get('q') || '') !== nextQuery) {
+        const nextSearchParams = new URLSearchParams(searchParams);
+        if (nextQuery) {
+          nextSearchParams.set('q', nextQuery);
+        } else {
+          nextSearchParams.delete('q');
+        }
+        setSearchParams(nextSearchParams, { replace: true });
+      }
     }, 250);
 
     return () => window.clearTimeout(timeout);
-  }, [searchInput]);
+  }, [searchInput, searchParams, setSearchParams]);
+
+  useEffect(() => {
+    const urlQuery = searchParams.get('q') || '';
+    if (urlQuery !== searchInput) {
+      setPage(1);
+      setQuery(urlQuery.trim());
+      setSearchInput(urlQuery);
+    }
+  }, [searchParams, searchInput]);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      setClientSearch(clientSearchInput.trim());
+    }, 250);
+
+    return () => window.clearTimeout(timeout);
+  }, [clientSearchInput]);
+
+  useEffect(() => {
+    if (!clientDialogCall || clientForm.sourceId || !clientSourcesQuery.data?.length) {
+      return;
+    }
+
+    setClientForm((current) => ({
+      ...current,
+      sourceId: String(clientSourcesQuery.data[0].id),
+    }));
+  }, [clientDialogCall, clientForm.sourceId, clientSourcesQuery.data]);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.telephony.all });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.clients.all });
     void queryClient.invalidateQueries({ queryKey: ['callTasks'] });
   };
 
@@ -308,6 +465,40 @@ export default function TelephonyPage() {
     onSuccess: () => {
       toast.success('Звонок скрыт из активной очереди');
       setSelectedCall(null);
+      invalidate();
+    },
+  });
+
+  const linkClientMutation = useMutation({
+    mutationFn: ({ callId, clientId }: { callId: number; clientId: number }) =>
+      linkTelephonyCallClient(callId, clientId),
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Не удалось привязать клиента'));
+    },
+    onSuccess: (call) => {
+      toast.success('Клиент привязан к звонку');
+      setClientDialogCall(null);
+      setSelectedCall((current) => (current?.id === call.id ? call : current));
+      invalidate();
+    },
+  });
+
+  const createClientMutation = useMutation({
+    mutationFn: ({
+      callId,
+      payload,
+    }: {
+      callId: number;
+      payload: { name: string; note?: string; source?: string; sourceId?: number };
+    }) => createTelephonyCallClient(callId, payload),
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Не удалось создать клиента'));
+    },
+    onSuccess: (call) => {
+      toast.success('Клиент создан и привязан к звонку');
+      setClientDialogCall(null);
+      setClientForm(EMPTY_CLIENT_FORM);
+      setSelectedCall((current) => (current?.id === call.id ? call : current));
       invalidate();
     },
   });
@@ -391,11 +582,53 @@ export default function TelephonyPage() {
     setForm(getDefaultForm(call));
   };
 
+  const openClientDialog = (call: TelephonyCall) => {
+    if (!canWork) return;
+    const searchValue = getClientSearchValue(call);
+    setClientDialogCall(call);
+    setClientSearchInput(searchValue);
+    setClientSearch(searchValue);
+    setClientForm(EMPTY_CLIENT_FORM);
+  };
+
+  const openRecording = async (call: TelephonyCall) => {
+    if (call.recordingUrl && !shouldRefreshRecordingLink(call)) {
+      window.open(call.recordingUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    try {
+      const updatedCall = await recordingReferenceMutation.mutateAsync(call.id);
+      if (updatedCall.recordingUrl) {
+        window.open(updatedCall.recordingUrl, '_blank', 'noopener,noreferrer');
+      }
+    } catch {
+      // Error is shown by the mutation handler.
+    }
+  };
+
   const submitCompletion = () => {
     if (!selectedCall) return;
     completeMutation.mutate({
       callId: selectedCall.id,
       payload: buildPayload(form),
+    });
+  };
+
+  const submitClientCreate = () => {
+    if (!clientDialogCall) return;
+    const source = clientSourcesQuery.data?.find(
+      (item) => String(item.id) === clientForm.sourceId,
+    );
+
+    createClientMutation.mutate({
+      callId: clientDialogCall.id,
+      payload: {
+        name: clientForm.name.trim(),
+        note: clientForm.note.trim() || undefined,
+        source: source?.name || undefined,
+        sourceId: clientForm.sourceId ? Number(clientForm.sourceId) : undefined,
+      },
     });
   };
 
@@ -408,7 +641,27 @@ export default function TelephonyPage() {
   };
 
   const stats = statsQuery.data;
+  const report = reportQuery.data;
+  const reportTotals = report?.totals;
   const latestSubscription = configQuery.data?.latestSubscription;
+  const clientCandidates = clientSearchQuery.data?.items || [];
+  const activeClientSources = clientSourcesQuery.data || [];
+  const canCreateClientFromCall = Boolean(
+    clientDialogCall?.clientPhone &&
+      clientForm.name.trim().length >= 2 &&
+      clientForm.sourceId,
+  );
+  const clientCreateBlockReason = !clientDialogCall?.clientPhone
+    ? 'В событии звонка нет распознанного телефона, поэтому клиента нельзя создать автоматически.'
+    : clientForm.name.trim().length < 2
+      ? 'Введите имя клиента минимум из двух символов.'
+      : clientSourcesQuery.isLoading
+        ? 'Загружаем источники клиентов.'
+        : activeClientSources.length === 0
+          ? 'Нет активных источников клиентов в справочниках.'
+          : !clientForm.sourceId
+            ? 'Выберите источник клиента.'
+            : null;
 
   return (
     <div className="min-w-0 space-y-4 p-4 md:p-6">
@@ -450,11 +703,11 @@ export default function TelephonyPage() {
             <Button
               variant="outline"
               onClick={() => subscribeMutation.mutate({})}
-              disabled={subscribeMutation.isPending || !beelineApiReady}
+              disabled={subscribeMutation.isPending || !beelineXsiReady}
               title={
-                beelineApiReady
+                beelineXsiReady
                   ? 'Создать или обновить XSI-подписку'
-                  : 'Сначала задайте BEELINE_API_BASE_URL на сервере'
+                  : 'Сначала задайте BEELINE_API_BASE_URL и BEELINE_CALLBACK_URL на сервере'
               }
             >
               <RotateCw className="h-4 w-4" />
@@ -463,11 +716,11 @@ export default function TelephonyPage() {
             <Button
               variant="outline"
               onClick={() => checkSubscriptionMutation.mutate()}
-              disabled={checkSubscriptionMutation.isPending || !beelineApiReady}
+              disabled={checkSubscriptionMutation.isPending || !beelineXsiReady}
               title={
-                beelineApiReady
+                beelineXsiReady
                   ? 'Проверить текущий статус XSI-подписки в Билайне'
-                  : 'Сначала задайте BEELINE_API_BASE_URL на сервере'
+                  : 'Сначала задайте BEELINE_API_BASE_URL и BEELINE_CALLBACK_URL на сервере'
               }
             >
               <RefreshCw className="h-4 w-4" />
@@ -522,6 +775,206 @@ export default function TelephonyPage() {
           tooltip="Номер из звонка пока не найден в клиентской базе CRM."
           value={stats?.unknownClients ?? '...'}
         />
+      </div>
+
+      <div className="space-y-3">
+        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold">Контроль обработки</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Итоги звонков за период: результаты, просроченные действия и работа операторов.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="w-[155px]">
+              <Label htmlFor="telephony-report-from">С</Label>
+              <Input
+                id="telephony-report-from"
+                type="date"
+                value={reportRange.from}
+                onChange={(event) =>
+                  setReportRange((current) => ({
+                    ...current,
+                    from: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <div className="w-[155px]">
+              <Label htmlFor="telephony-report-to">По</Label>
+              <Input
+                id="telephony-report-to"
+                type="date"
+                value={reportRange.to}
+                onChange={(event) =>
+                  setReportRange((current) => ({
+                    ...current,
+                    to: event.target.value,
+                  }))
+                }
+              />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => void reportQuery.refetch()}
+              disabled={reportQuery.isFetching}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Обновить
+            </Button>
+          </div>
+        </div>
+
+        {reportQuery.isError && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            {getApiErrorMessage(reportQuery.error, 'Не удалось получить отчет телефонии')}
+          </div>
+        )}
+
+        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <div className="rounded-md border p-3">
+            <MetricLabel tooltip="Все звонки, попавшие в выбранный период. Если у звонка нет времени начала, берется дата создания записи в CRM.">
+              Звонков
+            </MetricLabel>
+            <div className="mt-1 text-2xl font-semibold">
+              {reportQuery.isLoading ? '...' : reportTotals?.total ?? 0}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <MetricLabel tooltip="Доля звонков, по которым пользователь уже завершил обработку и указал итог.">
+              Обработано
+            </MetricLabel>
+            <div className="mt-1 text-2xl font-semibold">
+              {reportQuery.isLoading ? '...' : formatPercent(reportTotals?.processingRate)}
+            </div>
+            {!reportQuery.isLoading && (
+              <div className="mt-1 text-xs text-muted-foreground">
+                {reportTotals?.processed ?? 0} из {reportTotals?.total ?? 0}
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border p-3">
+            <MetricLabel tooltip="Доля обработанных звонков с итогом «Записался». Считается от обработанных, а не от всех звонков.">
+              В запись
+            </MetricLabel>
+            <div className="mt-1 text-2xl font-semibold">
+              {reportQuery.isLoading ? '...' : formatPercent(reportTotals?.bookingConversion)}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <MetricLabel tooltip="Пропущенные звонки в выбранном периоде. Это зона контроля перезвона.">
+              Пропущено
+            </MetricLabel>
+            <div className="mt-1 text-2xl font-semibold text-destructive">
+              {reportQuery.isLoading ? '...' : reportTotals?.missed ?? 0}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <MetricLabel tooltip="Обработанные звонки с просроченным следующим действием. Если к звонку создана задача и она не закрыта, звонок остается в этой метрике.">
+              Просрочено
+            </MetricLabel>
+            <div className="mt-1 text-2xl font-semibold text-orange-400">
+              {reportQuery.isLoading ? '...' : reportTotals?.overdueNextActions ?? 0}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <MetricLabel tooltip="Звонки, которые пока не связаны с клиентской карточкой. Их стоит привязать, чтобы история не терялась.">
+              Без клиента
+            </MetricLabel>
+            <div className="mt-1 text-2xl font-semibold">
+              {reportQuery.isLoading ? '...' : reportTotals?.unknownClients ?? 0}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 xl:grid-cols-2">
+          <div className="rounded-md border">
+            <div className="border-b px-3 py-2">
+              <div className="flex items-center gap-2 font-medium">
+                Итоги звонков
+                <HelpTooltip>
+                  Показывает, чем завершались обработанные звонки: запись, отказ,
+                  сомнение, перезвон и другие исходы.
+                </HelpTooltip>
+              </div>
+            </div>
+            <div className="divide-y">
+              {(report?.byResult || []).length === 0 ? (
+                <div className="p-4 text-sm text-muted-foreground">
+                  Итогов за период пока нет.
+                </div>
+              ) : (
+                report?.byResult.map((item) => {
+                  const width =
+                    reportTotals?.processed && reportTotals.processed > 0
+                      ? `${Math.round((item.count / reportTotals.processed) * 100)}%`
+                      : '0%';
+
+                  return (
+                    <div key={item.key} className="p-3">
+                      <div className="flex items-center justify-between gap-3 text-sm">
+                        <span className="font-medium">{item.label}</span>
+                        <span className="text-muted-foreground">{item.count}</span>
+                      </div>
+                      <div className="mt-2 h-1.5 rounded-full bg-muted">
+                        <div
+                          className="h-1.5 rounded-full bg-primary"
+                          style={{ width }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-md border">
+            <div className="border-b px-3 py-2">
+              <div className="flex items-center gap-2 font-medium">
+                По обработчикам
+                <HelpTooltip>
+                  Считается по аккаунту, который завершил обработку звонка. Если
+                  звонок еще не назначен, он попадает в строку «Не назначен».
+                </HelpTooltip>
+              </div>
+            </div>
+            <div className="divide-y">
+              {(report?.byOperator || []).length === 0 ? (
+                <div className="p-4 text-sm text-muted-foreground">
+                  Обработчиков за период пока нет.
+                </div>
+              ) : (
+                report?.byOperator.slice(0, 8).map((item) => (
+                  <div
+                    key={item.key}
+                    className="grid gap-2 p-3 text-sm sm:grid-cols-[1fr_80px_90px_90px] sm:items-center"
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-medium">{item.label}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {item.key === 'none' ? 'ожидает обработки' : item.account?.role || 'без аккаунта'}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Всего:</span>{' '}
+                      {item.count}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Закрыто:</span>{' '}
+                      {item.processed}
+                    </div>
+                    <div>
+                      <span className="text-muted-foreground">Запись:</span>{' '}
+                      {formatPercent(item.bookingConversion)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
       </div>
 
       {canManage && (
@@ -580,6 +1033,8 @@ export default function TelephonyPage() {
               <span className="text-foreground">Webhook secret:</span>{' '}
               {configQuery.data?.webhookSecretConfigured ? (
                 'включен'
+              ) : configQuery.data?.webhookSecretRequired ? (
+                <Badge variant="destructive">обязателен</Badge>
               ) : (
                 <Badge variant="destructive">выключен</Badge>
               )}
@@ -601,6 +1056,14 @@ export default function TelephonyPage() {
               {latestSubscription?.lastCheckedAt
                 ? formatDateTime(latestSubscription.lastCheckedAt)
                 : 'нет данных'}
+            </div>
+            <div>
+              <span className="text-foreground">Автопродление:</span>{' '}
+              {configQuery.data?.subscriptionAutoRenewEnabled ? (
+                <Badge variant="outline">включено</Badge>
+              ) : (
+                <Badge variant="destructive">выключено</Badge>
+              )}
             </div>
             <div>
               <span className="text-foreground">Истекает:</span>{' '}
@@ -791,17 +1254,19 @@ export default function TelephonyPage() {
 
             {canWork && (
               <div className="mt-3 flex flex-wrap justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => openClientDialog(call)}
+                >
+                  <UserPlus className="h-4 w-4" />
+                  Клиент
+                </Button>
                 {call.recordingStatus === 'available' && (
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      if (call.recordingUrl) {
-                        window.open(call.recordingUrl, '_blank', 'noopener,noreferrer');
-                        return;
-                      }
-                      recordingReferenceMutation.mutate(call.id);
-                    }}
+                    onClick={() => void openRecording(call)}
                     disabled={recordingReferenceMutation.isPending}
                   >
                     <LinkIcon className="h-4 w-4" />
@@ -828,22 +1293,22 @@ export default function TelephonyPage() {
       </div>
 
       <div className="hidden overflow-x-auto rounded-md border md:block">
-        <Table className="min-w-[1260px] table-fixed">
+        <Table className="min-w-[1240px] table-fixed">
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[130px]">
+              <TableHead className="w-[125px]">
                 <MetricLabel tooltip="Дата начала звонка по данным Билайна или статистики.">
                   Время
                 </MetricLabel>
               </TableHead>
-              <TableHead className="w-[220px]">Клиент</TableHead>
-              <TableHead className="w-[115px]">Тип</TableHead>
-              <TableHead className="w-[110px]">Статус</TableHead>
-              <TableHead className="w-[120px]">Итог</TableHead>
-              <TableHead className="w-[105px]">Запись</TableHead>
-              <TableHead className="w-[150px]">Ответственный</TableHead>
-              <TableHead className="w-[160px]">Следующий шаг</TableHead>
-              {canWork && <TableHead className="w-[150px] text-right">Действия</TableHead>}
+              <TableHead className="w-[190px]">Клиент</TableHead>
+              <TableHead className="w-[95px]">Тип</TableHead>
+              <TableHead className="w-[95px]">Статус</TableHead>
+              <TableHead className="w-[110px]">Итог</TableHead>
+              <TableHead className="w-[115px]">Запись</TableHead>
+              <TableHead className="w-[145px]">Ответственный</TableHead>
+              <TableHead className="w-[135px]">Следующий шаг</TableHead>
+              {canWork && <TableHead className="w-[125px] text-right">Действия</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -860,7 +1325,7 @@ export default function TelephonyPage() {
                 <TableCell>
                   <div className="font-medium">{formatDateTime(call.startedAt)}</div>
                   <div className="text-xs text-muted-foreground">
-                    {formatDuration(call.durationSeconds)}
+                    {formatDurationCompact(call.durationSeconds)}
                   </div>
                 </TableCell>
                 <TableCell className="min-w-0 whitespace-normal">
@@ -911,8 +1376,10 @@ export default function TelephonyPage() {
                     </div>
                   )}
                 </TableCell>
-                <TableCell>
-                  {call.staff?.name || call.processedByAccount?.name || 'Не назначен'}
+                <TableCell className="min-w-0">
+                  <div className="truncate">
+                    {call.staff?.name || call.processedByAccount?.name || 'Не назначен'}
+                  </div>
                 </TableCell>
                 <TableCell className="whitespace-normal">
                   {call.followUpCallTask ? (
@@ -935,35 +1402,43 @@ export default function TelephonyPage() {
                 </TableCell>
                 {canWork && (
                   <TableCell>
-                    <div className="flex justify-end gap-2">
-                    {call.recordingStatus === 'available' && (
+                    <div className="flex justify-end gap-1">
                       <Button
                         variant="outline"
                         size="icon-sm"
-                        onClick={() => {
-                          if (call.recordingUrl) {
-                            window.open(call.recordingUrl, '_blank', 'noopener,noreferrer');
-                            return;
-                          }
-                          recordingReferenceMutation.mutate(call.id);
-                        }}
-                        disabled={recordingReferenceMutation.isPending}
-                        aria-label="Открыть запись звонка"
-                        title="Получить временную ссылку на запись из Билайна"
+                        onClick={() => openClientDialog(call)}
+                        aria-label="Привязать клиента к звонку"
+                        title={
+                          call.client
+                            ? 'Проверить или сменить клиента звонка'
+                            : 'Найти или создать клиента по номеру звонка'
+                        }
                       >
-                        <LinkIcon className="h-4 w-4" />
+                        <UserPlus className="h-4 w-4" />
                       </Button>
-                    )}
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void openCompletion(call)}
-                    >
-                      <PhoneCall className="h-4 w-4" />
-                      Обработать
-                    </Button>
-                  </div>
-                </TableCell>
+                      {call.recordingStatus === 'available' && (
+                        <Button
+                          variant="outline"
+                          size="icon-sm"
+                          onClick={() => void openRecording(call)}
+                          disabled={recordingReferenceMutation.isPending}
+                          aria-label="Открыть запись звонка"
+                          title="Открыть временную ссылку на запись из Билайна"
+                        >
+                          <LinkIcon className="h-4 w-4" />
+                        </Button>
+                      )}
+                      <Button
+                        variant="outline"
+                        size="icon-sm"
+                        onClick={() => void openCompletion(call)}
+                        aria-label="Обработать звонок"
+                        title="Обработать звонок"
+                      >
+                        <PhoneCall className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
                 )}
               </TableRow>
             ))}
@@ -1074,6 +1549,230 @@ export default function TelephonyPage() {
         </div>
       )}
 
+      <Dialog open={Boolean(clientDialogCall)} onOpenChange={(open) => !open && setClientDialogCall(null)}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Клиент звонка</DialogTitle>
+            <DialogDescription>
+              Привяжите звонок к существующему клиенту или создайте нового из номера звонка.
+            </DialogDescription>
+          </DialogHeader>
+
+          {clientDialogCall && (
+            <div className="space-y-4">
+              <div className="rounded-md border p-3 text-sm">
+                <div className="font-medium">
+                  {clientDialogCall.client?.name || 'Клиент пока не привязан'}
+                </div>
+                <div className="text-muted-foreground">
+                  {clientDialogCall.clientPhone || 'Телефон в событии не распознан'}
+                  {' · '}
+                  {formatDateTime(clientDialogCall.startedAt)}
+                  {' · '}
+                  {DIRECTION_LABELS[clientDialogCall.direction]}
+                </div>
+                {clientDialogCall.client && (
+                  <div className="mt-2">
+                    <Button asChild variant="outline" size="sm">
+                      <Link
+                        to={`/admin/clients?q=${encodeURIComponent(
+                          clientDialogCall.client.phone || clientDialogCall.client.name,
+                        )}`}
+                      >
+                        Открыть карточку
+                      </Link>
+                    </Button>
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="telephony-client-search">Найти клиента</Label>
+                    <Input
+                      id="telephony-client-search"
+                      value={clientSearchInput}
+                      onChange={(event) => setClientSearchInput(event.target.value)}
+                      placeholder="Телефон или имя"
+                    />
+                  </div>
+
+                  <div className="max-h-[340px] space-y-2 overflow-auto rounded-md border p-2">
+                    {clientSearchQuery.isLoading && (
+                      <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                        Ищем клиентов...
+                      </div>
+                    )}
+                    {clientSearchQuery.isError && (
+                      <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+                        <div>
+                          {getApiErrorMessage(clientSearchQuery.error, 'Не удалось найти клиентов')}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="mt-2"
+                          onClick={() => void clientSearchQuery.refetch()}
+                        >
+                          Повторить поиск
+                        </Button>
+                      </div>
+                    )}
+                    {!clientSearchQuery.isError &&
+                      clientCandidates.map((client) => {
+                        const isCurrentClient = client.id === clientDialogCall.client?.id;
+
+                        return (
+                          <div
+                            key={client.id}
+                            className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card p-3"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="truncate font-medium">{client.name}</div>
+                                {isCurrentClient && (
+                                  <Badge variant="outline">Уже привязан</Badge>
+                                )}
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {client.phone} · {client.source}
+                              </div>
+                              <div className="text-xs text-muted-foreground">
+                                {getClientVisitSummary(client)}
+                              </div>
+                            </div>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                linkClientMutation.mutate({
+                                  callId: clientDialogCall.id,
+                                  clientId: client.id,
+                                })
+                              }
+                              disabled={
+                                isCurrentClient ||
+                                linkClientMutation.isPending ||
+                                createClientMutation.isPending
+                              }
+                            >
+                              {isCurrentClient ? 'Текущий' : 'Привязать'}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    {!clientSearchQuery.isLoading &&
+                      !clientSearchQuery.isError &&
+                      clientSearch.trim() &&
+                      clientCandidates.length === 0 && (
+                        <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                          Активных клиентов по этому запросу не найдено.
+                        </div>
+                      )}
+                    {!clientSearch.trim() && (
+                      <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                        Введите телефон или имя, чтобы найти клиента в базе.
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-md border p-3">
+                  <div>
+                    <div className="font-medium">Создать клиента</div>
+                    <div className="text-sm text-muted-foreground">
+                      {clientDialogCall.clientPhone
+                        ? 'Телефон возьмем из звонка, чтобы не вводить его вручную.'
+                        : 'Создание доступно только если Билайн передал телефон клиента.'}
+                    </div>
+                  </div>
+                  <div>
+                    <Label>Телефон</Label>
+                    <Input value={clientDialogCall.clientPhone || ''} disabled />
+                  </div>
+                  <div>
+                    <Label htmlFor="telephony-client-name">Имя</Label>
+                    <Input
+                      id="telephony-client-name"
+                      value={clientForm.name}
+                      onChange={(event) =>
+                        setClientForm((current) => ({
+                          ...current,
+                          name: event.target.value,
+                        }))
+                      }
+                      placeholder="Имя клиента"
+                    />
+                  </div>
+                  <div>
+                    <Label>Источник</Label>
+                    <Select
+                      value={clientForm.sourceId}
+                      onValueChange={(sourceId) =>
+                        setClientForm((current) => ({ ...current, sourceId }))
+                      }
+                      disabled={clientSourcesQuery.isLoading || activeClientSources.length === 0}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Выберите источник" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {activeClientSources.map((source) => (
+                          <SelectItem key={source.id} value={String(source.id)}>
+                            {source.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {activeClientSources.length === 0 && !clientSourcesQuery.isLoading && (
+                      <div className="mt-1 text-xs text-destructive">
+                        Сначала добавьте активный источник клиента в справочниках.
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <Label htmlFor="telephony-client-note">Заметка</Label>
+                    <textarea
+                      id="telephony-client-note"
+                      className="min-h-[86px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                      value={clientForm.note}
+                      onChange={(event) =>
+                        setClientForm((current) => ({
+                          ...current,
+                          note: event.target.value,
+                        }))
+                      }
+                      placeholder="Что известно после звонка"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    className="w-full"
+                    onClick={submitClientCreate}
+                    disabled={
+                      !canCreateClientFromCall ||
+                      createClientMutation.isPending ||
+                      linkClientMutation.isPending
+                    }
+                  >
+                    <UserPlus className="h-4 w-4" />
+                    Создать и привязать
+                  </Button>
+                  {clientCreateBlockReason && (
+                    <div className="text-xs text-muted-foreground">
+                      {clientCreateBlockReason}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(selectedCall)} onOpenChange={(open) => !open && setSelectedCall(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
@@ -1102,7 +1801,7 @@ export default function TelephonyPage() {
                   </div>
                   {selectedCall.recordingStatus === 'available' && (
                     <div className="flex flex-wrap justify-end gap-2">
-                      {selectedCall.recordingUrl ? (
+                      {selectedCall.recordingUrl && !shouldRefreshRecordingLink(selectedCall) ? (
                         <Button asChild variant="outline" size="sm">
                           <a
                             href={selectedCall.recordingUrl}

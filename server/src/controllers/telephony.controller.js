@@ -37,6 +37,14 @@ class TelephonyController {
     }
   }
 
+  async getReport(req, res) {
+    try {
+      res.json(await telephonyService.getReport(req.account, req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения отчета телефонии');
+    }
+  }
+
   async getCalls(req, res) {
     try {
       res.json(await telephonyService.listCalls(req.account, req.query));
@@ -60,6 +68,26 @@ class TelephonyController {
       );
     } catch (error) {
       handleError(res, error, 'Ошибка начала обработки звонка');
+    }
+  }
+
+  async linkClient(req, res) {
+    try {
+      res.json(
+        await telephonyService.linkCallClient(req.account, req.params.id, req.body),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка привязки клиента к звонку');
+    }
+  }
+
+  async createClient(req, res) {
+    try {
+      res.status(201).json(
+        await telephonyService.createClientForCall(req.account, req.params.id, req.body),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания клиента из звонка');
     }
   }
 

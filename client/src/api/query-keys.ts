@@ -20,6 +20,11 @@ export const queryKeys = {
     series: () => [...queryKeys.bookings.all, 'series'] as const,
     settings: () => [...queryKeys.bookings.all, 'settings'] as const,
   },
+  clients: {
+    all: ['clients'] as const,
+    list: (params: Record<string, unknown>) =>
+      [...queryKeys.clients.all, 'list', params] as const,
+  },
   references: {
     all: ['references'] as const,
     list: (type: ReferenceType, status: ReferenceStatus | 'all') =>
@@ -32,6 +37,8 @@ export const queryKeys = {
     config: () => [...queryKeys.telephony.all, 'config'] as const,
     rawEvents: (params: Record<string, unknown>) =>
       [...queryKeys.telephony.all, 'raw-events', params] as const,
+    report: (params: Record<string, unknown>) =>
+      [...queryKeys.telephony.all, 'report', params] as const,
     stats: () => [...queryKeys.telephony.all, 'stats'] as const,
   },
   utilization: {

@@ -172,6 +172,7 @@ interface ClientDetails {
   client: Client;
   duplicateCandidates: Client[];
   mergedInto?: Client | null;
+  telephonyCalls: ClientTelephonyCall[];
   timeline: ClientTimelineItem[];
   trainingNotes: TrainingNote[];
   visits: ClientVisit[];
@@ -200,12 +201,73 @@ interface ClientActiveCallTask {
   updatedAt?: string | null;
 }
 
+type ClientTelephonyDirection = 'inbound' | 'outbound' | 'unknown';
+type ClientTelephonyCallStatus =
+  | 'answered'
+  | 'completed'
+  | 'failed'
+  | 'missed'
+  | 'new'
+  | 'ringing'
+  | 'unknown';
+type ClientTelephonyProcessingStatus =
+  | 'ignored'
+  | 'in_progress'
+  | 'new'
+  | 'processed';
+type ClientTelephonyResult =
+  | 'booked'
+  | 'callback'
+  | 'complaint'
+  | 'corporate'
+  | 'no_answer'
+  | 'other'
+  | 'refused'
+  | 'thinking';
+
+interface ClientTelephonyCall {
+  callStatus: ClientTelephonyCallStatus;
+  createdAt?: string | null;
+  direction: ClientTelephonyDirection;
+  durationSeconds?: number | null;
+  endedAt?: string | null;
+  followUpCallTask?: {
+    dueAt?: string | null;
+    id: number;
+    status: string;
+    title: string;
+  } | null;
+  id: number;
+  interest?: string | null;
+  nextActionAt?: string | null;
+  nextActionText?: string | null;
+  processedAt?: string | null;
+  processedByAccount?: {
+    id: number;
+    name: string;
+    role: string;
+  } | null;
+  processingStatus: ClientTelephonyProcessingStatus;
+  recordingFileSize?: number | null;
+  recordingStatus: 'available' | 'missing' | 'pending' | 'unknown';
+  result?: ClientTelephonyResult | null;
+  staff?: {
+    id: number;
+    name: string;
+    role: string;
+    status: string;
+  } | null;
+  startedAt?: string | null;
+  summary?: string | null;
+}
+
 type ClientTimelineType =
   | 'booking'
   | 'booking_series'
   | 'call_attempt'
   | 'call_task'
   | 'client_change'
+  | 'telephony_call'
   | 'training'
   | 'visit';
 
@@ -473,8 +535,50 @@ const TIMELINE_TYPE_LABELS: Record<ClientTimelineType, string> = {
   call_attempt: 'Попытка',
   call_task: 'Обзвон',
   client_change: 'Изменение',
+  telephony_call: 'Звонок',
   training: 'Тренировка',
   visit: 'Визит',
+};
+
+const TELEPHONY_DIRECTION_LABELS: Record<ClientTelephonyDirection, string> = {
+  inbound: 'Входящий',
+  outbound: 'Исходящий',
+  unknown: 'Неизвестно',
+};
+
+const TELEPHONY_CALL_STATUS_LABELS: Record<ClientTelephonyCallStatus, string> = {
+  answered: 'Принят',
+  completed: 'Завершен',
+  failed: 'Ошибка',
+  missed: 'Пропущен',
+  new: 'Новый',
+  ringing: 'Звонит',
+  unknown: 'Неизвестно',
+};
+
+const TELEPHONY_PROCESSING_STATUS_LABELS: Record<ClientTelephonyProcessingStatus, string> = {
+  ignored: 'Скрыт',
+  in_progress: 'В обработке',
+  new: 'Новый',
+  processed: 'Обработан',
+};
+
+const TELEPHONY_RESULT_LABELS: Record<ClientTelephonyResult, string> = {
+  booked: 'Записался',
+  callback: 'Перезвонить',
+  complaint: 'Жалоба',
+  corporate: 'Корпоратив',
+  no_answer: 'Не взял трубку',
+  other: 'Другое',
+  refused: 'Отказ',
+  thinking: 'Думает',
+};
+
+const TELEPHONY_RECORDING_LABELS: Record<ClientTelephonyCall['recordingStatus'], string> = {
+  available: 'Запись есть',
+  missing: 'Без записи',
+  pending: 'Готовится',
+  unknown: 'Запись неизвестна',
 };
 
 const BOOKING_STATUS_LABELS: Record<string, string> = {
@@ -564,6 +668,13 @@ function formatDate(value?: string | null) {
 
 function formatCurrency(value?: number | null) {
   return `${Number(value || 0).toLocaleString('ru-RU')} ₽`;
+}
+
+function formatDuration(seconds?: number | null) {
+  if (seconds === null || seconds === undefined) return 'Длительность неизвестна';
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return `${minutes}:${String(rest).padStart(2, '0')}`;
 }
 
 function getLocalDateOnly(value?: string | null) {
@@ -685,6 +796,7 @@ function getTimelineIcon(type: ClientTimelineType) {
   if (type === 'booking_series') return Repeat2;
   if (type === 'visit') return CalendarDays;
   if (type === 'training') return Dumbbell;
+  if (type === 'telephony_call') return PhoneCall;
   if (type === 'call_task' || type === 'call_attempt') return MessageSquareText;
   return History;
 }
@@ -705,6 +817,52 @@ function getTimelineMeta(item: ClientTimelineItem) {
     typeof meta.paymentStatus === 'string' ? meta.paymentStatus : '';
   const durationMinutes =
     typeof meta.durationMinutes === 'number' ? meta.durationMinutes : null;
+  const durationSeconds =
+    typeof meta.durationSeconds === 'number' ? meta.durationSeconds : null;
+  const direction = typeof meta.direction === 'string' ? meta.direction : '';
+  const callStatus = typeof meta.callStatus === 'string' ? meta.callStatus : '';
+  const processingStatus =
+    typeof meta.processingStatus === 'string' ? meta.processingStatus : '';
+  const result = typeof meta.result === 'string' ? meta.result : '';
+  const recordingStatus =
+    typeof meta.recordingStatus === 'string' ? meta.recordingStatus : '';
+
+  if (item.type === 'telephony_call') {
+    if (direction) {
+      parts.push(
+        TELEPHONY_DIRECTION_LABELS[direction as ClientTelephonyDirection] ||
+          direction,
+      );
+    }
+    if (callStatus) {
+      parts.push(
+        TELEPHONY_CALL_STATUS_LABELS[callStatus as ClientTelephonyCallStatus] ||
+          callStatus,
+      );
+    }
+    if (processingStatus) {
+      parts.push(
+        TELEPHONY_PROCESSING_STATUS_LABELS[
+          processingStatus as ClientTelephonyProcessingStatus
+        ] || processingStatus,
+      );
+    }
+    if (result) {
+      parts.push(
+        TELEPHONY_RESULT_LABELS[result as ClientTelephonyResult] || result,
+      );
+    }
+    if (durationSeconds !== null) parts.push(formatDuration(durationSeconds));
+    if (recordingStatus) {
+      parts.push(
+        TELEPHONY_RECORDING_LABELS[
+          recordingStatus as ClientTelephonyCall['recordingStatus']
+        ] || recordingStatus,
+      );
+    }
+
+    return parts.join(' · ');
+  }
 
   if (status) {
     parts.push(
@@ -840,6 +998,9 @@ export default function ClientsPage() {
   const canMerge = canMergeClients(account?.role);
   const canViewTraining = canViewTrainingNotes(account?.role);
   const canEditTraining = canManageTrainingNotes(account?.role);
+  const canViewClientTelephony = ['owner', 'manager', 'admin', 'viewer'].includes(
+    account?.role || '',
+  );
   const isTrainerAccount = account?.role === 'trainer';
 
   const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
@@ -1448,6 +1609,7 @@ export default function ClientsPage() {
           upcomingCount: 0,
         },
         bookings: data.bookings || [],
+        telephonyCalls: data.telephonyCalls || [],
         timeline: data.timeline || [],
         trainingNotes: data.trainingNotes || [],
         visits: data.visits || [],
@@ -3249,7 +3411,7 @@ export default function ClientsPage() {
                     </div>
                   </div>
 
-                  {!isTrainerAccount && (
+                  {canViewClientTelephony && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
@@ -3346,6 +3508,193 @@ export default function ClientsPage() {
                             Всего будущих: {details.bookingStats.upcomingCount}
                           </div>
                         </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {!isTrainerAccount && (
+                    <div className="rounded-md border">
+                      <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 font-medium">
+                            <PhoneCall className="h-4 w-4 text-muted-foreground" />
+                            Звонки
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            История телефонии, итоги обработки и связанные задачи.
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline">
+                            {details.telephonyCalls.length} всего
+                          </Badge>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              closeDetails();
+                              navigate(
+                                `/admin/telephony?q=${encodeURIComponent(
+                                  details.client.phone,
+                                )}`,
+                              );
+                            }}
+                          >
+                            Все звонки
+                          </Button>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 p-4">
+                        {details.telephonyCalls.length === 0 ? (
+                          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                            Звонков по клиенту пока нет.
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+                              <div className="rounded-md border p-3">
+                                <MetricLabel tooltip="Все звонки, которые сейчас привязаны к этому клиенту.">
+                                  Всего
+                                </MetricLabel>
+                                <div className="mt-1 text-xl font-semibold">
+                                  {details.telephonyCalls.length}
+                                </div>
+                              </div>
+                              <div className="rounded-md border p-3">
+                                <MetricLabel tooltip="Звонки со статусом «Пропущен»: клиент или сотрудник не дозвонились.">
+                                  Пропущено
+                                </MetricLabel>
+                                <div className="mt-1 text-xl font-semibold">
+                                  {
+                                    details.telephonyCalls.filter(
+                                      (call) => call.callStatus === 'missed',
+                                    ).length
+                                  }
+                                </div>
+                              </div>
+                              <div className="rounded-md border p-3">
+                                <MetricLabel tooltip="Звонки, по которым оператор уже нажал завершение обработки и заполнил итог.">
+                                  Обработано
+                                </MetricLabel>
+                                <div className="mt-1 text-xl font-semibold">
+                                  {
+                                    details.telephonyCalls.filter(
+                                      (call) =>
+                                        call.processingStatus === 'processed',
+                                    ).length
+                                  }
+                                </div>
+                              </div>
+                              <div className="rounded-md border p-3">
+                                <MetricLabel tooltip="Звонки, для которых Билайн вернул доступную запись разговора.">
+                                  С записью
+                                </MetricLabel>
+                                <div className="mt-1 text-xl font-semibold">
+                                  {
+                                    details.telephonyCalls.filter(
+                                      (call) =>
+                                        call.recordingStatus === 'available',
+                                    ).length
+                                  }
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="space-y-2">
+                              {details.telephonyCalls.slice(0, 8).map((call) => (
+                                <div
+                                  key={call.id}
+                                  className="rounded-md border p-3 text-sm"
+                                >
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant="outline">
+                                          {
+                                            TELEPHONY_DIRECTION_LABELS[
+                                              call.direction
+                                            ]
+                                          }
+                                        </Badge>
+                                        <Badge
+                                          variant={
+                                            call.callStatus === 'missed'
+                                              ? 'destructive'
+                                              : 'secondary'
+                                          }
+                                        >
+                                          {
+                                            TELEPHONY_CALL_STATUS_LABELS[
+                                              call.callStatus
+                                            ]
+                                          }
+                                        </Badge>
+                                        <Badge variant="outline">
+                                          {
+                                            TELEPHONY_PROCESSING_STATUS_LABELS[
+                                              call.processingStatus
+                                            ]
+                                          }
+                                        </Badge>
+                                        {call.result && (
+                                          <Badge variant="outline">
+                                            {TELEPHONY_RESULT_LABELS[call.result]}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <div className="mt-2 text-muted-foreground">
+                                        {formatDateTime(
+                                          call.startedAt ||
+                                            call.processedAt ||
+                                            call.createdAt,
+                                        )}{' '}
+                                        ·{' '}
+                                        {formatDuration(call.durationSeconds)} ·{' '}
+                                        {
+                                          TELEPHONY_RECORDING_LABELS[
+                                            call.recordingStatus
+                                          ]
+                                        }
+                                      </div>
+                                      {(call.staff || call.processedByAccount) && (
+                                        <div className="mt-1 text-xs text-muted-foreground">
+                                          Ответственный:{' '}
+                                          {call.staff?.name ||
+                                            call.processedByAccount?.name}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {call.followUpCallTask && (
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          closeDetails();
+                                          navigate('/admin/call-tasks');
+                                        }}
+                                      >
+                                        Задача
+                                      </Button>
+                                    )}
+                                  </div>
+                                  {call.summary && (
+                                    <div className="mt-2 whitespace-pre-wrap break-words">
+                                      {call.summary}
+                                    </div>
+                                  )}
+                                  {call.nextActionText && (
+                                    <div className="mt-2 whitespace-pre-wrap break-words text-muted-foreground">
+                                      Следующий шаг: {call.nextActionText}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   )}

@@ -21,6 +21,7 @@ const CHECKS = [
   ['clientBases.list', '/client-bases?status=active'],
   ['callTasks.list', '/call-tasks?status=active'],
   ['telephony.stats', '/telephony/stats'],
+  ['telephony.report', '/telephony/report'],
   ['telephony.calls', '/telephony/calls?status=all&pageSize=5'],
   ['finance.list', '/finance'],
   ['visits.analytics', '/analytics/visits'],

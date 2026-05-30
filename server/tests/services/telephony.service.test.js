@@ -25,6 +25,36 @@ test('normalizes Beeline statistics payload into an inbound call', () => {
   assert.equal(normalized.externalTrackingId, 'track-1');
 });
 
+test('infers Beeline statistics direction from status when direction is missing', () => {
+  const outbound = normalizePayload({
+    abonent: {
+      extension: '200',
+      phone: '+79215453939',
+      userId: '9215453939@vol.nw.ims.mnc099.mcc250.3gppnetwork.org',
+    },
+    duration: 254200,
+    phone_to: '+79814271847',
+    startDate: 1779987798000,
+    status: 'PLACED',
+  });
+  const inbound = normalizePayload({
+    abonent: {
+      extension: '200',
+      phone: '+79215453939',
+      userId: '9215453939@vol.nw.ims.mnc099.mcc250.3gppnetwork.org',
+    },
+    duration: 800,
+    phone_from: '+79814271847',
+    startDate: 1779987798000,
+    status: 'RECIEVED',
+  });
+
+  assert.equal(outbound.direction, 'outbound');
+  assert.equal(outbound.clientPhoneNormalized, '9814271847');
+  assert.equal(inbound.direction, 'inbound');
+  assert.equal(inbound.clientPhoneNormalized, '9814271847');
+});
+
 test('normalizes real Beeline v2 statistics payload shape', () => {
   const normalized = normalizePayload({
     abonent: {
@@ -168,6 +198,54 @@ test('accepts Beeline XSI XML callback payloads', () => {
   assert.equal(normalized.clientPhoneNormalized, '9814271847');
   assert.equal(normalized.abonentExtension, '200');
   assert.equal(normalized.startedAt.toISOString(), '2026-05-29T09:00:00.000Z');
+});
+
+test('normalizes Beeline XSI received event with nested endpoint parties', () => {
+  const [payload] = parseIncomingBeelinePayload(
+    `<?xml version="1.0" encoding="UTF-8"?>
+    <xsi:Event xmlns:xsi="http://schema.broadsoft.com/xsi">
+      <xsi:eventData xsi:type="xsi:CallReceivedEvent">
+        <xsi:callId>xsi-call-2</xsi:callId>
+        <xsi:personality>Terminator</xsi:personality>
+        <xsi:startTime>2026-05-29T12:00:00+03:00</xsi:startTime>
+        <xsi:remoteParty>
+          <xsi:address>tel:+79814271847</xsi:address>
+        </xsi:remoteParty>
+        <xsi:endpoint>
+          <xsi:address>sip:9215453939@vol.nw.ims.mnc099.mcc250.3gppnetwork.org</xsi:address>
+        </xsi:endpoint>
+        <xsi:extension>200</xsi:extension>
+      </xsi:eventData>
+    </xsi:Event>`,
+    { 'content-type': 'application/xml' },
+  );
+  const normalized = normalizePayload(payload);
+
+  assert.equal(normalized.direction, 'inbound');
+  assert.equal(normalized.callStatus, 'ringing');
+  assert.equal(normalized.clientPhoneNormalized, '9814271847');
+  assert.equal(normalized.employeePhone, '9215453939');
+});
+
+test('normalizes Beeline XSI released event as completed', () => {
+  const [payload] = parseIncomingBeelinePayload(
+    `<?xml version="1.0" encoding="UTF-8"?>
+    <xsi:Event xmlns:xsi="http://schema.broadsoft.com/xsi">
+      <xsi:eventData xsi:type="xsi:CallReleasedEvent">
+        <xsi:callId>xsi-call-3</xsi:callId>
+        <xsi:personality>Terminator</xsi:personality>
+        <xsi:startTime>2026-05-29T12:00:00+03:00</xsi:startTime>
+        <xsi:remoteParty>
+          <xsi:address>tel:+79814271847</xsi:address>
+        </xsi:remoteParty>
+      </xsi:eventData>
+    </xsi:Event>`,
+    { 'content-type': 'application/xml' },
+  );
+  const normalized = normalizePayload(payload);
+
+  assert.equal(normalized.callStatus, 'completed');
+  assert.equal(normalized.clientPhoneNormalized, '9814271847');
 });
 
 test('accepts Beeline XSI subscription XML as service event payload', () => {

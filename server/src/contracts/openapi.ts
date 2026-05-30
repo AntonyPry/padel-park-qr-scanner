@@ -13,6 +13,7 @@ interface EndpointContract {
   public?: boolean;
   query?: unknown;
   responseType?: 'json' | 'xlsx';
+  successStatus?: number;
   summary: string;
   tags: string[];
 }
@@ -130,9 +131,12 @@ const endpointContracts: EndpointContract[] = [
 
   { id: 'telephony.config', method: 'get', path: '/telephony/config', summary: 'Get Beeline telephony config', tags: ['Telephony'] },
   { id: 'telephony.stats', method: 'get', path: '/telephony/stats', summary: 'Get telephony dashboard stats', tags: ['Telephony'] },
+  { id: 'telephony.report', method: 'get', path: '/telephony/report', query: apiSchemas.telephony.reportQuery, summary: 'Get telephony processing report', tags: ['Telephony'] },
   { id: 'telephony.calls', method: 'get', path: '/telephony/calls', query: apiSchemas.telephony.callsQuery, summary: 'List telephony calls', tags: ['Telephony'] },
   { id: 'telephony.getCall', method: 'get', path: '/telephony/calls/{id}', params: apiSchemas.telephony.withId.params, summary: 'Get telephony call', tags: ['Telephony'] },
   { id: 'telephony.startCall', method: 'post', path: '/telephony/calls/{id}/start', params: apiSchemas.telephony.withId.params, summary: 'Start call processing', tags: ['Telephony'] },
+  { id: 'telephony.linkClient', method: 'post', path: '/telephony/calls/{id}/client', body: apiSchemas.telephony.linkClient.body, params: apiSchemas.telephony.linkClient.params, summary: 'Link client to telephony call', tags: ['Telephony'] },
+  { id: 'telephony.createClient', method: 'post', path: '/telephony/calls/{id}/client/create', body: apiSchemas.telephony.createClient.body, params: apiSchemas.telephony.createClient.params, successStatus: 201, summary: 'Create client from telephony call', tags: ['Telephony'] },
   { id: 'telephony.completeCall', method: 'post', path: '/telephony/calls/{id}/complete', body: apiSchemas.telephony.complete.body, params: apiSchemas.telephony.complete.params, summary: 'Complete call processing', tags: ['Telephony'] },
   { id: 'telephony.ignoreCall', method: 'post', path: '/telephony/calls/{id}/ignore', body: apiSchemas.telephony.ignore.body, params: apiSchemas.telephony.ignore.params, summary: 'Ignore telephony call', tags: ['Telephony'] },
   { id: 'telephony.recordingReference', method: 'post', path: '/telephony/calls/{id}/recording-reference', params: apiSchemas.telephony.withId.params, summary: 'Refresh call recording reference', tags: ['Telephony'] },
@@ -258,6 +262,7 @@ function buildParameters(endpoint: EndpointContract) {
 }
 
 function buildOperation(endpoint: EndpointContract) {
+  const successStatus = endpoint.successStatus || 200;
   const successContent =
     endpoint.responseType === 'xlsx'
       ? {
@@ -273,7 +278,7 @@ function buildOperation(endpoint: EndpointContract) {
   const operation: Record<string, unknown> = {
     operationId: endpoint.id,
     responses: {
-      200: {
+      [successStatus]: {
         content: successContent,
         description: 'Success',
       },

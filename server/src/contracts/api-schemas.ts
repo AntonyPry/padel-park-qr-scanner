@@ -562,6 +562,19 @@ const apiSchemas = {
         to: optionalDateTime,
       })
       .passthrough(),
+    createClient: {
+      body: clientBody
+        .omit({ phone: true })
+        .extend({
+          status: archiveStatus.optional(),
+        })
+        .passthrough(),
+      params: idParams,
+    },
+    linkClient: {
+      body: z.object({ clientId: id }).passthrough(),
+      params: idParams,
+    },
     complete: {
       body: z
         .object({
@@ -598,6 +611,25 @@ const apiSchemas = {
     rawEventsQuery: paginationQuery
       .extend({
         status: z.enum(['all', 'new', 'processed', 'failed']).optional(),
+      })
+      .passthrough(),
+    reportQuery: dateRangeQuery
+      .extend({
+        callStatus: z
+          .enum([
+            'ringing',
+            'answered',
+            'completed',
+            'missed',
+            'failed',
+            'unknown',
+          ])
+          .optional(),
+        direction: z.enum(['inbound', 'outbound', 'unknown']).optional(),
+        recordingStatus: z.enum(['available', 'missing', 'pending', 'unknown']).optional(),
+        status: z
+          .enum(['all', 'new', 'in_progress', 'processed', 'ignored'])
+          .optional(),
       })
       .passthrough(),
     recordsSyncBody: z

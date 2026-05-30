@@ -7,6 +7,7 @@ const { createSocketServer } = require('./src/sockets');
 const { createTelegramBot } = require('./src/bots/telegram');
 const { createVkBot } = require('./src/bots/vk');
 const callTasksService = require('./src/services/call-tasks.service');
+const telephonyService = require('./src/services/telephony.service');
 
 const PORT = process.env.PORT || 3000;
 
@@ -44,6 +45,31 @@ function startRecurringCallTasksRunner() {
 
   setInterval(run, intervalMs);
   void run();
+}
+
+function startTelephonySubscriptionRunner() {
+  const rawIntervalMs = Number(process.env.BEELINE_SUBSCRIPTION_RUNNER_INTERVAL_MS);
+  const intervalMs =
+    Number.isFinite(rawIntervalMs) && rawIntervalMs >= 60 * 1000
+      ? rawIntervalMs
+      : 5 * 60 * 1000;
+
+  const run = async () => {
+    try {
+      const result = await telephonyService.maintainEventSubscription();
+      if (['created', 'renewed'].includes(result.action)) {
+        console.log(`☎️ XSI-подписка Билайна: ${result.action}.`);
+      }
+      if (result.action === 'failed') {
+        console.error('❌ Ошибка автопродления XSI-подписки:', result.error);
+      }
+    } catch (error) {
+      console.error('❌ Ошибка runner XSI-подписки:', error);
+    }
+  };
+
+  setInterval(run, intervalMs);
+  setTimeout(run, 15000);
 }
 
 async function startTelegramBot() {
@@ -90,6 +116,7 @@ async function startApp() {
   try {
     startHttpServer();
     startRecurringCallTasksRunner();
+    startTelephonySubscriptionRunner();
   } catch (error) {
     console.error('❌ Ошибка старта сервера:', error);
   }

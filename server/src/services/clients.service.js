@@ -87,6 +87,36 @@ const SERIES_WEEKDAY_LABELS = {
   6: 'Суббота',
   7: 'Воскресенье',
 };
+const TELEPHONY_DIRECTION_LABELS = {
+  inbound: 'Входящий',
+  outbound: 'Исходящий',
+  unknown: 'Звонок',
+};
+const TELEPHONY_CALL_STATUS_LABELS = {
+  answered: 'Принят',
+  completed: 'Завершен',
+  failed: 'Ошибка',
+  missed: 'Пропущен',
+  new: 'Новый',
+  ringing: 'Звонит',
+  unknown: 'Неизвестно',
+};
+const TELEPHONY_PROCESSING_STATUS_LABELS = {
+  ignored: 'Скрыт',
+  in_progress: 'В обработке',
+  new: 'Новый',
+  processed: 'Обработан',
+};
+const TELEPHONY_RESULT_LABELS = {
+  booked: 'Записался',
+  callback: 'Перезвонить',
+  complaint: 'Жалоба',
+  corporate: 'Корпоратив',
+  no_answer: 'Не взял трубку',
+  other: 'Другое',
+  refused: 'Отказ',
+  thinking: 'Думает',
+};
 
 function appError(message, statusCode = 400, details = {}) {
   const error = new Error(message);
@@ -950,6 +980,78 @@ async function listTrainingNotes(clientId) {
   });
 }
 
+async function listClientTelephonyCalls(clientId, account, options = {}) {
+  if (!canViewCallTimeline(account) || !db.TelephonyCall) return [];
+
+  const limit = Math.min(100, Number(options.limit) || 30);
+  const rows = await db.TelephonyCall.findAll({
+    include: [
+      {
+        model: db.Staff,
+        as: 'staff',
+        attributes: ['id', 'name', 'role', 'phone', 'status'],
+      },
+      {
+        model: db.Account,
+        as: 'processedByAccount',
+        attributes: ['id', 'email', 'role', 'staffId'],
+        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+      },
+      {
+        model: db.CallTask,
+        as: 'followUpCallTask',
+        attributes: ['id', 'title', 'status', 'dueAt'],
+      },
+    ],
+    limit,
+    order: [
+      ['startedAt', 'DESC'],
+      ['createdAt', 'DESC'],
+    ],
+    where: { userId: clientId },
+  });
+
+  return rows.map((row) => {
+    const raw = row.toJSON();
+
+    return {
+      id: raw.id,
+      callStatus: raw.callStatus,
+      direction: raw.direction,
+      durationSeconds: raw.durationSeconds,
+      endedAt: raw.endedAt,
+      followUpCallTask: raw.followUpCallTask
+        ? {
+            dueAt: raw.followUpCallTask.dueAt || null,
+            id: raw.followUpCallTask.id,
+            status: raw.followUpCallTask.status,
+            title: raw.followUpCallTask.title,
+          }
+        : null,
+      interest: raw.interest || null,
+      nextActionAt: raw.nextActionAt || null,
+      nextActionText: raw.nextActionText || '',
+      processedAt: raw.processedAt || null,
+      processedByAccount: mapAccount(raw.processedByAccount),
+      processingStatus: raw.processingStatus,
+      recordingFileSize: raw.recordingFileSize || null,
+      recordingStatus: raw.recordingStatus,
+      result: raw.result || null,
+      staff: raw.staff
+        ? {
+            id: raw.staff.id,
+            name: raw.staff.name,
+            role: raw.staff.role,
+            status: raw.staff.status,
+          }
+        : null,
+      startedAt: raw.startedAt,
+      summary: raw.summary || '',
+      createdAt: raw.createdAt,
+    };
+  });
+}
+
 async function getClientDetails(id, account = null) {
   const client = await getClientOrFail(id, { includeMerged: true });
   if (client.mergedIntoUserId) {
@@ -957,13 +1059,14 @@ async function getClientDetails(id, account = null) {
     const trainingNotes = canViewTrainingNotes(account)
       ? await listTrainingNotes(client.id)
       : [];
-    const [bookings, bookingSeries, bookingStats] = includeOperationalHistory
+    const [bookings, bookingSeries, bookingStats, telephonyCalls] = includeOperationalHistory
       ? await Promise.all([
           listClientBookings(client.id, { limit: 50 }),
           listClientBookingSeries(client.id, { limit: 30 }),
           getClientBookingStats(client.id),
+          listClientTelephonyCalls(client.id, account, { limit: 30 }),
         ])
-      : [[], [], getEmptyBookingStats()];
+      : [[], [], getEmptyBookingStats(), []];
 
     return {
       bookingSeries,
@@ -985,9 +1088,11 @@ async function getClientDetails(id, account = null) {
             bookings,
             account,
             trainingNotes,
+            telephonyCalls,
             visits: [],
           })
         : [],
+      telephonyCalls,
       trainingNotes,
     };
   }
@@ -1002,6 +1107,7 @@ async function getClientDetails(id, account = null) {
     bookingSeries,
     bookingStats,
     activeCallTasks,
+    telephonyCalls,
   ] = await Promise.all([
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
@@ -1011,6 +1117,7 @@ async function getClientDetails(id, account = null) {
     includeOperationalHistory ? listClientBookingSeries(client.id, { limit: 30 }) : [],
     includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
     includeOperationalHistory ? listClientActiveCallTasks(client.id, account) : [],
+    includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
   ]);
 
   return {
@@ -1029,9 +1136,11 @@ async function getClientDetails(id, account = null) {
           bookingSeries,
           bookings,
           trainingNotes,
+          telephonyCalls,
           visits,
         })
       : [],
+    telephonyCalls,
     trainingNotes,
     visits: includeOperationalHistory ? visits : [],
   };
@@ -1177,7 +1286,7 @@ function createTimelineItem({
 }
 
 function canViewCallTimeline(account) {
-  return ['owner', 'manager', 'admin'].includes(account?.role);
+  return ['owner', 'manager', 'admin', 'viewer'].includes(account?.role);
 }
 
 function canViewClientAuditTimeline(account) {
@@ -1417,7 +1526,7 @@ async function listClientAuditTimeline(clientId, account) {
 
 async function listClientTimeline(
   clientId,
-  { account, bookingSeries, bookings, visits, trainingNotes } = {},
+  { account, bookingSeries, bookings, visits, trainingNotes, telephonyCalls } = {},
 ) {
   const [callItems, auditItems] = await Promise.all([
     listClientCallTimeline(clientId, account),
@@ -1492,8 +1601,52 @@ async function listClientTimeline(
       type: 'booking_series',
     }),
   );
+  const telephonyItems = (telephonyCalls || []).map((call) => {
+    const directionLabel =
+      TELEPHONY_DIRECTION_LABELS[call.direction] || TELEPHONY_DIRECTION_LABELS.unknown;
+    const statusLabel =
+      TELEPHONY_CALL_STATUS_LABELS[call.callStatus] || call.callStatus;
+    const processingLabel =
+      TELEPHONY_PROCESSING_STATUS_LABELS[call.processingStatus] ||
+      call.processingStatus;
+    const resultLabel = call.result
+      ? TELEPHONY_RESULT_LABELS[call.result] || call.result
+      : '';
 
-  return [...visitItems, ...bookingItems, ...seriesItems, ...trainingItems, ...callItems, ...auditItems]
+    return createTimelineItem({
+      actor: call.processedByAccount || null,
+      description: [
+        call.summary,
+        call.nextActionText ? `Следующий шаг: ${call.nextActionText}` : '',
+        call.followUpCallTask ? `Задача: ${call.followUpCallTask.title}` : '',
+      ].filter(Boolean).join('\n'),
+      id: `telephony-call-${call.id}`,
+      meta: {
+        callStatus: call.callStatus,
+        direction: call.direction,
+        durationSeconds: call.durationSeconds,
+        processingStatus: call.processingStatus,
+        recordingStatus: call.recordingStatus,
+        result: call.result || '',
+        status: call.callStatus,
+      },
+      occurredAt: call.startedAt || call.processedAt || call.createdAt,
+      title: [directionLabel, statusLabel, processingLabel, resultLabel]
+        .filter(Boolean)
+        .join(' · '),
+      type: 'telephony_call',
+    });
+  });
+
+  return [
+    ...visitItems,
+    ...bookingItems,
+    ...seriesItems,
+    ...trainingItems,
+    ...telephonyItems,
+    ...callItems,
+    ...auditItems,
+  ]
     .filter((item) => item.occurredAt)
     .sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime())
     .slice(0, 120);
@@ -2101,6 +2254,15 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
           },
         );
       }
+      if (db.TelephonyCall) {
+        await db.TelephonyCall.update(
+          { userId: primary.id },
+          {
+            where: { userId: duplicate.id },
+            transaction,
+          },
+        );
+      }
       await mergeCallTaskClientsForDuplicate(primary, duplicate, transaction);
 
       const primaryUpdates = {};
@@ -2208,6 +2370,7 @@ async function removeArchivedClient(id) {
     visitsCount,
     trainingNotesCount,
     callTaskClientsCount,
+    telephonyCallsCount,
     bookingCount,
     bookingSeriesCount,
     mergedClientsCount,
@@ -2216,6 +2379,7 @@ async function removeArchivedClient(id) {
       db.Visit.count({ where: { userId: client.id } }),
       db.TrainingNote.count({ where: { userId: client.id } }),
       db.CallTaskClient.count({ where: { userId: client.id } }),
+      db.TelephonyCall ? db.TelephonyCall.count({ where: { userId: client.id } }) : 0,
       db.Booking ? db.Booking.count({ where: { userId: client.id } }) : 0,
       db.BookingSeries ? db.BookingSeries.count({ where: { userId: client.id } }) : 0,
       db.User.count({ where: { mergedIntoUserId: client.id } }),
@@ -2225,12 +2389,13 @@ async function removeArchivedClient(id) {
     visitsCount > 0 ||
     trainingNotesCount > 0 ||
     callTaskClientsCount > 0 ||
+    telephonyCallsCount > 0 ||
     bookingCount > 0 ||
     bookingSeriesCount > 0 ||
     mergedClientsCount > 0
   ) {
     throw appError(
-      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, дневник тренировок, задачи обзвона или связанные дубли. Оставьте его в архиве.',
+      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
       409,
     );
   }

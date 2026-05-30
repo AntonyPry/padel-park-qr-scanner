@@ -34,6 +34,36 @@ const PROCESSING_STATUSES = new Set([
 ]);
 const SUBSCRIPTION_TYPES = new Set(['BASIC_CALL', 'ADVANCED_CALL']);
 const DEFAULT_MISSED_CALL_DEADLINE_MINUTES = 5;
+const DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS = 10 * 60;
+const DEFAULT_REPORT_DAYS = 30;
+const SUBSCRIPTION_LOCK_NAME = 'padel_park_beeline_xsi_subscription';
+
+const RESULT_LABELS = {
+  booked: 'Записался',
+  callback: 'Перезвонить',
+  complaint: 'Жалоба',
+  corporate: 'Корпоратив',
+  no_answer: 'Не взял трубку',
+  other: 'Другое',
+  refused: 'Отказ',
+  thinking: 'Думает',
+};
+
+const INTEREST_LABELS = {
+  corporate: 'Корпоратив',
+  game: 'Игра',
+  master_class: 'Мастер-класс',
+  other: 'Другое',
+  tournament: 'Турнир',
+  training: 'Тренировка',
+};
+
+const PROCESSING_LABELS = {
+  ignored: 'Скрыт',
+  in_progress: 'В обработке',
+  new: 'Новый',
+  processed: 'Обработан',
+};
 
 function appError(message, statusCode = 400, details = undefined) {
   const error = new Error(message);
@@ -45,6 +75,38 @@ function appError(message, statusCode = 400, details = undefined) {
 function normalizeText(value) {
   const normalized = String(value || '').trim();
   return normalized || null;
+}
+
+function readBooleanEnv(name, defaultValue = false) {
+  const value = process.env[name];
+  if (value === undefined || value === null || value === '') return defaultValue;
+  return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
+}
+
+function getSubscriptionExpiresSeconds() {
+  const value = Number(process.env.BEELINE_SUBSCRIPTION_EXPIRES || 3600);
+  return Number.isFinite(value) && value > 0 ? value : 3600;
+}
+
+function getSubscriptionRenewBeforeSeconds() {
+  const value = Number(process.env.BEELINE_SUBSCRIPTION_RENEW_BEFORE_SECONDS);
+  if (Number.isFinite(value) && value >= 60) return value;
+
+  return Math.min(
+    DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS,
+    Math.max(60, Math.floor(getSubscriptionExpiresSeconds() / 3)),
+  );
+}
+
+function isSubscriptionAutoRenewEnabled() {
+  return readBooleanEnv('BEELINE_SUBSCRIPTION_AUTORENEW_ENABLED', false);
+}
+
+function isWebhookSecretRequired() {
+  return readBooleanEnv(
+    'BEELINE_WEBHOOK_REQUIRE_SECRET',
+    process.env.NODE_ENV === 'production',
+  );
 }
 
 function asObject(value) {
@@ -150,6 +212,41 @@ function getXmlTagText(xml, tagNames) {
   return null;
 }
 
+function getXmlElementBlock(xml, tagNames) {
+  for (const tagName of tagNames) {
+    const escaped = escapeRegExp(tagName);
+    const pattern = new RegExp(
+      `<(?:[\\w.-]+:)?${escaped}\\b[^>]*>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${escaped}>`,
+      'i',
+    );
+    const match = String(xml || '').match(pattern);
+    if (match?.[1]) return match[1];
+  }
+
+  return null;
+}
+
+function getXmlTagTextInBlock(xml, blockTags, valueTags) {
+  const block = getXmlElementBlock(xml, blockTags);
+  return block ? getXmlTagText(block, valueTags) : null;
+}
+
+function getXmlAttributeInBlock(xml, blockTags, attributeNames) {
+  const block = getXmlElementBlock(xml, blockTags);
+  return block ? getXmlAttribute(block, attributeNames) : null;
+}
+
+function getXmlTagAttribute(xml, tagNames, attributeNames) {
+  for (const tagName of tagNames) {
+    const escaped = escapeRegExp(tagName);
+    const pattern = new RegExp(`<(?:[\\w.-]+:)?${escaped}\\b[^>]*>`, 'i');
+    const match = String(xml || '').match(pattern);
+    if (match?.[0]) return getXmlAttribute(match[0], attributeNames);
+  }
+
+  return null;
+}
+
 function getXmlAttribute(xml, attributeNames) {
   for (const attributeName of attributeNames) {
     const escaped = escapeRegExp(attributeName);
@@ -176,18 +273,49 @@ function normalizeXmlPhone(value) {
 
 function parseBeelineXmlPayload(xml, headers = {}) {
   const rawBody = String(xml || '');
+  const eventBlock = getXmlElementBlock(rawBody, ['eventData']) || rawBody;
   const eventType =
-    getXmlAttribute(rawBody, ['type']) ||
-    getXmlTagText(rawBody, ['eventType', 'event', 'eventDataType']) ||
+    getXmlTagAttribute(rawBody, ['eventData'], ['type']) ||
+    getXmlAttributeInBlock(rawBody, ['eventData'], ['type']) ||
+    getXmlTagText(eventBlock, ['eventType', 'eventDataType']) ||
     'xsi.xml';
-  const state = getXmlTagText(rawBody, ['state', 'status', 'event']);
-  const personality = getXmlTagText(rawBody, ['personality', 'callType']);
+  const state = getXmlTagText(eventBlock, ['state', 'status']);
+  const personality = getXmlTagText(eventBlock, ['personality', 'callType']);
+  const lowerEventType = String(eventType || '').toLowerCase();
   const direction =
     String(personality || '').toLowerCase() === 'originator'
       ? 'outbound'
       : String(personality || '').toLowerCase() === 'terminator'
         ? 'inbound'
-        : undefined;
+        : lowerEventType.includes('originated')
+          ? 'outbound'
+          : lowerEventType.includes('received')
+            ? 'inbound'
+            : undefined;
+  const remotePhone = normalizeXmlPhone(
+    getXmlTagTextInBlock(eventBlock, ['remoteParty', 'remoteEndpoint'], [
+      'address',
+      'addressOfRecord',
+      'phoneNumber',
+      'phone',
+    ]) ||
+      getXmlTagText(eventBlock, [
+        'remoteAddress',
+        'remotePartyAddress',
+        'remotePhoneNumber',
+        'remotePhone',
+      ]),
+  );
+  const localPhone = normalizeXmlPhone(
+    getXmlTagTextInBlock(eventBlock, ['endpoint', 'localParty', 'localEndpoint'], [
+      'address',
+      'addressOfRecord',
+      'primaryPhoneNumber',
+      'phoneNumber',
+      'phone',
+    ]) ||
+      getXmlTagText(eventBlock, ['localAddress', 'addressOfRecord', 'primaryPhoneNumber']),
+  );
 
   return {
     rawBody,
@@ -195,30 +323,20 @@ function parseBeelineXmlPayload(xml, headers = {}) {
     eventType,
     status: state || eventType,
     direction,
-    callId: getXmlTagText(rawBody, ['callId', 'callID', 'call_id']),
-    externalEventId: getXmlTagText(rawBody, ['eventID', 'eventId', 'event_id']),
-    externalTrackingId: getXmlTagText(rawBody, [
+    callId: getXmlTagText(eventBlock, ['callId', 'callID', 'call_id']),
+    externalEventId: getXmlTagText(eventBlock, ['eventID', 'eventId', 'event_id']),
+    externalTrackingId: getXmlTagText(eventBlock, [
       'externalTrackingId',
       'extTrackingId',
       'trackingId',
     ]),
-    startDate: getXmlTagText(rawBody, ['startTime', 'startDate', 'startedAt', 'timestamp']),
-    endedAt: getXmlTagText(rawBody, ['endTime', 'endDate', 'endedAt']),
-    duration: getXmlTagText(rawBody, ['duration', 'callDuration']),
-    phone: normalizeXmlPhone(
-      getXmlTagText(rawBody, [
-        'remoteAddress',
-        'remotePartyAddress',
-        'address',
-        'phoneNumber',
-        'phone',
-      ]),
-    ),
-    employeePhone: normalizeXmlPhone(
-      getXmlTagText(rawBody, ['localAddress', 'primaryPhoneNumber']),
-    ),
-    extension: getXmlTagText(rawBody, ['extension', 'ext']),
-    userId: getXmlTagText(rawBody, ['userId', 'targetId', 'subscriberId']),
+    startDate: getXmlTagText(eventBlock, ['startTime', 'startDate', 'startedAt', 'timestamp']),
+    endedAt: getXmlTagText(eventBlock, ['endTime', 'endDate', 'endedAt']),
+    duration: getXmlTagText(eventBlock, ['duration', 'callDuration']),
+    phone: remotePhone,
+    employeePhone: localPhone,
+    extension: getXmlTagText(eventBlock, ['extension', 'ext']),
+    userId: getXmlTagText(eventBlock, ['userId', 'targetId', 'subscriberId']),
   };
 }
 
@@ -253,7 +371,10 @@ async function getConfig() {
     latestSubscription: await getLatestSubscription(),
     recordsPath: normalizeText(process.env.BEELINE_RECORDS_PATH) || '/records',
     statisticsPath: normalizeText(process.env.BEELINE_STATISTICS_PATH) || '/v2/statistics',
+    subscriptionAutoRenewEnabled: isSubscriptionAutoRenewEnabled(),
+    subscriptionRenewBeforeSeconds: getSubscriptionRenewBeforeSeconds(),
     subscriptionPath: normalizeText(process.env.BEELINE_SUBSCRIPTION_PATH) || '/subscription',
+    webhookSecretRequired: isWebhookSecretRequired(),
     webhookSecretConfigured: Boolean(normalizeText(process.env.BEELINE_WEBHOOK_SECRET)),
   };
 }
@@ -261,6 +382,9 @@ async function getConfig() {
 function assertWebhookAllowed(headers = {}, query = {}) {
   const secret = normalizeText(process.env.BEELINE_WEBHOOK_SECRET);
   if (!secret) {
+    if (isWebhookSecretRequired()) {
+      throw appError('BEELINE_WEBHOOK_SECRET не настроен', 503);
+    }
     return;
   }
 
@@ -317,17 +441,56 @@ function normalizeDirection(value) {
   const normalized = String(value || '').toLowerCase();
   if (['inbound', 'incoming', 'in', 'входящий'].includes(normalized)) return 'inbound';
   if (['outbound', 'outgoing', 'out', 'placed', 'исходящий'].includes(normalized)) return 'outbound';
+  if (normalized.includes('callreceivedevent')) return 'inbound';
+  if (normalized.includes('calloriginatedevent')) return 'outbound';
+  return 'unknown';
+}
+
+function inferDirection(raw, statusValue) {
+  const explicit = normalizeDirection(
+    pickValue(raw, ['direction', 'call.direction'], ['direction', 'callDirection']),
+  );
+  if (explicit !== 'unknown') return explicit;
+
+  const status = String(statusValue || '').toLowerCase();
+  if (['placed'].includes(status) || status.includes('calloriginatedevent')) return 'outbound';
+  if (
+    ['recieved', 'received', 'missed'].includes(status) ||
+    status.includes('callreceivedevent') ||
+    status.includes('callnotansweredevent')
+  ) return 'inbound';
+
+  if (pickValue(raw, ['phone_from'], ['phone_from']) && pickValue(raw, ['phone_to'], ['phone_to'])) {
+    return raw.abonent ? 'inbound' : 'unknown';
+  }
+
   return 'unknown';
 }
 
 function normalizeCallStatus(value, direction = 'unknown') {
   const normalized = String(value || '').toLowerCase();
-  if (['ringing', 'alerting', 'incoming', 'originating'].includes(normalized)) return 'ringing';
-  if (['active', 'established', 'answered', 'received', 'recieved'].includes(normalized)) return 'answered';
-  if (['completed', 'complete', 'ended', 'finished', 'redirected', 'released', 'disconnected'].includes(normalized)) {
+  if (
+    ['ringing', 'alerting', 'incoming', 'originating'].includes(normalized) ||
+    normalized.includes('callreceivedevent') ||
+    normalized.includes('calloriginatedevent')
+  ) return 'ringing';
+  if (
+    ['active', 'established', 'answered', 'received', 'recieved'].includes(normalized) ||
+    normalized.includes('callansweredevent') ||
+    normalized.includes('callheldevent') ||
+    normalized.includes('callresumedevent')
+  ) return 'answered';
+  if (
+    ['completed', 'complete', 'ended', 'finished', 'redirected', 'released', 'disconnected'].includes(normalized) ||
+    normalized.includes('callreleasedevent') ||
+    normalized.includes('callcompletedevent')
+  ) {
     return 'completed';
   }
-  if (['missed', 'no_answer', 'notanswered', 'not_answered'].includes(normalized)) return 'missed';
+  if (
+    ['missed', 'no_answer', 'notanswered', 'not_answered'].includes(normalized) ||
+    normalized.includes('callnotansweredevent')
+  ) return 'missed';
   if (['failed', 'busy', 'rejected', 'cancelled', 'canceled'].includes(normalized)) return 'failed';
   if (direction === 'outbound' && normalized === 'placed') return 'completed';
   return 'unknown';
@@ -337,6 +500,32 @@ function parseDate(value) {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function parseReportDate(value, { endOfDay = false } = {}) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(raw)
+    ? new Date(`${raw}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}`)
+    : new Date(raw);
+
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getReportRange(query = {}) {
+  const now = new Date();
+  const fallbackFrom = new Date(now);
+  fallbackFrom.setDate(fallbackFrom.getDate() - (DEFAULT_REPORT_DAYS - 1));
+  fallbackFrom.setHours(0, 0, 0, 0);
+
+  const from = parseReportDate(query.from) || fallbackFrom;
+  const to = parseReportDate(query.to, { endOfDay: true }) || now;
+
+  if (from > to) {
+    throw appError('Дата начала отчета не может быть позже даты окончания');
+  }
+
+  return { from, to };
 }
 
 function normalizeDurationSeconds(value, { unit = 'auto' } = {}) {
@@ -401,15 +590,13 @@ function getEmployeePhoneFromPayload(payload, direction) {
 
 function normalizePayload(payload) {
   const raw = asObject(payload);
-  const direction = normalizeDirection(
-    pickValue(raw, ['direction', 'call.direction'], ['direction', 'callDirection']),
-  );
   const statusValue = pickValue(raw, ['status', 'eventType', 'event', 'state'], [
     'status',
     'eventType',
     'event',
     'state',
   ]);
+  const direction = inferDirection(raw, statusValue);
   const callStatus = normalizeCallStatus(statusValue, direction);
   const startedAt = parseDate(
     pickValue(raw, ['startDate', 'startedAt', 'date', 'call.startDate'], [
@@ -573,15 +760,25 @@ function mapAccount(account) {
   };
 }
 
-function mapCall(row) {
+function canAccessRecordingUrl(actor = null) {
+  return ['owner', 'manager', 'admin'].includes(actor?.role);
+}
+
+function mapCall(row, actor = null) {
   if (!row) return null;
   const raw = row.toJSON ? row.toJSON() : row;
-
-  return {
+  const mapped = {
     ...raw,
     client: raw.client || null,
     processedByAccount: mapAccount(raw.processedByAccount),
   };
+
+  delete mapped.rawSnapshot;
+  if (!canAccessRecordingUrl(actor)) {
+    delete mapped.recordingUrl;
+  }
+
+  return mapped;
 }
 
 function mapRawEvent(row) {
@@ -693,15 +890,47 @@ function compactCallPayload(payload, { forUpdate = false } = {}) {
 }
 
 async function createMissedCallTask(call, transaction = undefined) {
-  if (call.callStatus !== 'missed' || !call.userId || call.followUpCallTaskId) {
+  if (
+    call.callStatus !== 'missed' ||
+    call.direction !== 'inbound' ||
+    !call.userId ||
+    call.followUpCallTaskId
+  ) {
     return null;
   }
 
-  const dueAt = new Date(
-    Date.now() + DEFAULT_MISSED_CALL_DEADLINE_MINUTES * 60 * 1000,
-  );
+  const referenceDate = call.startedAt ? new Date(call.startedAt) : new Date();
+  const ageMs = Date.now() - referenceDate.getTime();
+  if (Number.isFinite(ageMs) && ageMs > 15 * 60 * 1000) return null;
+
+  const dueAt = new Date(referenceDate.getTime() + DEFAULT_MISSED_CALL_DEADLINE_MINUTES * 60 * 1000);
   const client = await db.User.findByPk(call.userId, { transaction });
   if (!client) return null;
+  const existingTaskClient = await db.CallTaskClient.findOne({
+    include: [
+      {
+        as: 'callTask',
+        model: db.CallTask,
+        required: true,
+        where: {
+          status: { [Op.in]: ['backlog', 'in_progress'] },
+        },
+      },
+    ],
+    order: [['createdAt', 'DESC']],
+    transaction,
+    where: {
+      status: { [Op.in]: ['new', 'no_answer', 'callback', 'doubting'] },
+      userId: client.id,
+    },
+  });
+  if (existingTaskClient) {
+    await call.update(
+      { followUpCallTaskId: existingTaskClient.callTaskId },
+      { transaction },
+    );
+    return existingTaskClient.callTask;
+  }
 
   const task = await db.CallTask.create(
     {
@@ -774,6 +1003,9 @@ async function upsertCallFromNormalized(normalized, transaction = undefined) {
     },
     { forUpdate: Boolean(existing) },
   );
+  if (existing?.userId) {
+    payload.userId = existing.userId;
+  }
 
   let call;
   try {
@@ -785,10 +1017,11 @@ async function upsertCallFromNormalized(normalized, transaction = undefined) {
 
     const duplicate = await findExistingCall(normalized, transaction);
     if (!duplicate) throw error;
-    call = await duplicate.update(
-      compactCallPayload(payload, { forUpdate: true }),
-      { transaction },
-    );
+    const updatePayload = compactCallPayload(payload, { forUpdate: true });
+    if (duplicate.userId) {
+      updatePayload.userId = duplicate.userId;
+    }
+    call = await duplicate.update(updatePayload, { transaction });
   }
 
   await createMissedCallTask(call, transaction);
@@ -862,6 +1095,29 @@ async function upsertCallFromRecording(recording, transaction = undefined) {
   return upsertCallFromNormalized(recording, transaction);
 }
 
+async function saveRawEvent(rawEventPayload) {
+  if (!rawEventPayload.externalEventId) {
+    return db.TelephonyRawEvent.create(rawEventPayload);
+  }
+
+  const where = {
+    externalEventId: rawEventPayload.externalEventId,
+    provider: 'beeline',
+  };
+  const existing = await db.TelephonyRawEvent.findOne({ where });
+  if (existing) return existing.update(rawEventPayload);
+
+  try {
+    return await db.TelephonyRawEvent.create(rawEventPayload);
+  } catch (error) {
+    if (error.name !== 'SequelizeUniqueConstraintError') throw error;
+
+    const duplicate = await db.TelephonyRawEvent.findOne({ where });
+    if (!duplicate) throw error;
+    return duplicate.update(rawEventPayload);
+  }
+}
+
 async function receiveBeelineEvent({
   body,
   headers,
@@ -877,7 +1133,7 @@ async function receiveBeelineEvent({
   for (const item of items) {
     const payload = asObject(item);
     const normalized = normalizePayload(payload);
-    const rawEvent = await db.TelephonyRawEvent.create({
+    const rawEventPayload = {
       eventType: normalized.eventType || 'beeline.event',
       externalEventId: normalized.externalEventId,
       headers: sanitizeHeaders(headers),
@@ -887,7 +1143,8 @@ async function receiveBeelineEvent({
       query: sanitizeQuery(query),
       receivedAt: new Date(),
       sourceIp: ip || null,
-    });
+    };
+    const rawEvent = await saveRawEvent(rawEventPayload);
 
     try {
       const result = await db.sequelize.transaction(async (transaction) => {
@@ -1003,7 +1260,7 @@ function buildCallWhere(query = {}, actor = null) {
     where.processingStatus = status;
   }
 
-  if (query.callStatus) {
+  if (query.callStatus && status !== 'missed') {
     where.callStatus = query.callStatus;
   }
   if (query.direction) {
@@ -1035,6 +1292,82 @@ function buildCallWhere(query = {}, actor = null) {
 
   applyActorScope(where, actor);
   return where;
+}
+
+function combineWhere(baseWhere, extraWhere = {}) {
+  if (!extraWhere || Object.keys(extraWhere).length === 0) return baseWhere;
+  return {
+    [Op.and]: [baseWhere, extraWhere],
+  };
+}
+
+function buildCallDateRangeWhere(from, to) {
+  const range = { [Op.gte]: from, [Op.lte]: to };
+  return {
+    [Op.or]: [
+      { startedAt: range },
+      {
+        [Op.and]: [
+          { startedAt: null },
+          { createdAt: range },
+        ],
+      },
+    ],
+  };
+}
+
+function buildReportWhere(actor, query = {}) {
+  const { from, to } = getReportRange(query);
+  const where = buildCallDateRangeWhere(from, to);
+
+  if (query.direction) {
+    where.direction = query.direction;
+  }
+  if (query.callStatus) {
+    where.callStatus = query.callStatus;
+  }
+  if (query.recordingStatus) {
+    where.recordingStatus = query.recordingStatus;
+  }
+  if (query.status && query.status !== 'all') {
+    if (!PROCESSING_STATUSES.has(query.status)) {
+      throw appError('Некорректный статус обработки звонка');
+    }
+    where.processingStatus = query.status;
+  }
+
+  applyActorScope(where, actor);
+  return { from, to, where };
+}
+
+async function countCalls(where, extra = {}, options = {}) {
+  return db.TelephonyCall.count({
+    distinct: true,
+    include: options.include || [],
+    where: combineWhere(where, extra),
+  });
+}
+
+async function groupCallsByField(where, field, labels, extra = {}) {
+  const rows = await db.TelephonyCall.findAll({
+    attributes: [
+      [db.Sequelize.col(field), 'key'],
+      [db.Sequelize.fn('COUNT', db.Sequelize.col('TelephonyCall.id')), 'count'],
+    ],
+    group: [field],
+    order: [[db.Sequelize.literal('count'), 'DESC']],
+    raw: true,
+    where: combineWhere(where, extra),
+  });
+
+  return rows.map((row) => {
+    const key = row.key || 'none';
+    return {
+      count: Number(row.count || 0),
+      key,
+      label: row.key ? labels[row.key] || row.key : 'Не указан',
+    };
+  });
 }
 
 function appendWhereAnd(where, condition) {
@@ -1071,7 +1404,7 @@ async function listCalls(actor, query = {}) {
   });
 
   return {
-    items: rows.map(mapCall),
+    items: rows.map((row) => mapCall(row, actor)),
     page,
     pageSize,
     total: count,
@@ -1092,7 +1425,139 @@ async function getCallOrFail(actor, id, options = {}) {
 }
 
 async function getCall(actor, id) {
-  return mapCall(await getCallOrFail(actor, id));
+  return mapCall(await getCallOrFail(actor, id), actor);
+}
+
+async function getActiveClientForCall(clientId, transaction = undefined) {
+  const id = Number(clientId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw appError('Некорректный клиент для звонка');
+  }
+
+  const client = await db.User.findOne({
+    where: {
+      id,
+      mergedIntoUserId: null,
+      status: 'active',
+    },
+    transaction,
+  });
+  if (!client) {
+    throw appError('Активный клиент для звонка не найден', 404);
+  }
+
+  return client;
+}
+
+async function syncFollowUpTaskClient(call, client, transaction = undefined) {
+  if (!call.followUpCallTaskId) return null;
+
+  const task = await db.CallTask.findByPk(call.followUpCallTaskId, {
+    transaction,
+  });
+  if (!task) return null;
+
+  const payload = {
+    clientName: client.name,
+    clientPhone: client.phone,
+    source: client.source,
+    userId: client.id,
+  };
+  const taskClient = await db.CallTaskClient.findOne({
+    order: [['createdAt', 'ASC']],
+    transaction,
+    where: { callTaskId: task.id },
+  });
+
+  if (taskClient) {
+    await taskClient.update(payload, { transaction });
+  } else {
+    await db.CallTaskClient.create(
+      {
+        ...payload,
+        callTaskId: task.id,
+        deadlineAt: task.dueAt,
+        status: 'new',
+        visitCount: 0,
+      },
+      { transaction },
+    );
+  }
+
+  await task.update(
+    {
+      snapshotClientCount: 1,
+      title: `Перезвонить: ${client.name}`,
+    },
+    { transaction },
+  );
+
+  return task;
+}
+
+async function attachCallToClient(call, client, transaction = undefined) {
+  await call.update(
+    {
+      clientPhone: call.clientPhone || client.phone,
+      clientPhoneNormalized: call.clientPhoneNormalized || client.phoneNormalized || null,
+      userId: client.id,
+    },
+    { transaction },
+  );
+
+  if (call.followUpCallTaskId) {
+    await syncFollowUpTaskClient(call, client, transaction);
+  } else {
+    await createMissedCallTask(call, transaction);
+  }
+
+  return call;
+}
+
+async function linkCallClient(actor, id, data = {}) {
+  const callId = await db.sequelize.transaction(async (transaction) => {
+    const call = await getCallOrFail(actor, id, { transaction });
+    const client = await getActiveClientForCall(data.clientId, transaction);
+
+    await attachCallToClient(call, client, transaction);
+
+    return call.id;
+  });
+
+  return getCall(actor, callId);
+}
+
+async function createClientForCall(actor, id, data = {}) {
+  const call = await getCallOrFail(actor, id);
+  if (!call.clientPhoneNormalized || !call.clientPhone) {
+    throw appError('В звонке нет телефона для создания клиента', 409);
+  }
+
+  const client = await clientsService.createClient({
+    ...data,
+    phone: call.clientPhone,
+    status: 'active',
+  });
+  const clientId = client.client?.id || client.id;
+  let attached = false;
+
+  try {
+    const callId = await db.sequelize.transaction(async (transaction) => {
+      const freshCall = await getCallOrFail(actor, call.id, { transaction });
+      const freshClient = await getActiveClientForCall(clientId, transaction);
+
+      await attachCallToClient(freshCall, freshClient, transaction);
+      return freshCall.id;
+    });
+    attached = true;
+
+    return getCall(actor, callId);
+  } catch (error) {
+    if (!attached && clientId) {
+      await db.User.destroy({ where: { id: clientId } }).catch(() => null);
+    }
+    throw error;
+  }
 }
 
 function normalizeResult(value) {
@@ -1152,7 +1617,7 @@ async function completeCall(actor, id, data = {}) {
 
 async function startProcessing(actor, id) {
   const call = await getCallOrFail(actor, id);
-  if (call.processingStatus === 'processed') return mapCall(call);
+  if (call.processingStatus === 'processed') return mapCall(call, actor);
 
   await call.update({
     processedByAccountId: actor?.id || call.processedByAccountId || null,
@@ -1253,6 +1718,166 @@ async function getStats(actor = null) {
     recordingsAvailable,
     total,
     unknownClients,
+  };
+}
+
+async function getReport(actor = null, query = {}) {
+  const { from, to, where } = buildReportWhere(actor, query);
+  const now = new Date();
+
+  const [
+    total,
+    inbound,
+    outbound,
+    missed,
+    processed,
+    active,
+    ignored,
+    unknownClients,
+    recordingsAvailable,
+    booked,
+    overdueNextActions,
+    avgDurationRows,
+    byResult,
+    byInterest,
+    byProcessing,
+    operatorRows,
+  ] = await Promise.all([
+    countCalls(where),
+    countCalls(where, { direction: 'inbound' }),
+    countCalls(where, { direction: 'outbound' }),
+    countCalls(where, { callStatus: 'missed' }),
+    countCalls(where, { processingStatus: 'processed' }),
+    countCalls(where, { processingStatus: { [Op.in]: ['new', 'in_progress'] } }),
+    countCalls(where, { processingStatus: 'ignored' }),
+    countCalls(where, { userId: null }),
+    countCalls(where, { recordingStatus: 'available' }),
+    countCalls(where, { result: 'booked' }),
+    countCalls(where, {
+      nextActionAt: { [Op.lt]: now },
+      processingStatus: 'processed',
+      [Op.or]: [
+        { followUpCallTaskId: null },
+        { '$followUpCallTask.status$': { [Op.ne]: 'done' } },
+      ],
+    }, {
+      include: [
+        {
+          model: db.CallTask,
+          as: 'followUpCallTask',
+          attributes: [],
+          required: false,
+        },
+      ],
+    }),
+    db.TelephonyCall.findAll({
+      attributes: [
+        [
+          db.Sequelize.fn('AVG', db.Sequelize.col('durationSeconds')),
+          'averageDurationSeconds',
+        ],
+      ],
+      raw: true,
+      where: combineWhere(where, {
+        durationSeconds: { [Op.ne]: null },
+      }),
+    }),
+    groupCallsByField(where, 'result', RESULT_LABELS, {
+      processingStatus: 'processed',
+      result: { [Op.ne]: null },
+    }),
+    groupCallsByField(where, 'interest', INTEREST_LABELS, {
+      interest: { [Op.ne]: null },
+      processingStatus: 'processed',
+    }),
+    groupCallsByField(where, 'processingStatus', PROCESSING_LABELS),
+    db.TelephonyCall.findAll({
+      attributes: [
+        ['processedByAccountId', 'accountId'],
+        [db.Sequelize.fn('COUNT', db.Sequelize.col('TelephonyCall.id')), 'count'],
+        [
+          db.Sequelize.fn(
+            'SUM',
+            db.Sequelize.literal("CASE WHEN `TelephonyCall`.`processingStatus` = 'processed' THEN 1 ELSE 0 END"),
+          ),
+          'processed',
+        ],
+        [
+          db.Sequelize.fn(
+            'SUM',
+            db.Sequelize.literal("CASE WHEN `TelephonyCall`.`result` = 'booked' THEN 1 ELSE 0 END"),
+          ),
+          'booked',
+        ],
+      ],
+      group: ['processedByAccountId'],
+      order: [[db.Sequelize.literal('count'), 'DESC']],
+      raw: true,
+      where,
+    }),
+  ]);
+
+  const accountIds = operatorRows
+    .map((row) => Number(row.accountId))
+    .filter((id) => Number.isInteger(id) && id > 0);
+  const accounts = accountIds.length
+    ? await db.Account.findAll({
+        attributes: ['id', 'email', 'role', 'staffId'],
+        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        where: { id: { [Op.in]: accountIds } },
+      })
+    : [];
+  const accountsById = new Map(
+    accounts.map((account) => [Number(account.id), mapAccount(account)]),
+  );
+  const averageDurationSeconds = Math.round(
+    Number(avgDurationRows[0]?.averageDurationSeconds || 0),
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    range: {
+      from: from.toISOString(),
+      to: to.toISOString(),
+    },
+    totals: {
+      active,
+      booked,
+      bookingConversion: processed > 0 ? booked / processed : 0,
+      ignored,
+      inbound,
+      missed,
+      outbound,
+      overdueNextActions,
+      processed,
+      processingRate: total > 0 ? processed / total : 0,
+      recordingsAvailable,
+      recordingCoverage: total > 0 ? recordingsAvailable / total : 0,
+      total,
+      unknownClients,
+      unknownClientRate: total > 0 ? unknownClients / total : 0,
+      averageDurationSeconds,
+    },
+    byInterest,
+    byOperator: operatorRows.map((row) => {
+      const accountId = row.accountId ? Number(row.accountId) : null;
+      const account = accountId ? accountsById.get(accountId) || null : null;
+      const count = Number(row.count || 0);
+      const processedCount = Number(row.processed || 0);
+      const bookedCount = Number(row.booked || 0);
+
+      return {
+        account,
+        booked: bookedCount,
+        bookingConversion: processedCount > 0 ? bookedCount / processedCount : 0,
+        count,
+        key: accountId ? String(accountId) : 'none',
+        label: account?.name || 'Без обработчика',
+        processed: processedCount,
+      };
+    }),
+    byProcessing,
+    byResult,
   };
 }
 
@@ -1435,6 +2060,30 @@ function normalizeSubscriptionType(value) {
   return SUBSCRIPTION_TYPES.has(normalized) ? normalized : 'BASIC_CALL';
 }
 
+function buildSubscriptionRequestPayload(data = {}) {
+  const callbackUrl = normalizeText(data.url) || normalizeText(process.env.BEELINE_CALLBACK_URL);
+  if (!callbackUrl) throw appError('BEELINE_CALLBACK_URL не настроен', 409);
+
+  return {
+    expires: data.expires || getSubscriptionExpiresSeconds(),
+    pattern: normalizeText(data.pattern || process.env.BEELINE_SUBSCRIPTION_PATTERN) || undefined,
+    subscriptionType:
+      normalizeSubscriptionType(data.subscriptionType || process.env.BEELINE_SUBSCRIPTION_TYPE),
+    url: callbackUrl,
+  };
+}
+
+function subscriptionMatchesDesired(subscription, desired) {
+  if (!subscription) return false;
+
+  return (
+    normalizeText(subscription.callbackUrl) === normalizeText(desired.url) &&
+    normalizeText(subscription.pattern) === normalizeText(desired.pattern) &&
+    normalizeSubscriptionType(subscription.subscriptionType) ===
+      normalizeSubscriptionType(desired.subscriptionType)
+  );
+}
+
 async function refreshRecordingReference(actor, id) {
   const call = await getCallOrFail(actor, id);
   const client = getBeelineClient();
@@ -1468,16 +2117,13 @@ async function refreshRecordingReference(actor, id) {
 
 async function subscribeToEvents(data = {}) {
   const client = getBeelineClient();
-  const callbackUrl = normalizeText(data.url) || normalizeText(process.env.BEELINE_CALLBACK_URL);
-  if (!callbackUrl) throw appError('BEELINE_CALLBACK_URL не настроен', 409);
   const subscriptionPath = normalizeText(process.env.BEELINE_SUBSCRIPTION_PATH) || '/subscription';
-  const requestPayload = {
-    expires: data.expires || Number(process.env.BEELINE_SUBSCRIPTION_EXPIRES || 3600),
-    pattern: data.pattern || process.env.BEELINE_SUBSCRIPTION_PATTERN || undefined,
-    subscriptionType:
-      normalizeSubscriptionType(data.subscriptionType || process.env.BEELINE_SUBSCRIPTION_TYPE),
-    url: callbackUrl,
-  };
+  const requestPayload = buildSubscriptionRequestPayload(data);
+  const callbackUrl = requestPayload.url;
+
+  if (isWebhookSecretRequired() && !normalizeText(process.env.BEELINE_WEBHOOK_SECRET)) {
+    throw appError('BEELINE_WEBHOOK_SECRET не настроен для XSI callback', 409);
+  }
 
   try {
     const response = await client.put(subscriptionPath, requestPayload);
@@ -1526,6 +2172,7 @@ async function subscribeToEvents(data = {}) {
       lastError: message,
       lastRequest: requestPayload,
       lastResponse: error.response?.data || null,
+      pattern: normalizeText(requestPayload.pattern),
       provider: 'beeline',
       status: 'failed',
       subscriptionType: requestPayload.subscriptionType,
@@ -1538,7 +2185,7 @@ async function checkEventSubscription() {
   const client = getBeelineClient();
   const subscriptionPath = normalizeText(process.env.BEELINE_SUBSCRIPTION_PATH) || '/subscription';
   const callbackUrl = normalizeText(process.env.BEELINE_CALLBACK_URL) || '';
-  const latest = await getLatestSubscription();
+  const latest = await getLatestSubscription({ preferActive: true });
 
   if (!latest?.subscriptionId) {
     throw appError('Сначала создайте XSI-подписку: у CRM пока нет subscriptionId для проверки', 409);
@@ -1597,6 +2244,113 @@ async function checkEventSubscription() {
   }
 }
 
+async function maintainEventSubscription({ force = false } = {}) {
+  if (!isSubscriptionAutoRenewEnabled()) {
+    return { action: 'skipped', reason: 'disabled' };
+  }
+
+  if (
+    !normalizeText(process.env.BEELINE_API_TOKEN) ||
+    !normalizeText(process.env.BEELINE_API_BASE_URL) ||
+    !normalizeText(process.env.BEELINE_CALLBACK_URL)
+  ) {
+    return { action: 'skipped', reason: 'not_configured' };
+  }
+
+  return withSubscriptionMaintenanceLock(async () => {
+    const latest = await getLatestSubscription({ preferActive: true });
+    const desired = buildSubscriptionRequestPayload({});
+    const renewBeforeMs = getSubscriptionRenewBeforeSeconds() * 1000;
+    const expiresAt = latest?.expiresAt ? new Date(latest.expiresAt) : null;
+    const expiresInMs = expiresAt && !Number.isNaN(expiresAt.getTime())
+      ? expiresAt.getTime() - Date.now()
+      : null;
+
+    if (
+      !force &&
+      latest?.status === 'active' &&
+      subscriptionMatchesDesired(latest, desired) &&
+      expiresInMs !== null &&
+      expiresInMs > renewBeforeMs
+    ) {
+      return {
+        action: 'skipped',
+        reason: 'fresh',
+        expiresAt: latest.expiresAt,
+        expiresInSeconds: Math.round(expiresInMs / 1000),
+        subscriptionId: latest.subscriptionId,
+      };
+    }
+
+    try {
+      const subscription = await subscribeToEvents({});
+      return {
+        action: latest?.subscriptionId ? 'renewed' : 'created',
+        subscription,
+      };
+    } catch (error) {
+      return {
+        action: 'failed',
+        error: error.message,
+        details: error.details,
+      };
+    }
+  });
+}
+
+async function withSubscriptionMaintenanceLock(callback) {
+  if (db.sequelize.getDialect() !== 'mysql') {
+    return callback();
+  }
+
+  return db.sequelize.transaction(async (transaction) => {
+    const [rows] = await db.sequelize.query('SELECT GET_LOCK(:name, 0) AS locked', {
+      replacements: { name: SUBSCRIPTION_LOCK_NAME },
+      transaction,
+    });
+    const locked = Number(rows?.[0]?.locked) === 1;
+    if (!locked) return { action: 'skipped', reason: 'locked' };
+
+    try {
+      return await callback();
+    } finally {
+      await db.sequelize.query('SELECT RELEASE_LOCK(:name)', {
+        replacements: { name: SUBSCRIPTION_LOCK_NAME },
+        transaction,
+      });
+    }
+  });
+}
+
+async function getActiveSubscriptionCandidate() {
+  const activeRow = await db.TelephonySubscription.findOne({
+    order: [['updatedAt', 'DESC']],
+    where: {
+      provider: 'beeline',
+      status: 'active',
+      subscriptionId: { [Op.ne]: null },
+    },
+  });
+
+  return mapSubscription(activeRow);
+}
+
+async function getLatestSubscription({ preferActive = false } = {}) {
+  if (preferActive) {
+    const active = await getActiveSubscriptionCandidate();
+    if (active) return active;
+  }
+
+  const row = await db.TelephonySubscription.findOne({
+    order: [['updatedAt', 'DESC']],
+    where: {
+      provider: 'beeline',
+    },
+  });
+
+  return mapSubscription(row);
+}
+
 function mapSubscription(row) {
   if (!row) return null;
   const raw = row.toJSON ? row.toJSON() : row;
@@ -1615,17 +2369,6 @@ function mapSubscription(row) {
     subscriptionType: raw.subscriptionType,
     updatedAt: raw.updatedAt,
   };
-}
-
-async function getLatestSubscription() {
-  const row = await db.TelephonySubscription.findOne({
-    order: [['updatedAt', 'DESC']],
-    where: {
-      provider: 'beeline',
-    },
-  });
-
-  return mapSubscription(row);
 }
 
 async function listRawEvents(query = {}) {
@@ -1654,12 +2397,16 @@ async function listRawEvents(query = {}) {
 
 module.exports = {
   completeCall,
+  createClientForCall,
   getCall,
   getConfig,
+  getReport,
   getStats,
   ignoreCall,
+  linkCallClient,
   listCalls,
   listRawEvents,
+  maintainEventSubscription,
   parseIncomingBeelinePayload,
   normalizeRecordingPayload,
   normalizeSubscriptionResponse,

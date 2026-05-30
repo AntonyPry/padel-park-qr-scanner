@@ -85,9 +85,12 @@ export const apiEndpoints = {
   "callTasks.addAttempt": { method: "POST", path: "/call-task-clients/{taskClientId}/attempts", responseType: "json" },
   "telephony.config": { method: "GET", path: "/telephony/config", responseType: "json" },
   "telephony.stats": { method: "GET", path: "/telephony/stats", responseType: "json" },
+  "telephony.report": { method: "GET", path: "/telephony/report", responseType: "json" },
   "telephony.calls": { method: "GET", path: "/telephony/calls", responseType: "json" },
   "telephony.getCall": { method: "GET", path: "/telephony/calls/{id}", responseType: "json" },
   "telephony.startCall": { method: "POST", path: "/telephony/calls/{id}/start", responseType: "json" },
+  "telephony.linkClient": { method: "POST", path: "/telephony/calls/{id}/client", responseType: "json" },
+  "telephony.createClient": { method: "POST", path: "/telephony/calls/{id}/client/create", responseType: "json" },
   "telephony.completeCall": { method: "POST", path: "/telephony/calls/{id}/complete", responseType: "json" },
   "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json" },
   "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json" },
@@ -742,12 +745,42 @@ export type CallTasksAddAttemptParams = {
   taskClientId: number | string;
 };
 export type CallTasksAddAttemptBody = Record<string, unknown>;
+export type TelephonyReportQuery = {
+  from?: string | "";
+  to?: string | "";
+  callStatus?: "ringing" | "answered" | "completed" | "missed" | "failed" | "unknown";
+  direction?: "inbound" | "outbound" | "unknown";
+  recordingStatus?: "available" | "missing" | "pending" | "unknown";
+  status?: "all" | "new" | "in_progress" | "processed" | "ignored";
+  [key: string]: unknown;
+};
 export type TelephonyCallsQuery = Record<string, unknown>;
 export type TelephonyGetCallParams = {
   id: number | string;
 };
 export type TelephonyStartCallParams = {
   id: number | string;
+};
+export type TelephonyLinkClientParams = {
+  id: number | string;
+};
+export type TelephonyLinkClientBody = {
+  clientId: number | string;
+  [key: string]: unknown;
+};
+export type TelephonyCreateClientParams = {
+  id: number | string;
+};
+export type TelephonyCreateClientBody = {
+  name: string;
+  note?: string | "" | null;
+  source?: string | "" | null;
+  sourceId?: number | string | "" | null;
+  status?: "active" | "archived";
+  telegramId?: string | "" | null;
+  vkId?: string | "" | null;
+  webId?: string | "" | null;
+  [key: string]: unknown;
 };
 export type TelephonyCompleteCallParams = {
   id: number | string;
@@ -1240,9 +1273,12 @@ export interface ApiEndpointRequestMap {
   "callTasks.addAttempt": ApiEndpointRequest<CallTasksAddAttemptParams, undefined, CallTasksAddAttemptBody>;
   "telephony.config": ApiEndpointRequest<undefined, undefined, undefined>;
   "telephony.stats": ApiEndpointRequest<undefined, undefined, undefined>;
+  "telephony.report": ApiEndpointRequest<undefined, TelephonyReportQuery, undefined>;
   "telephony.calls": ApiEndpointRequest<undefined, TelephonyCallsQuery, undefined>;
   "telephony.getCall": ApiEndpointRequest<TelephonyGetCallParams, undefined, undefined>;
   "telephony.startCall": ApiEndpointRequest<TelephonyStartCallParams, undefined, undefined>;
+  "telephony.linkClient": ApiEndpointRequest<TelephonyLinkClientParams, undefined, TelephonyLinkClientBody>;
+  "telephony.createClient": ApiEndpointRequest<TelephonyCreateClientParams, undefined, TelephonyCreateClientBody>;
   "telephony.completeCall": ApiEndpointRequest<TelephonyCompleteCallParams, undefined, TelephonyCompleteCallBody>;
   "telephony.ignoreCall": ApiEndpointRequest<TelephonyIgnoreCallParams, undefined, TelephonyIgnoreCallBody>;
   "telephony.recordingReference": ApiEndpointRequest<TelephonyRecordingReferenceParams, undefined, undefined>;

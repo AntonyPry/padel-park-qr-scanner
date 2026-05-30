@@ -17,6 +17,12 @@ router.get(
 );
 router.get('/telephony/stats', viewTelephony, telephonyController.getStats);
 router.get(
+  '/telephony/report',
+  viewTelephony,
+  validate({ query: apiSchemas.telephony.reportQuery }),
+  telephonyController.getReport,
+);
+router.get(
   '/telephony/calls',
   viewTelephony,
   validate({ query: apiSchemas.telephony.callsQuery }),
@@ -33,6 +39,18 @@ router.post(
   workTelephony,
   validate(apiSchemas.telephony.withId),
   telephonyController.startProcessing,
+);
+router.post(
+  '/telephony/calls/:id/client',
+  workTelephony,
+  validate(apiSchemas.telephony.linkClient),
+  telephonyController.linkClient,
+);
+router.post(
+  '/telephony/calls/:id/client/create',
+  workTelephony,
+  validate(apiSchemas.telephony.createClient),
+  telephonyController.createClient,
 );
 router.post(
   '/telephony/calls/:id/complete',

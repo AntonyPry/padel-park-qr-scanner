@@ -95,6 +95,65 @@ export interface TelephonyStats {
   unknownClients: number;
 }
 
+export interface TelephonyReportBucket {
+  count: number;
+  key: string;
+  label: string;
+}
+
+export interface TelephonyReportOperator {
+  account?: {
+    id: number;
+    name: string;
+    role: string;
+  } | null;
+  booked: number;
+  bookingConversion: number;
+  count: number;
+  key: string;
+  label: string;
+  processed: number;
+}
+
+export interface TelephonyReport {
+  byInterest: TelephonyReportBucket[];
+  byOperator: TelephonyReportOperator[];
+  byProcessing: TelephonyReportBucket[];
+  byResult: TelephonyReportBucket[];
+  generatedAt: string;
+  range: {
+    from: string;
+    to: string;
+  };
+  totals: {
+    active: number;
+    averageDurationSeconds: number;
+    booked: number;
+    bookingConversion: number;
+    ignored: number;
+    inbound: number;
+    missed: number;
+    outbound: number;
+    overdueNextActions: number;
+    processed: number;
+    processingRate: number;
+    recordingCoverage: number;
+    recordingsAvailable: number;
+    total: number;
+    unknownClientRate: number;
+    unknownClients: number;
+  };
+}
+
+export interface TelephonyReportQuery {
+  callStatus?: string;
+  direction?: string;
+  from?: string;
+  recordingStatus?: string;
+  status?: string;
+  to?: string;
+}
+
 export interface TelephonyConfig {
   apiBaseUrl: string | null;
   apiTokenConfigured: boolean;
@@ -115,7 +174,10 @@ export interface TelephonyConfig {
   } | null;
   recordsPath: string;
   statisticsPath: string;
+  subscriptionAutoRenewEnabled: boolean;
   subscriptionPath: string;
+  subscriptionRenewBeforeSeconds: number;
+  webhookSecretRequired: boolean;
   webhookSecretConfigured: boolean;
 }
 
@@ -160,6 +222,13 @@ export interface CompleteTelephonyCallPayload {
   summary?: string | null;
 }
 
+export interface CreateTelephonyClientPayload {
+  name: string;
+  note?: string | null;
+  source?: string | null;
+  sourceId?: number;
+}
+
 function toQueryString(params: object) {
   const searchParams = new URLSearchParams();
   Object.entries(params as Record<string, unknown>).forEach(([key, value]) => {
@@ -184,6 +253,14 @@ export function getTelephonyStats() {
     '/api/telephony/stats',
     {},
     'Не удалось получить статистику телефонии',
+  );
+}
+
+export function getTelephonyReport(params: TelephonyReportQuery) {
+  return apiRequest<TelephonyReport>(
+    `/api/telephony/report${toQueryString(params)}`,
+    {},
+    'Не удалось получить отчет телефонии',
   );
 }
 
@@ -220,6 +297,31 @@ export function startTelephonyCallProcessing(callId: number) {
     `/api/telephony/calls/${callId}/start`,
     { method: 'POST' },
     'Не удалось начать обработку звонка',
+  );
+}
+
+export function linkTelephonyCallClient(callId: number, clientId: number) {
+  return apiRequest<TelephonyCall>(
+    `/api/telephony/calls/${callId}/client`,
+    {
+      body: JSON.stringify({ clientId }),
+      method: 'POST',
+    },
+    'Не удалось привязать клиента к звонку',
+  );
+}
+
+export function createTelephonyCallClient(
+  callId: number,
+  payload: CreateTelephonyClientPayload,
+) {
+  return apiRequest<TelephonyCall>(
+    `/api/telephony/calls/${callId}/client/create`,
+    {
+      body: JSON.stringify(payload),
+      method: 'POST',
+    },
+    'Не удалось создать клиента из звонка',
   );
 }
 
