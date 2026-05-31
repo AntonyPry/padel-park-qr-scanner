@@ -95,7 +95,7 @@ function isInstructionBlockScreenshotRequired(block) {
   if (!block || typeof block !== 'object') return false;
   if (block.screenshotRequired === true) return true;
   if (block.screenshotRequired === false) return false;
-  return block.type === 'step';
+  return true;
 }
 
 function collectInstructionScreenshotCoverage(paths) {

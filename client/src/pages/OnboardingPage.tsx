@@ -684,8 +684,9 @@ function getCardScreenshot(
   const screenshotIndex = Number.isInteger(block.screenshotIndex)
     ? Number(block.screenshotIndex)
     : index;
+  const screenshots = task.lesson.screenshots;
 
-  return task.lesson.screenshots[screenshotIndex];
+  return screenshots[screenshotIndex] || screenshots[screenshots.length - 1];
 }
 
 function InstructionCardReader({

@@ -45,10 +45,10 @@ lesson: {
 
 For instruction cards:
 
-- `type: 'step'` requires a real CRM screenshot by default;
+- every visible card requires a real CRM screenshot by default;
 - `screenshotIndex` points to `lesson.screenshots[index]`;
-- set `screenshotRequired: false` only for a step that intentionally should not have an image;
-- use `type: 'paragraph'` for conceptual text cards without screenshots.
+- cards can reuse the closest screenshot from the same task when the explanation describes the same screen state;
+- set `screenshotRequired: false` only for a rare card that intentionally should not have an image, and document why in the review.
 
 ## Refresh workflow
 
@@ -69,10 +69,11 @@ When a feature changes a screen used in onboarding:
 - screenshot paths start with `/onboarding/`;
 - referenced files exist under `client/public/onboarding`;
 - card `screenshotIndex` values point to existing screenshots;
-- every required instruction step has a real CRM screenshot.
+- every required instruction card has a real CRM screenshot.
 
 Current release baseline:
 
 - `37/37` onboarding tasks have instruction-card lessons;
-- `74/74` required `step` cards have screenshots;
+- `111/111` visible instruction cards resolve to screenshots;
+- `74` CRM screenshot assets are wired into the catalog;
 - QA screenshots belong in `outputs/qa/...` and must not be wired into the catalog.

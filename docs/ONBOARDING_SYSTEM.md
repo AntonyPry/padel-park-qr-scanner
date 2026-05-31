@@ -83,12 +83,13 @@ The task detail page uses a simple card-reader flow:
 Practice targets through `data-onboarding-target` may remain in code for future interactive training, but they are not part of the active onboarding experience.
 
 Instruction screenshots live under `client/public/onboarding/<role>/<task-slug>/`.
-For release-quality instructions, `type: 'step'` cards require a real CRM screenshot by default; use `type: 'paragraph'` for text-only conceptual cards.
+For release-quality instructions, every visible card requires a real CRM screenshot by default. Cards can reuse the closest screenshot from the task when the final explanation describes the same screen state.
 
 Current release-quality coverage:
 
 - `37/37` catalog tasks have instruction-card lessons;
-- `74/74` required `step` cards have real CRM screenshots;
+- `111/111` visible instruction cards resolve to real CRM screenshots;
+- `74` screenshot assets are reused across card flows where appropriate;
 - screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
 - role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
 - trainer screenshots are captured in safe mode without phone numbers or excess personal data;
