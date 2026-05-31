@@ -5,6 +5,7 @@ import {
   SidebarTrigger,
 } from '@/components/ui/sidebar';
 import { AppSidebar } from './app-sidebar';
+import { TrainingModeBanner } from './training-mode-banner';
 
 export const Layout = () => {
   return (
@@ -13,6 +14,7 @@ export const Layout = () => {
 
       <SidebarInset className="min-w-0">
         <SidebarTrigger className="fixed left-3 top-3 z-40 md:hidden" />
+        <TrainingModeBanner />
         <main className="min-w-0 flex-1 overflow-auto pt-12 md:pt-0">
           <Outlet />
         </main>

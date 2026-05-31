@@ -194,3 +194,77 @@ test('rejects operational statuses for future booking series', () => {
   assert.equal(nextCalled, false);
   assert.equal(res.statusCode, 400);
 });
+
+test('accepts onboarding owner role override payloads', () => {
+  const { nextCalled, res } = runValidation(
+    {
+      body: apiSchemas.onboarding.completeBody,
+      params: apiSchemas.onboarding.taskParams,
+    },
+    {
+      body: {
+        metadata: { source: 'manual' },
+        role: 'trainer',
+      },
+      params: { taskKey: 'trainer.training-note.create' },
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('accepts onboarding training mode settings', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.onboarding.trainingModeBody },
+    {
+      body: {
+        isEnabled: true,
+        metadata: { source: 'onboarding-page' },
+        role: 'admin',
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('accepts safe onboarding client checkpoint events', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.onboarding.eventBody },
+    {
+      body: {
+        entityId: '/admin/visits-analytics',
+        entityType: 'route',
+        eventKey: 'report.viewed',
+        payload: { report: 'visits_analytics' },
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('rejects action onboarding events from client payloads', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.onboarding.eventBody },
+    {
+      body: {
+        eventKey: 'booking.created',
+        payload: { source: 'phone' },
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 400);
+});

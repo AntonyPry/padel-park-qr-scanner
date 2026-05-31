@@ -3,6 +3,7 @@ import type { AccountRole } from '@/lib/roles';
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
   '/admin/audit': ['owner', 'manager'],
+  '/admin/onboarding': ['owner', 'manager', 'admin', 'accountant', 'viewer', 'trainer'],
   '/admin/bookings': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/trainer': ['owner', 'manager', 'trainer'],

@@ -1,6 +1,12 @@
 import { API_URL } from '@/config';
 
 const AUTH_TOKEN_KEY = 'padel_park_auth_token';
+const TRAINING_MODE_KEY = 'padel_park_training_mode';
+
+interface StoredTrainingMode {
+  isEnabled: boolean;
+  role?: string | null;
+}
 
 export function getAuthToken() {
   return localStorage.getItem(AUTH_TOKEN_KEY);
@@ -12,15 +18,41 @@ export function setAuthToken(token: string) {
 
 export function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
+  clearStoredTrainingMode();
+}
+
+export function getStoredTrainingMode() {
+  try {
+    const rawValue = localStorage.getItem(TRAINING_MODE_KEY);
+    return rawValue ? (JSON.parse(rawValue) as StoredTrainingMode) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredTrainingMode(value: StoredTrainingMode) {
+  localStorage.setItem(TRAINING_MODE_KEY, JSON.stringify(value));
+}
+
+export function clearStoredTrainingMode() {
+  localStorage.removeItem(TRAINING_MODE_KEY);
 }
 
 export async function apiFetch(input: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   const token = getAuthToken();
   const isFormData = init.body instanceof FormData;
+  const trainingMode = getStoredTrainingMode();
 
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  if (trainingMode?.isEnabled) {
+    headers.set('X-Training-Mode', 'true');
+    if (trainingMode.role) {
+      headers.set('X-Training-Role', trainingMode.role);
+    }
   }
 
   if (init.body && !isFormData && !headers.has('Content-Type')) {

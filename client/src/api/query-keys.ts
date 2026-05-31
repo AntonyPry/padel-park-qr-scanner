@@ -25,6 +25,15 @@ export const queryKeys = {
     list: (params: Record<string, unknown>) =>
       [...queryKeys.clients.all, 'list', params] as const,
   },
+  onboarding: {
+    all: ['onboarding'] as const,
+    detail: (role?: string | null) =>
+      [...queryKeys.onboarding.all, 'detail', role || 'current'] as const,
+    metrics: () => [...queryKeys.onboarding.all, 'metrics'] as const,
+    trainingData: (role?: string | null) =>
+      [...queryKeys.onboarding.all, 'training-data', role || 'all'] as const,
+    trainingMode: () => [...queryKeys.onboarding.all, 'training-mode'] as const,
+  },
   references: {
     all: ['references'] as const,
     list: (type: ReferenceType, status: ReferenceStatus | 'all') =>

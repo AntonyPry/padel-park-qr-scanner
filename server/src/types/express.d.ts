@@ -12,6 +12,10 @@ declare global {
         } | null;
         [key: string]: unknown;
       };
+      trainingMode?: {
+        requested: boolean;
+        role?: AccountRole;
+      };
     }
   }
 }

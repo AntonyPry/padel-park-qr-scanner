@@ -1,4 +1,5 @@
 const catalogService = require('../services/catalog.service');
+const onboardingService = require('../services/onboarding.service');
 const { sendError } = require('../utils/api-error');
 
 function handleError(res, error, fallback) {
@@ -17,7 +18,17 @@ class CatalogController {
 
   async createCategory(req, res) {
     try {
-      res.status(201).json(await catalogService.createCategory(req.body));
+      const category = await catalogService.createCategory(req.body);
+      await onboardingService.recordEventSafe(
+        req.account,
+        'catalog.category_updated',
+        {
+          entityId: category.id,
+          entityType: 'catalog_category',
+          payload: { categoryId: category.id, group: category.group },
+        },
+      );
+      res.status(201).json(category);
     } catch (error) {
       handleError(res, error, 'Ошибка создания категории');
     }
@@ -53,6 +64,15 @@ class CatalogController {
         req.params.id,
         req.body,
       );
+      await onboardingService.recordEventSafe(
+        req.account,
+        'catalog.category_updated',
+        {
+          entityId: updated.id,
+          entityType: 'catalog_category',
+          payload: { categoryId: updated.id, group: updated.group },
+        },
+      );
       res.json(updated);
     } catch (error) {
       handleError(res, error, 'Ошибка обновления категории');
@@ -78,7 +98,15 @@ class CatalogController {
 
   async createRule(req, res) {
     try {
-      res.status(201).json(await catalogService.saveRule(req.body));
+      const result = await catalogService.saveRule(req.body);
+      await onboardingService.recordEventSafe(req.account, 'catalog.rule_updated', {
+        entityType: 'catalog_rule',
+        payload: {
+          category: req.body.category,
+          itemName: req.body.itemName,
+        },
+      });
+      res.status(201).json(result);
     } catch (error) {
       handleError(res, error, 'Ошибка создания правила');
     }
@@ -94,7 +122,17 @@ class CatalogController {
 
   async restoreRule(req, res) {
     try {
-      res.json(await catalogService.restoreRule(req.params.id));
+      const rule = await catalogService.restoreRule(req.params.id);
+      await onboardingService.recordEventSafe(req.account, 'catalog.rule_updated', {
+        entityId: rule.id,
+        entityType: 'catalog_rule',
+        payload: {
+          category: rule.category,
+          itemName: rule.itemName,
+          ruleId: rule.id,
+        },
+      });
+      res.json(rule);
     } catch (error) {
       handleError(res, error, 'Ошибка восстановления правила');
     }

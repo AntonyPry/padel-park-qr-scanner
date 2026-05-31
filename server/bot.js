@@ -10,6 +10,7 @@ const callTasksService = require('./src/services/call-tasks.service');
 const telephonyService = require('./src/services/telephony.service');
 
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || process.env.SERVER_HOST || null;
 
 const app = createApp();
 const server = http.createServer(app);
@@ -23,8 +24,21 @@ async function startDatabase() {
 }
 
 function startHttpServer() {
+  if (HOST) {
+    server.listen(PORT, HOST);
+    console.log(`Сервер запущен на ${HOST}:${PORT}`);
+    return;
+  }
+
   server.listen(PORT);
   console.log('Сервер запущен на порту', PORT);
+}
+
+function isFeatureEnabled(envName, defaultValue = true) {
+  const value = process.env[envName];
+  if (value == null || value === '') return defaultValue;
+
+  return !['0', 'false', 'no', 'off'].includes(String(value).toLowerCase());
 }
 
 function startRecurringCallTasksRunner() {
@@ -101,22 +115,30 @@ async function startApp() {
     console.error('❌ Ошибка старта БД:', error);
   }
 
-  try {
-    await startTelegramBot();
-  } catch (error) {
-    console.error('❌ Ошибка старта Tg:', error);
-  }
+  if (isFeatureEnabled('BOTS_ENABLED')) {
+    try {
+      await startTelegramBot();
+    } catch (error) {
+      console.error('❌ Ошибка старта Tg:', error);
+    }
 
-  try {
-    await startVkBot();
-  } catch (error) {
-    console.error('❌ Ошибка старта VK:', error);
+    try {
+      await startVkBot();
+    } catch (error) {
+      console.error('❌ Ошибка старта VK:', error);
+    }
+  } else {
+    console.log('🤖 Боты отключены через BOTS_ENABLED=false.');
   }
 
   try {
     startHttpServer();
-    startRecurringCallTasksRunner();
-    startTelephonySubscriptionRunner();
+    if (isFeatureEnabled('BACKGROUND_RUNNERS_ENABLED')) {
+      startRecurringCallTasksRunner();
+      startTelephonySubscriptionRunner();
+    } else {
+      console.log('⏱️ Фоновые runner-ы отключены через BACKGROUND_RUNNERS_ENABLED=false.');
+    }
   } catch (error) {
     console.error('❌ Ошибка старта сервера:', error);
   }

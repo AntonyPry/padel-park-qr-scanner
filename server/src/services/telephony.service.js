@@ -1537,7 +1537,7 @@ async function createClientForCall(actor, id, data = {}) {
     ...data,
     phone: call.clientPhone,
     status: 'active',
-  });
+  }, actor);
   const clientId = client.client?.id || client.id;
   let attached = false;
 

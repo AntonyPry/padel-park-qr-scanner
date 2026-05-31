@@ -410,32 +410,12 @@ export default function TelephonyPage() {
   }, [searchInput, searchParams, setSearchParams]);
 
   useEffect(() => {
-    const urlQuery = searchParams.get('q') || '';
-    if (urlQuery !== searchInput) {
-      setPage(1);
-      setQuery(urlQuery.trim());
-      setSearchInput(urlQuery);
-    }
-  }, [searchParams, searchInput]);
-
-  useEffect(() => {
     const timeout = window.setTimeout(() => {
       setClientSearch(clientSearchInput.trim());
     }, 250);
 
     return () => window.clearTimeout(timeout);
   }, [clientSearchInput]);
-
-  useEffect(() => {
-    if (!clientDialogCall || clientForm.sourceId || !clientSourcesQuery.data?.length) {
-      return;
-    }
-
-    setClientForm((current) => ({
-      ...current,
-      sourceId: String(clientSourcesQuery.data[0].id),
-    }));
-  }, [clientDialogCall, clientForm.sourceId, clientSourcesQuery.data]);
 
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.telephony.all });
@@ -618,7 +598,7 @@ export default function TelephonyPage() {
   const submitClientCreate = () => {
     if (!clientDialogCall) return;
     const source = clientSourcesQuery.data?.find(
-      (item) => String(item.id) === clientForm.sourceId,
+      (item) => String(item.id) === selectedClientSourceId,
     );
 
     createClientMutation.mutate({
@@ -627,7 +607,7 @@ export default function TelephonyPage() {
         name: clientForm.name.trim(),
         note: clientForm.note.trim() || undefined,
         source: source?.name || undefined,
-        sourceId: clientForm.sourceId ? Number(clientForm.sourceId) : undefined,
+        sourceId: selectedClientSourceId ? Number(selectedClientSourceId) : undefined,
       },
     });
   };
@@ -646,10 +626,12 @@ export default function TelephonyPage() {
   const latestSubscription = configQuery.data?.latestSubscription;
   const clientCandidates = clientSearchQuery.data?.items || [];
   const activeClientSources = clientSourcesQuery.data || [];
+  const selectedClientSourceId =
+    clientForm.sourceId || (activeClientSources[0]?.id ? String(activeClientSources[0].id) : '');
   const canCreateClientFromCall = Boolean(
     clientDialogCall?.clientPhone &&
       clientForm.name.trim().length >= 2 &&
-      clientForm.sourceId,
+      selectedClientSourceId,
   );
   const clientCreateBlockReason = !clientDialogCall?.clientPhone
     ? 'В событии звонка нет распознанного телефона, поэтому клиента нельзя создать автоматически.'
@@ -659,7 +641,7 @@ export default function TelephonyPage() {
         ? 'Загружаем источники клиентов.'
         : activeClientSources.length === 0
           ? 'Нет активных источников клиентов в справочниках.'
-          : !clientForm.sourceId
+          : !selectedClientSourceId
             ? 'Выберите источник клиента.'
             : null;
 
@@ -1710,7 +1692,7 @@ export default function TelephonyPage() {
                   <div>
                     <Label>Источник</Label>
                     <Select
-                      value={clientForm.sourceId}
+                      value={selectedClientSourceId}
                       onValueChange={(sourceId) =>
                         setClientForm((current) => ({ ...current, sourceId }))
                       }

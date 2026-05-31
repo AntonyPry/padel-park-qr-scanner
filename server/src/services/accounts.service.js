@@ -1,5 +1,6 @@
 const db = require('../../models');
 const authService = require('./auth.service');
+const onboardingService = require('./onboarding.service');
 const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 
 const ACCOUNT_ATTRIBUTES = [
@@ -160,6 +161,16 @@ async function create(actor, data) {
       role,
       status,
       staffId,
+    });
+
+    await onboardingService.recordEventSafe(actor, 'account.created', {
+      entityId: account.id,
+      entityType: 'account',
+      payload: {
+        role,
+        staffId,
+        status,
+      },
     });
 
     return getById(account.id);

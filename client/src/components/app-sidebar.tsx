@@ -6,6 +6,7 @@ import {
   ContactRound,
   Database,
   Filter,
+  GraduationCap,
   History,
   LayoutDashboard,
   LineChart,
@@ -41,6 +42,11 @@ const items = [
     title: 'Монитор входов',
     url: '/admin',
     icon: LayoutDashboard,
+  },
+  {
+    title: 'Обучение',
+    url: '/admin/onboarding',
+    icon: GraduationCap,
   },
   {
     title: 'Аналитика входов',

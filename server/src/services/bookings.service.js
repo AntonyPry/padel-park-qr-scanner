@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const bookingRulesService = require('./booking-rules.service');
+const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const {
   formatRussianPhone,
@@ -501,7 +502,7 @@ async function getBookingOrFail(id, transaction) {
   return booking;
 }
 
-async function resolveClient(data, transaction) {
+async function resolveClient(data, transaction, trainingMarker = {}) {
   if (data.userId) {
     const client = await db.User.findByPk(Number(data.userId), { transaction });
     if (!client) throw appError('Клиент не найден', 404);
@@ -520,7 +521,7 @@ async function resolveClient(data, transaction) {
   const { phone, phoneNormalized } = normalizePhonePayload(payload.phone);
   const existing = await db.User.findOne({
     transaction,
-    where: { phoneNormalized },
+    where: { phoneNormalized, isTraining: false },
   });
   if (existing) {
     throw appError(
@@ -554,6 +555,7 @@ async function resolveClient(data, transaction) {
       sourceId: sourceRef.id,
       status: 'active',
       webId,
+      ...trainingMarker,
     },
     { transaction },
   );
@@ -584,6 +586,7 @@ async function assertNoConflict({
   const where = {
     courtId: Number(courtId),
     endsAt: { [Op.gt]: startsAt },
+    isTraining: false,
     startsAt: { [Op.lt]: endsAt },
     status: { [Op.ne]: 'canceled' },
   };
@@ -880,6 +883,7 @@ async function getBookingAnalytics(query = {}) {
         [db.Court, 'sortOrder', 'ASC'],
       ],
       where: {
+        isTraining: false,
         startsAt: {
           [Op.gte]: range.fromDate,
           [Op.lte]: range.toDate,
@@ -1140,6 +1144,8 @@ async function previewBookingSeries(data) {
 }
 
 async function createBookingSeries(data, account) {
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+
   return db.sequelize.transaction(async (transaction) => {
     const config = buildSeriesConfig(data);
     const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
@@ -1153,7 +1159,7 @@ async function createBookingSeries(data, account) {
       });
     }
 
-    const client = await resolveClient(data, transaction);
+    const client = await resolveClient(data, transaction, trainingMarker);
     const series = await db.BookingSeries.create(
       {
         clientName: client.name,
@@ -1177,6 +1183,7 @@ async function createBookingSeries(data, account) {
         updatedByAccountId: account?.id || null,
         userId: client.id,
         weekday: config.weekday,
+        ...trainingMarker,
       },
       { transaction },
     );
@@ -1212,6 +1219,7 @@ async function createBookingSeries(data, account) {
             timing,
           ),
           createdByAccountId: account?.id || null,
+          ...trainingMarker,
         },
         { transaction },
       );
@@ -1366,7 +1374,9 @@ async function getSchedule(query = {}) {
 }
 
 async function createBooking(data, account) {
-  return db.sequelize.transaction(async (transaction) => {
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+
+  const result = await db.sequelize.transaction(async (transaction) => {
     const courtsById = await lockCourtsForBooking([data.courtId], transaction);
     const court = courtsById.get(Number(data.courtId));
     const timing = buildTiming(data);
@@ -1383,7 +1393,7 @@ async function createBooking(data, account) {
       startsAt: timing.startsAt,
       transaction,
     });
-    const client = await resolveClient(data, transaction);
+    const client = await resolveClient(data, transaction, trainingMarker);
     const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
     const pricedData = await applyAutomaticPrice(data, court.id, timing);
 
@@ -1396,6 +1406,7 @@ async function createBooking(data, account) {
           timing,
         ),
         createdByAccountId: account?.id || null,
+        ...trainingMarker,
       },
       { transaction },
     );
@@ -1404,10 +1415,25 @@ async function createBooking(data, account) {
     await recordChange(fullBooking, 'created', account, {}, transaction);
     return mapBooking(fullBooking);
   });
+
+  await onboardingService.recordEventSafe(account, 'booking.created', {
+    entityId: result.id,
+    entityType: 'booking',
+    payload: result,
+  });
+  if (result.paymentStatus === 'paid') {
+    await onboardingService.recordEventSafe(account, 'booking.paid', {
+      entityId: result.id,
+      entityType: 'booking',
+      payload: result,
+    });
+  }
+
+  return result;
 }
 
 async function updateBooking(id, data, account) {
-  return db.sequelize.transaction(async (transaction) => {
+  const result = await db.sequelize.transaction(async (transaction) => {
     const booking = await getBookingOrFail(id, transaction);
     const client = data.userId || data.client ? await resolveClient(data, transaction) : booking.User;
     const courtId = Number(data.courtId || booking.courtId);
@@ -1473,8 +1499,25 @@ async function updateBooking(id, data, account) {
       transaction,
     );
 
-    return after;
+    const events = [];
+    if (action === 'canceled') events.push('booking.cancelled');
+    if (isRescheduled) events.push('booking.moved');
+    if (before.paymentStatus !== 'paid' && after.paymentStatus === 'paid') {
+      events.push('booking.paid');
+    }
+
+    return { booking: after, events };
   });
+
+  for (const eventKey of result.events) {
+    await onboardingService.recordEventSafe(account, eventKey, {
+      entityId: result.booking.id,
+      entityType: 'booking',
+      payload: result.booking,
+    });
+  }
+
+  return result.booking;
 }
 
 async function changeBookingStatus(id, data, account) {

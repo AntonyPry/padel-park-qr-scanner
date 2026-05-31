@@ -24,7 +24,7 @@ class ClientsController {
 
   async create(req, res) {
     try {
-      res.status(201).json(await clientsService.createClient(req.body));
+      res.status(201).json(await clientsService.createClient(req.body, req.account));
     } catch (error) {
       handleError(res, error, 'Ошибка создания клиента');
     }

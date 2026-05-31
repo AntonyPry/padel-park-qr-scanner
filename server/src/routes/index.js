@@ -1,6 +1,7 @@
 const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { auditMutations } = require('../middleware/audit');
+const { captureTrainingMode } = require('../middleware/training-mode');
 const db = require('../../models');
 const cacheService = require('../services/cache.service');
 const { getOpenApiDocument } = require('../contracts/openapi');
@@ -25,6 +26,7 @@ const motivationRoutes = require('./motivation');
 const referencesRoutes = require('./references');
 const trainingNotesRoutes = require('./training-notes');
 const telephonyRoutes = require('./telephony');
+const onboardingRoutes = require('./onboarding');
 
 router.get('/health', async (_req, res) => {
   const services = {
@@ -63,6 +65,7 @@ router.use('/auth', authRoutes);
 router.use('/webhooks', webhookRoutes);
 
 router.use(requireAuth);
+router.use(captureTrainingMode());
 router.use(auditMutations);
 router.use(auditRoutes);
 router.use(bookingsRoutes);
@@ -81,5 +84,6 @@ router.use(motivationRoutes);
 router.use(referencesRoutes);
 router.use(trainingNotesRoutes);
 router.use(telephonyRoutes);
+router.use(onboardingRoutes);
 
 module.exports = router;

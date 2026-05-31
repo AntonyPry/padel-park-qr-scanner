@@ -19,6 +19,7 @@ describe('permissions', () => {
 
   it('keeps trainer away from common CRM management sections', () => {
     expect(canAccessPath('trainer', '/admin/trainer')).toBe(true);
+    expect(canAccessPath('trainer', '/admin/onboarding')).toBe(true);
     expect(canAccessPath('trainer', '/admin/clients')).toBe(false);
     expect(canManageClients('trainer')).toBe(false);
     expect(canViewTrainingNotes('trainer')).toBe(true);

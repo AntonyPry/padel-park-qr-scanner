@@ -5,12 +5,15 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toast';
 import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
+import { OnboardingRouteEvents } from './components/onboarding-route-events';
 import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { ROUTE_ACCESS } from './lib/permissions';
 import { AuthProvider } from './lib/auth';
 import { queryClient } from './lib/query-client';
+import { TrainingModeProvider } from './lib/training-mode';
 
 const AdminPage = lazy(() => import('./pages/Admin'));
+const OnboardingPage = lazy(() => import('./pages/OnboardingPage'));
 const BookingsPage = lazy(() => import('./pages/BookingsPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
 const ClientsPage = lazy(() => import('./pages/ClientsPage'));
@@ -42,9 +45,11 @@ function App() {
         <AuthProvider>
           <TooltipProvider delayDuration={0}>
             <AuthGate>
-              <Suspense fallback={<PageLoader />}>
-                <Routes>
-                  <Route element={<Layout />}>
+              <TrainingModeProvider>
+                <OnboardingRouteEvents />
+                <Suspense fallback={<PageLoader />}>
+                  <Routes>
+                    <Route element={<Layout />}>
                     <Route path="/" element={<HomeRedirect />} />
                     <Route
                       path="/admin"
@@ -59,6 +64,14 @@ function App() {
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/clients']}>
                           <ClientsPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/onboarding"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/onboarding']}>
+                          <OnboardingPage />
                         </RequireRoles>
                       }
                     />
@@ -177,9 +190,10 @@ function App() {
                       }
                     />
                     <Route path="*" element={<Navigate to="/" replace />} />
-                  </Route>
-                </Routes>
-              </Suspense>
+                    </Route>
+                  </Routes>
+                </Suspense>
+              </TrainingModeProvider>
             </AuthGate>
             <Toaster />
           </TooltipProvider>

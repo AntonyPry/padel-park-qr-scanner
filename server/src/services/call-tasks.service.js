@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
+const onboardingService = require('./onboarding.service');
 
 const TASK_STATUSES = new Set(['backlog', 'in_progress', 'done', 'archived']);
 const TASK_SCOPE_TYPES = new Set(['snapshot', 'dynamic']);
@@ -538,6 +539,9 @@ async function syncDynamicTask(task) {
           callTaskId: raw.id,
           deadlineAt: getClientDeadlineAt(raw.clientBase, new Date(), raw.dueAt),
           status: 'new',
+          isTraining: Boolean(raw.isTraining),
+          trainingAccountId: raw.trainingAccountId || null,
+          trainingRole: raw.trainingRole || null,
         })),
         {
           ignoreDuplicates: true,
@@ -627,6 +631,13 @@ async function createTaskForBase({
     data.assignedToAccountId,
     transaction,
   );
+  const trainingMarker = base.isTraining
+    ? {
+        isTraining: true,
+        trainingAccountId: base.trainingAccountId || null,
+        trainingRole: base.trainingRole || null,
+      }
+    : await onboardingService.getTrainingDataMarker(actor);
 
   const createdTask = await db.CallTask.create(
     {
@@ -639,6 +650,7 @@ async function createTaskForBase({
       snapshotClientCount: snapshotClients.length,
       status: 'backlog',
       title,
+      ...trainingMarker,
     },
     { transaction },
   );
@@ -650,6 +662,7 @@ async function createTaskForBase({
         callTaskId: createdTask.id,
         deadlineAt: clientDeadlineAt,
         status: 'new',
+        ...trainingMarker,
       })),
       { transaction },
     );
@@ -674,6 +687,7 @@ async function createForClient(actor, clientId, data = {}) {
   const dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
   const assignedToAccountId = await normalizeAssigneeId(data.assignedToAccountId);
   const title = normalizeText(data.title) || `Обзвон: ${client.name}`;
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
 
   if (title.length < 2) {
     throw appError('Название задачи слишком короткое');
@@ -691,6 +705,7 @@ async function createForClient(actor, clientId, data = {}) {
         snapshotClientCount: 1,
         status: 'backlog',
         title,
+        ...trainingMarker,
       },
       { transaction },
     );
@@ -701,11 +716,22 @@ async function createForClient(actor, clientId, data = {}) {
         callTaskId: task.id,
         deadlineAt: dueAt,
         status: 'new',
+        ...trainingMarker,
       },
       { transaction },
     );
 
     return task;
+  });
+
+  await onboardingService.recordEventSafe(actor, 'call_task.created', {
+    entityId: createdTask.id,
+    entityType: 'call_task',
+    payload: {
+      clientId: client.id,
+      scopeType: 'snapshot',
+      taskId: createdTask.id,
+    },
   });
 
   return getOne(actor, createdTask.id);
@@ -766,6 +792,16 @@ async function createFromBase(actor, baseId, data = {}) {
 
   const task = await db.sequelize.transaction(async (transaction) => {
     return createTaskForBase({ actor, base, data, transaction });
+  });
+
+  await onboardingService.recordEventSafe(actor, 'call_task.created', {
+    entityId: task.id,
+    entityType: 'call_task',
+    payload: {
+      baseId: base.id,
+      scopeType: data.scopeType || 'snapshot',
+      taskId: task.id,
+    },
   });
 
   return getOne(actor, task.id);
@@ -990,6 +1026,13 @@ async function addAttempt(actor, taskClientId, data = {}) {
   const summary = normalizeText(data.summary);
   const deadlineAt = normalizeDateTime(data.deadlineAt, 'дедлайн клиента');
   const now = new Date();
+  const trainingMarker = taskClient.isTraining
+    ? {
+        isTraining: true,
+        trainingAccountId: taskClient.trainingAccountId || null,
+        trainingRole: taskClient.trainingRole || null,
+      }
+    : await onboardingService.getTrainingDataMarker(actor);
 
   await db.sequelize.transaction(async (transaction) => {
     await db.CallTaskAttempt.create(
@@ -999,6 +1042,7 @@ async function addAttempt(actor, taskClientId, data = {}) {
         deadlineAt,
         status,
         summary,
+        ...trainingMarker,
       },
       { transaction },
     );
@@ -1012,6 +1056,16 @@ async function addAttempt(actor, taskClientId, data = {}) {
       },
       { transaction },
     );
+  });
+
+  await onboardingService.recordEventSafe(actor, 'call_task.attempt_logged', {
+    entityId: taskClient.id,
+    entityType: 'call_task_client',
+    payload: {
+      callTaskId: taskClient.callTaskId,
+      status,
+      taskClientId: taskClient.id,
+    },
   });
 
   return mapTaskClient(
@@ -1140,6 +1194,7 @@ async function bulkUpdateClients(actor, taskId, data = {}) {
 
 async function getReport(actor, query = {}) {
   const where = buildTaskWhere(actor, query);
+  where.isTraining = false;
   const createdFrom = normalizeDateTime(query.createdFrom, 'начало периода');
   const createdTo = normalizeDateTime(query.createdTo, 'конец периода');
   if (createdFrom || createdTo) {

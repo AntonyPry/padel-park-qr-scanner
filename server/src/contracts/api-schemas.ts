@@ -1,6 +1,9 @@
 const { z } = require('zod');
 const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 const { PNL_GROUP_VALUES } = require('../constants/catalog');
+const {
+  ONBOARDING_CLIENT_CHECKPOINT_EVENTS,
+} = require('../onboarding/catalog');
 
 const id = z.union([
   z.number().int().positive(),
@@ -54,6 +57,13 @@ const nameString = z.string().trim().min(2, 'Минимум 2 символа').m
 const optionalString = z.union([z.string().trim(), z.literal(''), z.null()]).optional();
 const jsonObject = z.record(z.string(), z.unknown());
 const optionalJsonObject = z.union([jsonObject, z.null()]).optional();
+const accountRoleValue = z.enum(ACCOUNT_ROLE_VALUES);
+const onboardingTaskKey = z
+  .string()
+  .trim()
+  .min(3, 'Ключ задания обязателен')
+  .max(160, 'Ключ задания слишком длинный')
+  .regex(/^[a-z0-9._-]+$/, 'Ключ задания указан некорректно');
 const paginationQuery = z
   .object({
     page: z.union([id, z.literal('')]).optional(),
@@ -471,6 +481,32 @@ const apiSchemas = {
       .passthrough(),
     listQuery: z.object({ status: statusFilter.optional() }).passthrough(),
     params: idParams,
+  },
+  onboarding: {
+    completeBody: z
+      .object({
+        metadata: optionalJsonObject,
+        role: accountRoleValue.optional(),
+      })
+      .passthrough(),
+    eventBody: z
+      .object({
+        entityId: optionalString,
+        entityType: optionalString,
+        eventKey: z.enum(ONBOARDING_CLIENT_CHECKPOINT_EVENTS),
+        payload: optionalJsonObject,
+        role: accountRoleValue.optional(),
+      })
+      .passthrough(),
+    roleQuery: z.object({ role: accountRoleValue.optional() }).passthrough(),
+    taskParams: z.object({ taskKey: onboardingTaskKey }),
+    trainingModeBody: z
+      .object({
+        isEnabled: z.boolean(),
+        metadata: optionalJsonObject,
+        role: accountRoleValue.optional(),
+      })
+      .passthrough(),
   },
   auth: {
     bootstrap: {

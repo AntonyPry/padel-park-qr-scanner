@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { apiRequest, ApiRequestError, clearAuthToken, setAuthToken } from './api';
+import {
+  apiRequest,
+  ApiRequestError,
+  clearAuthToken,
+  setAuthToken,
+  setStoredTrainingMode,
+} from './api';
 
 afterEach(() => {
   clearAuthToken();
@@ -46,5 +52,27 @@ describe('apiRequest', () => {
       name: 'ApiRequestError',
       status: 409,
     } satisfies Partial<ApiRequestError>);
+  });
+
+  it('adds training mode headers when enabled locally', async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        void _input;
+        void _init;
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 200,
+        });
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    setStoredTrainingMode({ isEnabled: true, role: 'admin' });
+
+    await apiRequest('/api/example');
+
+    const [, init] = fetchMock.mock.calls[0] || [];
+    const headers = new Headers(init?.headers);
+    expect(headers.get('X-Training-Mode')).toBe('true');
+    expect(headers.get('X-Training-Role')).toBe('admin');
   });
 });

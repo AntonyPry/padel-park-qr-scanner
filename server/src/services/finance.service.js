@@ -4,6 +4,7 @@ const xlsx = require('xlsx');
 const db = require('../../models');
 const catalogService = require('./catalog.service');
 const motivationService = require('./motivation.service');
+const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
 const { FINANCE_TYPES } = require('../constants/catalog');
 const { resolveStoredReceiptPayments } = require('../utils/payments');
@@ -185,7 +186,7 @@ class FinanceService {
 
     // --- ОБРАБОТКА РУЧНЫХ ОПЕРАЦИЙ ---
     const manualFinances = await db.Finance.findAll({
-      where: dateFilter,
+      where: { ...dateFilter, isTraining: false },
     }).catch(() => []);
     manualFinances.forEach((f) => {
       const catInfo = catMap[f.category.toLowerCase()] || {
@@ -417,6 +418,7 @@ class FinanceService {
 
     const date = normalizeDateOnly(data.date);
     await payrollService.assertDateEditable(date, 'ручную финансовую операцию');
+    const trainingMarker = await onboardingService.getTrainingDataMarker(account);
 
     const record = await db.Finance.create({
       date,
@@ -425,6 +427,7 @@ class FinanceService {
       type,
       comment: data.comment ? String(data.comment).trim() : null,
       createdByAccountId: account?.id || null,
+      ...trainingMarker,
     });
 
     await payrollService.recordChange({
@@ -435,6 +438,17 @@ class FinanceService {
       date,
       reason: data.comment,
       afterData: record.toJSON(),
+    });
+
+    await onboardingService.recordEventSafe(account, 'finance.record_created', {
+      entityId: record.id,
+      entityType: 'finance',
+      payload: {
+        amount: record.amount,
+        category: record.category,
+        date: record.date,
+        type: record.type,
+      },
     });
 
     return record;
@@ -499,6 +513,15 @@ class FinanceService {
       afterData: {
         summary: report.summary,
         reconciliation: report.reconciliation,
+      },
+    });
+
+    await onboardingService.recordEventSafe(account, 'report.exported', {
+      entityType: 'finance_report',
+      payload: {
+        fromDate: from || null,
+        report: 'finance',
+        toDate: to || null,
       },
     });
 

@@ -1,4 +1,5 @@
 const db = require('../../models');
+const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
 
 const SHIFT_INCLUDE = [{ model: db.Staff, attributes: ['id', 'name', 'role'] }];
@@ -106,6 +107,16 @@ async function create(data, account) {
     afterData: shift.toJSON(),
   });
 
+  await onboardingService.recordEventSafe(account, 'shift.approved', {
+    entityId: shift.id,
+    entityType: 'shift',
+    payload: {
+      date,
+      shiftId: shift.id,
+      status: shift.status,
+    },
+  });
+
   return shift;
 }
 
@@ -149,6 +160,16 @@ async function update(data, account) {
     reason: comment,
     beforeData: before,
     afterData: shift.toJSON(),
+  });
+
+  await onboardingService.recordEventSafe(account, 'shift.approved', {
+    entityId: shift.id,
+    entityType: 'shift',
+    payload: {
+      date: shift.date,
+      shiftId: shift.id,
+      status: shift.status,
+    },
   });
 
   return shift;
@@ -256,6 +277,16 @@ async function endActive(account) {
     date: activeShift.date,
     beforeData: before,
     afterData: activeShift.toJSON(),
+  });
+
+  await onboardingService.recordEventSafe(account, 'shift.approved', {
+    entityId: activeShift.id,
+    entityType: 'shift',
+    payload: {
+      date: activeShift.date,
+      shiftId: activeShift.id,
+      status: activeShift.status,
+    },
   });
 
   return db.Shift.findByPk(activeShift.id, { include: SHIFT_INCLUDE });

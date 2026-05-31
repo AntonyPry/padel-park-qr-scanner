@@ -1,5 +1,6 @@
 const db = require('../../models');
 const clientsService = require('./clients.service');
+const onboardingService = require('./onboarding.service');
 
 const STATUS_VALUES = new Set(['active', 'archived']);
 const RECURRENCE_INTERVALS = new Set(['none', 'daily', 'weekly']);
@@ -369,6 +370,7 @@ async function create(actor, data) {
     assertTaskableFilters(filters);
   }
   await assertRecurringAssignee(recurrencePayload.recurringAssignedToAccountId);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
 
   const base = await db.ClientBase.create({
     name,
@@ -378,7 +380,18 @@ async function create(actor, data) {
     ...recurrencePayload,
     status: normalizeStatus(data.status),
     createdByAccountId: actor?.id || null,
+    ...trainingMarker,
     lastCalculatedAt: new Date(),
+  });
+
+  await onboardingService.recordEventSafe(actor, 'client_base.created', {
+    entityId: base.id,
+    entityType: 'client_base',
+    payload: {
+      baseId: base.id,
+      recurrenceEnabled: Boolean(recurrencePayload.recurringEnabled),
+      scopeType: base.scopeType,
+    },
   });
 
   return mapBase(await getBaseOrFail(base.id));

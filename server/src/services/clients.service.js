@@ -5,6 +5,7 @@ const {
   formatRussianPhone,
   getPhoneLookupDigits,
 } = require('../utils/phone');
+const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 
 const CLIENT_ATTRIBUTES = [
@@ -476,6 +477,8 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
   const segment = SEGMENT_VALUES.has(query.segment) ? query.segment : 'all';
   const trainingLevel = String(query.trainingLevel || '').trim().toUpperCase();
 
+  where.push('COALESCE(u.isTraining, 0) = 0');
+
   if (query.includeMerged !== 'true') {
     where.push('u.mergedIntoUserId IS NULL');
   }
@@ -503,7 +506,9 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
         SELECT 1
         FROM Visits vcid
         JOIN VisitCategoryAssignments vca ON vca.visitId = vcid.id
-        WHERE vcid.userId = u.id AND vca.visitCategoryId = :visitCategoryId
+        WHERE vcid.userId = u.id
+          AND COALESCE(vcid.isTraining, 0) = 0
+          AND vca.visitCategoryId = :visitCategoryId
       )
     `);
     replacements.visitCategoryId = visitCategoryId;
@@ -515,7 +520,9 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
       EXISTS (
         SELECT 1
         FROM Visits vc
-        WHERE vc.userId = u.id AND vc.category LIKE :visitCategory
+        WHERE vc.userId = u.id
+          AND COALESCE(vc.isTraining, 0) = 0
+          AND vc.category LIKE :visitCategory
       )
     `);
     replacements.visitCategory = `%${visitCategory}%`;
@@ -546,6 +553,7 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
         SELECT phoneNormalized
       FROM Users
         WHERE status = 'active'
+          AND COALESCE(isTraining, 0) = 0
           AND mergedIntoUserId IS NULL
           AND phoneNormalized IS NOT NULL
         GROUP BY phoneNormalized
@@ -614,24 +622,24 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
       (
         SELECT tn.level
         FROM TrainingNotes tn
-        WHERE tn.userId = u.id
+        WHERE tn.userId = u.id AND COALESCE(tn.isTraining, 0) = 0
         ORDER BY tn.trainedAt DESC, tn.createdAt DESC
         LIMIT 1
       ) AS latestTrainingLevel,
       (
         SELECT tn.trainedAt
         FROM TrainingNotes tn
-        WHERE tn.userId = u.id
+        WHERE tn.userId = u.id AND COALESCE(tn.isTraining, 0) = 0
         ORDER BY tn.trainedAt DESC, tn.createdAt DESC
         LIMIT 1
       ) AS latestTrainingAt,
       (
         SELECT COUNT(*)
         FROM TrainingNotes tn_count
-        WHERE tn_count.userId = u.id
+        WHERE tn_count.userId = u.id AND COALESCE(tn_count.isTraining, 0) = 0
       ) AS trainingNotesCount
     FROM Users u
-    LEFT JOIN Visits v ON v.userId = u.id
+    LEFT JOIN Visits v ON v.userId = u.id AND COALESCE(v.isTraining, 0) = 0
     ${whereSql}
     GROUP BY u.id
     ${havingSql}
@@ -831,7 +839,7 @@ async function getClientStats(clientId) {
       [db.Sequelize.fn('MIN', db.Sequelize.col('scannedAt')), 'firstVisitAt'],
       [db.Sequelize.fn('MAX', db.Sequelize.col('scannedAt')), 'lastVisitAt'],
     ],
-    where: { userId: clientId },
+    where: { userId: clientId, isTraining: false },
     raw: true,
   });
 
@@ -1054,6 +1062,16 @@ async function listClientTelephonyCalls(clientId, account, options = {}) {
 
 async function getClientDetails(id, account = null) {
   const client = await getClientOrFail(id, { includeMerged: true });
+
+  await onboardingService.recordEventSafe(account, 'client.viewed', {
+    entityId: client.id,
+    entityType: 'client',
+    payload: {
+      clientId: client.id,
+      isMerged: Boolean(client.mergedIntoUserId),
+    },
+  });
+
   if (client.mergedIntoUserId) {
     const includeOperationalHistory = !isTrainer(account);
     const trainingNotes = canViewTrainingNotes(account)
@@ -1184,12 +1202,13 @@ async function getClientBookingStats(clientId) {
 
   const now = new Date();
   const activeWhere = {
+    isTraining: false,
     userId: clientId,
     status: { [Op.ne]: 'canceled' },
   };
   const [totalCount, activeCount, upcomingCount, canceledCount, paidAmount, plannedAmount, nextBooking] =
     await Promise.all([
-      db.Booking.count({ where: { userId: clientId } }),
+      db.Booking.count({ where: { userId: clientId, isTraining: false } }),
       db.Booking.count({ where: activeWhere }),
       db.Booking.count({
         where: {
@@ -1201,6 +1220,7 @@ async function getClientBookingStats(clientId) {
         where: {
           userId: clientId,
           status: 'canceled',
+          isTraining: false,
         },
       }),
       db.Booking.sum('paidAmount', { where: activeWhere }),
@@ -1681,6 +1701,7 @@ async function lookupByPhone(
   if (phoneNormalized.length !== 10) return null;
 
   const where = {
+    isTraining: false,
     phoneNormalized,
     mergedIntoUserId: null,
   };
@@ -1712,6 +1733,7 @@ async function findExistingByIdentity(field, value, excludeClientId = null) {
 
   const where = {
     [field]: normalizedValue,
+    isTraining: false,
     mergedIntoUserId: null,
   };
   if (excludeClientId) {
@@ -1732,6 +1754,7 @@ async function findExistingByIdentity(field, value, excludeClientId = null) {
 
 async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
   const where = {
+    isTraining: false,
     phoneNormalized,
     mergedIntoUserId: null,
   };
@@ -1787,10 +1810,11 @@ async function generateWebId() {
   throw appError('Не удалось сгенерировать уникальный WEB ID клиента');
 }
 
-async function createClient(data) {
+async function createClient(data, actor = null) {
   const name = normalizeClientName(data.name);
   const sourceRef = await referencesService.getClientSourceByInput(data);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
   return withClientIdentityLocks(
     getClientIdentityLockKeys(data, phoneNormalized),
     async () => {
@@ -1828,9 +1852,17 @@ async function createClient(data) {
         sourceId: sourceRef.id,
         note: normalizeNote(data.note),
         status: 'active',
+        ...trainingMarker,
       });
 
-      return getClientDetails(client.id);
+      const result = await getClientDetails(client.id);
+      await onboardingService.recordEventSafe(actor, 'client.created', {
+        entityId: result.client?.id || client.id,
+        entityType: 'client',
+        payload: result.client || result,
+      });
+
+      return result;
     },
   );
 }
@@ -2037,7 +2069,7 @@ async function findActiveByPhone(phone) {
   if (phoneNormalized.length !== 10) return null;
 
   return db.User.findOne({
-    where: { phoneNormalized, status: 'active', mergedIntoUserId: null },
+    where: { phoneNormalized, status: 'active', isTraining: false, mergedIntoUserId: null },
     order: [['createdAt', 'DESC']],
   });
 }
@@ -2046,12 +2078,15 @@ async function findCanonicalByQr(qr) {
   let client = null;
 
   if (qr.startsWith('vk_')) {
-    client = await db.User.findOne({ where: { vkId: qr.replace('vk_', '') } });
+    client = await db.User.findOne({
+      where: { vkId: qr.replace('vk_', ''), isTraining: false },
+    });
   } else if (qr.startsWith('web_')) {
-    client = await db.User.findOne({ where: { webId: qr } });
+    client = await db.User.findOne({ where: { webId: qr, isTraining: false } });
   } else {
     client = await db.User.findOne({
       where: {
+        isTraining: false,
         [Op.or]: [{ telegramId: qr }, { telegramId: `@${qr}` }],
       },
     });
@@ -2084,7 +2119,7 @@ async function getClientStatsSnapshot(clientId, transaction) {
     ],
     raw: true,
     transaction,
-    where: { userId: clientId },
+    where: { userId: clientId, isTraining: false },
   });
 
   return {
@@ -2301,6 +2336,7 @@ async function getDuplicateGroups() {
         SELECT ${group.field} AS value, COUNT(*) AS count
         FROM Users
         WHERE status = 'active'
+          AND COALESCE(isTraining, 0) = 0
           AND mergedIntoUserId IS NULL
           AND ${group.field} IS NOT NULL
           AND ${group.field} <> ''
@@ -2334,6 +2370,7 @@ async function getDuplicateGroups() {
     where: {
       [Op.or]: conditions,
       status: 'active',
+      isTraining: false,
       mergedIntoUserId: null,
     },
     order: [['createdAt', 'DESC']],

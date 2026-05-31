@@ -39,6 +39,19 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 0,
     },
+    isTraining: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    trainingRole: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    trainingAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
   });
 
   CallTask.associate = (models) => {

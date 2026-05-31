@@ -84,6 +84,19 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.DATE,
       allowNull: true,
     },
+    isTraining: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+    },
+    trainingRole: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    trainingAccountId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
   });
 
   ClientBase.associate = (models) => {

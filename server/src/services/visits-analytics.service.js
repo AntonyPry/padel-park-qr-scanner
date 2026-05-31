@@ -3,7 +3,9 @@ const XLSX = require('xlsx');
 const db = require('../../models');
 
 function buildVisitDateFilter(from, to) {
-  const where = {};
+  const where = {
+    isTraining: false,
+  };
 
   if (from || to) {
     where.createdAt = {};
@@ -19,7 +21,7 @@ function buildVisitDateFilter(from, to) {
 }
 
 function buildVisitDateSql(from, to) {
-  const where = [];
+  const where = ['COALESCE(v.isTraining, 0) = 0'];
   const replacements = {};
 
   if (from) {

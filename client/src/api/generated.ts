@@ -23,6 +23,15 @@ export const apiEndpoints = {
   "accounts.restore": { method: "POST", path: "/accounts/{id}/restore", responseType: "json" },
   "accounts.deletePermanent": { method: "DELETE", path: "/accounts/{id}/permanent", responseType: "json" },
   "accounts.archive": { method: "DELETE", path: "/accounts/{id}", responseType: "json" },
+  "onboarding.overview": { method: "GET", path: "/onboarding", responseType: "json" },
+  "onboarding.trainingMode": { method: "GET", path: "/onboarding/training-mode", responseType: "json" },
+  "onboarding.trainingModeUpdate": { method: "PUT", path: "/onboarding/training-mode", responseType: "json" },
+  "onboarding.trainingData": { method: "GET", path: "/onboarding/training-data", responseType: "json" },
+  "onboarding.trainingDataCleanup": { method: "DELETE", path: "/onboarding/training-data", responseType: "json" },
+  "onboarding.metrics": { method: "GET", path: "/onboarding/metrics", responseType: "json" },
+  "onboarding.completeTask": { method: "POST", path: "/onboarding/tasks/{taskKey}/complete", responseType: "json" },
+  "onboarding.recordEvent": { method: "POST", path: "/onboarding/events", responseType: "json" },
+  "onboarding.resetProgress": { method: "DELETE", path: "/onboarding/progress", responseType: "json" },
   "audit.list": { method: "GET", path: "/audit-logs", responseType: "json" },
   "bookings.schedule": { method: "GET", path: "/bookings/schedule", responseType: "json" },
   "bookings.courts": { method: "GET", path: "/bookings/courts", responseType: "json" },
@@ -269,6 +278,44 @@ export type AccountsDeletePermanentParams = {
 };
 export type AccountsArchiveParams = {
   id: number | string;
+};
+export type OnboardingOverviewQuery = {
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingTrainingModeUpdateBody = {
+  isEnabled: boolean;
+  metadata?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingTrainingDataQuery = {
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingTrainingDataCleanupQuery = {
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingCompleteTaskParams = {
+  taskKey: string;
+};
+export type OnboardingCompleteTaskBody = {
+  metadata?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingRecordEventBody = {
+  entityId?: string | "" | null;
+  entityType?: string | "" | null;
+  eventKey: "audit.viewed" | "booking.schedule_viewed" | "call_task.report_viewed" | "finance.report_viewed" | "reference.viewed" | "report.viewed" | "utilization.viewed";
+  payload?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingResetProgressQuery = {
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
 };
 export type AuditListQuery = {
   page?: number | string | "";
@@ -1211,6 +1258,15 @@ export interface ApiEndpointRequestMap {
   "accounts.restore": ApiEndpointRequest<AccountsRestoreParams, undefined, undefined>;
   "accounts.deletePermanent": ApiEndpointRequest<AccountsDeletePermanentParams, undefined, undefined>;
   "accounts.archive": ApiEndpointRequest<AccountsArchiveParams, undefined, undefined>;
+  "onboarding.overview": ApiEndpointRequest<undefined, OnboardingOverviewQuery, undefined>;
+  "onboarding.trainingMode": ApiEndpointRequest<undefined, undefined, undefined>;
+  "onboarding.trainingModeUpdate": ApiEndpointRequest<undefined, undefined, OnboardingTrainingModeUpdateBody>;
+  "onboarding.trainingData": ApiEndpointRequest<undefined, OnboardingTrainingDataQuery, undefined>;
+  "onboarding.trainingDataCleanup": ApiEndpointRequest<undefined, OnboardingTrainingDataCleanupQuery, undefined>;
+  "onboarding.metrics": ApiEndpointRequest<undefined, undefined, undefined>;
+  "onboarding.completeTask": ApiEndpointRequest<OnboardingCompleteTaskParams, undefined, OnboardingCompleteTaskBody>;
+  "onboarding.recordEvent": ApiEndpointRequest<undefined, undefined, OnboardingRecordEventBody>;
+  "onboarding.resetProgress": ApiEndpointRequest<undefined, OnboardingResetProgressQuery, undefined>;
   "audit.list": ApiEndpointRequest<undefined, AuditListQuery, undefined>;
   "bookings.schedule": ApiEndpointRequest<undefined, BookingsScheduleQuery, undefined>;
   "bookings.courts": ApiEndpointRequest<undefined, undefined, undefined>;

@@ -27,6 +27,15 @@
 - `UI_SMOKE_API_URL`, по умолчанию `http://127.0.0.1:3004/api`
 - `UI_SMOKE_OUTPUT`, по умолчанию `outputs/qa/<date>/ui-smoke`
 
+## Локальные порты для параллельных worktree
+
+Чтобы одновременно смотреть две ветки проекта:
+
+- основной/feature worktree можно оставить на `server:3004`, `client:5173`, `preview:4173`;
+- `worktrees/crm-instructions` настроен локальными `.env` на `server:3005`, `client:5174`, `preview:4174`;
+- клиентский Vite читает `VITE_DEV_PORT` и `VITE_PREVIEW_PORT`;
+- `client npm run smoke:ui` дополнительно подхватывает `UI_SMOKE_BASE_URL` и `UI_SMOKE_API_URL` из `client/.env`, если переменные не переданы в командной строке.
+
 После `npm run smoke:ui` обязательно сохранить и открыть:
 
 - `outputs/qa/<date>/ui-smoke/report.json`;

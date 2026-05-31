@@ -1,4 +1,5 @@
 const db = require('../../models');
+const onboardingService = require('./onboarding.service');
 
 const LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
 
@@ -138,14 +139,35 @@ async function create(clientId, data, actor) {
   if (!exercises && !note) {
     throw appError('Заполните упражнения или заметку');
   }
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
 
-  await db.TrainingNote.create({
+  const trainingNote = await db.TrainingNote.create({
     userId: Number(clientId),
     trainerAccountId: actor?.id || null,
     trainedAt: normalizeDateOnly(data.trainedAt),
     level: normalizeLevel(data.level),
     exercises,
     note,
+    ...trainingMarker,
+  });
+
+  await onboardingService.recordEventSafe(actor, 'training_note.created', {
+    entityId: trainingNote.id,
+    entityType: 'training_note',
+    payload: {
+      clientId: Number(clientId),
+      level: trainingNote.level,
+      noteId: trainingNote.id,
+    },
+  });
+  await onboardingService.recordEventSafe(actor, 'training_level.updated', {
+    entityId: clientId,
+    entityType: 'client',
+    payload: {
+      clientId: Number(clientId),
+      level: trainingNote.level,
+      noteId: trainingNote.id,
+    },
   });
 
   return listByClient(clientId);
@@ -173,6 +195,16 @@ async function update(noteId, data, actor) {
       data.trainedAt === undefined
         ? note.trainedAt
         : normalizeDateOnly(data.trainedAt),
+  });
+
+  await onboardingService.recordEventSafe(actor, 'training_note.updated', {
+    entityId: note.id,
+    entityType: 'training_note',
+    payload: {
+      clientId: note.userId,
+      level: note.level,
+      noteId: note.id,
+    },
   });
 
   return listByClient(note.userId);

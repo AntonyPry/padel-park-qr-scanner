@@ -102,6 +102,18 @@ module.exports = (sequelize, DataTypes) => {
       as: 'bookingChangeLogs',
       foreignKey: 'actorAccountId',
     });
+    Account.hasMany(models.OnboardingProgress, {
+      as: 'onboardingProgress',
+      foreignKey: 'accountId',
+    });
+    Account.hasOne(models.OnboardingTrainingMode, {
+      as: 'onboardingTrainingMode',
+      foreignKey: 'accountId',
+    });
+    Account.hasMany(models.OnboardingEvent, {
+      as: 'onboardingEvents',
+      foreignKey: 'accountId',
+    });
     Account.hasMany(models.BookingSeries, {
       as: 'createdBookingSeries',
       foreignKey: 'createdByAccountId',

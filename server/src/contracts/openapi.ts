@@ -64,6 +64,16 @@ const endpointContracts: EndpointContract[] = [
   { id: 'accounts.deletePermanent', method: 'delete', path: '/accounts/{id}/permanent', params: apiSchemas.accounts.params, summary: 'Delete archived system user permanently', tags: ['Accounts'] },
   { id: 'accounts.archive', method: 'delete', path: '/accounts/{id}', params: apiSchemas.accounts.params, summary: 'Archive system user', tags: ['Accounts'] },
 
+  { id: 'onboarding.overview', method: 'get', path: '/onboarding', query: apiSchemas.onboarding.roleQuery, summary: 'Get onboarding path and progress', tags: ['Onboarding'] },
+  { id: 'onboarding.trainingMode', method: 'get', path: '/onboarding/training-mode', summary: 'Get onboarding training mode state', tags: ['Onboarding'] },
+  { id: 'onboarding.trainingModeUpdate', method: 'put', path: '/onboarding/training-mode', body: apiSchemas.onboarding.trainingModeBody, summary: 'Update onboarding training mode state', tags: ['Onboarding'] },
+  { id: 'onboarding.trainingData', method: 'get', path: '/onboarding/training-data', query: apiSchemas.onboarding.roleQuery, summary: 'Get onboarding training data summary', tags: ['Onboarding'] },
+  { id: 'onboarding.trainingDataCleanup', method: 'delete', path: '/onboarding/training-data', query: apiSchemas.onboarding.roleQuery, summary: 'Cleanup onboarding training data', tags: ['Onboarding'] },
+  { id: 'onboarding.metrics', method: 'get', path: '/onboarding/metrics', summary: 'Get onboarding completion metrics by role', tags: ['Onboarding'] },
+  { id: 'onboarding.completeTask', method: 'post', path: '/onboarding/tasks/{taskKey}/complete', body: apiSchemas.onboarding.completeBody, params: apiSchemas.onboarding.taskParams, summary: 'Mark onboarding task as completed', tags: ['Onboarding'] },
+  { id: 'onboarding.recordEvent', method: 'post', path: '/onboarding/events', body: apiSchemas.onboarding.eventBody, summary: 'Record client-side onboarding checkpoint event', tags: ['Onboarding'] },
+  { id: 'onboarding.resetProgress', method: 'delete', path: '/onboarding/progress', query: apiSchemas.onboarding.roleQuery, summary: 'Reset onboarding progress for selected role', tags: ['Onboarding'] },
+
   { id: 'audit.list', method: 'get', path: '/audit-logs', query: apiSchemas.audit.listQuery, summary: 'List audit logs', tags: ['Audit'] },
 
   { id: 'bookings.schedule', method: 'get', path: '/bookings/schedule', query: apiSchemas.bookings.scheduleQuery, summary: 'Booking schedule by day', tags: ['Bookings'] },

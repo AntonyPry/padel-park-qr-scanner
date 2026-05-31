@@ -5,6 +5,29 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
+const CLIENT_DIR = path.resolve(__dirname, '..');
+
+function loadLocalEnv() {
+  const envPath = path.join(CLIENT_DIR, '.env');
+  if (!fs.existsSync(envPath)) return;
+
+  const lines = fs.readFileSync(envPath, 'utf8').split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const separatorIndex = trimmed.indexOf('=');
+    if (separatorIndex === -1) continue;
+
+    const key = trimmed.slice(0, separatorIndex).trim();
+    const value = trimmed.slice(separatorIndex + 1).trim();
+    if (key && process.env[key] === undefined) {
+      process.env[key] = value.replace(/^["']|["']$/g, '');
+    }
+  }
+}
+
+loadLocalEnv();
 
 const BASE_URL = process.env.UI_SMOKE_BASE_URL || 'http://127.0.0.1:4173';
 const API_URL = process.env.UI_SMOKE_API_URL || 'http://127.0.0.1:3004/api';
@@ -24,6 +47,7 @@ const ROUTES = [
   '/admin/telephony',
   '/admin/staff',
   '/admin/finances',
+  '/admin/onboarding',
   '/admin/users',
   '/admin/visits-analytics',
   '/admin/utilization',

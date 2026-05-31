@@ -4,8 +4,22 @@ const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const ACCESS_SOCKET_ROOM = 'access';
 
+function parseAllowedOrigin(value) {
+  if (!value || value === '*') return value || '*';
+
+  const origins = String(value)
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+  if (origins.length === 0) return '*';
+  return origins.length === 1 ? origins[0] : origins;
+}
+
 function createSocketServer(httpServer) {
-  const allowedOrigin = process.env.CLIENT_ORIGIN || process.env.CORS_ORIGIN || '*';
+  const allowedOrigin = parseAllowedOrigin(
+    process.env.CLIENT_ORIGIN || process.env.CORS_ORIGIN,
+  );
   const io = new Server(httpServer, {
     cors: {
       origin: allowedOrigin,

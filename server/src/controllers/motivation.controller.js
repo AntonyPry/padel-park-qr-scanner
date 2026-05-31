@@ -1,4 +1,5 @@
 const motivationService = require('../services/motivation.service');
+const onboardingService = require('../services/onboarding.service');
 const { sendError } = require('../utils/api-error');
 
 class MotivationController {
@@ -49,6 +50,15 @@ class MotivationController {
   async updateRule(req, res) {
     try {
       const rule = await motivationService.updateRule(req.params.key, req.body);
+      await onboardingService.recordEventSafe(
+        req.account,
+        'motivation.rule_updated',
+        {
+          entityId: req.params.key,
+          entityType: 'motivation_rule',
+          payload: { key: req.params.key },
+        },
+      );
       res.json(rule);
     } catch (error) {
       sendError(res, error, 'Ошибка обновления правила');
@@ -58,6 +68,15 @@ class MotivationController {
   async createBonusRule(req, res) {
     try {
       const rule = await motivationService.createBonusRule(req.body);
+      await onboardingService.recordEventSafe(
+        req.account,
+        'motivation.rule_updated',
+        {
+          entityId: rule.id,
+          entityType: 'motivation_bonus_rule',
+          payload: { ruleId: rule.id },
+        },
+      );
       res.status(201).json(rule);
     } catch (error) {
       sendError(res, error, 'Ошибка создания бонусного правила');
@@ -70,6 +89,15 @@ class MotivationController {
         req.params.id,
         req.body,
       );
+      await onboardingService.recordEventSafe(
+        req.account,
+        'motivation.rule_updated',
+        {
+          entityId: rule.id,
+          entityType: 'motivation_bonus_rule',
+          payload: { ruleId: rule.id },
+        },
+      );
       res.json(rule);
     } catch (error) {
       sendError(res, error, 'Ошибка обновления бонусного правила');
@@ -81,6 +109,18 @@ class MotivationController {
       const rules = await motivationService.assignCategoryToBonusRule(
         req.params.categoryId,
         req.body.bonusRuleId,
+      );
+      await onboardingService.recordEventSafe(
+        req.account,
+        'motivation.rule_updated',
+        {
+          entityId: req.params.categoryId,
+          entityType: 'motivation_category_rule',
+          payload: {
+            bonusRuleId: req.body.bonusRuleId || null,
+            categoryId: req.params.categoryId,
+          },
+        },
       );
       res.json(rules);
     } catch (error) {

@@ -8,10 +8,13 @@
 - Apply database migrations for the target environment.
 - `server`: `npm run typecheck`
 - `server`: `npm run test`
+- `server`: `npm run onboarding:audit:strict`
 - `server`: `npm run openapi`
 - `client`: `npm run lint`
 - `client`: `npm run test`
 - `client`: `npm run build`
+- Check `Onboarding impact` for every user-facing feature in the release. Update onboarding catalog, checkpoint events, role paths, skills, badges and in-app instructions before deploy.
+- If a feature creates or changes production data, verify its training-mode marker fields and report exclusions, or explicitly mark it as not training-safe yet.
 - Create and verify a database backup before switching traffic.
 
 ## After deploy
@@ -21,6 +24,7 @@
 - Run UI smoke against the deployed frontend and API.
 - Save smoke screenshots and `report.json` from `outputs/qa/<date>/ui-smoke`.
 - Verify login, client creation, duplicate restore, bases, call tasks, payroll, motivation, catalog, references and access monitor.
+- Verify onboarding opens for the changed roles and owner role override can view the affected role path.
 
 ## Rollback
 

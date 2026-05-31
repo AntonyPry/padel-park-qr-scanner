@@ -2,6 +2,7 @@ const { Op } = require('sequelize');
 const xlsx = require('xlsx');
 const db = require('../../models');
 const motivationService = require('./motivation.service');
+const onboardingService = require('./onboarding.service');
 
 const LOCKED_PAYROLL_STATUSES = ['reviewed', 'approved', 'paid'];
 const PAYROLL_STATUSES = ['draft', 'reviewed', 'approved', 'paid'];
@@ -588,6 +589,19 @@ async function createPeriod(data, account) {
     afterData: { period: serializePeriod(period), totals: snapshot.totals },
   });
 
+  if (nextStatus === 'reviewed') {
+    await onboardingService.recordEventSafe(account, 'payroll.reviewed', {
+      entityId: period.id,
+      entityType: 'payroll_period',
+      payload: {
+        fromDate: period.fromDate,
+        periodId: period.id,
+        status: nextStatus,
+        toDate: period.toDate,
+      },
+    });
+  }
+
   return db.PayrollPeriod.findByPk(period.id, { include: getPeriodInclude() });
 }
 
@@ -817,6 +831,16 @@ async function exportPayroll(query, account) {
     fromDate: snapshot.fromDate,
     toDate: snapshot.toDate,
     afterData: { totals: snapshot.totals },
+  });
+
+  await onboardingService.recordEventSafe(account, 'report.exported', {
+    entityId: period?.id || null,
+    entityType: 'payroll_period',
+    payload: {
+      fromDate: snapshot.fromDate,
+      report: 'payroll',
+      toDate: snapshot.toDate,
+    },
   });
 
   return {

@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
+const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const scannerEventsService = require('./scanner-events.service');
 const {
@@ -120,6 +121,7 @@ async function searchUsers(query) {
   const users = await db.User.findAll({
     where: {
       status: 'active',
+      isTraining: false,
       mergedIntoUserId: null,
       [Op.or]: conditions,
     },
@@ -157,6 +159,7 @@ async function createVisitForUser(user, options = {}) {
   } = options;
 
   const normalizedClientEventId = normalizeClientEventId(clientEventId);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
 
   let visitResult;
 
@@ -221,6 +224,7 @@ async function createVisitForUser(user, options = {}) {
           entrySource,
           qrRaw: rawQr || null,
           clientEventId: normalizedClientEventId,
+          ...trainingMarker,
         },
         { transaction },
       );
@@ -285,6 +289,18 @@ async function createVisitForUser(user, options = {}) {
       repeatWindowMinutes: REPEAT_SCAN_WINDOW_MINUTES,
     },
   });
+
+  if (!result.isRepeated) {
+    await onboardingService.recordEventSafe(account, 'access.visit_created', {
+      entityId: result.visitId,
+      entityType: 'visit',
+      payload: {
+        entrySource,
+        userId: result.user.id,
+        visitId: result.visitId,
+      },
+    });
+  }
 
   return result;
 }
