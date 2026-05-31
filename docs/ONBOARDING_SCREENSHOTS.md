@@ -74,7 +74,8 @@ When a feature changes a screen used in onboarding:
 
 Current release baseline:
 
-- `37/37` onboarding tasks have instruction-card lessons;
+- `71/71` onboarding tasks have instruction-card lessons;
+- `34` owner/manager knowledge guides are text-first and only need screenshots when a card explains a concrete UI state;
 - `74/74` screenshot-backed instruction cards resolve to screenshots;
-- `37` final or conceptual cards are intentionally text-only;
+- `183` final, conceptual or knowledge cards are intentionally text-only;
 - QA screenshots belong in `outputs/qa/...` and must not be wired into the catalog.

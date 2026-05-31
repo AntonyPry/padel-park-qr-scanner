@@ -27,9 +27,10 @@ After a feature lands or is ready for review:
 2. Update `server/src/onboarding/catalog.js` for affected role paths.
 3. Add or adjust checkpoint events in product services.
 4. Update task `skills`, `badge`, training-mode recommendation and route.
-5. Update instruction cards and real CRM screenshots when the feature changes a taught screen.
-6. If the feature creates data, add training markers or explicitly document why it is not training-safe yet.
-7. Run the full release gate:
+5. Update owner/manager knowledge guides when the feature changes a section, metric, formula, data source, permission rule or management interpretation.
+6. Update instruction cards and real CRM screenshots when the feature changes a taught screen.
+7. If the feature creates data, add training markers or explicitly document why it is not training-safe yet.
+8. Run the full release gate:
 
 ```bash
 cd server
@@ -44,9 +45,9 @@ npm run build
 UI_SMOKE_BASE_URL=http://127.0.0.1:5174 UI_SMOKE_API_URL=http://127.0.0.1:3005/api npm run smoke:ui
 ```
 
-8. Run browser QA for changed instruction cards on desktop and narrow viewport.
-9. Verify console/network output has no actionable error or warning.
-10. Update `docs/SPRINT_STATUS.md` if the work closes or changes a planned onboarding sprint.
+9. Run browser QA for changed instruction cards on desktop and narrow viewport.
+10. Verify console/network output has no actionable error or warning.
+11. Update `docs/SPRINT_STATUS.md` if the work closes or changes a planned onboarding sprint.
 
 For the onboarding worktree, use the dedicated local ports:
 
@@ -102,6 +103,7 @@ The owner account must be able to open `/admin/onboarding?role=<role>` for every
 The current Guided Onboarding card-reader baseline is release-ready when:
 
 - every catalog task has a `lesson`;
+- owner and manager knowledge guides cover every CRM section they can use;
 - every release-quality `step` card has a real CRM screenshot;
 - `server npm run onboarding:audit:strict` reports screenshot coverage with no warnings;
 - all backend and frontend release gate commands pass;

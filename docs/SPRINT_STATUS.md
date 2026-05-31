@@ -579,6 +579,45 @@
 - post-release Playwright screenshot QA подтвердил: 1/2 карточки показывают релевантные screenshots, 3-я карточка `admin.access.create-visit` text-only без пустого image-блока;
 - Playwright role onboarding QA прошел: demo accounts всех ролей, owner override, desktop и узкий viewport, screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint20-role-library/`.
 
+### Onboarding Sprint 22 - Owner/Manager knowledge layer
+
+Статус: `done`.
+
+Цель:
+
+- добавить подробную базу знаний для владельца и менеджера рядом с текущими целевыми действиями, не заменяя action/review задания.
+
+Сделано:
+
+- добавлены отдельные knowledge-миссии для `owner` и `manager`;
+- покрыты все CRM-разделы, доступные owner/manager: монитор входов, брони, клиенты, тренерский кабинет, клиентские базы, обзвоны, телефония, аналитика посещений, финансы, персонал/payroll, мотивация, утилизация, пользователи, аудит, каталог, справочники и onboarding;
+- каждый knowledge guide объясняет, что показывает раздел, откуда берутся данные, как читать метрики/формулы и что с этим делает конкретная роль;
+- `owner.knowledge.*` и `manager.knowledge.*` добавлены как отдельные review-задачи рядом с существующими целевыми заданиями;
+- `/admin/telephony` добавлен в allowlist onboarding routes;
+- release workflow обновлен: при изменении раздела, метрики, формулы, источника данных или прав надо обновлять owner/manager knowledge guide;
+- screenshot baseline обновлен: knowledge guides остаются text-only, если скриншот не объясняет конкретное состояние UI.
+
+Результат:
+
+- каталог вырос до `71/71` задач с lesson;
+- добавлено `34` owner/manager knowledge guides;
+- screenshot-backed cards остались `74/74`;
+- text-only cards стали `183`, включая концептуальные карточки и подробные объяснения логики CRM;
+- старые action-задачи, practice metadata и существующие screenshots не заменялись.
+
+Проверки:
+
+- `server npm run onboarding:audit:strict` прошел;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- Playwright QA новых knowledge guides прошел для owner desktop и manager mobile без console error/warning;
+- screenshots сохранены в `outputs/qa/2026-06-01/onboarding-knowledge-guides/`.
+
 ## Sprint 11 - Клиентская CRM 2.0
 
 Цель: сделать карточку клиента главным рабочим инструментом менеджера.

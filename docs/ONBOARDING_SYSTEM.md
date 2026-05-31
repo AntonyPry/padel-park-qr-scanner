@@ -16,6 +16,8 @@ The onboarding system teaches CRM users by role and scenario. Instructions live 
 
 The catalog is file-based by design. New roles, missions, tasks, routes and checkpoint events should be changed in the same pull request as the feature that affects them.
 
+Owner and manager paths also include knowledge guides with keys like `owner.knowledge.finances` and `manager.knowledge.telephony`. These guides explain how each CRM section works, where metrics come from and what decisions the role should make from the data. They are intentionally stored next to action tasks so feature releases can update the workflow instruction and the underlying business explanation together.
+
 ## Role behavior
 
 Every user gets the path for their own role by default.
@@ -77,6 +79,7 @@ The task detail page uses a simple card-reader flow:
 - only one card is visible at a time;
 - navigation is `Назад` / `Далее`;
 - screenshots are shown inside the card and must be real CRM screenshots for release-quality tasks;
+- knowledge guides can be text-only when the card explains calculations, data lineage or management logic rather than a visible UI state;
 - the last card completes the instruction;
 - there is no `Попробовать`, no quest bar and no mini-test in the current UI.
 
@@ -87,9 +90,10 @@ For release-quality instructions, only cards with an explicit `screenshotIndex` 
 
 Current release-quality coverage:
 
-- `37/37` catalog tasks have instruction-card lessons;
+- `71/71` catalog tasks have instruction-card lessons;
+- `34` owner/manager knowledge guides cover CRM sections, metrics and role-specific interpretation;
 - `74/74` screenshot-backed instruction cards resolve to real CRM screenshots;
-- `37` final or conceptual cards are intentionally text-only;
+- `183` final, conceptual or knowledge cards are intentionally text-only;
 - screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
 - role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
 - trainer screenshots are captured in safe mode without phone numbers or excess personal data;
