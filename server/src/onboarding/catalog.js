@@ -2139,30 +2139,7 @@ function applyRoleInstructionLessons() {
   }
 }
 
-function applyInstructionScreenshotFallbacks() {
-  for (const pathConfig of Object.values(onboardingCatalog)) {
-    for (const mission of pathConfig.missions || []) {
-      for (const task of mission.tasks || []) {
-        const lesson = task.lesson;
-        const blocks = Array.isArray(lesson?.blocks) ? lesson.blocks : [];
-        const screenshots = Array.isArray(lesson?.screenshots)
-          ? lesson.screenshots
-          : [];
-
-        if (blocks.length === 0 || screenshots.length === 0) continue;
-
-        blocks.forEach((block, blockIndex) => {
-          if (!block || Number.isInteger(block.screenshotIndex)) return;
-
-          block.screenshotIndex = Math.min(blockIndex, screenshots.length - 1);
-        });
-      }
-    }
-  }
-}
-
 applyRoleInstructionLessons();
-applyInstructionScreenshotFallbacks();
 
 function getOnboardingRoleOptions() {
   return ACCOUNT_ROLE_VALUES.map((role) => ({

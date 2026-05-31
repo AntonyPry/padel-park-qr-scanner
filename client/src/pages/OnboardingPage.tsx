@@ -690,14 +690,10 @@ function getInstructionCardStorageKey(role: AccountRole, taskKey: string) {
 function getCardScreenshot(
   task: OnboardingGuidedTask,
   block: OnboardingLessonBlock,
-  index: number,
 ) {
-  const screenshotIndex = Number.isInteger(block.screenshotIndex)
-    ? Number(block.screenshotIndex)
-    : index;
-  const screenshots = task.lesson.screenshots;
+  if (!Number.isInteger(block.screenshotIndex)) return undefined;
 
-  return screenshots[screenshotIndex] || screenshots[screenshots.length - 1];
+  return task.lesson.screenshots[Number(block.screenshotIndex)];
 }
 
 function InstructionScreenshot({
@@ -796,7 +792,7 @@ function InstructionCardReader({
   });
   const safeIndex = Math.max(0, Math.min(cardIndex, blocks.length - 1));
   const block = blocks[safeIndex];
-  const screenshot = getCardScreenshot(task, block, safeIndex);
+  const screenshot = getCardScreenshot(task, block);
   const title =
     block.title ||
     (block.type === 'heading' ? block.text : `Карточка ${safeIndex + 1}`);
@@ -852,8 +848,20 @@ function InstructionCardReader({
           </div>
         </div>
 
-        <div className="grid min-h-[440px] gap-5 p-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]">
-          <div className="flex min-w-0 flex-col justify-center">
+        <div
+          className={cn(
+            'grid gap-5 p-5',
+            screenshot
+              ? 'min-h-[440px] lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]'
+              : 'min-h-[320px]',
+          )}
+        >
+          <div
+            className={cn(
+              'flex min-w-0 flex-col justify-center',
+              !screenshot && 'mx-auto w-full max-w-3xl',
+            )}
+          >
             <Badge variant="outline" className="w-fit">
               {safeIndex + 1}/{blocks.length}
             </Badge>
@@ -875,12 +883,8 @@ function InstructionCardReader({
             )}
           </div>
 
-          {screenshot ? (
+          {screenshot && (
             <InstructionScreenshot screenshot={screenshot} title={title} />
-          ) : (
-            <div className="flex min-h-[260px] items-center justify-center rounded-md border bg-muted/20 px-6 text-center text-sm text-muted-foreground">
-              Скриншот CRM будет добавлен в следующем контентном спринте.
-            </div>
           )}
         </div>
       </article>

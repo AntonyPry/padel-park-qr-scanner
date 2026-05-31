@@ -445,7 +445,7 @@
 
 - структура screenshots зафиксирована в `docs/ONBOARDING_SCREENSHOTS.md`;
 - release workflow теперь явно требует обновлять screenshots при изменении обучаемых экранов;
-- `onboarding:audit` проверяет, что screenshots лежат в `/onboarding/...`, файлы существуют в `client/public/onboarding`, `screenshotIndex` валиден, а все видимые instruction cards имеют реальные CRM screenshots;
+- `onboarding:audit` проверяет, что screenshots лежат в `/onboarding/...`, файлы существуют в `client/public/onboarding`, `screenshotIndex` валиден, а screenshot-backed cards имеют реальные CRM screenshots;
 - `admin.client.create` проходит screenshot coverage: `2/2` required cards.
 
 Проверки:
@@ -521,7 +521,7 @@
 
 - карточные инструкции добавлены для всех оставшихся ролей: manager, owner, accountant, viewer, trainer;
 - весь onboarding catalog теперь покрыт инструкциями: `37/37` задач имеют lesson из 3 карточек;
-- screenshot coverage после hardening доведен до `111/111` видимых instruction cards;
+- screenshot coverage после UX hardening: `74/74` screenshot-backed cards, еще `37` карточек оставлены text-only;
 - добавлены CRM screenshots для ролей в `client/public/onboarding/{manager,owner,accountant,viewer,trainer}/...`;
 - trainer screenshots пересняты через безопасный demo-фильтр без телефонов и лишних персональных данных;
 - owner role override проверен: владелец открывает и проходит роли manager, accountant, viewer и trainer;
@@ -529,7 +529,7 @@
 
 Проверки:
 
-- `server npm run onboarding:audit:strict` прошел, instruction cards `111/111`;
+- `server npm run onboarding:audit:strict` прошел, screenshot-backed cards `74/74`;
 - `server npm test` прошел;
 - `server npm run typecheck` прошел;
 - `server npm run health` прошел на `127.0.0.1:3005`;
@@ -560,14 +560,14 @@
 
 - `docs/ONBOARDING_SYSTEM.md` обновлен под финальный card-reader baseline;
 - `docs/ONBOARDING_RELEASE_WORKFLOW.md` закрепляет полный release gate, dedicated-порты `5174/3005`, demo account QA и owner role override;
-- `docs/ONBOARDING_SCREENSHOTS.md` фиксирует актуальный screenshot baseline `37/37` задач и `111/111` видимых instruction cards;
-- post-release fix закрыл плейсхолдеры на третьих карточках: карточки без своего `screenshotIndex` переиспользуют ближайший CRM screenshot задачи;
-- `onboarding:audit:strict` теперь требует screenshot для каждой видимой карточки, а не только для `step`;
+- `docs/ONBOARDING_SCREENSHOTS.md` фиксирует актуальный screenshot baseline `37/37` задач, `74/74` screenshot-backed cards и `37` text-only cards;
+- post-release UX fix убрал автоподстановку повторных screenshots: карточки без своего `screenshotIndex` больше не резервируют место под изображение;
+- `onboarding:audit:strict` требует screenshot для `step` и явно screenshot-backed карточек, а summary/concept cards могут быть text-only;
 - release QA подтвердил, что onboarding готов к merge/deploy.
 
 Проверки:
 
-- `server npm run onboarding:audit:strict` прошел, instruction cards `111/111`, screenshot assets `74`;
+- `server npm run onboarding:audit:strict` прошел, screenshot-backed cards `74/74`, text-only cards `37`;
 - `server npm test` прошел;
 - `server npm run typecheck` прошел;
 - `server npm run health` прошел на `127.0.0.1:3005`;
@@ -576,7 +576,7 @@
 - `client npm run build` прошел;
 - `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
 - Playwright admin onboarding QA прошел desktop/mobile без actionable console/network messages;
-- post-release Playwright screenshot QA подтвердил загрузку изображений на 1/2/3 карточке, включая `admin.access.create-visit` на третьем шаге;
+- post-release Playwright screenshot QA подтвердил: 1/2 карточки показывают релевантные screenshots, 3-я карточка `admin.access.create-visit` text-only без пустого image-блока;
 - Playwright role onboarding QA прошел: demo accounts всех ролей, owner override, desktop и узкий viewport, screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint20-role-library/`.
 
 ## Sprint 11 - Клиентская CRM 2.0

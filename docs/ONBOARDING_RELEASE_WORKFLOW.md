@@ -56,7 +56,7 @@ For the onboarding worktree, use the dedicated local ports:
 ## Screenshot refresh
 
 Instruction screenshots are stored under `client/public/onboarding/<role>/<task-slug>/`.
-Every visible instruction card must resolve to a real CRM screenshot before release; final summary cards can reuse the closest task screenshot when they describe the same screen.
+Attach screenshots only to instruction cards where the image directly illustrates the text. Leave summary or conceptual cards text-only instead of reusing a nearby screenshot.
 See `docs/ONBOARDING_SCREENSHOTS.md` for the full convention.
 
 When a feature changes an instructed screen:

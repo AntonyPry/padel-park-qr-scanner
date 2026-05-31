@@ -95,7 +95,7 @@ function isInstructionBlockScreenshotRequired(block) {
   if (!block || typeof block !== 'object') return false;
   if (block.screenshotRequired === true) return true;
   if (block.screenshotRequired === false) return false;
-  return true;
+  return block.type === 'step' || Number.isInteger(block.screenshotIndex);
 }
 
 function collectInstructionScreenshotCoverage(paths) {
@@ -155,8 +155,14 @@ function collectInstructionScreenshotCoverage(paths) {
           if (!isInstructionBlockScreenshotRequired(block)) return;
 
           screenshotRequiredCardCount += 1;
-          const screenshotIndex =
-            Number.isInteger(explicitIndex) ? explicitIndex : blockIndex;
+          if (!Number.isInteger(explicitIndex)) {
+            warnings.push(
+              `Instruction card ${task.key}[${blockIndex}] requires an explicit screenshotIndex`,
+            );
+            return;
+          }
+
+          const screenshotIndex = explicitIndex;
           const screenshot = screenshots[screenshotIndex];
           const filePath = screenshot?.src
             ? getScreenshotFilePath(screenshot.src)
