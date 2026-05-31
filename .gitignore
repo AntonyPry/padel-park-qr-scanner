@@ -10,3 +10,6 @@ screenshots/
 recordings/
 docs/generated/
 docs/artifacts/
+
+# Local git worktrees for parallel Codex chats.
+worktrees/
