@@ -33,9 +33,15 @@ const BASE_URL = process.env.UI_SMOKE_BASE_URL || 'http://127.0.0.1:4173';
 const API_URL = process.env.UI_SMOKE_API_URL || 'http://127.0.0.1:3004/api';
 const EMAIL = process.env.UI_SMOKE_EMAIL || 'owner@padelpark.demo';
 const PASSWORD = process.env.UI_SMOKE_PASSWORD || 'Demo1234!';
+const BROWSER_CHANNEL = String(process.env.UI_SMOKE_BROWSER_CHANNEL || '').trim();
 const OUTPUT_DIR =
   process.env.UI_SMOKE_OUTPUT ||
   path.join(ROOT, 'outputs', 'qa', new Date().toISOString().slice(0, 10), 'ui-smoke');
+const LAUNCH_ARGS = [
+  '--disable-background-networking',
+  '--disable-component-extensions-with-background-pages',
+  '--disable-extensions',
+];
 
 const ROUTES = [
   '/admin',
@@ -78,18 +84,49 @@ async function login() {
   return token;
 }
 
+async function launchSmokeBrowser() {
+  const attempts = [];
+  if (BROWSER_CHANNEL) {
+    attempts.push({
+      label: `system ${BROWSER_CHANNEL}`,
+      options: { channel: BROWSER_CHANNEL },
+    });
+  }
+  attempts.push({ label: 'playwright chromium', options: {} });
+  if (!BROWSER_CHANNEL) {
+    attempts.push({
+      label: 'system chrome',
+      options: { channel: 'chrome' },
+    });
+  }
+
+  const errors = [];
+  for (const attempt of attempts) {
+    try {
+      const browser = await chromium.launch({
+        ...attempt.options,
+        args: LAUNCH_ARGS,
+        headless: true,
+      });
+      return { browser, label: attempt.label };
+    } catch (error) {
+      errors.push(`${attempt.label}: ${error.message}`);
+    }
+  }
+
+  throw new Error(
+    [
+      'Unable to launch a browser for UI smoke.',
+      'Install Playwright Chromium with: npx playwright install chromium',
+      ...errors,
+    ].join('\n'),
+  );
+}
+
 async function main() {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   const token = await login();
-  const browser = await chromium.launch({
-    channel: 'chrome',
-    headless: true,
-    args: [
-      '--disable-background-networking',
-      '--disable-component-extensions-with-background-pages',
-      '--disable-extensions',
-    ],
-  });
+  const { browser, label: browserLabel } = await launchSmokeBrowser();
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const messages = [];
@@ -137,7 +174,7 @@ async function main() {
   }
 
   await browser.close();
-  const report = { messages, outputDir: OUTPUT_DIR, results };
+  const report = { browser: browserLabel, messages, outputDir: OUTPUT_DIR, results };
   fs.writeFileSync(path.join(OUTPUT_DIR, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report, null, 2));
 
