@@ -284,6 +284,298 @@
 - strict audit падает при warnings или catalog errors;
 - release checklist явно указывает strict-команду перед релизом.
 
+### Onboarding Sprint 14 - Guided foundation + demo role accounts
+
+Статус: `done`.
+
+Причина добавления:
+
+- текущий onboarding выглядит как список чекбоксов, а нужен игровой сценарий с инструкцией, практикой и тестом;
+- перед UI-спринтами нужен backend-фундамент, который хранит три независимые отметки прохождения.
+
+Сделано:
+
+- зафиксированы спринты Guided Onboarding 2.0 до Sprint 21;
+- добавлен статус прогресса `in_progress`;
+- progress metadata поддерживает `lesson`, `practice` и `quiz`;
+- добавлены API task detail, lesson read, practice start, practice step и quiz attempt;
+- product checkpoint events теперь продвигают practice-часть задания, а complete-статус требует все три блока;
+- добавлена локальная команда `server npm run seed:demo-accounts`;
+- demo-аккаунты покрывают все роли: owner, manager, admin, accountant, viewer, trainer;
+- demo seeder дополнен ролями viewer/trainer.
+
+Осталось закрыть:
+
+- критичных хвостов нет.
+
+Критерии приемки:
+
+- можно получить детальное guided-задание по API;
+- lesson/practice/quiz сохраняются отдельно;
+- quiz считается пройденным только при 100% правильных ответов;
+- локально можно создать тестовые аккаунты всех ролей без ручной настройки.
+
+### Onboarding Sprint 15 - Guided UI shell
+
+Статус: `done`.
+
+Цель:
+
+- заменить старый onboarding dashboard на список заданий роли и детальную страницу задания.
+
+Сделано:
+
+- `/admin/onboarding` показывает задания текущей роли как список миссий и task cards;
+- ручная кнопка `Завершить` убрана из основного UI;
+- добавлен маршрут `/admin/onboarding/:taskKey`;
+- task detail показывает инструкцию, скриншоты/placeholder, статусы instruction/practice/quiz, кнопку `Попробовать` и мини-тест;
+- `Попробовать` стартует practice, включает training mode через backend и открывает рабочий экран задания;
+- добавлен верхний quest bar в layout для активной практики;
+- quest bar показывает этапы, прогресс, ссылки на инструкцию и рабочий экран;
+- quest bar умеет подсвечивать элементы по `data-onboarding-target`, когда такие target selectors появятся в заданиях;
+- owner сохраняет переключение и прохождение за любую роль.
+
+Осталось закрыть:
+
+- критичных хвостов нет.
+
+Критерии приемки:
+
+- пользователь видит все задания своей роли;
+- пользователь открывает конкретное задание и видит инструкцию/practice/quiz;
+- после `Попробовать` появляется верхняя панель практики на рабочих экранах;
+- старый ручной completion-flow больше не является основным способом прохождения.
+
+### Onboarding Sprint 16 - First admin quest: create client
+
+Статус: `done`.
+
+Цель:
+
+- реализовать первый end-to-end quest `admin.client.create`.
+
+Сделано:
+
+- `admin.client.create` получил полноценные `lesson`, `practice`, `quiz`;
+- учебные данные зафиксированы: `Иван Иванович Тестов`, `+79000000999`, источник `Онбординг`, training-заметка;
+- добавлены screenshots-assets в `client/public/onboarding/admin/client-create/`;
+- на `/admin/clients` добавлены `data-onboarding-target` для кнопки создания, имени, телефона, источника, заметки и сохранения;
+- промежуточные шаги практики отмечаются из UI, финальная практика закрывается реальным событием `client.created`;
+- добавлена миграция со справочником источника `Онбординг`;
+- задание закрывается только после инструкции, практики и теста на 100%.
+- UX перестроен в staged flow: сначала урок карточками, затем карточка задания, этапы только в quest bar на рабочем экране, тест появляется только после практики;
+- screenshots заменены на реальные PNG из локальной CRM.
+
+Результат:
+
+- первое задание администратора работает как guided quest без смешивания урока, задания, этапов и теста на одном экране.
+
+Проверки:
+
+- backend/frontend test/build/typecheck/audit прошли;
+- `health`, `smoke:api`, `smoke:ui` прошли на локальных серверах;
+- полный UI e2e под `admin@padelpark.demo` прошел без console warning/error;
+- QA screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint16-refinement/`.
+
+### Onboarding Sprint 17 - Instruction cards UX reset
+
+Статус: `done`.
+
+Причина изменения:
+
+- после приемки Sprint 16 стало понятно, что `Попробовать`, quest bar и тест создают слишком много шума;
+- до появления сильных референсов по практическому обучению оставляем простой формат: одна карточка инструкции на экран.
+
+Цель:
+
+- заменить детальную страницу задания на спокойный card-reader: пользователь читает карточки по шагам, видит реальные скриншоты CRM и завершает инструкцию на последней карточке.
+
+Сделано:
+
+- переписать `/admin/onboarding/:taskKey` под одну карточку инструкции на экран;
+- убрать из основного UI кнопки `Попробовать`, quest bar и мини-тест;
+- оставить список заданий по ролям и owner role override;
+- завершать задание после прохождения всех карточек инструкции;
+- сохранить реальные screenshots из CRM там, где они уже есть.
+
+Результат:
+
+- обучение перешло в card-reader формат: список заданий -> конкретная инструкция -> карточки вперед/назад -> завершение на последней карточке;
+- экран задания больше не смешивает урок, практику, этапы и тест;
+- верхняя quest-панель отключена из layout;
+- `admin.client.create` показывает реальные screenshots CRM внутри карточек.
+
+Проверки:
+
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `server npm run onboarding:audit:strict` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- Playwright QA для `admin.client.create` прошел desktop/mobile без console warning/error;
+- screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint17-card-reader/`.
+
+Критерии приемки:
+
+- администратор открывает задание и видит только одну карточку инструкции;
+- кнопки навигации ведут вперед/назад без смешивания урока, задания, этапов и теста;
+- на последней карточке можно завершить инструкцию;
+- верхняя quest-панель не появляется на рабочих экранах.
+
+### Onboarding Sprint 18 - Real CRM screenshot pipeline
+
+Статус: `done`.
+
+Цель:
+
+- сделать скриншоты настоящей CRM обязательной частью инструкций и убрать случайные placeholders.
+
+Сделано:
+
+- зафиксировать структуру assets для onboarding screenshots;
+- добавить/обновить реальные screenshots для `admin.client.create`;
+- описать быстрый процесс обновления скриншотов после релиза фичи;
+- добавить audit-предупреждение для instruction cards без screenshot там, где screenshot обязателен;
+- проверить desktop и узкий viewport карточек.
+
+Результат:
+
+- структура screenshots зафиксирована в `docs/ONBOARDING_SCREENSHOTS.md`;
+- release workflow теперь явно требует обновлять screenshots при изменении обучаемых экранов;
+- `onboarding:audit` проверяет, что screenshots лежат в `/onboarding/...`, файлы существуют в `client/public/onboarding`, `screenshotIndex` валиден, а required step-карточки имеют реальные CRM screenshots;
+- `admin.client.create` проходит screenshot coverage: `2/2` required cards.
+
+Проверки:
+
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run onboarding:audit:strict` прошел, screenshots `2/2`;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- Playwright QA карточки `admin.client.create` прошел desktop/mobile без console warning/error.
+
+### Onboarding Sprint 19 - Admin instruction pack
+
+Статус: `done`.
+
+Цель:
+
+- перевести ключевые сценарии администратора в карточные инструкции без интерактивной практики.
+
+План:
+
+- подготовить карточки и screenshots для `admin.access.create-visit`;
+- подготовить карточки и screenshots для `admin.booking.create-phone`;
+- подготовить карточки и screenshots для `admin.booking.mark-paid`;
+- подготовить карточки и screenshots для `admin.booking.move`;
+- подготовить карточки и screenshots для `admin.booking.cancel`;
+- подготовить карточки и screenshots для `admin.call-task.log-attempt`;
+- подготовить карточки и screenshots для `admin.booking.review-schedule`.
+
+Результат:
+
+- все ключевые задания администратора переведены в карточные инструкции;
+- для каждого admin-задания есть инструкция из 3 карточек: 2 step-карточки с CRM screenshot и 1 итоговая карточка;
+- screenshots сохранены в `client/public/onboarding/admin/...`;
+- screenshot coverage в audit вырос до `16/16` required cards;
+- Playwright QA подтвердил загрузку первых двух screenshot-карточек у всех 8 admin-заданий;
+- проверены desktop и узкий viewport для ключевых admin-заданий;
+- старые блоки `Попробовать`, `Практика` и `Мини-тест` не показываются на страницах admin-инструкций.
+
+Проверки:
+
+- `server npm run onboarding:audit:strict` прошел, screenshots `16/16`;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm run build` прошел;
+- `client npm test` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- browser QA screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint19-admin-pack/`.
+
+### Onboarding Sprint 20 - Role instruction library
+
+Статус: `done`.
+
+Цель:
+
+- масштабировать card-reader формат на остальные роли.
+
+План:
+
+- подготовить ключевые инструкции для manager;
+- подготовить owner review/control инструкции;
+- подготовить accountant finance инструкции;
+- подготовить viewer read-only инструкции;
+- подготовить trainer инструкции без лишних персональных данных;
+- проверить owner role override для просмотра и прохождения любой роли.
+
+Результат:
+
+- карточные инструкции добавлены для всех оставшихся ролей: manager, owner, accountant, viewer, trainer;
+- весь onboarding catalog теперь покрыт инструкциями: `37/37` задач имеют lesson из 3 карточек;
+- screenshot coverage вырос до `74/74` required cards;
+- добавлены CRM screenshots для ролей в `client/public/onboarding/{manager,owner,accountant,viewer,trainer}/...`;
+- trainer screenshots пересняты через безопасный demo-фильтр без телефонов и лишних персональных данных;
+- owner role override проверен: владелец открывает и проходит роли manager, accountant, viewer и trainer;
+- accountant получил read-only доступ к payroll-связанным motivation bonus rules, без права управлять мотивацией.
+
+Проверки:
+
+- `server npm run onboarding:audit:strict` прошел, screenshots `74/74`;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- Playwright role QA прошел: 47 проверок, 0 actionable console/network messages, screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint20-role-library/`;
+- отдельная console/network проверка ключевых страниц manager, owner, accountant, viewer, trainer прошла без error/warning.
+
+### Onboarding Sprint 21 - Release QA + content workflow
+
+Статус: `done`.
+
+Цель:
+
+- подготовить карточный onboarding к merge/deploy и закрепить процесс обновления с релизами фич.
+
+План:
+
+- обновить `docs/ONBOARDING_SYSTEM.md` и release workflow под card-reader;
+- прогнать backend: `npm test`, `npm run typecheck`, `npm run health`, `npm run smoke:api`, `npm run onboarding:audit:strict`;
+- прогнать frontend: `npm test`, `npm run build`, `npm run smoke:ui`;
+- выполнить browser QA: desktop screenshots, узкий viewport, console без error/warning;
+- проверить вход под demo accounts ключевых ролей.
+
+Результат:
+
+- `docs/ONBOARDING_SYSTEM.md` обновлен под финальный card-reader baseline;
+- `docs/ONBOARDING_RELEASE_WORKFLOW.md` закрепляет полный release gate, dedicated-порты `5174/3005`, demo account QA и owner role override;
+- `docs/ONBOARDING_SCREENSHOTS.md` фиксирует актуальный screenshot baseline `37/37` задач и `74/74` required step cards;
+- release QA подтвердил, что onboarding готов к merge/deploy.
+
+Проверки:
+
+- `server npm run onboarding:audit:strict` прошел, screenshots `74/74`;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- Playwright admin onboarding QA прошел desktop/mobile без actionable console/network messages;
+- Playwright role onboarding QA прошел: demo accounts всех ролей, owner override, desktop и узкий viewport, screenshots сохранены в `outputs/qa/2026-05-31/onboarding-sprint20-role-library/`.
+
 ## Sprint 11 - Клиентская CRM 2.0
 
 Цель: сделать карточку клиента главным рабочим инструментом менеджера.

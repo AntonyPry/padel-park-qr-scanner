@@ -28,6 +28,14 @@ router.get(
   '/onboarding/metrics',
   onboardingController.getMetrics,
 );
+router.get(
+  '/onboarding/tasks/:taskKey',
+  validate({
+    params: apiSchemas.onboarding.taskParams,
+    query: apiSchemas.onboarding.roleQuery,
+  }),
+  onboardingController.getTask,
+);
 router.delete(
   '/onboarding/training-data',
   validate({ query: apiSchemas.onboarding.roleQuery }),
@@ -40,6 +48,38 @@ router.post(
     params: apiSchemas.onboarding.taskParams,
   }),
   onboardingController.completeTask,
+);
+router.post(
+  '/onboarding/tasks/:taskKey/lesson-read',
+  validate({
+    body: apiSchemas.onboarding.progressBody,
+    params: apiSchemas.onboarding.taskParams,
+  }),
+  onboardingController.markLessonRead,
+);
+router.post(
+  '/onboarding/tasks/:taskKey/practice-start',
+  validate({
+    body: apiSchemas.onboarding.progressBody,
+    params: apiSchemas.onboarding.taskParams,
+  }),
+  onboardingController.startPractice,
+);
+router.post(
+  '/onboarding/tasks/:taskKey/steps/:stepKey',
+  validate({
+    body: apiSchemas.onboarding.progressBody,
+    params: apiSchemas.onboarding.stepParams,
+  }),
+  onboardingController.completePracticeStep,
+);
+router.post(
+  '/onboarding/tasks/:taskKey/quiz-attempt',
+  validate({
+    body: apiSchemas.onboarding.quizAttemptBody,
+    params: apiSchemas.onboarding.taskParams,
+  }),
+  onboardingController.submitQuizAttempt,
 );
 router.post(
   '/onboarding/events',

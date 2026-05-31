@@ -30,6 +30,8 @@ export const queryKeys = {
     all: ['onboarding'] as const,
     detail: (role?: string | null) =>
       [...queryKeys.onboarding.all, 'detail', role || 'current'] as const,
+    task: (taskKey: string, role?: string | null) =>
+      [...queryKeys.onboarding.all, 'task', role || 'current', taskKey] as const,
     metrics: () => [...queryKeys.onboarding.all, 'metrics'] as const,
     trainingData: (role?: string | null) =>
       [...queryKeys.onboarding.all, 'training-data', role || 'all'] as const,

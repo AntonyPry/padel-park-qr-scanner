@@ -34,5 +34,12 @@ test('current onboarding catalog is strict-release ready', () => {
   assert.deepEqual(report.warnings, []);
   assert.equal(report.usedEventCount, report.allowedEventCount);
   assert.equal(report.referencedEventCount, report.usedEventCount);
+  assert.equal(report.missingInstructionScreenshotCount, 0);
+  assert.ok(report.instructionScreenshotCount >= 2);
+  assert.ok(report.screenshotRequiredCardCount >= 2);
+  assert.equal(
+    report.screenshotVerifiedCardCount,
+    report.screenshotRequiredCardCount,
+  );
   assert.equal(getAuditExitCode(report, { strict: true }), 0);
 });

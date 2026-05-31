@@ -1,16 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowUpRight,
+  ArrowLeft,
   Award,
   BarChart3,
+  BookOpenCheck,
   CheckCircle2,
   Circle,
   Database,
-  FlaskConical,
   GraduationCap,
   ListChecks,
-  Power,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -18,20 +17,23 @@ import {
   Timer,
   Trash2,
   Trophy,
-  UsersRound,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   cleanupOnboardingTrainingData,
   completeOnboardingTask,
   getOnboardingMetrics,
   getOnboardingOverview,
+  getOnboardingTaskDetail,
   getOnboardingTrainingData,
   resetOnboardingProgress,
+  type OnboardingGuidedTask,
+  type OnboardingLessonBlock,
   type OnboardingMetrics,
   type OnboardingMission,
   type OnboardingOverview,
   type OnboardingTask,
+  type OnboardingTaskDetail,
   type OnboardingTrainingDataSummary,
 } from '@/api/onboarding';
 import { queryKeys } from '@/api/query-keys';
@@ -48,10 +50,10 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { getApiErrorMessage } from '@/lib/api';
+import { clearStoredActiveOnboardingQuest } from '@/lib/onboarding-quest';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
-import { useTrainingMode } from '@/lib/useTrainingMode';
 
 function getTaskStatus(task: OnboardingTask) {
   if (task.progress.isCompleted) {
@@ -60,6 +62,15 @@ function getTaskStatus(task: OnboardingTask) {
         'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300',
       icon: CheckCircle2,
       label: 'Готово',
+    };
+  }
+
+  if (task.progress.status === 'in_progress') {
+    return {
+      className:
+        'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300',
+      icon: BookOpenCheck,
+      label: 'В процессе',
     };
   }
 
@@ -110,7 +121,7 @@ function getCompletedSkillCount(overview: OnboardingOverview | undefined) {
 }
 
 function formatTaskKind(kind: OnboardingTask['kind']) {
-  return kind === 'review' ? 'Разбор' : 'Практика';
+  return kind === 'review' ? 'Разбор' : 'Инструкция';
 }
 
 function formatCompletedAt(value: string | null) {
@@ -120,6 +131,14 @@ function formatCompletedAt(value: string | null) {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function roleQuery(role?: AccountRole | null) {
+  return role ? `?role=${encodeURIComponent(role)}` : '';
+}
+
+function taskDetailUrl(taskKey: string, role?: AccountRole | null) {
+  return `/admin/onboarding/${encodeURIComponent(taskKey)}${roleQuery(role)}`;
 }
 
 function ProgressBar({ percent }: { percent: number }) {
@@ -133,95 +152,33 @@ function ProgressBar({ percent }: { percent: number }) {
   );
 }
 
-function NextTaskPanel({
-  completingTaskKey,
-  completionBadge,
-  nextTask,
-  onComplete,
+function RoleSelect({
+  overview,
+  onChange,
 }: {
-  completingTaskKey: string | null;
-  completionBadge: string;
-  nextTask: OnboardingTask | null;
-  onComplete: (task: OnboardingTask) => void;
+  overview: OnboardingOverview;
+  onChange: (role: string) => void;
 }) {
-  if (!nextTask) {
-    return (
-      <section className="rounded-md border bg-background p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <Badge
-              variant="outline"
-              className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
-            >
-              <Award className="h-3 w-3" />
-              Путь завершен
-            </Badge>
-            <h2 className="mt-3 text-lg font-semibold text-foreground">
-              {completionBadge}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Все задания роли закрыты, обучение можно использовать как чеклист
-              контроля качества.
-            </p>
-          </div>
-          <Trophy className="h-10 w-10 text-primary" />
-        </div>
-      </section>
-    );
-  }
+  if (!overview.ownerRoleOverrideEnabled) return null;
 
   return (
-    <section className="rounded-md border bg-background p-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">
-            <ListChecks className="h-3 w-3" />
-            Следующее задание
-          </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
-            {nextTask.title}
-          </h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            {nextTask.description}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {nextTask.skills.map((skill) => (
-              <Badge key={skill} variant="secondary">
-                {skill}
-              </Badge>
-            ))}
-            <Badge variant="outline">
-              <Award className="h-3 w-3" />
-              {nextTask.badge}
-            </Badge>
-          </div>
-        </div>
-
-        <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link to={nextTask.route}>
-              <ArrowUpRight className="h-4 w-4" />
-              Открыть
-            </Link>
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={
-              nextTask.progress.isCompleted || completingTaskKey === nextTask.key
-            }
-            onClick={() => onComplete(nextTask)}
-          >
-            {completingTaskKey === nextTask.key ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            Завершить
-          </Button>
-        </div>
+    <div className="w-full min-w-56 sm:w-64">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">
+        Роль прохождения
       </div>
-    </section>
+      <Select value={overview.selectedRole} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {overview.availableRoles.map((role) => (
+            <SelectItem key={role.value} value={role.value}>
+              {role.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
@@ -234,9 +191,9 @@ function SkillProgressPanel({ overview }: { overview: OnboardingOverview }) {
         <div className="min-w-0">
           <Badge variant="outline">
             <Sparkles className="h-3 w-3" />
-            Навыки пути
+            Навыки
           </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
+          <h2 className="mt-3 text-base font-semibold text-foreground">
             {completedSkills}/{overview.summary.skills.length} закрыто
           </h2>
         </div>
@@ -287,11 +244,11 @@ function TrainingDataPanel({
             <Database className="h-3 w-3" />
             Учебные данные
           </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
+          <h2 className="mt-3 text-base font-semibold text-foreground">
             {loading ? 'Проверяем...' : `${summary?.totalRecords || 0} записей`}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            {roleTitle}: данные тренировки не участвуют в боевых отчетах.
+            {roleTitle}: training-записи не участвуют в боевых отчетах.
           </p>
         </div>
         <Button
@@ -344,50 +301,29 @@ function OnboardingMetricsPanel({
         <div className="min-w-0">
           <Badge variant="outline">
             <BarChart3 className="h-3 w-3" />
-            Метрики обучения
+            Метрики
           </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
+          <h2 className="mt-3 text-base font-semibold text-foreground">
             {loading ? 'Считаем...' : `${metrics?.summary.percent || 0}% общего прогресса`}
           </h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Сводка владельца по прохождению ролевых путей активными аккаунтами.
-          </p>
         </div>
-        <div className="flex flex-wrap gap-2 lg:justify-end">
-          <Badge variant="secondary">
-            <UsersRound className="h-3 w-3" />
-            {metrics?.summary.activeAccounts || 0} аккаунтов
-          </Badge>
-          <Badge variant="secondary">
-            {metrics?.summary.completedTaskSlots || 0}/{metrics?.summary.totalTaskSlots || 0} заданий
-          </Badge>
-        </div>
+        <Badge variant="secondary">
+          {metrics?.summary.completedTaskSlots || 0}/{metrics?.summary.totalTaskSlots || 0} заданий
+        </Badge>
       </div>
 
       <div className="mt-5 grid gap-3 lg:grid-cols-2">
         {roles.map((role) => (
           <div key={role.role} className="rounded-md border bg-muted/20 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{role.label}</Badge>
-                  <Badge variant="secondary">
-                    {role.startedAccounts}/{role.totalAccounts} начали
-                  </Badge>
-                </div>
-                <div className="mt-2 text-sm text-muted-foreground">
-                  {role.completedTaskSlots}/{role.totalTaskSlots} заданий, завершили путь: {role.completedAccounts}
+                <Badge variant="outline">{role.label}</Badge>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {role.startedAccounts}/{role.totalAccounts} начали
                 </div>
               </div>
-              <div className="text-left sm:text-right">
-                <div className="text-xl font-semibold text-foreground">
-                  {role.percent}%
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {role.lastCompletedAt
-                    ? `Обновлено ${formatCompletedAt(role.lastCompletedAt)}`
-                    : 'Без прогресса'}
-                </div>
+              <div className="text-right text-lg font-semibold text-foreground">
+                {role.percent}%
               </div>
             </div>
             <div className="mt-3">
@@ -400,13 +336,11 @@ function OnboardingMetricsPanel({
   );
 }
 
-function TaskRow({
-  completingTaskKey,
-  onComplete,
+function TaskCard({
+  selectedRole,
   task,
 }: {
-  completingTaskKey: string | null;
-  onComplete: (task: OnboardingTask) => void;
+  selectedRole: AccountRole;
   task: OnboardingTask;
 }) {
   const status = getTaskStatus(task);
@@ -414,9 +348,9 @@ function TaskRow({
   const completedAt = formatCompletedAt(task.progress.completedAt);
 
   return (
-    <div
+    <article
       className={cn(
-        'rounded-md border bg-background p-4',
+        'rounded-md border bg-background p-4 transition-colors',
         task.progress.isNext && !task.progress.isCompleted && 'border-primary/40',
       )}
     >
@@ -428,14 +362,6 @@ function TaskRow({
               {status.label}
             </Badge>
             <Badge variant="outline">{formatTaskKind(task.kind)}</Badge>
-            {task.trainingMode?.recommended && (
-              <Badge
-                variant="outline"
-                className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300"
-              >
-                Тренировка
-              </Badge>
-            )}
           </div>
 
           <h3 className="mt-3 text-base font-semibold text-foreground">
@@ -466,92 +392,62 @@ function TaskRow({
               <Trophy className="h-3.5 w-3.5" />
               {task.rewardXp} XP
             </span>
-            <span className="font-mono text-[11px]">
-              {task.checkpoint.event}
+            <span className="inline-flex items-center gap-1">
+              <BookOpenCheck className="h-3.5 w-3.5" />
+              {task.progress.isCompleted ? 'инструкция пройдена' : 'карточки инструкции'}
             </span>
             {completedAt && <span>Завершено: {completedAt}</span>}
           </div>
         </div>
 
         <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link to={task.route}>
-              <ArrowUpRight className="h-4 w-4" />
-              Открыть
+          <Button asChild size="sm">
+            <Link to={taskDetailUrl(task.key, selectedRole)}>
+              <BookOpenCheck className="h-4 w-4" />
+              Открыть инструкцию
             </Link>
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={
-              task.progress.isCompleted || completingTaskKey === task.key
-            }
-            onClick={() => onComplete(task)}
-          >
-            {completingTaskKey === task.key ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            Завершить
           </Button>
         </div>
       </div>
-    </div>
+    </article>
   );
 }
 
-export default function OnboardingPage() {
+function OnboardingListView({
+  onRoleChange,
+  overview,
+}: {
+  onRoleChange: (role: string) => void;
+  overview: OnboardingOverview;
+}) {
   const { account } = useAuth();
-  const trainingMode = useTrainingMode();
   const queryClient = useQueryClient();
-  const [selectedRoleOverride, setSelectedRoleOverride] =
-    useState<AccountRole | null>(null);
   const [confirmTrainingCleanup, setConfirmTrainingCleanup] = useState(false);
-
-  const roleForRequest =
-    account?.role === 'owner'
-      ? selectedRoleOverride || account.role
-      : undefined;
-  const roleForQueryKey =
-    account?.role === 'owner'
-      ? selectedRoleOverride || account.role
-      : account?.role;
-
-  const onboardingQuery = useQuery({
-    enabled: Boolean(account?.role),
-    queryFn: () => getOnboardingOverview(roleForRequest),
-    queryKey: queryKeys.onboarding.detail(roleForQueryKey),
-  });
+  const activeRole = overview.selectedRole;
+  const roleTitle = getAccountRoleLabel(activeRole);
+  const nextTask = useMemo(() => getNextTask(overview), [overview]);
+  const completedMissions = useMemo(
+    () =>
+      overview.path.missions.filter((mission) => {
+        const stats = getMissionStats(mission);
+        return stats.total > 0 && stats.completed === stats.total;
+      }).length,
+    [overview],
+  );
+  const hasProgress = overview.path.missions.some((mission) =>
+    mission.tasks.some((task) => task.progress.status !== 'not_started'),
+  );
 
   const trainingDataQuery = useQuery({
-    enabled: account?.role === 'owner' && Boolean(roleForQueryKey),
-    queryFn: () => getOnboardingTrainingData(roleForQueryKey as AccountRole),
-    queryKey: queryKeys.onboarding.trainingData(roleForQueryKey),
+    enabled: account?.role === 'owner',
+    queryFn: () => getOnboardingTrainingData(activeRole),
+    queryKey: queryKeys.onboarding.trainingData(activeRole),
   });
-
   const metricsQuery = useQuery({
     enabled: account?.role === 'owner',
     queryFn: getOnboardingMetrics,
     queryKey: queryKeys.onboarding.metrics(),
   });
-
-  const overview = onboardingQuery.data;
-  const activeRole = overview?.selectedRole || roleForQueryKey;
-
-  const completeMutation = useMutation({
-    mutationFn: (task: OnboardingTask) =>
-      completeOnboardingTask(task.key, activeRole),
-    onSuccess: (data: OnboardingOverview) => {
-      queryClient.setQueryData(
-        queryKeys.onboarding.detail(data.selectedRole),
-        data,
-      );
-      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
-      toast.success('Задание завершено');
-    },
-  });
-
   const resetMutation = useMutation({
     mutationFn: () => resetOnboardingProgress(activeRole),
     onSuccess: (data: OnboardingOverview) => {
@@ -560,10 +456,11 @@ export default function OnboardingPage() {
         data,
       );
       queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.all });
+      clearStoredActiveOnboardingQuest();
       toast.success('Прогресс сброшен');
     },
   });
-
   const cleanupTrainingDataMutation = useMutation({
     mutationFn: () => cleanupOnboardingTrainingData(activeRole),
     onSuccess: (data) => {
@@ -576,51 +473,11 @@ export default function OnboardingPage() {
     },
   });
 
-  const completedMissions = useMemo(() => {
-    if (!overview) return 0;
-    return overview.path.missions.filter((mission) => {
-      const stats = getMissionStats(mission);
-      return stats.total > 0 && stats.completed === stats.total;
-    }).length;
-  }, [overview]);
-
-  const nextTask = useMemo(() => getNextTask(overview), [overview]);
-
-  const handleRoleChange = (role: string) => {
-    setSelectedRoleOverride(role as AccountRole);
-  };
-
-  const handleComplete = async (task: OnboardingTask) => {
-    try {
-      await completeMutation.mutateAsync(task);
-    } catch (error) {
-      toast.error(
-        getApiErrorMessage(error, 'Не удалось обновить прогресс обучения'),
-      );
-    }
-  };
-
   const handleReset = async () => {
     try {
       await resetMutation.mutateAsync();
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Не удалось сбросить прогресс'));
-    }
-  };
-
-  const handleTrainingModeToggle = async () => {
-    try {
-      if (trainingMode.state.isEnabled) {
-        await trainingMode.disable();
-        toast.success('Режим тренировки выключен');
-      } else {
-        await trainingMode.enable(activeRole);
-        toast.success('Режим тренировки включен');
-      }
-    } catch (error) {
-      toast.error(
-        getApiErrorMessage(error, 'Не удалось изменить режим тренировки'),
-      );
     }
   };
 
@@ -633,38 +490,6 @@ export default function OnboardingPage() {
     }
   };
 
-  if (onboardingQuery.isError) {
-    return (
-      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-        <ErrorState
-          message={getApiErrorMessage(
-            onboardingQuery.error,
-            'Не удалось загрузить обучение',
-          )}
-          onRetry={() => onboardingQuery.refetch()}
-        />
-      </div>
-    );
-  }
-
-  if (onboardingQuery.isLoading || !overview) {
-    return (
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
-        <div className="h-32 animate-pulse rounded-md border bg-muted/40" />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
-          <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
-        </div>
-      </div>
-    );
-  }
-
-  const summary = overview.summary;
-  const roleTitle = getAccountRoleLabel(overview.selectedRole);
-  const completingTaskKey = completeMutation.isPending
-    ? completeMutation.variables?.key || null
-    : null;
-
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
       <section className="rounded-md border bg-background p-5">
@@ -676,17 +501,11 @@ export default function OnboardingPage() {
                 {roleTitle}
               </Badge>
               <Badge variant="outline">{overview.path.levelLabel}</Badge>
-              {summary.percent === 100 && (
+              {overview.ownerRoleOverrideEnabled && (
                 <Badge
                   variant="outline"
                   className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
                 >
-                  <Award className="h-3 w-3" />
-                  {overview.path.completionBadge}
-                </Badge>
-              )}
-              {overview.ownerRoleOverrideEnabled && (
-                <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300">
                   <ShieldCheck className="h-3 w-3" />
                   Режим владельца
                 </Badge>
@@ -702,33 +521,12 @@ export default function OnboardingPage() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            {overview.ownerRoleOverrideEnabled && (
-              <div className="w-full min-w-56 sm:w-64">
-                <div className="mb-1 text-xs font-medium text-muted-foreground">
-                  Роль прохождения
-                </div>
-                <Select
-                  value={overview.selectedRole}
-                  onValueChange={handleRoleChange}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {overview.availableRoles.map((role) => (
-                      <SelectItem key={role.value} value={role.value}>
-                        {role.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <RoleSelect overview={overview} onChange={onRoleChange} />
             <Button
               type="button"
               variant="outline"
               onClick={handleReset}
-              disabled={resetMutation.isPending || summary.completedTasks === 0}
+              disabled={resetMutation.isPending || !hasProgress}
             >
               {resetMutation.isPending ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
@@ -737,31 +535,18 @@ export default function OnboardingPage() {
               )}
               Сбросить
             </Button>
-            <Button
-              type="button"
-              variant={trainingMode.state.isEnabled ? 'destructive' : 'secondary'}
-              onClick={handleTrainingModeToggle}
-              disabled={trainingMode.loading}
-            >
-              {trainingMode.state.isEnabled ? (
-                <Power className="h-4 w-4" />
-              ) : (
-                <FlaskConical className="h-4 w-4" />
-              )}
-              {trainingMode.state.isEnabled ? 'Выключить тренировку' : 'Тренировка'}
-            </Button>
           </div>
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-4">
           <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-xs text-muted-foreground">Прогресс</div>
-            <div className="mt-1 text-2xl font-semibold">{summary.percent}%</div>
+            <div className="mt-1 text-2xl font-semibold">{overview.summary.percent}%</div>
           </div>
           <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-xs text-muted-foreground">Задания</div>
             <div className="mt-1 text-2xl font-semibold">
-              {summary.completedTasks}/{summary.totalTasks}
+              {overview.summary.completedTasks}/{overview.summary.totalTasks}
             </div>
           </div>
           <div className="rounded-md border bg-muted/20 p-4">
@@ -773,35 +558,42 @@ export default function OnboardingPage() {
           <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-xs text-muted-foreground">Опыт</div>
             <div className="mt-1 text-2xl font-semibold">
-              {summary.earnedXp}/{summary.totalXp}
+              {overview.summary.earnedXp}/{overview.summary.totalXp}
             </div>
           </div>
         </div>
 
         <div className="mt-5">
-          <ProgressBar percent={summary.percent} />
+          <ProgressBar percent={overview.summary.percent} />
         </div>
-
-        {overview.path.outcomes.length > 0 && (
-          <div className="mt-5 flex flex-wrap gap-2">
-            {overview.path.outcomes.map((outcome) => (
-              <Badge key={outcome} variant="outline">
-                {outcome}
-              </Badge>
-            ))}
-          </div>
-        )}
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-        <NextTaskPanel
-          completingTaskKey={completingTaskKey}
-          completionBadge={overview.path.completionBadge}
-          nextTask={nextTask}
-          onComplete={handleComplete}
-        />
-        <SkillProgressPanel overview={overview} />
-      </div>
+      {nextTask && (
+        <section className="rounded-md border bg-background p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">
+                <ListChecks className="h-3 w-3" />
+                Следующее задание
+              </Badge>
+              <h2 className="mt-3 text-lg font-semibold text-foreground">
+                {nextTask.title}
+              </h2>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                {nextTask.description}
+              </p>
+            </div>
+            <Button asChild>
+              <Link to={taskDetailUrl(nextTask.key, activeRole)}>
+                <BookOpenCheck className="h-4 w-4" />
+                Открыть задание
+              </Link>
+            </Button>
+          </div>
+        </section>
+      )}
+
+      <SkillProgressPanel overview={overview} />
 
       {overview.ownerRoleOverrideEnabled && (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
@@ -849,10 +641,9 @@ export default function OnboardingPage() {
 
               <div className="grid gap-3 p-5">
                 {mission.tasks.map((task) => (
-                  <TaskRow
+                  <TaskCard
                     key={task.key}
-                    completingTaskKey={completingTaskKey}
-                    onComplete={handleComplete}
+                    selectedRole={activeRole}
                     task={task}
                   />
                 ))}
@@ -878,5 +669,368 @@ export default function OnboardingPage() {
         onConfirm={handleCleanupTrainingData}
       />
     </div>
+  );
+}
+
+function getInstructionCardStorageKey(role: AccountRole, taskKey: string) {
+  return `padel-park:onboarding-card:${role}:${taskKey}`;
+}
+
+function getCardScreenshot(
+  task: OnboardingGuidedTask,
+  block: OnboardingLessonBlock,
+  index: number,
+) {
+  const screenshotIndex = Number.isInteger(block.screenshotIndex)
+    ? Number(block.screenshotIndex)
+    : index;
+
+  return task.lesson.screenshots[screenshotIndex];
+}
+
+function InstructionCardReader({
+  isPending,
+  onComplete,
+  role,
+  task,
+}: {
+  isPending: boolean;
+  onComplete: () => void;
+  role: AccountRole;
+  task: OnboardingGuidedTask;
+}) {
+  const blocks =
+    task.lesson.blocks.length > 0
+      ? task.lesson.blocks
+      : [{ text: task.description, type: 'paragraph' }];
+  const storageKey = getInstructionCardStorageKey(role, task.key);
+  const [cardIndex, setCardIndex] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+
+    const saved = Number(window.localStorage.getItem(storageKey));
+    return Number.isFinite(saved) ? saved : 0;
+  });
+  const safeIndex = Math.max(0, Math.min(cardIndex, blocks.length - 1));
+  const block = blocks[safeIndex];
+  const screenshot = getCardScreenshot(task, block, safeIndex);
+  const title =
+    block.title ||
+    (block.type === 'heading' ? block.text : `Карточка ${safeIndex + 1}`);
+  const showText = block.type !== 'heading' || Boolean(block.title);
+  const isFinalCard = safeIndex === blocks.length - 1;
+  const progressPercent = Math.round(((safeIndex + 1) / blocks.length) * 100);
+
+  const saveCardIndex = (nextIndex: number) => {
+    const boundedIndex = Math.max(0, Math.min(nextIndex, blocks.length - 1));
+    setCardIndex(boundedIndex);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, String(boundedIndex));
+    }
+  };
+
+  const handleNext = () => {
+    if (isFinalCard) {
+      onComplete();
+      return;
+    }
+
+    saveCardIndex(safeIndex + 1);
+  };
+
+  return (
+    <section className="grid gap-4">
+      <article
+        key={`${task.key}-${safeIndex}`}
+        className="overflow-hidden rounded-md border bg-background motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-3"
+      >
+        <div className="border-b p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <Badge variant="outline">
+                <BookOpenCheck className="h-3 w-3" />
+                Инструкция
+              </Badge>
+              <h2 className="mt-3 text-lg font-semibold text-foreground">
+                {task.lesson.title}
+              </h2>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                {task.lesson.summary}
+              </p>
+            </div>
+            <Badge variant="outline">
+              Карточка {safeIndex + 1}/{blocks.length}
+            </Badge>
+          </div>
+
+          <div className="mt-4">
+            <ProgressBar percent={progressPercent} />
+          </div>
+        </div>
+
+        <div className="grid min-h-[440px] gap-5 p-5 lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]">
+          <div className="flex min-w-0 flex-col justify-center">
+            <Badge variant="outline" className="w-fit">
+              {safeIndex + 1}/{blocks.length}
+            </Badge>
+            <h3 className="mt-4 text-xl font-semibold text-foreground">{title}</h3>
+            {showText && (
+              <p className="mt-3 text-sm leading-6 text-muted-foreground">
+                {block.text}
+              </p>
+            )}
+            {Array.isArray(block.items) && block.items.length > 0 && (
+              <ul className="mt-5 grid gap-2 text-sm text-muted-foreground">
+                {block.items.map((item) => (
+                  <li key={item} className="flex gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          {screenshot ? (
+            <figure className="flex min-h-[260px] flex-col overflow-hidden rounded-md border bg-muted/20">
+              <div className="flex flex-1 items-center justify-center p-3">
+                <img
+                  src={screenshot.src}
+                  alt={screenshot.alt || screenshot.caption || title}
+                  className="max-h-[520px] w-full object-contain"
+                />
+              </div>
+              {screenshot.caption && (
+                <figcaption className="border-t bg-background px-3 py-2 text-xs text-muted-foreground">
+                  {screenshot.caption}
+                </figcaption>
+              )}
+            </figure>
+          ) : (
+            <div className="flex min-h-[260px] items-center justify-center rounded-md border bg-muted/20 px-6 text-center text-sm text-muted-foreground">
+              Скриншот CRM будет добавлен в следующем контентном спринте.
+            </div>
+          )}
+        </div>
+      </article>
+
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex justify-center gap-1 sm:justify-start">
+          {blocks.map((item, index) => (
+            <button
+              key={`${item.type}-${index}`}
+              type="button"
+              className={cn(
+                'h-2.5 w-2.5 rounded-full border transition-colors',
+                index === safeIndex
+                  ? 'border-primary bg-primary'
+                  : 'border-border bg-muted hover:bg-muted-foreground/20',
+              )}
+              aria-label={`Открыть карточку ${index + 1}`}
+              onClick={() => saveCardIndex(index)}
+            />
+          ))}
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => saveCardIndex(safeIndex - 1)}
+            disabled={safeIndex === 0}
+          >
+            Назад
+          </Button>
+          <Button
+            type="button"
+            onClick={handleNext}
+            disabled={isPending || (task.progress.isCompleted && isFinalCard)}
+          >
+            {isPending ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            {task.progress.isCompleted && isFinalCard
+              ? 'Инструкция завершена'
+              : isFinalCard
+                ? 'Завершить инструкцию'
+                : 'Далее'}
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function TaskDetailView({
+  detail,
+  loadingCompletion,
+  onComplete,
+}: {
+  detail: OnboardingTaskDetail;
+  loadingCompletion: boolean;
+  onComplete: () => void;
+}) {
+  const task = detail.task;
+  const roleTitle = getAccountRoleLabel(detail.selectedRole);
+  const status = getTaskStatus(task);
+  const StatusIcon = status.icon;
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
+      <div>
+        <Button asChild variant="ghost" size="sm">
+          <Link to={`/admin/onboarding${roleQuery(detail.selectedRole)}`}>
+            <ArrowLeft className="h-4 w-4" />
+            К заданиям
+          </Link>
+        </Button>
+      </div>
+
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline" className={status.className}>
+            <StatusIcon className="h-3 w-3" />
+            {status.label}
+          </Badge>
+          <Badge variant="outline">{roleTitle}</Badge>
+          <Badge variant="outline">{detail.mission.title}</Badge>
+        </div>
+        <h1 className="mt-3 text-2xl font-semibold text-foreground">
+          {task.title}
+        </h1>
+        <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
+          {task.description}
+        </p>
+      </div>
+
+      <InstructionCardReader
+        isPending={loadingCompletion}
+        onComplete={onComplete}
+        role={detail.selectedRole}
+        task={task}
+      />
+    </div>
+  );
+}
+
+export default function OnboardingPage() {
+  const { taskKey } = useParams<{ taskKey?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { account } = useAuth();
+  const queryClient = useQueryClient();
+  const roleFromQuery = searchParams.get('role') as AccountRole | null;
+  const roleForRequest =
+    account?.role === 'owner'
+      ? roleFromQuery || account.role
+      : undefined;
+  const roleForQueryKey =
+    account?.role === 'owner'
+      ? roleFromQuery || account.role
+      : account?.role;
+
+  const overviewQuery = useQuery({
+    enabled: Boolean(account?.role) && !taskKey,
+    queryFn: () => getOnboardingOverview(roleForRequest),
+    queryKey: queryKeys.onboarding.detail(roleForQueryKey),
+  });
+  const detailQuery = useQuery({
+    enabled: Boolean(account?.role && taskKey),
+    queryFn: () => getOnboardingTaskDetail(taskKey!, roleForRequest),
+    queryKey: queryKeys.onboarding.task(taskKey || 'none', roleForQueryKey),
+  });
+
+  const completeInstructionMutation = useMutation({
+    mutationFn: (detail: OnboardingTaskDetail) =>
+      completeOnboardingTask(detail.task.key, detail.selectedRole),
+    onSuccess: (data, detail) => {
+      queryClient.setQueryData(
+        queryKeys.onboarding.detail(data.selectedRole),
+        data,
+      );
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.onboarding.task(detail.task.key, detail.selectedRole),
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
+      clearStoredActiveOnboardingQuest();
+      toast.success('Инструкция завершена');
+    },
+  });
+
+  const handleRoleChange = (role: string) => {
+    setSearchParams({ role });
+  };
+
+  if (taskKey) {
+    if (detailQuery.isError) {
+      return (
+        <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <ErrorState
+            message={getApiErrorMessage(
+              detailQuery.error,
+              'Не удалось загрузить задание',
+            )}
+            onRetry={() => detailQuery.refetch()}
+          />
+        </div>
+      );
+    }
+
+    if (detailQuery.isLoading || !detailQuery.data) {
+      return (
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+          <div className="h-28 animate-pulse rounded-md border bg-muted/40" />
+          <div className="h-72 animate-pulse rounded-md border bg-muted/40" />
+          <div className="h-56 animate-pulse rounded-md border bg-muted/40" />
+        </div>
+      );
+    }
+
+    const detail = detailQuery.data;
+
+    return (
+      <TaskDetailView
+        detail={detail}
+        loadingCompletion={completeInstructionMutation.isPending}
+        onComplete={() => {
+          void completeInstructionMutation.mutateAsync(detail).catch((error) => {
+            toast.error(getApiErrorMessage(error, 'Не удалось завершить инструкцию'));
+          });
+        }}
+      />
+    );
+  }
+
+  if (overviewQuery.isError) {
+    return (
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <ErrorState
+          message={getApiErrorMessage(
+            overviewQuery.error,
+            'Не удалось загрузить обучение',
+          )}
+          onRetry={() => overviewQuery.refetch()}
+        />
+      </div>
+    );
+  }
+
+  if (overviewQuery.isLoading || !overviewQuery.data) {
+    return (
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="h-32 animate-pulse rounded-md border bg-muted/40" />
+        <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
+        <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
+      </div>
+    );
+  }
+
+  return (
+    <OnboardingListView
+      overview={overviewQuery.data}
+      onRoleChange={handleRoleChange}
+    />
   );
 }

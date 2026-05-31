@@ -27,6 +27,8 @@ const TRAINING_DATA_ENTITIES = [
   },
 ];
 
+const DEFAULT_QUIZ_PASSING_SCORE_PERCENT = 100;
+
 function appError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
@@ -172,28 +174,6 @@ function normalizeClientEventKey(eventKey) {
   return eventKey;
 }
 
-async function upsertCompletedProgress(actor, role, taskKey, metadata = {}) {
-  const where = {
-    accountId: actor.id,
-    role,
-    taskKey,
-  };
-  const payload = {
-    completedAt: new Date(),
-    metadata,
-    status: 'completed',
-  };
-  const existing = await db.OnboardingProgress.findOne({ where });
-  if (existing) {
-    await existing.update(payload);
-  } else {
-    await db.OnboardingProgress.create({
-      ...where,
-      ...payload,
-    });
-  }
-}
-
 function buildProgressMap(progressRows = []) {
   const progressByTaskKey = new Map();
 
@@ -205,6 +185,336 @@ function buildProgressMap(progressRows = []) {
   }
 
   return progressByTaskKey;
+}
+
+function isPlainObject(value) {
+  return Boolean(
+    value &&
+      typeof value === 'object' &&
+      !Array.isArray(value) &&
+      !(value instanceof Date),
+  );
+}
+
+function cloneJsonObject(value) {
+  if (typeof value === 'string') {
+    try {
+      return cloneJsonObject(JSON.parse(value));
+    } catch {
+      return {};
+    }
+  }
+
+  if (!isPlainObject(value)) return {};
+  return JSON.parse(JSON.stringify(value));
+}
+
+function mergeMetadata(base = {}, patch = {}) {
+  const result = cloneJsonObject(base);
+
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (isPlainObject(value) && isPlainObject(result[key])) {
+      result[key] = mergeMetadata(result[key], value);
+    } else if (Array.isArray(value)) {
+      result[key] = value.map((item) =>
+        isPlainObject(item) || Array.isArray(item)
+          ? JSON.parse(JSON.stringify(item))
+          : item,
+      );
+    } else if (value !== undefined) {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
+function getDefaultPracticeStep(task) {
+  return {
+    description: task.description,
+    key: 'checkpoint',
+    target: null,
+    title: task.title,
+  };
+}
+
+function normalizePracticeSteps(task) {
+  const steps = Array.isArray(task.practice?.steps)
+    ? task.practice.steps.filter((step) => step?.key)
+    : [];
+
+  return steps.length > 0
+    ? steps.map((step) => ({
+        checkpointEvent: step.checkpointEvent || null,
+        description: step.description || '',
+        key: step.key,
+        target: step.target || null,
+        title: step.title || step.key,
+      }))
+    : [getDefaultPracticeStep(task)];
+}
+
+function getDefaultQuizQuestion(task) {
+  return {
+    correctOptionId: 'crm-action',
+    hint: 'Задание засчитывается по действию внутри CRM, а не по заметке вне системы.',
+    key: 'crm-source-of-truth',
+    options: [
+      {
+        id: 'crm-action',
+        text: 'Выполнить действие на нужном экране CRM',
+      },
+      {
+        id: 'external-note',
+        text: 'Записать результат вне CRM',
+      },
+      {
+        id: 'skip-training',
+        text: 'Пропустить действие и закрыть смену',
+      },
+    ],
+    prompt: `Что нужно сделать, чтобы закрепить задание "${task.title}"?`,
+    type: 'single_choice',
+  };
+}
+
+function normalizeQuizQuestions(task) {
+  const questions = Array.isArray(task.quiz?.questions)
+    ? task.quiz.questions.filter((question) => question?.key)
+    : [];
+
+  return questions.length > 0
+    ? questions.map((question) => ({
+        correctOptionId: question.correctOptionId,
+        correctOptionIds: question.correctOptionIds,
+        explanation: question.explanation || null,
+        hint: question.hint || null,
+        key: question.key,
+        options: Array.isArray(question.options) ? question.options : [],
+        prompt: question.prompt || question.key,
+        type: question.type || 'single_choice',
+      }))
+    : [getDefaultQuizQuestion(task)];
+}
+
+function getGuidedContent(task) {
+  const lesson = task.lesson || {};
+  const practice = task.practice || {};
+  const quiz = task.quiz || {};
+
+  return {
+    lesson: {
+      blocks:
+        Array.isArray(lesson.blocks) && lesson.blocks.length > 0
+          ? lesson.blocks
+          : [{ text: task.description, type: 'paragraph' }],
+      screenshots: Array.isArray(lesson.screenshots) ? lesson.screenshots : [],
+      summary: lesson.summary || task.description,
+      title: lesson.title || task.title,
+    },
+    practice: {
+      autoTrainingMode:
+        practice.autoTrainingMode ?? Boolean(task.trainingMode?.recommended),
+      route: practice.route || task.route,
+      steps: normalizePracticeSteps(task),
+      targetSelectors: Array.isArray(practice.targetSelectors)
+        ? practice.targetSelectors
+        : [],
+      testData: practice.testData || null,
+    },
+    quiz: {
+      passingScorePercent:
+        quiz.passingScorePercent || DEFAULT_QUIZ_PASSING_SCORE_PERCENT,
+      questions: normalizeQuizQuestions(task),
+    },
+  };
+}
+
+function sanitizeQuiz(quiz) {
+  return {
+    passingScorePercent: quiz.passingScorePercent,
+    questions: quiz.questions.map((question) => ({
+      hint: question.hint || null,
+      key: question.key,
+      options: question.options.map((option) => ({
+        id: option.id,
+        text: option.text,
+      })),
+      prompt: question.prompt,
+      type: question.type,
+    })),
+  };
+}
+
+function getGuidanceSummary(task) {
+  const content = getGuidedContent(task);
+
+  return {
+    hasLesson: true,
+    hasPractice: true,
+    hasQuiz: true,
+    practiceStepCount: content.practice.steps.length,
+    quizQuestionCount: content.quiz.questions.length,
+    screenshotCount: content.lesson.screenshots.length,
+  };
+}
+
+function getProgressMetadata(progress) {
+  return cloneJsonObject(getPlainProgress(progress)?.metadata);
+}
+
+function hasGuidedMetadata(metadata = {}) {
+  return Boolean(metadata.lesson || metadata.practice || metadata.quiz);
+}
+
+function getCompletedPracticeStepKeys(task, metadata = {}) {
+  const content = getGuidedContent(task);
+  const steps = metadata.practice?.steps || {};
+
+  return content.practice.steps
+    .filter((step) => steps[step.key]?.completedAt)
+    .map((step) => step.key);
+}
+
+function getTaskRequirementState(task, progress) {
+  const plainProgress = getPlainProgress(progress);
+  const metadata = getProgressMetadata(progress);
+  const content = getGuidedContent(task);
+  const legacyCompleted =
+    plainProgress?.status === 'completed' && !hasGuidedMetadata(metadata);
+  const completedAt = serializeDate(plainProgress?.completedAt);
+  const completedStepKeys = getCompletedPracticeStepKeys(task, metadata);
+  const practiceCompleted =
+    legacyCompleted ||
+    Boolean(metadata.practice?.completedAt) ||
+    completedStepKeys.length >= content.practice.steps.length;
+  const quizLastAttempt = metadata.quiz?.lastAttempt || null;
+  const quizAttempts = Array.isArray(metadata.quiz?.attempts)
+    ? metadata.quiz.attempts
+    : [];
+
+  return {
+    hasStarted:
+      legacyCompleted ||
+      hasGuidedMetadata(metadata) ||
+      plainProgress?.status === 'in_progress',
+    lesson: {
+      isRead: legacyCompleted || Boolean(metadata.lesson?.readAt),
+      readAt: legacyCompleted ? completedAt : serializeDate(metadata.lesson?.readAt),
+    },
+    practice: {
+      activeStepKey: metadata.practice?.activeStepKey || null,
+      completedAt: legacyCompleted
+        ? completedAt
+        : serializeDate(metadata.practice?.completedAt),
+      completedStepKeys,
+      isCompleted: practiceCompleted,
+      isStarted: legacyCompleted || Boolean(metadata.practice?.startedAt),
+      startedAt: legacyCompleted
+        ? completedAt
+        : serializeDate(metadata.practice?.startedAt),
+      totalSteps: content.practice.steps.length,
+    },
+    quiz: {
+      attemptsCount: quizAttempts.length,
+      isPassed: legacyCompleted || Boolean(metadata.quiz?.passedAt),
+      lastAttemptAt: serializeDate(quizLastAttempt?.submittedAt),
+      lastCorrectCount: quizLastAttempt?.correctCount ?? null,
+      passedAt: legacyCompleted ? completedAt : serializeDate(metadata.quiz?.passedAt),
+      totalQuestions: content.quiz.questions.length,
+    },
+  };
+}
+
+function isTaskFullySatisfied(task, metadata = {}) {
+  const fakeProgress = { metadata, status: 'in_progress' };
+  const requirements = getTaskRequirementState(task, fakeProgress);
+
+  return (
+    requirements.lesson.isRead &&
+    requirements.practice.isCompleted &&
+    requirements.quiz.isPassed
+  );
+}
+
+function resolveStoredProgressStatus(task, metadata, currentStatus) {
+  if (currentStatus === 'skipped') return 'skipped';
+  return isTaskFullySatisfied(task, metadata) ? 'completed' : 'in_progress';
+}
+
+function buildTaskProgress(task, progress, nextTaskKey) {
+  const plainProgress = getPlainProgress(progress);
+  const requirements = getTaskRequirementState(task, progress);
+  const status = plainProgress?.status || 'not_started';
+  const resolvedStatus =
+    status === 'completed' || status === 'skipped'
+      ? status
+      : requirements.hasStarted
+        ? 'in_progress'
+        : 'not_started';
+
+  return {
+    completedAt: serializeDate(plainProgress?.completedAt),
+    isCompleted: resolvedStatus === 'completed',
+    isNext: task.key === nextTaskKey,
+    lesson: requirements.lesson,
+    practice: requirements.practice,
+    quiz: requirements.quiz,
+    status: resolvedStatus,
+  };
+}
+
+function buildCompletedMetadata(task) {
+  const now = new Date().toISOString();
+  const content = getGuidedContent(task);
+  const steps = Object.fromEntries(
+    content.practice.steps.map((step) => [
+      step.key,
+      {
+        completedAt: now,
+        source: 'manual-complete',
+      },
+    ]),
+  );
+
+  return {
+    lesson: { readAt: now },
+    practice: {
+      activeStepKey: null,
+      completedAt: now,
+      startedAt: now,
+      steps,
+    },
+    quiz: {
+      attempts: [
+        {
+          correctCount: content.quiz.questions.length,
+          isPassed: true,
+          source: 'manual-complete',
+          submittedAt: now,
+          totalQuestions: content.quiz.questions.length,
+        },
+      ],
+      lastAttempt: {
+        correctCount: content.quiz.questions.length,
+        isPassed: true,
+        source: 'manual-complete',
+        submittedAt: now,
+        totalQuestions: content.quiz.questions.length,
+      },
+      passedAt: now,
+    },
+  };
+}
+
+function serializeTaskForOverview(task, progress, nextTaskKey) {
+  const { lesson, practice, quiz, ...taskSummary } = task;
+
+  return {
+    ...taskSummary,
+    guidance: getGuidanceSummary(task),
+    progress: buildTaskProgress(task, progress, nextTaskKey),
+  };
 }
 
 function buildSkillSummary(path, progressByTaskKey) {
@@ -244,17 +554,7 @@ function buildSkillSummary(path, progressByTaskKey) {
 }
 
 function decorateTask(task, progress, nextTaskKey) {
-  const status = progress?.status || 'not_started';
-
-  return {
-    ...task,
-    progress: {
-      completedAt: serializeDate(progress?.completedAt),
-      isCompleted: status === 'completed',
-      isNext: task.key === nextTaskKey,
-      status,
-    },
-  };
+  return serializeTaskForOverview(task, progress, nextTaskKey);
 }
 
 function buildOnboardingResponse(actor, targetRole, progressRows = []) {
@@ -336,6 +636,101 @@ async function getProgressRows(accountId, role) {
       role,
     },
   });
+}
+
+async function getTaskProgressContext(actor, taskKey, role) {
+  const targetRole = resolveTargetRole(actor, role);
+  const taskMatch = findOnboardingTask(targetRole, taskKey);
+  if (!taskMatch) {
+    throw appError('Задание обучения не найдено', 404);
+  }
+
+  const where = {
+    accountId: actor.id,
+    role: targetRole,
+    taskKey,
+  };
+  const existing = await db.OnboardingProgress.findOne({ where });
+
+  return {
+    existing,
+    metadata: getProgressMetadata(existing),
+    taskMatch,
+    targetRole,
+    where,
+  };
+}
+
+async function saveTaskProgress(context, metadata, statusOverride = null) {
+  const current = getPlainProgress(context.existing);
+  const status =
+    statusOverride ||
+    resolveStoredProgressStatus(context.taskMatch.task, metadata, current?.status);
+  const completedAt =
+    status === 'completed'
+      ? current?.completedAt || new Date()
+      : null;
+  const payload = {
+    completedAt,
+    metadata,
+    status,
+  };
+
+  if (context.existing) {
+    await context.existing.update(payload);
+    return context.existing;
+  }
+
+  return db.OnboardingProgress.create({
+    ...context.where,
+    ...payload,
+  });
+}
+
+async function upsertTaskProgress(actor, role, task, metadataPatch = {}) {
+  const context = await getTaskProgressContext(actor, task.key, role);
+  const metadata = mergeMetadata(context.metadata, metadataPatch);
+  return saveTaskProgress(context, metadata);
+}
+
+function buildTaskDetailResponse(actor, targetRole, taskMatch, progress) {
+  const { mission, path, task } = taskMatch;
+  const content = getGuidedContent(task);
+  const overviewTask = serializeTaskForOverview(task, progress, null);
+
+  return {
+    availableRoles: getAvailableRoles(actor),
+    mission: {
+      description: mission.description,
+      key: mission.key,
+      title: mission.title,
+    },
+    ownerRoleOverrideEnabled: actor.role === 'owner',
+    path: {
+      completionBadge: path.completionBadge,
+      description: path.description,
+      levelLabel: path.levelLabel,
+      role: path.role,
+      title: path.title,
+    },
+    selectedRole: targetRole,
+    task: {
+      ...overviewTask,
+      lesson: content.lesson,
+      practice: content.practice,
+      quiz: sanitizeQuiz(content.quiz),
+    },
+  };
+}
+
+async function getTaskDetail(actor, taskKey, query = {}) {
+  const context = await getTaskProgressContext(actor, taskKey, query.role);
+  return buildTaskDetailResponse(
+    actor,
+    context.targetRole,
+    context.taskMatch,
+    context.existing,
+  );
 }
 
 async function getTrainingMode(actor) {
@@ -662,32 +1057,244 @@ async function getOverview(actor, query = {}) {
 }
 
 async function completeTask(actor, taskKey, body = {}) {
-  const targetRole = resolveTargetRole(actor, body.role);
-  const taskMatch = findOnboardingTask(targetRole, taskKey);
-  if (!taskMatch) {
-    throw appError('Задание обучения не найдено', 404);
+  const context = await getTaskProgressContext(actor, taskKey, body.role);
+  const metadata = mergeMetadata(context.metadata, {
+    ...buildCompletedMetadata(context.taskMatch.task),
+    manual: body.metadata || null,
+  });
+
+  await saveTaskProgress(context, metadata);
+
+  return getOverview(actor, { role: context.targetRole });
+}
+
+async function markLessonRead(actor, taskKey, body = {}) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role);
+  const now = new Date().toISOString();
+  const metadata = mergeMetadata(context.metadata, {
+    lesson: {
+      readAt: now,
+    },
+    lessonReadMetadata: body.metadata || null,
+  });
+  const progress = await saveTaskProgress(context, metadata);
+
+  return buildTaskDetailResponse(
+    actor,
+    context.targetRole,
+    context.taskMatch,
+    progress,
+  );
+}
+
+async function startPractice(actor, taskKey, body = {}) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role);
+  const now = new Date().toISOString();
+  const content = getGuidedContent(context.taskMatch.task);
+
+  if (content.practice.autoTrainingMode) {
+    await setTrainingMode(actor, {
+      isEnabled: true,
+      metadata: {
+        source: 'onboarding-practice',
+        taskKey,
+      },
+      role: context.targetRole,
+    });
   }
 
-  await upsertCompletedProgress(actor, targetRole, taskKey, body.metadata || null);
+  const metadata = mergeMetadata(context.metadata, {
+    practice: {
+      activeStepKey:
+        context.metadata.practice?.activeStepKey ||
+        content.practice.steps[0]?.key ||
+        null,
+      startedAt: context.metadata.practice?.startedAt || now,
+    },
+    practiceStartMetadata: body.metadata || null,
+  });
+  const progress = await saveTaskProgress(context, metadata);
 
-  return getOverview(actor, { role: targetRole });
+  return buildTaskDetailResponse(
+    actor,
+    context.targetRole,
+    context.taskMatch,
+    progress,
+  );
+}
+
+async function completePracticeStep(actor, taskKey, stepKey, body = {}) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role);
+  const content = getGuidedContent(context.taskMatch.task);
+  const stepKeys = content.practice.steps.map((step) => step.key);
+
+  if (!stepKeys.includes(stepKey)) {
+    throw appError('Шаг задания обучения не найден', 404);
+  }
+
+  const now = new Date().toISOString();
+  const nextMetadata = mergeMetadata(context.metadata, {
+    practice: {
+      startedAt: context.metadata.practice?.startedAt || now,
+      steps: {
+        [stepKey]: {
+          completedAt: now,
+          metadata: body.metadata || null,
+        },
+      },
+    },
+  });
+  const completedStepKeys = getCompletedPracticeStepKeys(
+    context.taskMatch.task,
+    nextMetadata,
+  );
+  const nextIncompleteStep = content.practice.steps.find(
+    (step) => !completedStepKeys.includes(step.key),
+  );
+
+  nextMetadata.practice = mergeMetadata(nextMetadata.practice, {
+    activeStepKey: nextIncompleteStep?.key || null,
+    completedAt:
+      completedStepKeys.length >= content.practice.steps.length
+        ? nextMetadata.practice.completedAt || now
+        : null,
+  });
+
+  const progress = await saveTaskProgress(context, nextMetadata);
+
+  return buildTaskDetailResponse(
+    actor,
+    context.targetRole,
+    context.taskMatch,
+    progress,
+  );
+}
+
+function normalizeAnswer(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item)).sort();
+  }
+  if (value == null) return [];
+  return [String(value)];
+}
+
+function getCorrectAnswer(question) {
+  if (Array.isArray(question.correctOptionIds)) {
+    return question.correctOptionIds.map((item) => String(item)).sort();
+  }
+  if (question.correctOptionId == null) return [];
+  return [String(question.correctOptionId)];
+}
+
+function answersEqual(actual, expected) {
+  if (actual.length !== expected.length) return false;
+  return actual.every((value, index) => value === expected[index]);
+}
+
+function evaluateQuizAttempt(task, answers = {}) {
+  const content = getGuidedContent(task);
+  const results = content.quiz.questions.map((question) => {
+    const selectedOptionIds = normalizeAnswer(answers[question.key]);
+    const correctOptionIds = getCorrectAnswer(question);
+    const isCorrect = answersEqual(selectedOptionIds, correctOptionIds);
+
+    return {
+      explanation: question.explanation || null,
+      hint: isCorrect ? null : question.hint || null,
+      isCorrect,
+      questionKey: question.key,
+      selectedOptionIds,
+    };
+  });
+  const correctCount = results.filter((result) => result.isCorrect).length;
+  const totalQuestions = content.quiz.questions.length;
+  const scorePercent =
+    totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+
+  return {
+    correctCount,
+    isPassed: scorePercent >= content.quiz.passingScorePercent,
+    results,
+    scorePercent,
+    submittedAt: new Date().toISOString(),
+    totalQuestions,
+  };
+}
+
+async function submitQuizAttempt(actor, taskKey, body = {}) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role);
+  const attempt = evaluateQuizAttempt(context.taskMatch.task, body.answers || {});
+  const attempts = Array.isArray(context.metadata.quiz?.attempts)
+    ? context.metadata.quiz.attempts
+    : [];
+  const nextAttempts = [...attempts, attempt].slice(-10);
+  const metadata = mergeMetadata(context.metadata, {
+    quiz: {
+      attempts: nextAttempts,
+      lastAttempt: attempt,
+      passedAt: attempt.isPassed
+        ? context.metadata.quiz?.passedAt || attempt.submittedAt
+        : context.metadata.quiz?.passedAt || null,
+    },
+    quizAttemptMetadata: body.metadata || null,
+  });
+  const progress = await saveTaskProgress(context, metadata);
+
+  return {
+    attempt,
+    detail: buildTaskDetailResponse(
+      actor,
+      context.targetRole,
+      context.taskMatch,
+      progress,
+    ),
+  };
 }
 
 async function recordEventForTarget(actor, target, eventKey, options = {}) {
   const payload = options.payload || {};
   const matchingTasks = listMatchingTasks(target.role, eventKey, payload);
   const completedTaskKeys = [];
+  const progressedTaskKeys = [];
 
   for (const task of matchingTasks) {
-    await upsertCompletedProgress(actor, target.role, task.key, {
+    const now = new Date().toISOString();
+    const content = getGuidedContent(task);
+    const matchingStepKeys = content.practice.steps
+      .filter((step) => !step.checkpointEvent || step.checkpointEvent === eventKey)
+      .map((step) => step.key);
+    const stepKeys =
+      matchingStepKeys.length > 0
+        ? matchingStepKeys
+        : content.practice.steps.map((step) => step.key);
+    const steps = Object.fromEntries(
+      stepKeys.map((stepKey) => [
+        stepKey,
+        {
+          completedAt: now,
+          eventKey,
+          source: 'event',
+        },
+      ]),
+    );
+    const progress = await upsertTaskProgress(actor, target.role, task, {
       checkpointEvent: eventKey,
       entityId: options.entityId || null,
       entityType: options.entityType || null,
       isTraining: target.isTraining,
       payload,
+      practice: {
+        activeStepKey: null,
+        completedAt: now,
+        startedAt: now,
+        steps,
+      },
       source: 'event',
     });
-    completedTaskKeys.push(task.key);
+    progressedTaskKeys.push(task.key);
+    if (getPlainProgress(progress)?.status === 'completed') {
+      completedTaskKeys.push(task.key);
+    }
   }
 
   const event = await db.OnboardingEvent.create({
@@ -704,13 +1311,19 @@ async function recordEventForTarget(actor, target, eventKey, options = {}) {
   return {
     completedTaskKeys,
     event,
+    progressedTaskKeys,
     role: target.role,
   };
 }
 
 async function recordEvent(actor, eventKey, options = {}) {
   if (!actor?.id || !eventKey) {
-    return { completedTaskKeys: [], event: null, role: null };
+    return {
+      completedTaskKeys: [],
+      event: null,
+      progressedTaskKeys: [],
+      role: null,
+    };
   }
 
   const target = await getEventTargetContext(actor);
@@ -747,7 +1360,12 @@ async function recordEventSafe(actor, eventKey, options = {}) {
       eventKey,
     });
 
-    return { completedTaskKeys: [], event: null, role: null };
+    return {
+      completedTaskKeys: [],
+      event: null,
+      progressedTaskKeys: [],
+      role: null,
+    };
   }
 }
 
@@ -767,13 +1385,16 @@ module.exports = {
   buildOnboardingResponse,
   cleanupTrainingData,
   completeTask,
+  completePracticeStep,
   getAvailableRoles,
   getOverview,
   getOnboardingMetrics,
+  getTaskDetail,
   getTrainingDataSummary,
   getTrainingMode,
   getTrainingDataMarker,
   listMatchingTasks,
+  markLessonRead,
   matchesCheckpointConditions,
   recordClientEvent,
   recordEvent,
@@ -781,4 +1402,6 @@ module.exports = {
   resetProgress,
   resolveTargetRole,
   setTrainingMode,
+  startPractice,
+  submitQuizAttempt,
 };

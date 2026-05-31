@@ -20,9 +20,9 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
     },
     status: {
-      type: DataTypes.ENUM('completed', 'skipped'),
+      type: DataTypes.ENUM('in_progress', 'completed', 'skipped'),
       allowNull: false,
-      defaultValue: 'completed',
+      defaultValue: 'in_progress',
     },
     completedAt: {
       type: DataTypes.DATE,

@@ -60,7 +60,7 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   financeView: ['owner', 'manager', 'accountant', 'viewer'],
   financeExport: ['owner', 'manager', 'accountant'],
   motivationManage: ['owner', 'manager'],
-  motivationView: ['owner', 'manager', 'admin'],
+  motivationView: ['owner', 'manager', 'admin', 'accountant'],
   payrollApprove: ['owner', 'manager'],
   payrollExport: ['owner', 'manager', 'accountant'],
   payrollPay: ['owner', 'accountant'],

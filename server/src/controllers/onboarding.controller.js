@@ -24,6 +24,72 @@ class OnboardingController {
     }
   }
 
+  async getTask(req, res) {
+    try {
+      const result = await onboardingService.getTaskDetail(
+        req.account,
+        req.params.taskKey,
+        req.query,
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка получения задания обучения');
+    }
+  }
+
+  async markLessonRead(req, res) {
+    try {
+      const result = await onboardingService.markLessonRead(
+        req.account,
+        req.params.taskKey,
+        req.body,
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка обновления инструкции задания');
+    }
+  }
+
+  async startPractice(req, res) {
+    try {
+      const result = await onboardingService.startPractice(
+        req.account,
+        req.params.taskKey,
+        req.body,
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка старта практики задания');
+    }
+  }
+
+  async completePracticeStep(req, res) {
+    try {
+      const result = await onboardingService.completePracticeStep(
+        req.account,
+        req.params.taskKey,
+        req.params.stepKey,
+        req.body,
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка обновления шага задания');
+    }
+  }
+
+  async submitQuizAttempt(req, res) {
+    try {
+      const result = await onboardingService.submitQuizAttempt(
+        req.account,
+        req.params.taskKey,
+        req.body,
+      );
+      res.json(result);
+    } catch (error) {
+      sendError(res, error, 'Ошибка проверки теста задания');
+    }
+  }
+
   async recordEvent(req, res) {
     try {
       const result = await onboardingService.recordClientEvent(

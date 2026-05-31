@@ -4,16 +4,22 @@ const db = require('../../models');
 const {
   buildOnboardingResponse,
   cleanupTrainingData,
+  completePracticeStep,
   getAvailableRoles,
+  getTaskDetail,
   getTrainingMode,
   getTrainingDataMarker,
   getTrainingDataSummary,
   getOnboardingMetrics,
+  listMatchingTasks,
+  markLessonRead,
   matchesCheckpointConditions,
   recordClientEvent,
   recordEvent,
   resolveTargetRole,
   setTrainingMode,
+  startPractice,
+  submitQuizAttempt,
 } = require('../../src/services/onboarding.service');
 
 const originalEventModel = db.OnboardingEvent;
@@ -165,6 +171,97 @@ test('training data marker mirrors the active training role', async () => {
   });
 });
 
+test('guided task requires lesson, practice and quiz before completion', async () => {
+  const progressRows = new Map();
+  let trainingMode = null;
+
+  db.OnboardingProgress = {
+    async create(payload) {
+      const row = {
+        ...payload,
+        async update(nextPayload) {
+          Object.assign(row, nextPayload);
+          return row;
+        },
+      };
+      progressRows.set(payload.taskKey, row);
+      return row;
+    },
+    async findOne({ where }) {
+      return progressRows.get(where.taskKey) || null;
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async create(payload) {
+      trainingMode = {
+        ...payload,
+        async update(nextPayload) {
+          Object.assign(trainingMode, nextPayload);
+          return trainingMode;
+        },
+      };
+      return trainingMode;
+    },
+    async findOne() {
+      return trainingMode;
+    },
+  };
+
+  const actor = { id: 21, role: 'admin' };
+  const initial = await getTaskDetail(actor, 'admin.client.create');
+
+  assert.equal(initial.task.progress.status, 'not_started');
+  assert.equal(
+    'correctOptionId' in initial.task.quiz.questions[0],
+    false,
+  );
+
+  const afterLesson = await markLessonRead(actor, 'admin.client.create');
+  assert.equal(afterLesson.task.progress.status, 'in_progress');
+  assert.equal(afterLesson.task.progress.lesson.isRead, true);
+
+  const afterPracticeStart = await startPractice(actor, 'admin.client.create');
+  assert.equal(afterPracticeStart.task.progress.practice.isStarted, true);
+  assert.equal(afterPracticeStart.task.practice.steps.length, 6);
+  assert.equal(trainingMode.isEnabled, true);
+  assert.equal(trainingMode.role, 'admin');
+
+  let afterPracticeStep = afterPracticeStart;
+  for (const step of afterPracticeStart.task.practice.steps) {
+    afterPracticeStep = await completePracticeStep(
+      actor,
+      'admin.client.create',
+      step.key,
+    );
+  }
+  assert.equal(afterPracticeStep.task.progress.practice.isCompleted, true);
+  assert.equal(afterPracticeStep.task.progress.status, 'in_progress');
+
+  const failedQuiz = await submitQuizAttempt(actor, 'admin.client.create', {
+    answers: {
+      'client-required-fields': 'name-only',
+      'client-training-mode': 'training-isolated',
+    },
+  });
+  assert.equal(failedQuiz.attempt.isPassed, false);
+  assert.equal(failedQuiz.detail.task.progress.status, 'in_progress');
+  assert.equal(Boolean(failedQuiz.attempt.results[0].hint), true);
+
+  const passedQuiz = await submitQuizAttempt(actor, 'admin.client.create', {
+    answers: {
+      'client-required-fields': 'name-phone-source-note',
+      'client-training-mode': 'training-isolated',
+    },
+  });
+  assert.equal(passedQuiz.attempt.isPassed, true);
+  assert.equal(passedQuiz.detail.task.progress.quiz.isPassed, true);
+  assert.equal(passedQuiz.detail.task.progress.status, 'completed');
+  assert.equal(
+    progressRows.get('admin.client.create').status,
+    'completed',
+  );
+});
+
 test('owner can inspect training data summary by role', async () => {
   const seen = [];
   for (const name of trainingModelNames) {
@@ -301,7 +398,7 @@ test('non-owner cannot inspect onboarding metrics', async () => {
   );
 });
 
-test('recordClientEvent completes matching review task from a safe client event', async () => {
+test('recordClientEvent progresses matching review task from a safe client event', async () => {
   const progressRows = new Map();
   db.OnboardingTrainingMode = {
     async findOne() {
@@ -333,13 +430,22 @@ test('recordClientEvent completes matching review task from a safe client event'
     },
   );
 
-  assert.deepEqual(result.completedTaskKeys, ['manager.visits-analytics.review']);
+  assert.deepEqual(result.completedTaskKeys, []);
+  assert.deepEqual(result.progressedTaskKeys, ['manager.visits-analytics.review']);
   assert.equal(result.role, 'manager');
   assert.equal(result.event.eventKey, 'report.viewed');
   assert.equal(result.event.payload.source, 'client');
   assert.equal(
     progressRows.get('manager.visits-analytics.review').metadata.source,
     'event',
+  );
+  assert.equal(progressRows.get('manager.visits-analytics.review').status, 'in_progress');
+  assert.equal(
+    Boolean(
+      progressRows.get('manager.visits-analytics.review').metadata.practice
+        .completedAt,
+    ),
+    true,
   );
 });
 
@@ -518,7 +624,28 @@ test('checkpoint conditions support exact nested payload matches', () => {
   );
 });
 
-test('recordEvent stores event and completes matching tasks for training role', async () => {
+test('admin client create quest only matches the guided training payload', () => {
+  assert.deepEqual(
+    listMatchingTasks('admin', 'client.created', {
+      name: 'Иван Иванович Тестов',
+      note: '[training] создано в задании администратора',
+      phoneNormalized: '9000000999',
+      source: 'Онбординг',
+    }).map((task) => task.key),
+    ['admin.client.create'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('admin', 'client.created', {
+      name: 'Иван Иванович Тестов',
+      note: '[training] создано в задании администратора',
+      phoneNormalized: '9000000999',
+      source: 'Ресепшн (Админ)',
+    }),
+    [],
+  );
+});
+
+test('recordEvent stores event and progresses matching tasks for training role', async () => {
   const progressRows = new Map();
   db.OnboardingTrainingMode = {
     async findOne() {
@@ -550,12 +677,17 @@ test('recordEvent stores event and completes matching tasks for training role', 
     },
   );
 
-  assert.deepEqual(result.completedTaskKeys, ['admin.booking.create-phone']);
+  assert.deepEqual(result.completedTaskKeys, []);
+  assert.deepEqual(result.progressedTaskKeys, ['admin.booking.create-phone']);
   assert.equal(result.role, 'admin');
-  assert.equal(progressRows.get('admin.booking.create-phone').status, 'completed');
+  assert.equal(progressRows.get('admin.booking.create-phone').status, 'in_progress');
   assert.equal(
     progressRows.get('admin.booking.create-phone').metadata.checkpointEvent,
     'booking.created',
+  );
+  assert.equal(
+    Boolean(progressRows.get('admin.booking.create-phone').metadata.practice.completedAt),
+    true,
   );
   assert.equal(result.event.isTraining, true);
 });

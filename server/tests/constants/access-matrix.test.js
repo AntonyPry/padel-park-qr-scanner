@@ -19,6 +19,13 @@ test('manager can view finances but cannot manage finance operations', () => {
   assert.equal(ACCESS_MATRIX.financeManage.includes('manager'), false);
 });
 
+test('accountant can read payroll-related motivation data without managing motivation', () => {
+  assert.equal(ACCESS_MATRIX.financeView.includes('accountant'), true);
+  assert.equal(ACCESS_MATRIX.payrollView.includes('accountant'), true);
+  assert.equal(ACCESS_MATRIX.motivationView.includes('accountant'), true);
+  assert.equal(ACCESS_MATRIX.motivationManage.includes('accountant'), false);
+});
+
 test('admins can manage phone bookings without finance or catalog access', () => {
   assert.equal(ACCESS_MATRIX.bookingsView.includes('admin'), true);
   assert.equal(ACCESS_MATRIX.bookingsManage.includes('admin'), true);

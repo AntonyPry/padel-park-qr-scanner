@@ -17,6 +17,7 @@ const SOURCE_DIRS = [
   path.join(ROOT_DIR, 'client', 'src'),
 ];
 const CLIENT_APP_PATH = path.join(ROOT_DIR, 'client', 'src', 'App.tsx');
+const CLIENT_PUBLIC_DIR = path.join(ROOT_DIR, 'client', 'public');
 
 function walkFiles(dir) {
   if (!fs.existsSync(dir)) return [];
@@ -85,6 +86,105 @@ function collectClientRoutes() {
   );
 }
 
+function getScreenshotFilePath(src) {
+  if (typeof src !== 'string' || !src.startsWith('/')) return null;
+  return path.join(CLIENT_PUBLIC_DIR, src.replace(/^\/+/, ''));
+}
+
+function isInstructionBlockScreenshotRequired(block) {
+  if (!block || typeof block !== 'object') return false;
+  if (block.screenshotRequired === true) return true;
+  if (block.screenshotRequired === false) return false;
+  return block.type === 'step';
+}
+
+function collectInstructionScreenshotCoverage(paths) {
+  const warnings = [];
+  let screenshotCount = 0;
+  let screenshotRequiredCardCount = 0;
+  let screenshotVerifiedCardCount = 0;
+
+  for (const pathConfig of paths) {
+    for (const mission of pathConfig.missions) {
+      for (const task of mission.tasks) {
+        const lesson = task.lesson;
+        if (!lesson) continue;
+
+        const blocks = Array.isArray(lesson.blocks) ? lesson.blocks : [];
+        const screenshots = Array.isArray(lesson.screenshots)
+          ? lesson.screenshots
+          : [];
+        screenshotCount += screenshots.length;
+
+        screenshots.forEach((screenshot, screenshotIndex) => {
+          if (!screenshot?.src) {
+            warnings.push(
+              `Instruction screenshot ${task.key}[${screenshotIndex}] has no src`,
+            );
+            return;
+          }
+
+          if (!screenshot.src.startsWith('/onboarding/')) {
+            warnings.push(
+              `Instruction screenshot ${task.key}[${screenshotIndex}] must live under /onboarding/: ${screenshot.src}`,
+            );
+            return;
+          }
+
+          const filePath = getScreenshotFilePath(screenshot.src);
+          if (!filePath || !fs.existsSync(filePath)) {
+            warnings.push(
+              `Instruction screenshot file is missing for ${task.key}[${screenshotIndex}]: ${screenshot.src}`,
+            );
+          }
+        });
+
+        blocks.forEach((block, blockIndex) => {
+          const explicitIndex = block?.screenshotIndex;
+          if (
+            explicitIndex !== undefined &&
+            (!Number.isInteger(explicitIndex) ||
+              explicitIndex < 0 ||
+              explicitIndex >= screenshots.length)
+          ) {
+            warnings.push(
+              `Instruction block ${task.key}[${blockIndex}] references missing screenshotIndex ${explicitIndex}`,
+            );
+          }
+
+          if (!isInstructionBlockScreenshotRequired(block)) return;
+
+          screenshotRequiredCardCount += 1;
+          const screenshotIndex =
+            Number.isInteger(explicitIndex) ? explicitIndex : blockIndex;
+          const screenshot = screenshots[screenshotIndex];
+          const filePath = screenshot?.src
+            ? getScreenshotFilePath(screenshot.src)
+            : null;
+
+          if (filePath && fs.existsSync(filePath)) {
+            screenshotVerifiedCardCount += 1;
+            return;
+          }
+
+          warnings.push(
+            `Instruction card ${task.key}[${blockIndex}] requires a real CRM screenshot`,
+          );
+        });
+      }
+    }
+  }
+
+  return {
+    missingInstructionScreenshotCount:
+      screenshotRequiredCardCount - screenshotVerifiedCardCount,
+    screenshotCount,
+    screenshotRequiredCardCount,
+    screenshotVerifiedCardCount,
+    warnings,
+  };
+}
+
 function parseAuditArgs(argv = process.argv.slice(2)) {
   return {
     json: argv.includes('--json'),
@@ -127,6 +227,10 @@ function printHumanReport(report, options = {}) {
   console.log(`- allowed checkpoint events: ${report.allowedEventCount}`);
   console.log(`- events used by tasks: ${report.usedEventCount}`);
   console.log(`- events referenced in product code: ${report.referencedEventCount}`);
+  console.log(`- instruction screenshots: ${report.instructionScreenshotCount}`);
+  console.log(
+    `- instruction cards with required screenshots: ${report.screenshotVerifiedCardCount}/${report.screenshotRequiredCardCount}`,
+  );
   console.log('');
 
   if (report.warnings.length > 0) {
@@ -147,6 +251,7 @@ function printHumanReport(report, options = {}) {
   console.log('Next release checklist:');
   console.log('- review feature `Onboarding impact`;');
   console.log('- update catalog tasks, skills, badges and checkpoint events;');
+  console.log('- refresh instruction screenshots for changed CRM screens;');
   console.log('- run this audit before release.');
 }
 
@@ -156,6 +261,7 @@ function buildReport() {
   const usedEvents = collectUsedCheckpointEvents(paths);
   const referencedEvents = collectReferencedEvents();
   const clientRoutes = collectClientRoutes();
+  const screenshotCoverage = collectInstructionScreenshotCoverage(paths);
   const warnings = [];
   const routesMissingInClient = ONBOARDING_ROUTES.filter(
     (route) => !clientRoutes.has(route),
@@ -185,16 +291,23 @@ function buildReport() {
     );
   }
 
+  warnings.push(...screenshotCoverage.warnings);
+
   return {
     allowedEventCount: ONBOARDING_CHECKPOINT_EVENTS.length,
     clientRouteCount: clientRoutes.size,
     errors,
+    instructionScreenshotCount: screenshotCoverage.screenshotCount,
+    missingInstructionScreenshotCount:
+      screenshotCoverage.missingInstructionScreenshotCount,
     referencedEventCount: referencedEvents.size,
     routeCount: ONBOARDING_ROUTES.length,
     roles: paths.map((pathConfig) => ({
       role: pathConfig.role,
       ...countRoleStats(pathConfig),
     })),
+    screenshotRequiredCardCount: screenshotCoverage.screenshotRequiredCardCount,
+    screenshotVerifiedCardCount: screenshotCoverage.screenshotVerifiedCardCount,
     usedEventCount: usedEvents.size,
     warnings,
   };

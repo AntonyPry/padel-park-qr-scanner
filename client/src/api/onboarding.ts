@@ -18,7 +18,28 @@ export interface OnboardingTaskProgress {
   completedAt: string | null;
   isCompleted: boolean;
   isNext: boolean;
-  status: 'completed' | 'skipped' | 'not_started';
+  lesson: {
+    isRead: boolean;
+    readAt: string | null;
+  };
+  practice: {
+    activeStepKey: string | null;
+    completedAt: string | null;
+    completedStepKeys: string[];
+    isCompleted: boolean;
+    isStarted: boolean;
+    startedAt: string | null;
+    totalSteps: number;
+  };
+  quiz: {
+    attemptsCount: number;
+    isPassed: boolean;
+    lastAttemptAt: string | null;
+    lastCorrectCount: number | null;
+    passedAt: string | null;
+    totalQuestions: number;
+  };
+  status: 'completed' | 'in_progress' | 'skipped' | 'not_started';
 }
 
 export interface OnboardingTask {
@@ -33,9 +54,91 @@ export interface OnboardingTask {
   route: string;
   skills: string[];
   title: string;
+  guidance?: {
+    hasLesson: boolean;
+    hasPractice: boolean;
+    hasQuiz: boolean;
+    practiceStepCount: number;
+    quizQuestionCount: number;
+    screenshotCount: number;
+  };
   trainingMode?: {
     recommended: boolean;
   };
+}
+
+export interface OnboardingLessonBlock {
+  items?: string[];
+  screenshotIndex?: number;
+  text: string;
+  title?: string;
+  type: string;
+}
+
+export interface OnboardingLessonScreenshot {
+  alt?: string;
+  caption?: string;
+  src: string;
+}
+
+export interface OnboardingLesson {
+  blocks: OnboardingLessonBlock[];
+  screenshots: OnboardingLessonScreenshot[];
+  summary: string;
+  title: string;
+}
+
+export interface OnboardingPracticeStep {
+  description: string;
+  key: string;
+  target: string | null;
+  title: string;
+}
+
+export interface OnboardingPractice {
+  autoTrainingMode: boolean;
+  route: string;
+  steps: OnboardingPracticeStep[];
+  targetSelectors: string[];
+  testData: Record<string, unknown> | null;
+}
+
+export interface OnboardingQuizQuestion {
+  hint: string | null;
+  key: string;
+  options: Array<{ id: string; text: string }>;
+  prompt: string;
+  type: string;
+}
+
+export interface OnboardingQuiz {
+  passingScorePercent: number;
+  questions: OnboardingQuizQuestion[];
+}
+
+export interface OnboardingGuidedTask extends OnboardingTask {
+  lesson: OnboardingLesson;
+  practice: OnboardingPractice;
+  quiz: OnboardingQuiz;
+}
+
+export interface OnboardingTaskDetail {
+  availableRoles: OnboardingRoleOption[];
+  mission: {
+    description: string;
+    key: string;
+    title: string;
+  };
+  ownerRoleOverrideEnabled: boolean;
+  path: {
+    completionBadge: string;
+    description: string;
+    levelLabel: string;
+    role: AccountRole;
+    title: string;
+  };
+  selectedRole: AccountRole;
+  task: OnboardingGuidedTask;
 }
 
 export interface OnboardingMission {
@@ -165,7 +268,26 @@ export interface OnboardingClientEventPayload {
 export interface OnboardingEventResult {
   completedTaskKeys: string[];
   event: unknown;
+  progressedTaskKeys?: string[];
   role: AccountRole | null;
+}
+
+export interface OnboardingQuizAttemptResult {
+  attempt: {
+    correctCount: number;
+    isPassed: boolean;
+    results: Array<{
+      explanation: string | null;
+      hint: string | null;
+      isCorrect: boolean;
+      questionKey: string;
+      selectedOptionIds: string[];
+    }>;
+    scorePercent: number;
+    submittedAt: string;
+    totalQuestions: number;
+  };
+  detail: OnboardingTaskDetail;
 }
 
 function roleQuery(role?: AccountRole) {
@@ -191,6 +313,72 @@ export function completeOnboardingTask(taskKey: string, role?: AccountRole) {
       method: 'POST',
     },
     'Не удалось обновить прогресс обучения',
+  );
+}
+
+export function getOnboardingTaskDetail(taskKey: string, role?: AccountRole) {
+  return apiRequest<OnboardingTaskDetail>(
+    `/api/onboarding/tasks/${encodeURIComponent(taskKey)}${roleQuery(role)}`,
+    {},
+    'Не удалось загрузить задание обучения',
+  );
+}
+
+export function markOnboardingLessonRead(
+  taskKey: string,
+  role?: AccountRole,
+) {
+  return apiRequest<OnboardingTaskDetail>(
+    `/api/onboarding/tasks/${encodeURIComponent(taskKey)}/lesson-read`,
+    {
+      body: JSON.stringify({ role }),
+      method: 'POST',
+    },
+    'Не удалось отметить инструкцию прочитанной',
+  );
+}
+
+export function startOnboardingPractice(taskKey: string, role?: AccountRole) {
+  return apiRequest<OnboardingTaskDetail>(
+    `/api/onboarding/tasks/${encodeURIComponent(taskKey)}/practice-start`,
+    {
+      body: JSON.stringify({ role }),
+      method: 'POST',
+    },
+    'Не удалось начать практику задания',
+  );
+}
+
+export function completeOnboardingPracticeStep(payload: {
+  role?: AccountRole;
+  stepKey: string;
+  taskKey: string;
+}) {
+  return apiRequest<OnboardingTaskDetail>(
+    `/api/onboarding/tasks/${encodeURIComponent(payload.taskKey)}/steps/${encodeURIComponent(payload.stepKey)}`,
+    {
+      body: JSON.stringify({ role: payload.role }),
+      method: 'POST',
+    },
+    'Не удалось обновить шаг задания',
+  );
+}
+
+export function submitOnboardingQuizAttempt(payload: {
+  answers: Record<string, string | string[]>;
+  role?: AccountRole;
+  taskKey: string;
+}) {
+  return apiRequest<OnboardingQuizAttemptResult>(
+    `/api/onboarding/tasks/${encodeURIComponent(payload.taskKey)}/quiz-attempt`,
+    {
+      body: JSON.stringify({
+        answers: payload.answers,
+        role: payload.role,
+      }),
+      method: 'POST',
+    },
+    'Не удалось проверить тест задания',
   );
 }
 

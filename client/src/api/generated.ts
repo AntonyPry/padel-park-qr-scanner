@@ -29,7 +29,12 @@ export const apiEndpoints = {
   "onboarding.trainingData": { method: "GET", path: "/onboarding/training-data", responseType: "json" },
   "onboarding.trainingDataCleanup": { method: "DELETE", path: "/onboarding/training-data", responseType: "json" },
   "onboarding.metrics": { method: "GET", path: "/onboarding/metrics", responseType: "json" },
+  "onboarding.taskDetail": { method: "GET", path: "/onboarding/tasks/{taskKey}", responseType: "json" },
   "onboarding.completeTask": { method: "POST", path: "/onboarding/tasks/{taskKey}/complete", responseType: "json" },
+  "onboarding.lessonRead": { method: "POST", path: "/onboarding/tasks/{taskKey}/lesson-read", responseType: "json" },
+  "onboarding.practiceStart": { method: "POST", path: "/onboarding/tasks/{taskKey}/practice-start", responseType: "json" },
+  "onboarding.practiceStep": { method: "POST", path: "/onboarding/tasks/{taskKey}/steps/{stepKey}", responseType: "json" },
+  "onboarding.quizAttempt": { method: "POST", path: "/onboarding/tasks/{taskKey}/quiz-attempt", responseType: "json" },
   "onboarding.recordEvent": { method: "POST", path: "/onboarding/events", responseType: "json" },
   "onboarding.resetProgress": { method: "DELETE", path: "/onboarding/progress", responseType: "json" },
   "audit.list": { method: "GET", path: "/audit-logs", responseType: "json" },
@@ -300,10 +305,51 @@ export type OnboardingTrainingDataCleanupQuery = {
   role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
   [key: string]: unknown;
 };
+export type OnboardingTaskDetailParams = {
+  taskKey: string;
+};
+export type OnboardingTaskDetailQuery = {
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
 export type OnboardingCompleteTaskParams = {
   taskKey: string;
 };
 export type OnboardingCompleteTaskBody = {
+  metadata?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingLessonReadParams = {
+  taskKey: string;
+};
+export type OnboardingLessonReadBody = {
+  metadata?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingPracticeStartParams = {
+  taskKey: string;
+};
+export type OnboardingPracticeStartBody = {
+  metadata?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingPracticeStepParams = {
+  stepKey: string;
+  taskKey: string;
+};
+export type OnboardingPracticeStepBody = {
+  metadata?: Record<string, unknown> | null;
+  role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  [key: string]: unknown;
+};
+export type OnboardingQuizAttemptParams = {
+  taskKey: string;
+};
+export type OnboardingQuizAttemptBody = {
+  answers: Record<string, string | Array<string>>;
   metadata?: Record<string, unknown> | null;
   role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
   [key: string]: unknown;
@@ -1291,7 +1337,12 @@ export interface ApiEndpointRequestMap {
   "onboarding.trainingData": ApiEndpointRequest<undefined, OnboardingTrainingDataQuery, undefined>;
   "onboarding.trainingDataCleanup": ApiEndpointRequest<undefined, OnboardingTrainingDataCleanupQuery, undefined>;
   "onboarding.metrics": ApiEndpointRequest<undefined, undefined, undefined>;
+  "onboarding.taskDetail": ApiEndpointRequest<OnboardingTaskDetailParams, OnboardingTaskDetailQuery, undefined>;
   "onboarding.completeTask": ApiEndpointRequest<OnboardingCompleteTaskParams, undefined, OnboardingCompleteTaskBody>;
+  "onboarding.lessonRead": ApiEndpointRequest<OnboardingLessonReadParams, undefined, OnboardingLessonReadBody>;
+  "onboarding.practiceStart": ApiEndpointRequest<OnboardingPracticeStartParams, undefined, OnboardingPracticeStartBody>;
+  "onboarding.practiceStep": ApiEndpointRequest<OnboardingPracticeStepParams, undefined, OnboardingPracticeStepBody>;
+  "onboarding.quizAttempt": ApiEndpointRequest<OnboardingQuizAttemptParams, undefined, OnboardingQuizAttemptBody>;
   "onboarding.recordEvent": ApiEndpointRequest<undefined, undefined, OnboardingRecordEventBody>;
   "onboarding.resetProgress": ApiEndpointRequest<undefined, OnboardingResetProgressQuery, undefined>;
   "audit.list": ApiEndpointRequest<undefined, AuditListQuery, undefined>;

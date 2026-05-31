@@ -64,6 +64,16 @@ const onboardingTaskKey = z
   .min(3, 'Ключ задания обязателен')
   .max(160, 'Ключ задания слишком длинный')
   .regex(/^[a-z0-9._-]+$/, 'Ключ задания указан некорректно');
+const onboardingStepKey = z
+  .string()
+  .trim()
+  .min(1, 'Ключ шага обязателен')
+  .max(120, 'Ключ шага слишком длинный')
+  .regex(/^[a-z0-9._-]+$/, 'Ключ шага указан некорректно');
+const onboardingQuizAnswer = z.union([
+  z.string().trim(),
+  z.array(z.string().trim()),
+]);
 const paginationQuery = z
   .object({
     page: z.union([id, z.literal('')]).optional(),
@@ -507,7 +517,24 @@ const apiSchemas = {
         role: accountRoleValue.optional(),
       })
       .passthrough(),
+    progressBody: z
+      .object({
+        metadata: optionalJsonObject,
+        role: accountRoleValue.optional(),
+      })
+      .passthrough(),
+    quizAttemptBody: z
+      .object({
+        answers: z.record(z.string(), onboardingQuizAnswer),
+        metadata: optionalJsonObject,
+        role: accountRoleValue.optional(),
+      })
+      .passthrough(),
     roleQuery: z.object({ role: accountRoleValue.optional() }).passthrough(),
+    stepParams: z.object({
+      stepKey: onboardingStepKey,
+      taskKey: onboardingTaskKey,
+    }),
     taskParams: z.object({ taskKey: onboardingTaskKey }),
     trainingModeBody: z
       .object({

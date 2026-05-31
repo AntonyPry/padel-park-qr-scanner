@@ -70,7 +70,12 @@ const endpointContracts: EndpointContract[] = [
   { id: 'onboarding.trainingData', method: 'get', path: '/onboarding/training-data', query: apiSchemas.onboarding.roleQuery, summary: 'Get onboarding training data summary', tags: ['Onboarding'] },
   { id: 'onboarding.trainingDataCleanup', method: 'delete', path: '/onboarding/training-data', query: apiSchemas.onboarding.roleQuery, summary: 'Cleanup onboarding training data', tags: ['Onboarding'] },
   { id: 'onboarding.metrics', method: 'get', path: '/onboarding/metrics', summary: 'Get onboarding completion metrics by role', tags: ['Onboarding'] },
+  { id: 'onboarding.taskDetail', method: 'get', path: '/onboarding/tasks/{taskKey}', params: apiSchemas.onboarding.taskParams, query: apiSchemas.onboarding.roleQuery, summary: 'Get guided onboarding task detail', tags: ['Onboarding'] },
   { id: 'onboarding.completeTask', method: 'post', path: '/onboarding/tasks/{taskKey}/complete', body: apiSchemas.onboarding.completeBody, params: apiSchemas.onboarding.taskParams, summary: 'Mark onboarding task as completed', tags: ['Onboarding'] },
+  { id: 'onboarding.lessonRead', method: 'post', path: '/onboarding/tasks/{taskKey}/lesson-read', body: apiSchemas.onboarding.progressBody, params: apiSchemas.onboarding.taskParams, summary: 'Mark guided onboarding lesson as read', tags: ['Onboarding'] },
+  { id: 'onboarding.practiceStart', method: 'post', path: '/onboarding/tasks/{taskKey}/practice-start', body: apiSchemas.onboarding.progressBody, params: apiSchemas.onboarding.taskParams, summary: 'Start guided onboarding practice', tags: ['Onboarding'] },
+  { id: 'onboarding.practiceStep', method: 'post', path: '/onboarding/tasks/{taskKey}/steps/{stepKey}', body: apiSchemas.onboarding.progressBody, params: apiSchemas.onboarding.stepParams, summary: 'Complete guided onboarding practice step', tags: ['Onboarding'] },
+  { id: 'onboarding.quizAttempt', method: 'post', path: '/onboarding/tasks/{taskKey}/quiz-attempt', body: apiSchemas.onboarding.quizAttemptBody, params: apiSchemas.onboarding.taskParams, summary: 'Submit guided onboarding quiz attempt', tags: ['Onboarding'] },
   { id: 'onboarding.recordEvent', method: 'post', path: '/onboarding/events', body: apiSchemas.onboarding.eventBody, summary: 'Record client-side onboarding checkpoint event', tags: ['Onboarding'] },
   { id: 'onboarding.resetProgress', method: 'delete', path: '/onboarding/progress', query: apiSchemas.onboarding.roleQuery, summary: 'Reset onboarding progress for selected role', tags: ['Onboarding'] },
 

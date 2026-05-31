@@ -87,7 +87,12 @@ import {
   HelpTooltip,
   MetricLabel,
 } from '@/components/dashboard-metric';
+import { completeOnboardingPracticeStep } from '@/api/onboarding';
 import { apiFetch } from '@/lib/api';
+import {
+  getStoredActiveOnboardingQuest,
+  ONBOARDING_QUEST_EVENT,
+} from '@/lib/onboarding-quest';
 import {
   canManageClients,
   canManageCallTasks,
@@ -458,6 +463,14 @@ const EMPTY_FORM: ClientFormState = {
   webId: '',
   note: '',
   status: 'active',
+};
+
+const ADMIN_CLIENT_CREATE_QUEST = {
+  name: 'Иван Иванович Тестов',
+  note: '[training] создано в задании администратора',
+  phoneDigits: '9000000999',
+  source: 'Онбординг',
+  taskKey: 'admin.client.create',
 };
 
 const TRAINING_LEVELS: TrainingLevel[] = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
@@ -1083,6 +1096,7 @@ export default function ClientsPage() {
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const clientsRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
+  const completedQuestStepsRef = useRef<Set<string>>(new Set());
   const previousFilterResetKeyRef = useRef<string | null>(null);
   const clientForm = useForm<ClientFormState>({
     defaultValues: EMPTY_FORM,
@@ -1108,6 +1122,25 @@ export default function ClientsPage() {
       keepTouched: true,
     });
   };
+
+  const completeClientCreateQuestStep = useCallback((stepKey: string) => {
+    const quest = getStoredActiveOnboardingQuest();
+    if (quest?.taskKey !== ADMIN_CLIENT_CREATE_QUEST.taskKey) return;
+    if (completedQuestStepsRef.current.has(stepKey)) return;
+
+    completedQuestStepsRef.current.add(stepKey);
+    void completeOnboardingPracticeStep({
+      role: quest.role,
+      stepKey,
+      taskKey: quest.taskKey,
+    })
+      .then(() => {
+        window.dispatchEvent(new Event(ONBOARDING_QUEST_EVENT));
+      })
+      .catch(() => {
+        completedQuestStepsRef.current.delete(stepKey);
+      });
+  }, []);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams({
@@ -1402,6 +1435,7 @@ export default function ClientsPage() {
     setDuplicateWarning(null);
     setDuplicateWarningMessage(null);
     setFormOpen(true);
+    completeClientCreateQuestStep('open-form');
   };
 
   const openEdit = (client: Client) => {
@@ -2171,7 +2205,10 @@ export default function ClientsPage() {
             />
           </Button>
           {canEdit && (
-            <Button onClick={openCreate}>
+            <Button
+              onClick={openCreate}
+              data-onboarding-target="admin.client.create.open"
+            >
               <Plus className="mr-2 h-4 w-4" /> Клиент
             </Button>
           )}
@@ -2833,9 +2870,14 @@ export default function ClientsPage() {
                 <Input
                   required
                   value={form.name}
-                  onChange={(event) =>
-                    setForm({ ...form, name: event.target.value })
-                  }
+                  data-onboarding-target="admin.client.create.name"
+                  onChange={(event) => {
+                    const name = event.target.value;
+                    setForm({ ...form, name });
+                    if (name.trim() === ADMIN_CLIENT_CREATE_QUEST.name) {
+                      completeClientCreateQuestStep('fill-name');
+                    }
+                  }}
                 />
                 <FieldError>{clientForm.formState.errors.name?.message}</FieldError>
               </div>
@@ -2847,12 +2889,20 @@ export default function ClientsPage() {
                   required
                   inputMode="tel"
                   value={form.phone}
-                  onChange={(event) =>
+                  data-onboarding-target="admin.client.create.phone"
+                  onChange={(event) => {
+                    const phone = formatClientPhone(event.target.value);
                     setForm({
                       ...form,
-                      phone: formatClientPhone(event.target.value),
-                    })
-                  }
+                      phone,
+                    });
+                    if (
+                      getPhoneDigits(phone) ===
+                      ADMIN_CLIENT_CREATE_QUEST.phoneDigits
+                    ) {
+                      completeClientCreateQuestStep('fill-phone');
+                    }
+                  }}
                   placeholder="+7 (999) 000-00-00"
                 />
                 <FieldError>{clientForm.formState.errors.phone?.message}</FieldError>
@@ -2911,10 +2961,13 @@ export default function ClientsPage() {
                       sourceId,
                       source: source?.name || form.source,
                     });
+                    if (source?.name === ADMIN_CLIENT_CREATE_QUEST.source) {
+                      completeClientCreateQuestStep('select-source');
+                    }
                   }}
                   disabled={referencesLoading}
                 >
-                  <SelectTrigger>
+                  <SelectTrigger data-onboarding-target="admin.client.create.source">
                     <SelectValue placeholder="Выберите источник" />
                   </SelectTrigger>
                   <SelectContent>
@@ -3007,15 +3060,24 @@ export default function ClientsPage() {
               </label>
               <textarea
                 value={form.note}
-                onChange={(event) =>
-                  setForm({ ...form, note: event.target.value })
-                }
+                data-onboarding-target="admin.client.create.note"
+                onChange={(event) => {
+                  const note = event.target.value;
+                  setForm({ ...form, note });
+                  if (note.trim() === ADMIN_CLIENT_CREATE_QUEST.note) {
+                    completeClientCreateQuestStep('fill-note');
+                  }
+                }}
                 className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="Что важно знать администраторам и менеджеру"
               />
             </div>
 
-            <Button type="submit" className="w-full">
+            <Button
+              type="submit"
+              className="w-full"
+              data-onboarding-target="admin.client.create.save"
+            >
               Сохранить
             </Button>
           </form>

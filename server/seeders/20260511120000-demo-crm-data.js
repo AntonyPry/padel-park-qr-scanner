@@ -245,6 +245,22 @@ module.exports = {
         createdAt: now,
         updatedAt: now,
       },
+      {
+        name: 'Виктория Лебедева',
+        role: 'Наблюдатель',
+        phone: '+79000000105',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        name: 'Павел Романов',
+        role: 'Тренер',
+        phone: '+79000000106',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      },
     ]);
 
     const [staffRows] = await queryInterface.sequelize.query(
@@ -287,6 +303,24 @@ module.exports = {
         email: 'accountant@padelpark.demo',
         passwordHash,
         role: 'accountant',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        staffId: staffByPhone['+79000000105'],
+        email: 'viewer@padelpark.demo',
+        passwordHash,
+        role: 'viewer',
+        status: 'active',
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
+        staffId: staffByPhone['+79000000106'],
+        email: 'trainer@padelpark.demo',
+        passwordHash,
+        role: 'trainer',
         status: 'active',
         createdAt: now,
         updatedAt: now,

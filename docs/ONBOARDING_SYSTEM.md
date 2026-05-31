@@ -11,6 +11,7 @@ The onboarding system teaches CRM users by role and scenario. Instructions live 
 - API: `/api/onboarding`
 - Release guardrail: every user-facing feature must include `Onboarding impact`
 - Release workflow: `docs/ONBOARDING_RELEASE_WORKFLOW.md`
+- Screenshot workflow: `docs/ONBOARDING_SCREENSHOTS.md`
 - Audit command: `server npm run onboarding:audit`
 
 The catalog is file-based by design. New roles, missions, tasks, routes and checkpoint events should be changed in the same pull request as the feature that affects them.
@@ -32,6 +33,9 @@ Each role path contains missions. Each mission contains tasks. Each task has:
 - `badge`: short reward label for completing the task.
 - `checkpoint.event`: semantic event that should eventually auto-complete the task.
 - `trainingMode.recommended`: whether the task should preferably be done with safe demo data.
+- `lesson`: instruction card blocks and screenshots for the task detail screen.
+- `practice`: technical/future guided route metadata. It is not shown in the current card-reader UI.
+- `quiz`: technical/future knowledge-check metadata. It is not shown in the current card-reader UI.
 
 Each path also has `levelLabel` and `completionBadge`. These fields keep the in-app experience gamified without hardcoding copy in the client. When releases add or change a CRM workflow, update the task copy, skills, badge and checkpoint in the same catalog edit.
 
@@ -44,6 +48,51 @@ This allows:
 - a trainer to have trainer progress;
 - an admin to have admin progress;
 - an owner to have separate progress for `owner`, `admin`, `trainer`, `accountant` and other role paths.
+
+Statuses are `in_progress`, `completed` and `skipped`. Guided progress metadata can store three independent blocks:
+
+- `lesson.readAt`
+- `practice.startedAt`, `practice.completedAt` and completed step keys
+- `quiz.attempts`, `quiz.lastAttempt` and `quiz.passedAt`
+
+The current product UI uses the card-reader flow: a task is completed when the user reaches the last instruction card and clicks completion. Under the hood the legacy complete endpoint writes all guided metadata blocks at once, so old APIs and audits remain compatible while practice/quiz are paused.
+
+Guided task APIs:
+
+- `GET /api/onboarding/tasks/:taskKey`
+- `POST /api/onboarding/tasks/:taskKey/lesson-read`
+- `POST /api/onboarding/tasks/:taskKey/practice-start`
+- `POST /api/onboarding/tasks/:taskKey/steps/:stepKey`
+- `POST /api/onboarding/tasks/:taskKey/quiz-attempt`
+
+## Instruction Card UI
+
+The onboarding UI has two entry points:
+
+- `/admin/onboarding`: role task list grouped by missions.
+- `/admin/onboarding/:taskKey`: one instruction card per screen, with real CRM screenshots when available.
+
+The task detail page uses a simple card-reader flow:
+
+- only one card is visible at a time;
+- navigation is `Назад` / `Далее`;
+- screenshots are shown inside the card and must be real CRM screenshots for release-quality tasks;
+- the last card completes the instruction;
+- there is no `Попробовать`, no quest bar and no mini-test in the current UI.
+
+Practice targets through `data-onboarding-target` may remain in code for future interactive training, but they are not part of the active onboarding experience.
+
+Instruction screenshots live under `client/public/onboarding/<role>/<task-slug>/`.
+For release-quality instructions, `type: 'step'` cards require a real CRM screenshot by default; use `type: 'paragraph'` for text-only conceptual cards.
+
+Current release-quality coverage:
+
+- `37/37` catalog tasks have instruction-card lessons;
+- `74/74` required `step` cards have real CRM screenshots;
+- screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
+- role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
+- trainer screenshots are captured in safe mode without phone numbers or excess personal data;
+- owner role override is part of the supported QA path and must keep working for every role.
 
 ## Training mode
 
@@ -83,7 +132,7 @@ Owners can inspect and clean training data from `/api/onboarding/training-data`.
 
 Owners can inspect completion metrics from `/api/onboarding/metrics`. The endpoint aggregates active accounts, role-path starts, completed task slots, role percentages and per-task completion counts. The onboarding page shows these metrics next to training-data controls so the owner can see which roles are actually moving through the learning paths.
 
-`server npm run onboarding:audit` validates catalog shape, route allowlist, checkpoint event usage and whether catalog routes are registered in the client router. In the current baseline every checkpoint event from the catalog must be referenced either by backend product code or by client route-event code; warnings mean a release missed onboarding wiring. Use `server npm run onboarding:audit:strict` before release so warnings fail the release gate.
+`server npm run onboarding:audit` validates catalog shape, route allowlist, checkpoint event usage, screenshot files and whether catalog routes are registered in the client router. In the current baseline every checkpoint event from the catalog must be referenced either by backend product code or by client route-event code; required instruction screenshots must exist under `client/public/onboarding`. Warnings mean a release missed onboarding wiring or content assets. Use `server npm run onboarding:audit:strict` before release so warnings fail the release gate.
 
 ## Client-side review checkpoints
 
@@ -99,7 +148,7 @@ CRM services record semantic events through `onboardingService.recordEventSafe(.
 - resolves the target role from training mode or the user's own role;
 - finds tasks with the same `checkpoint.event`;
 - verifies optional checkpoint conditions against the event payload;
-- completes matching `OnboardingProgress` rows automatically.
+- marks matching task practice as progressed for future interactive training; the current card-reader UI completes tasks from the instruction page.
 
 Integrated backend product events:
 
@@ -127,6 +176,21 @@ Integrated backend product events:
 
 Use `recordEventSafe` inside product services so onboarding failures never block the user's real CRM action.
 
+## Local demo role accounts
+
+Use `server npm run seed:demo-accounts` in development to create or refresh local QA accounts for every role. The command is idempotent and local-only unless `ALLOW_DEMO_ACCOUNT_SEED=true` is set intentionally.
+
+Default credentials:
+
+- `owner@padelpark.demo`
+- `manager@padelpark.demo`
+- `admin@padelpark.demo`
+- `accountant@padelpark.demo`
+- `viewer@padelpark.demo`
+- `trainer@padelpark.demo`
+
+Password for all demo accounts: `Demo1234!`.
+
 ## Feature release workflow
 
 Feature branches should finish with:
@@ -141,14 +205,16 @@ Onboarding impact:
 - instructions/tasks to update:
 ```
 
-The onboarding branch then updates `catalog.js`, checkpoint event contracts, in-app instructions and smoke coverage before the feature ships.
+The onboarding branch then updates `catalog.js`, checkpoint event contracts, in-app instructions, screenshots and smoke coverage before the feature ships.
 
 Recommended update order after a feature release:
 
 - add or adjust checkpoint events in services;
 - update affected role missions and task copy in `catalog.js`;
 - add task `skills` and `badge` metadata;
+- refresh real CRM screenshots in `client/public/onboarding/...` when a taught screen changes;
 - mark any training-created entities with the standard training data fields;
 - keep production reports filtered away from `isTraining = true`;
 - verify owner role override can open the changed role path;
-- run catalog and onboarding service tests.
+- run catalog and onboarding service tests;
+- run the release gate from `docs/ONBOARDING_RELEASE_WORKFLOW.md`.

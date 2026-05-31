@@ -29,8 +29,29 @@ function loadLocalEnv() {
 
 loadLocalEnv();
 
-const BASE_URL = process.env.UI_SMOKE_BASE_URL || 'http://127.0.0.1:4173';
-const API_URL = process.env.UI_SMOKE_API_URL || 'http://127.0.0.1:3004/api';
+function trimTrailingSlash(value) {
+  return String(value || '').replace(/\/+$/, '');
+}
+
+function getDefaultBaseUrl() {
+  const port =
+    process.env.VITE_DEV_PORT ||
+    process.env.VITE_PREVIEW_PORT ||
+    '4173';
+
+  return `http://127.0.0.1:${port}`;
+}
+
+function getDefaultApiUrl() {
+  const baseUrl = trimTrailingSlash(
+    process.env.VITE_API_URL || 'http://127.0.0.1:3004',
+  );
+
+  return baseUrl.endsWith('/api') ? baseUrl : `${baseUrl}/api`;
+}
+
+const BASE_URL = process.env.UI_SMOKE_BASE_URL || getDefaultBaseUrl();
+const API_URL = process.env.UI_SMOKE_API_URL || getDefaultApiUrl();
 const EMAIL = process.env.UI_SMOKE_EMAIL || 'owner@padelpark.demo';
 const PASSWORD = process.env.UI_SMOKE_PASSWORD || 'Demo1234!';
 const BROWSER_CHANNEL = String(process.env.UI_SMOKE_BROWSER_CHANNEL || '').trim();
