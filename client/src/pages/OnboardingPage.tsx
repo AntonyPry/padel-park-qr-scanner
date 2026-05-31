@@ -17,6 +17,8 @@ import {
   Timer,
   Trash2,
   Trophy,
+  X,
+  ZoomIn,
 } from 'lucide-react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -41,6 +43,15 @@ import { ConfirmActionDialog } from '@/components/confirm-action-dialog';
 import { ErrorState } from '@/components/error-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -689,6 +700,78 @@ function getCardScreenshot(
   return screenshots[screenshotIndex] || screenshots[screenshots.length - 1];
 }
 
+function InstructionScreenshot({
+  screenshot,
+  title,
+}: {
+  screenshot: OnboardingGuidedTask['lesson']['screenshots'][number];
+  title: string;
+}) {
+  const alt = screenshot.alt || screenshot.caption || title;
+
+  return (
+    <Dialog>
+      <figure className="flex min-h-[260px] flex-col overflow-hidden rounded-md border bg-muted/20">
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            className="group relative flex flex-1 cursor-zoom-in items-center justify-center p-3 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="Открыть скриншот крупнее"
+          >
+            <img
+              src={screenshot.src}
+              alt={alt}
+              className="max-h-[520px] w-full object-contain"
+            />
+            <span className="pointer-events-none absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              <ZoomIn className="h-4 w-4" />
+            </span>
+          </button>
+        </DialogTrigger>
+        {screenshot.caption && (
+          <figcaption className="border-t bg-background px-3 py-2 text-xs text-muted-foreground">
+            {screenshot.caption}
+          </figcaption>
+        )}
+      </figure>
+
+      <DialogContent
+        className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden rounded-md p-0 sm:max-w-[min(1280px,calc(100vw-2rem))]"
+        overlayClassName="bg-black/70 supports-backdrop-filter:backdrop-blur-sm"
+        showCloseButton={false}
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{screenshot.caption || alt}</DialogDescription>
+        </DialogHeader>
+        <DialogClose asChild>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-sm"
+            className="absolute right-3 top-3 z-10 bg-background/90 shadow-sm"
+            aria-label="Закрыть скриншот"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </DialogClose>
+        <div className="max-h-[calc(100dvh-5rem)] overflow-auto bg-black p-2 sm:flex sm:items-center sm:justify-center sm:p-4">
+          <img
+            src={screenshot.src}
+            alt={alt}
+            className="h-auto w-[920px] max-w-none object-contain sm:max-h-[calc(100dvh-7rem)] sm:w-auto sm:max-w-full"
+          />
+        </div>
+        {screenshot.caption && (
+          <p className="border-t bg-background px-4 py-3 text-sm text-muted-foreground">
+            {screenshot.caption}
+          </p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function InstructionCardReader({
   isPending,
   onComplete,
@@ -793,20 +876,7 @@ function InstructionCardReader({
           </div>
 
           {screenshot ? (
-            <figure className="flex min-h-[260px] flex-col overflow-hidden rounded-md border bg-muted/20">
-              <div className="flex flex-1 items-center justify-center p-3">
-                <img
-                  src={screenshot.src}
-                  alt={screenshot.alt || screenshot.caption || title}
-                  className="max-h-[520px] w-full object-contain"
-                />
-              </div>
-              {screenshot.caption && (
-                <figcaption className="border-t bg-background px-3 py-2 text-xs text-muted-foreground">
-                  {screenshot.caption}
-                </figcaption>
-              )}
-            </figure>
+            <InstructionScreenshot screenshot={screenshot} title={title} />
           ) : (
             <div className="flex min-h-[260px] items-center justify-center rounded-md border bg-muted/20 px-6 text-center text-sm text-muted-foreground">
               Скриншот CRM будет добавлен в следующем контентном спринте.
