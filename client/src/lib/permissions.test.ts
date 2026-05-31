@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canAccessPath,
+  canManageBookingResources,
   canManageBookings,
   canManageClients,
   canManageFinance,
@@ -34,6 +35,8 @@ describe('permissions', () => {
   it('allows admins to operate bookings by phone', () => {
     expect(canAccessPath('admin', '/admin/bookings')).toBe(true);
     expect(canManageBookings('admin')).toBe(true);
+    expect(canManageBookingResources('admin')).toBe(false);
+    expect(canManageBookingResources('manager')).toBe(true);
     expect(canManageBookings('viewer')).toBe(false);
   });
 

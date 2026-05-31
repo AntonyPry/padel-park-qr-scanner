@@ -19,6 +19,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Columns3,
   Eye,
   ListFilter,
   Pencil,
@@ -36,18 +37,21 @@ import { addDays, format, startOfMonth, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import {
   createBooking,
+  archiveBookingResource,
   archiveBookingSeries,
   archiveBookingException,
   archiveBookingPriceRule,
   archiveCourtBlock,
   createBookingException,
   createBookingPriceRule,
+  createBookingResource,
   createBookingSeries,
   createCourtBlock,
   getBookingAnalytics,
   getBookingQuote,
   getBookingSchedule,
   getBookingSettings,
+  listBookingResources,
   listBookingResponsibles,
   listBookingHistory,
   listBookingExceptions,
@@ -56,6 +60,7 @@ import {
   previewBookingSeries,
   updateBookingException,
   updateBookingPriceRule,
+  updateBookingResource,
   updateBookingSettings,
   updateCourtBlock,
   updateBooking,
@@ -69,6 +74,7 @@ import {
   type BookingPaymentStatus,
   type BookingPriceRulePayload,
   type BookingResponsibleStaff,
+  type BookingResourcePayload,
   type BookingSeries,
   type BookingSeriesPayload,
   type BookingSeriesPreview,
@@ -115,7 +121,7 @@ import {
 } from '@/components/ui/table';
 import { HelpTooltip, MetricLabel } from '@/components/dashboard-metric';
 import { apiRequest, getApiErrorMessage } from '@/lib/api';
-import { canManageBookings } from '@/lib/permissions';
+import { canManageBookingResources, canManageBookings } from '@/lib/permissions';
 import { formatClientPhone, getPhoneDigits } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
@@ -175,10 +181,10 @@ const BOOKING_TYPE_SHORT_LABELS: Record<BookingType, string> = {
   tournament: 'Турнир',
 };
 const COURT_TYPE_LABELS: Record<BookingCourtType, string> = {
-  all: 'Все корты',
-  other: 'Другие',
-  padel_double: '2x2',
-  padel_single: '1x1',
+  all: 'Все ресурсы',
+  other: 'Другой ресурс',
+  padel_double: 'Падел 2x2',
+  padel_single: 'Падел 1x1',
 };
 const WEEKDAYS = [
   { label: 'Пн', value: 1 },
@@ -203,7 +209,7 @@ const bookingFormSchema = z
     cancellationReason: z.string(),
     clientName: z.string(),
     comment: z.string(),
-    courtId: z.string().min(1, 'Выберите корт'),
+    courtId: z.string().min(1, 'Выберите колонку календаря'),
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Укажите дату'),
     durationMinutes: z.string().regex(/^[1-9]\d*$/, 'Укажите длительность'),
     paidAmount: z.string().refine((value) => !value || Number(value) >= 0, {
@@ -315,6 +321,14 @@ interface PriceRuleDraft {
   weekdays: number[];
 }
 
+interface ResourceDraft {
+  id?: number;
+  isActive: boolean;
+  name: string;
+  sortOrder: string;
+  type: 'padel_double' | 'padel_single' | 'other';
+}
+
 interface BlockDraft {
   courtId: string;
   date: string;
@@ -388,6 +402,15 @@ function getEmptyPriceRuleDraft(): PriceRuleDraft {
     priority: '100',
     startTime: '08:00',
     weekdays: [1, 2, 3, 4, 5, 6, 7],
+  };
+}
+
+function getEmptyResourceDraft(nextSortOrder = 10): ResourceDraft {
+  return {
+    isActive: true,
+    name: '',
+    sortOrder: String(nextSortOrder),
+    type: 'other',
   };
 }
 
@@ -690,8 +713,8 @@ function buildAnalyticsCsv(report: BookingAnalytics) {
       report.total.unpaidAmount,
     ],
     [],
-    ['По кортам'],
-    ['Корт', 'Броней', 'Часы', 'Емкость', 'Загрузка %', 'План', 'Оплачено'],
+    ['По ресурсам'],
+    ['Ресурс', 'Броней', 'Часы', 'Емкость', 'Загрузка %', 'План', 'Оплачено'],
     ...report.byCourt.map((row) => [
       row.label,
       row.activeCount,
@@ -727,6 +750,7 @@ export default function BookingsPage() {
   const { account } = useAuth();
   const queryClient = useQueryClient();
   const canEditBookings = canManageBookings(account?.role);
+  const canEditBookingResources = canManageBookingResources(account?.role);
   const [searchParams, setSearchParams] = useSearchParams();
   const priceManuallyEditedRef = useRef(false);
   const priceQuoteBaselineRef = useRef('');
@@ -747,6 +771,7 @@ export default function BookingsPage() {
   );
   const [analyticsTo, setAnalyticsTo] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [editingPriceRuleId, setEditingPriceRuleId] = useState<number | null>(null);
+  const [editingResourceId, setEditingResourceId] = useState<number | null>(null);
   const [editingBlockId, setEditingBlockId] = useState<number | null>(null);
   const [editingExceptionId, setEditingExceptionId] = useState<number | null>(null);
   const [seriesOpen, setSeriesOpen] = useState(false);
@@ -778,6 +803,7 @@ export default function BookingsPage() {
     workingHoursStart: '08:00',
   });
   const [priceRuleDraft, setPriceRuleDraft] = useState<PriceRuleDraft>(getEmptyPriceRuleDraft);
+  const [resourceDraft, setResourceDraft] = useState<ResourceDraft>(() => getEmptyResourceDraft());
   const [blockDraft, setBlockDraft] = useState<BlockDraft>(() => getEmptyBlockDraft(selectedDate));
   const [exceptionDraft, setExceptionDraft] = useState<ExceptionDraft>(() => getEmptyExceptionDraft(selectedDate));
   const [lookupClient, setLookupClient] = useState<LookupClient | null>(null);
@@ -825,6 +851,11 @@ export default function BookingsPage() {
     queryFn: listBookingResponsibles,
     queryKey: queryKeys.bookings.responsibles(),
   });
+  const resourcesQuery = useQuery({
+    enabled: rulesOpen,
+    queryFn: () => listBookingResources('all'),
+    queryKey: queryKeys.bookings.resources(),
+  });
   const schedule = scheduleQuery.data;
   const analytics = analyticsQuery.data;
   const responsibles = useMemo(
@@ -833,6 +864,10 @@ export default function BookingsPage() {
   );
   const bookings = useMemo(() => schedule?.bookings ?? [], [schedule?.bookings]);
   const courts = useMemo(() => schedule?.courts ?? [], [schedule?.courts]);
+  const bookingResources = useMemo(
+    () => resourcesQuery.data ?? courts,
+    [courts, resourcesQuery.data],
+  );
   const workingHours = schedule?.workingHours;
   const isScheduleClosed = Boolean(workingHours?.isClosed);
   const stepMinutes = workingHours?.stepMinutes || DEFAULT_STEP_MINUTES;
@@ -1011,6 +1046,17 @@ export default function BookingsPage() {
   });
   const settingsMutation = useMutation({
     mutationFn: updateBookingSettings,
+    onSuccess: invalidateSchedule,
+  });
+  const resourceMutation = useMutation({
+    mutationFn: (payload: { id?: number; values: BookingResourcePayload }) =>
+      payload.id
+        ? updateBookingResource(payload.id, payload.values)
+        : createBookingResource(payload.values),
+    onSuccess: invalidateSchedule,
+  });
+  const archiveResourceMutation = useMutation({
+    mutationFn: archiveBookingResource,
     onSuccess: invalidateSchedule,
   });
   const priceRuleMutation = useMutation({
@@ -1667,6 +1713,28 @@ export default function BookingsPage() {
     });
   };
 
+  const requestArchiveResource = (resource: NonNullable<typeof resourcesQuery.data>[number]) => {
+    setPendingAction({
+      confirmLabel: 'Выключить',
+      description: `Колонка «${resource.name}» исчезнет из календаря. Если на ней есть будущие брони, постоянные брони или блокировки, CRM не даст ее выключить.`,
+      isDestructive: true,
+      title: 'Выключить колонку?',
+      onConfirm: async () => {
+        try {
+          await archiveResourceMutation.mutateAsync(resource.id);
+          if (editingResourceId === resource.id) {
+            setEditingResourceId(null);
+            setResourceDraft(getEmptyResourceDraft());
+          }
+          toast.success('Колонка выключена');
+        } catch (error) {
+          toast.error(getApiErrorMessage(error, 'Не удалось выключить колонку'));
+          return false;
+        }
+      },
+    });
+  };
+
   const requestArchiveBlock = (block: NonNullable<typeof schedule>['blocks'][number]) => {
     setPendingAction({
       confirmLabel: 'Архивировать',
@@ -1718,6 +1786,8 @@ export default function BookingsPage() {
     setRulesOpen(true);
     setBlockDraft(getEmptyBlockDraft(selectedDate, String(courts[0]?.id || '')));
     setExceptionDraft(getEmptyExceptionDraft(selectedDate));
+    setResourceDraft(getEmptyResourceDraft(Math.max(10, (courts.length + 1) * 10)));
+    setEditingResourceId(null);
     try {
       const settings = await queryClient.fetchQuery({
         queryFn: getBookingSettings,
@@ -1771,6 +1841,42 @@ export default function BookingsPage() {
         ? current.weekdays.filter((value) => value !== weekday)
         : [...current.weekdays, weekday].sort((a, b) => a - b);
       return { ...current, weekdays };
+    });
+  };
+
+  const saveResource = async () => {
+    const sortOrder = Number(resourceDraft.sortOrder || 10);
+    if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
+      toast.error('Порядок колонки должен быть целым числом от 0 до 10000');
+      return;
+    }
+
+    try {
+      await resourceMutation.mutateAsync({
+        id: editingResourceId || undefined,
+        values: {
+          isActive: resourceDraft.isActive,
+          name: resourceDraft.name,
+          sortOrder,
+          type: resourceDraft.type,
+        },
+      });
+      setEditingResourceId(null);
+      setResourceDraft(getEmptyResourceDraft(Math.max(10, (bookingResources.length + 1) * 10)));
+      toast.success('Колонка бронирования сохранена');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error, 'Не удалось сохранить колонку'));
+    }
+  };
+
+  const editResource = (resource: NonNullable<typeof resourcesQuery.data>[number]) => {
+    setEditingResourceId(resource.id);
+    setResourceDraft({
+      id: resource.id,
+      isActive: resource.isActive,
+      name: resource.name,
+      sortOrder: String(resource.sortOrder || 0),
+      type: resource.type,
     });
   };
 
@@ -1881,7 +1987,7 @@ export default function BookingsPage() {
         ),
       },
       {
-        header: 'Корт',
+        header: 'Ресурс',
         cell: ({ row }) => row.original.court?.name || '-',
       },
       {
@@ -2023,7 +2129,7 @@ export default function BookingsPage() {
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Бронирование</h1>
           <p className="mt-1 text-muted-foreground">
-            Расписание кортов и быстрые брони администратора по телефону.
+            Расписание ресурсов и быстрые брони администратора по телефону.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -2209,7 +2315,7 @@ export default function BookingsPage() {
                 <div key={court.id} className="border-b border-r p-3 text-sm font-medium">
                   <div>{court.name}</div>
                   <div className="text-xs font-normal text-muted-foreground">
-                    {court.type === 'padel_single' ? '1x1' : '2x2'}
+                    {COURT_TYPE_LABELS[court.type]}
                   </div>
                 </div>
               ))}
@@ -2398,7 +2504,7 @@ export default function BookingsPage() {
                 className="pl-9"
                 value={bookingSearch}
                 onChange={(event) => setBookingSearch(event.target.value)}
-                placeholder="Клиент, телефон, корт, комментарий"
+                placeholder="Клиент, телефон, ресурс, комментарий"
               />
             </div>
             <Select
@@ -2445,7 +2551,7 @@ export default function BookingsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="all">Все корты</SelectItem>
+                <SelectItem value="all">Все ресурсы</SelectItem>
                 {courts.map((court) => (
                   <SelectItem key={court.id} value={String(court.id)}>
                     {court.name}
@@ -2533,7 +2639,7 @@ export default function BookingsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Корт</Label>
+                <Label>Ресурс</Label>
                 <Select
                   value={courtIdValue}
                   disabled={!canEditBookings}
@@ -2868,7 +2974,7 @@ export default function BookingsPage() {
           <DialogHeader>
             <DialogTitle>Отчет по бронированиям</DialogTitle>
             <DialogDescription>
-              Загрузка кортов, деньги, статусы и источники по выбранному периоду.
+              Загрузка ресурсов, деньги, статусы и источники по выбранному периоду.
             </DialogDescription>
           </DialogHeader>
 
@@ -2960,7 +3066,7 @@ export default function BookingsPage() {
                   <Card>
                     <CardHeader className="pb-2">
                       <CardTitle>
-                        <MetricLabel tooltip="Доля занятого времени от доступной емкости активных кортов по рабочим часам и исключениям.">
+                        <MetricLabel tooltip="Доля занятого времени от доступной емкости активных ресурсов по рабочим часам и исключениям.">
                           Загрузка
                         </MetricLabel>
                       </CardTitle>
@@ -3010,7 +3116,7 @@ export default function BookingsPage() {
                 <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
                   <section className="rounded-md border">
                     <div className="border-b px-4 py-3">
-                      <div className="font-medium">Кортовая загрузка</div>
+                      <div className="font-medium">Загрузка ресурсов</div>
                       <div className="mt-1 text-sm text-muted-foreground">
                         По активным броням без отмен.
                       </div>
@@ -3019,7 +3125,7 @@ export default function BookingsPage() {
                       <Table className="min-w-[760px]">
                         <TableHeader>
                           <TableRow>
-                            <TableHead>Корт</TableHead>
+                            <TableHead>Ресурс</TableHead>
                             <TableHead className="text-right">Броней</TableHead>
                             <TableHead className="text-right">Часы</TableHead>
                             <TableHead className="text-right">Загрузка</TableHead>
@@ -3140,7 +3246,7 @@ export default function BookingsPage() {
           <DialogHeader>
             <DialogTitle>Постоянные брони</DialogTitle>
             <DialogDescription>
-              Создайте серию повторяющихся броней на один и тот же день недели, время и корт.
+              Создайте серию повторяющихся броней на один и тот же день недели, время и ресурс.
             </DialogDescription>
           </DialogHeader>
 
@@ -3235,7 +3341,7 @@ export default function BookingsPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <Label>Корт</Label>
+                  <Label>Ресурс</Label>
                   <Select
                     value={seriesDraft.courtId}
                     onValueChange={(value) => setSeriesDraft((current) => ({ ...current, courtId: value }))}
@@ -3474,7 +3580,7 @@ export default function BookingsPage() {
 	                      <div>
                         <div className="font-medium">{series.name}</div>
                         <div className="text-muted-foreground">
-                          {series.clientName} · {series.court?.name || `Корт #${series.courtId}`}
+                          {series.clientName} · {series.court?.name || `Ресурс #${series.courtId}`}
                         </div>
                       </div>
                       <Badge variant="outline">
@@ -3528,13 +3634,159 @@ export default function BookingsPage() {
         >
           <DialogHeader>
             <DialogTitle>Правила бронирования</DialogTitle>
-            <DialogDescription>
-              Рабочее время, тарифы, блокировки кортов и исключения по датам.
-            </DialogDescription>
+	            <DialogDescription>
+	              Колонки календаря, рабочее время, тарифы, блокировки и исключения по датам.
+	            </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-6">
-            <section className="rounded-md border p-4">
+	          <div className="space-y-6">
+	            <section className="rounded-md border p-4">
+	              <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+	                <div>
+	                  <RulesSectionTitle tooltip="Колонки календаря - это любые ресурсы, которые можно бронировать: корты, теннисный стол, пушка для мячей или другая зона. Активные колонки показываются в расписании.">
+	                    Колонки календаря
+	                  </RulesSectionTitle>
+	                  <p className="text-sm text-muted-foreground">
+	                    Названия колонок задают owner и manager. Тип нужен только для тарифов.
+	                  </p>
+	                </div>
+	                {!canEditBookingResources && (
+	                  <Badge variant="secondary">Только owner / manager</Badge>
+	                )}
+	              </div>
+
+	              {canEditBookingResources && (
+	                <div className="grid gap-3 md:grid-cols-[1.4fr_170px_110px_120px_auto]">
+	                  <div className="space-y-2">
+	                    <RulesFieldLabel tooltip="Название, которое администратор увидит заголовком колонки в календаре. Например: Корт 1, Теннисный стол, Пушка для мячей.">
+	                      Название
+	                    </RulesFieldLabel>
+	                    <Input
+	                      value={resourceDraft.name}
+	                      onChange={(event) =>
+	                        setResourceDraft((current) => ({ ...current, name: event.target.value }))
+	                      }
+	                      placeholder="Например: Корт 1"
+	                    />
+	                  </div>
+	                  <div className="space-y-2">
+	                    <RulesFieldLabel tooltip="Группа для автоматического расчета цены. Для нестандартных ресурсов выберите «Другой ресурс» и создайте тариф для этого типа.">
+	                      Тип тарифа
+	                    </RulesFieldLabel>
+	                    <Select
+	                      value={resourceDraft.type}
+	                      onValueChange={(value) =>
+	                        setResourceDraft((current) => ({
+	                          ...current,
+	                          type: value as ResourceDraft['type'],
+	                        }))
+	                      }
+	                    >
+	                      <SelectTrigger><SelectValue /></SelectTrigger>
+	                      <SelectContent>
+	                        <SelectItem value="padel_double">Падел 2x2</SelectItem>
+	                        <SelectItem value="padel_single">Падел 1x1</SelectItem>
+	                        <SelectItem value="other">Другой ресурс</SelectItem>
+	                      </SelectContent>
+	                    </Select>
+	                  </div>
+	                  <div className="space-y-2">
+	                    <RulesFieldLabel tooltip="Чем меньше число, тем левее колонка стоит в календаре. Обычно удобно использовать 10, 20, 30, чтобы между ними можно было вставить новую колонку.">
+	                      Порядок
+	                    </RulesFieldLabel>
+	                    <Input
+	                      inputMode="numeric"
+	                      value={resourceDraft.sortOrder}
+	                      onChange={(event) =>
+	                        setResourceDraft((current) => ({ ...current, sortOrder: event.target.value }))
+	                      }
+	                    />
+	                  </div>
+	                  <label className="flex items-end gap-2 pb-2 text-sm">
+	                    <input
+	                      type="checkbox"
+	                      checked={resourceDraft.isActive}
+	                      onChange={(event) =>
+	                        setResourceDraft((current) => ({ ...current, isActive: event.target.checked }))
+	                      }
+	                    />
+	                    Активна
+	                  </label>
+	                  <div className="flex items-end gap-2">
+	                    {editingResourceId && (
+	                      <Button
+	                        type="button"
+	                        variant="outline"
+	                        onClick={() => {
+	                          setEditingResourceId(null);
+	                          setResourceDraft(getEmptyResourceDraft(Math.max(10, (bookingResources.length + 1) * 10)));
+	                        }}
+	                      >
+	                        Сбросить
+	                      </Button>
+	                    )}
+	                    <Button
+	                      type="button"
+	                      onClick={() => void saveResource()}
+	                      disabled={resourceMutation.isPending}
+	                    >
+	                      <Columns3 className="mr-2 size-4" />
+	                      {editingResourceId ? 'Сохранить' : 'Добавить'}
+	                    </Button>
+	                  </div>
+	                </div>
+	              )}
+
+	              <div className="mt-4 divide-y rounded-md border">
+	                {resourcesQuery.isLoading && (
+	                  <div className="p-4 text-sm text-muted-foreground">Загрузка колонок...</div>
+	                )}
+	                {resourcesQuery.isError && (
+	                  <div className="p-3">
+	                    <InlineQueryError
+	                      error={resourcesQuery.error}
+	                      fallback="Не удалось загрузить колонки календаря"
+	                      onRetry={() => void resourcesQuery.refetch()}
+	                    />
+	                  </div>
+	                )}
+	                {!resourcesQuery.isError && bookingResources.map((resource) => (
+	                  <div key={resource.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
+	                    <div className="min-w-[220px] flex-1">
+	                      <div className="font-medium">{resource.name}</div>
+	                      <div className="text-muted-foreground">
+	                        {COURT_TYPE_LABELS[resource.type]} · порядок {resource.sortOrder}
+	                      </div>
+	                    </div>
+	                    <Badge variant={resource.isActive ? 'outline' : 'secondary'}>
+	                      {resource.isActive ? 'Активна' : 'Выключена'}
+	                    </Badge>
+	                    {canEditBookingResources && (
+	                      <>
+	                        <Button size="sm" variant="outline" onClick={() => editResource(resource)}>
+	                          <Pencil className="mr-2 size-4" />
+	                          Изменить
+	                        </Button>
+	                        <Button
+	                          size="icon"
+	                          variant="ghost"
+	                          onClick={() => requestArchiveResource(resource)}
+	                          disabled={!resource.isActive}
+	                          title="Выключить колонку"
+	                        >
+	                          <Trash2 className="size-4" />
+	                        </Button>
+	                      </>
+	                    )}
+	                  </div>
+	                ))}
+	                {!resourcesQuery.isLoading && !resourcesQuery.isError && bookingResources.length === 0 && (
+	                  <div className="p-4 text-sm text-muted-foreground">Колонки календаря еще не созданы.</div>
+	                )}
+	              </div>
+	            </section>
+
+	            <section className="rounded-md border p-4">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <RulesSectionTitle tooltip="Базовые правила клуба для обычного дня. Они определяют доступные интервалы в расписании и ограничения на действия с бронью.">
@@ -3562,7 +3814,7 @@ export default function BookingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <RulesFieldLabel tooltip="До этого времени можно бронировать корты в обычный день. Значение 24:00 означает конец календарного дня.">
+                  <RulesFieldLabel tooltip="До этого времени можно бронировать ресурсы в обычный день. Значение 24:00 означает конец календарного дня.">
                     Закрытие
                   </RulesFieldLabel>
                   <Input
@@ -3610,7 +3862,7 @@ export default function BookingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <RulesFieldLabel tooltip="За сколько часов до начала бронь еще можно перенести на другое время или корт. 0 означает, что ограничение по времени сейчас не применяется.">
+                  <RulesFieldLabel tooltip="За сколько часов до начала бронь еще можно перенести на другое время или ресурс. 0 означает, что ограничение по времени сейчас не применяется.">
                     Перенос, ч
                   </RulesFieldLabel>
                   <Input
@@ -3631,7 +3883,7 @@ export default function BookingsPage() {
                     Тарифы
                   </RulesSectionTitle>
                   <p className="text-sm text-muted-foreground">
-                    Цена считается по сегментам времени и типу корта.
+                    Цена считается по сегментам времени и типу ресурса.
                   </p>
                 </div>
                 <Button
@@ -3657,8 +3909,8 @@ export default function BookingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <RulesFieldLabel tooltip="К каким кортам применяется тариф. «Все корты» работает как общее правило, если нет более точного тарифа.">
-                    Тип корта
+                  <RulesFieldLabel tooltip="К каким ресурсам применяется тариф. «Все ресурсы» работает как общее правило, если нет более точного тарифа.">
+                    Тип ресурса
                   </RulesFieldLabel>
                   <Select
                     value={priceRuleDraft.courtType}
@@ -3782,8 +4034,8 @@ export default function BookingsPage() {
             </section>
 
             <section className="rounded-md border p-4">
-              <RulesSectionTitle tooltip="Блокировка закрывает конкретный корт на точный интервал: ремонт, турнир, уборка или внутренняя тренировка. На это время нельзя создать или перенести бронь.">
-                Блокировки кортов
+              <RulesSectionTitle tooltip="Блокировка закрывает конкретный ресурс на точный интервал: ремонт, турнир, уборка или внутренняя тренировка. На это время нельзя создать или перенести бронь.">
+                Блокировки ресурсов
               </RulesSectionTitle>
               <div className="mt-3 grid gap-3 md:grid-cols-[150px_150px_110px_110px_1fr_auto]">
                 <div className="space-y-2">
@@ -3797,14 +4049,14 @@ export default function BookingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <RulesFieldLabel tooltip="Корт, который временно недоступен для бронирования. Остальные корты продолжают работать по обычным правилам.">
-                    Корт
+                  <RulesFieldLabel tooltip="Ресурс, который временно недоступен для бронирования. Остальные ресурсы продолжают работать по обычным правилам.">
+                    Ресурс
                   </RulesFieldLabel>
                   <Select
                     value={blockDraft.courtId || String(courts[0]?.id || '')}
                     onValueChange={(value) => setBlockDraft((current) => ({ ...current, courtId: value }))}
                   >
-                    <SelectTrigger><SelectValue placeholder="Корт" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Ресурс" /></SelectTrigger>
                     <SelectContent>
                       {courts.map((court) => (
                         <SelectItem key={court.id} value={String(court.id)}>{court.name}</SelectItem>
@@ -3813,7 +4065,7 @@ export default function BookingsPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
-                  <RulesFieldLabel tooltip="Время начала недоступности корта.">
+                  <RulesFieldLabel tooltip="Время начала недоступности ресурса.">
                     Начало
                   </RulesFieldLabel>
                   <Input
@@ -3823,7 +4075,7 @@ export default function BookingsPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <RulesFieldLabel tooltip="Время, с которого корт снова доступен для бронирования.">
+                  <RulesFieldLabel tooltip="Время, с которого ресурс снова доступен для бронирования.">
                     Окончание
                   </RulesFieldLabel>
                   <Input
@@ -3859,7 +4111,7 @@ export default function BookingsPage() {
 	                {!scheduleQuery.isError && (schedule?.blocks || []).map((block) => (
 	                  <div key={block.id} className="flex flex-wrap items-center gap-3 p-3 text-sm">
 	                    <div className="min-w-[220px] flex-1">
-	                      <div className="font-medium">{block.court?.name || `Корт #${block.courtId}`}</div>
+	                      <div className="font-medium">{block.court?.name || `Ресурс #${block.courtId}`}</div>
                       <div className="text-muted-foreground">
                         {formatDateTime(block.startsAt)}-{formatTime(block.endsAt)} · {block.reason}
                       </div>
@@ -4000,7 +4252,7 @@ export default function BookingsPage() {
               <div className="rounded-md border bg-muted/20 p-3 text-sm">
                 <div className="font-medium">{seriesArchiveTarget.name}</div>
                 <div className="text-muted-foreground">
-                  {seriesArchiveTarget.clientName} · {seriesArchiveTarget.court?.name || `Корт #${seriesArchiveTarget.courtId}`} · {seriesArchiveTarget.startTime}
+                  {seriesArchiveTarget.clientName} · {seriesArchiveTarget.court?.name || `Ресурс #${seriesArchiveTarget.courtId}`} · {seriesArchiveTarget.startTime}
                 </div>
                 <div className="mt-1 text-muted-foreground">
                   Будущих активных броней: {seriesArchiveTarget.futureActiveBookingsCount || 0}
@@ -4065,7 +4317,7 @@ export default function BookingsPage() {
               <div className="rounded-md border bg-muted/20 p-3 text-sm">
                 <div className="font-medium">{paymentBooking.clientName}</div>
                 <div className="text-muted-foreground">
-                  {paymentBooking.court?.name || `Корт #${paymentBooking.courtId}`} · {formatTime(paymentBooking.startsAt)}-{formatTime(paymentBooking.endsAt)}
+                  {paymentBooking.court?.name || `Ресурс #${paymentBooking.courtId}`} · {formatTime(paymentBooking.startsAt)}-{formatTime(paymentBooking.endsAt)}
                 </div>
                 <div className="mt-2">
                   К оплате: <span className="font-semibold">{formatCurrency(paymentBooking.price)}</span>
@@ -4123,7 +4375,7 @@ export default function BookingsPage() {
               <div className="rounded-md border bg-muted/20 p-3 text-sm">
                 <div className="font-medium">{cancelBooking.clientName}</div>
                 <div className="text-muted-foreground">
-                  {cancelBooking.court?.name || `Корт #${cancelBooking.courtId}`} · {formatTime(cancelBooking.startsAt)}-{formatTime(cancelBooking.endsAt)}
+                  {cancelBooking.court?.name || `Ресурс #${cancelBooking.courtId}`} · {formatTime(cancelBooking.startsAt)}-{formatTime(cancelBooking.endsAt)}
                 </div>
               </div>
               <div className="space-y-2">

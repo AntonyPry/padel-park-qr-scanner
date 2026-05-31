@@ -35,6 +35,9 @@ export const apiEndpoints = {
   "audit.list": { method: "GET", path: "/audit-logs", responseType: "json" },
   "bookings.schedule": { method: "GET", path: "/bookings/schedule", responseType: "json" },
   "bookings.courts": { method: "GET", path: "/bookings/courts", responseType: "json" },
+  "bookings.courtCreate": { method: "POST", path: "/bookings/courts", responseType: "json" },
+  "bookings.courtUpdate": { method: "PUT", path: "/bookings/courts/{id}", responseType: "json" },
+  "bookings.courtArchive": { method: "DELETE", path: "/bookings/courts/{id}", responseType: "json" },
   "bookings.responsibles": { method: "GET", path: "/bookings/responsibles", responseType: "json" },
   "bookings.analytics": { method: "GET", path: "/bookings/analytics", responseType: "json" },
   "bookings.settings": { method: "GET", path: "/bookings/settings", responseType: "json" },
@@ -329,6 +332,30 @@ export type BookingsScheduleQuery = {
   date?: string | "";
   status?: "all" | "new" | "confirmed" | "canceled" | "arrived" | "no_show";
   [key: string]: unknown;
+};
+export type BookingsCourtsQuery = {
+  status?: "active" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type BookingsCourtCreateBody = {
+  isActive?: boolean;
+  name: string;
+  sortOrder?: number | string | "" | null;
+  type?: "padel_double" | "padel_single" | "other";
+  [key: string]: unknown;
+};
+export type BookingsCourtUpdateParams = {
+  id: number | string;
+};
+export type BookingsCourtUpdateBody = {
+  isActive?: boolean;
+  name?: string;
+  sortOrder?: number | string | "" | null;
+  type?: "padel_double" | "padel_single" | "other";
+  [key: string]: unknown;
+};
+export type BookingsCourtArchiveParams = {
+  id: number | string;
 };
 export type BookingsAnalyticsQuery = {
   from?: string | "";
@@ -1269,7 +1296,10 @@ export interface ApiEndpointRequestMap {
   "onboarding.resetProgress": ApiEndpointRequest<undefined, OnboardingResetProgressQuery, undefined>;
   "audit.list": ApiEndpointRequest<undefined, AuditListQuery, undefined>;
   "bookings.schedule": ApiEndpointRequest<undefined, BookingsScheduleQuery, undefined>;
-  "bookings.courts": ApiEndpointRequest<undefined, undefined, undefined>;
+  "bookings.courts": ApiEndpointRequest<undefined, BookingsCourtsQuery, undefined>;
+  "bookings.courtCreate": ApiEndpointRequest<undefined, undefined, BookingsCourtCreateBody>;
+  "bookings.courtUpdate": ApiEndpointRequest<BookingsCourtUpdateParams, undefined, BookingsCourtUpdateBody>;
+  "bookings.courtArchive": ApiEndpointRequest<BookingsCourtArchiveParams, undefined, undefined>;
   "bookings.responsibles": ApiEndpointRequest<undefined, undefined, undefined>;
   "bookings.analytics": ApiEndpointRequest<undefined, BookingsAnalyticsQuery, undefined>;
   "bookings.settings": ApiEndpointRequest<undefined, undefined, undefined>;

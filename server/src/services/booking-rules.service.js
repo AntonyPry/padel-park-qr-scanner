@@ -321,7 +321,7 @@ async function assertNoBlockConflict({ courtId, endsAt, startsAt, transaction })
     },
   });
   if (block) {
-    throw appError(`Корт заблокирован: ${block.reason}`, 409, {
+    throw appError(`Ресурс заблокирован: ${block.reason}`, 409, {
       block: mapBlock(block),
       code: 'COURT_BLOCK_CONFLICT',
     });
@@ -399,7 +399,7 @@ function normalizePriceRulePayload(data, current = {}) {
     data.endTime ?? current.endTime ?? '24:00',
   );
   const courtType = String(data.courtType ?? current.courtType ?? 'all');
-  if (!COURT_TYPES.has(courtType)) throw appError('Некорректный тип корта');
+  if (!COURT_TYPES.has(courtType)) throw appError('Некорректный тип ресурса');
   return {
     courtType,
     endTime,
@@ -454,14 +454,14 @@ async function lockCourts(courtIds, transaction) {
   const courtsById = new Map(courts.map((court) => [Number(court.id), court]));
   ids.forEach((id) => {
     const court = courtsById.get(id);
-    if (!court || !court.isActive) throw appError('Корт не найден или выключен', 404);
+    if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   });
   return courtsById;
 }
 
 async function calculateQuote({ courtId, durationMinutes, startsAt }) {
   const court = await db.Court.findByPk(Number(courtId));
-  if (!court || !court.isActive) throw appError('Корт не найден или выключен', 404);
+  if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   const start = normalizeDate(startsAt, 'Время начала');
   const duration = normalizeInteger(durationMinutes, 'Длительность', 1, 720);
   const end = new Date(start.getTime() + duration * 60000);
@@ -543,12 +543,12 @@ async function assertNoBookingConflictForBlock({ courtId, endsAt, excludeBlockId
   };
   if (excludeBlockId) blockWhere.id = { [Op.ne]: Number(excludeBlockId) };
   const block = await db.CourtBlock.findOne({ transaction, where: blockWhere });
-  if (block) throw appError('На это время уже есть блокировка корта', 409);
+  if (block) throw appError('На это время уже есть блокировка ресурса', 409);
 }
 
 async function buildBlockPayload(data, account, transaction) {
   const court = await db.Court.findByPk(Number(data.courtId), { transaction });
-  if (!court || !court.isActive) throw appError('Корт не найден или выключен', 404);
+  if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   const startsAt = normalizeDate(data.startsAt, 'Время начала блокировки');
   const endsAt = normalizeDate(data.endsAt, 'Время окончания блокировки');
   if (endsAt <= startsAt) throw appError('Окончание блокировки должно быть позже начала');

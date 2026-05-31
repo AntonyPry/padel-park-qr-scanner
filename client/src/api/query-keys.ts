@@ -16,6 +16,7 @@ export const queryKeys = {
     history: (id: number | null) => [...queryKeys.bookings.all, 'history', id] as const,
     priceRules: () => [...queryKeys.bookings.all, 'price-rules'] as const,
     responsibles: () => [...queryKeys.bookings.all, 'responsibles'] as const,
+    resources: () => [...queryKeys.bookings.all, 'resources'] as const,
     schedule: (date: string) => [...queryKeys.bookings.all, 'schedule', date] as const,
     series: () => [...queryKeys.bookings.all, 'series'] as const,
     settings: () => [...queryKeys.bookings.all, 'settings'] as const,

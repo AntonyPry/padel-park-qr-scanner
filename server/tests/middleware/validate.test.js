@@ -171,6 +171,27 @@ test('accepts booking payload used by the phone booking page', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('accepts booking resource payload for custom calendar columns', () => {
+  const middleware = validate({ body: apiSchemas.bookings.resourceBody });
+  const req = {
+    body: {
+      isActive: true,
+      name: 'Теннисный стол',
+      sortOrder: 70,
+      type: 'other',
+    },
+  };
+  const res = createResponse();
+  let nextCalled = false;
+
+  middleware(req, res, () => {
+    nextCalled = true;
+  });
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
 test('rejects operational statuses for future booking series', () => {
   const { nextCalled, res } = runValidation(
     { body: apiSchemas.bookings.seriesBody },

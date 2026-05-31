@@ -9,6 +9,7 @@ const { apiSchemas } = require('../contracts/api-schemas');
 const router = express.Router();
 const viewBookings = requireRole(...ACCESS_MATRIX.bookingsView);
 const manageBookings = requireRole(...ACCESS_MATRIX.bookingsManage);
+const manageBookingResources = requireRole('owner', 'manager');
 
 router.get(
   '/bookings/schedule',
@@ -16,7 +17,30 @@ router.get(
   validate({ query: apiSchemas.bookings.scheduleQuery }),
   bookingsController.getSchedule,
 );
-router.get('/bookings/courts', viewBookings, bookingsController.getCourts);
+router.get(
+  '/bookings/courts',
+  viewBookings,
+  validate({ query: apiSchemas.bookings.statusQuery }),
+  bookingsController.getCourts,
+);
+router.post(
+  '/bookings/courts',
+  manageBookingResources,
+  validate({ body: apiSchemas.bookings.resourceBody }),
+  bookingsController.createCourt,
+);
+router.put(
+  '/bookings/courts/:id',
+  manageBookingResources,
+  validate({ body: apiSchemas.bookings.resourceBody.partial().passthrough(), params: apiSchemas.bookings.params }),
+  bookingsController.updateCourt,
+);
+router.delete(
+  '/bookings/courts/:id',
+  manageBookingResources,
+  validate({ params: apiSchemas.bookings.params }),
+  bookingsController.archiveCourt,
+);
 router.get('/bookings/responsibles', viewBookings, bookingsController.getResponsibles);
 router.get(
   '/bookings/analytics',

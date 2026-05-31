@@ -729,7 +729,7 @@ export default function TelephonyPage() {
         <MetricCard
           icon={<PhoneIncoming className="h-3.5 w-3.5" />}
           label="Пропущенные"
-          tooltip="Звонки со статусом missed. По известным клиентам CRM создает задачу перезвона."
+          tooltip="Звонки со статусом missed. CRM создает задачу перезвона для каждого свежего пропущенного входящего звонка, даже если номер еще не заведен как клиент."
           value={stats?.missed ?? '...'}
           valueClassName={(stats?.missed || 0) > 0 ? 'text-destructive' : ''}
         />
@@ -1207,10 +1207,15 @@ export default function TelephonyPage() {
                   'Неизвестный номер'
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">
-                {call.client?.phone || call.clientPhone || 'Телефон не распознан'}
+                <div className="text-xs text-muted-foreground">
+                  {call.client?.phone || call.clientPhone || 'Телефон не распознан'}
+                </div>
+                {call.isNewClient && (
+                  <Badge variant="secondary" className="mt-2">
+                    Новый номер
+                  </Badge>
+                )}
               </div>
-            </div>
 
             <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
               <div>
@@ -1326,6 +1331,11 @@ export default function TelephonyPage() {
                   <div className="text-xs text-muted-foreground">
                     {call.client?.phone || call.clientPhone || 'Телефон не распознан'}
                   </div>
+                  {call.isNewClient && (
+                    <Badge variant="secondary" className="mt-1">
+                      Новый номер
+                    </Badge>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div>{DIRECTION_LABELS[call.direction]}</div>
@@ -1543,9 +1553,14 @@ export default function TelephonyPage() {
           {clientDialogCall && (
             <div className="space-y-4">
               <div className="rounded-md border p-3 text-sm">
-                <div className="font-medium">
-                  {clientDialogCall.client?.name || 'Клиент пока не привязан'}
-                </div>
+	                <div className="flex flex-wrap items-center gap-2">
+	                  <span className="font-medium">
+	                    {clientDialogCall.client?.name || 'Клиент пока не привязан'}
+	                  </span>
+	                  {clientDialogCall.isNewClient && (
+	                    <Badge variant="secondary">Новый номер</Badge>
+	                  )}
+	                </div>
                 <div className="text-muted-foreground">
                   {clientDialogCall.clientPhone || 'Телефон в событии не распознан'}
                   {' · '}

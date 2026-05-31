@@ -23,6 +23,13 @@ export interface Court {
   type: 'padel_double' | 'padel_single' | 'other';
 }
 
+export interface BookingResourcePayload {
+  isActive?: boolean;
+  name: string;
+  sortOrder?: number;
+  type?: 'padel_double' | 'padel_single' | 'other';
+}
+
 export interface BookingClient {
   id: number;
   name: string;
@@ -356,6 +363,34 @@ export async function listBookingResponsibles() {
   );
 }
 
+export async function listBookingResources(status: BookingRuleStatus | 'all' = 'active') {
+  return apiRequest<Court[]>(
+    `/api/bookings/courts?status=${encodeURIComponent(status)}`,
+    {},
+    'Не удалось получить колонки бронирования',
+  );
+}
+
+export async function createBookingResource(payload: BookingResourcePayload) {
+  return apiRequest<Court>('/api/bookings/courts', {
+    body: JSON.stringify(payload),
+    method: 'POST',
+  }, 'Не удалось создать колонку бронирования');
+}
+
+export async function updateBookingResource(id: number, payload: Partial<BookingResourcePayload>) {
+  return apiRequest<Court>(`/api/bookings/courts/${id}`, {
+    body: JSON.stringify(payload),
+    method: 'PUT',
+  }, 'Не удалось обновить колонку бронирования');
+}
+
+export async function archiveBookingResource(id: number) {
+  return apiRequest<Court>(`/api/bookings/courts/${id}`, {
+    method: 'DELETE',
+  }, 'Не удалось выключить колонку бронирования');
+}
+
 export async function createBooking(payload: BookingPayload) {
   return apiRequest<Booking>('/api/bookings', {
     body: JSON.stringify(payload),
@@ -419,7 +454,7 @@ export async function listCourtBlocks(date: string, status: BookingRuleStatus | 
   return apiRequest<CourtBlock[]>(
     `/api/bookings/blocks?date=${encodeURIComponent(date)}&status=${encodeURIComponent(status)}`,
     {},
-    'Не удалось получить блокировки кортов',
+    'Не удалось получить блокировки ресурсов',
   );
 }
 

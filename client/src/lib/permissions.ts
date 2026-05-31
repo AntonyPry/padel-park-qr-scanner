@@ -59,6 +59,10 @@ export function canManageBookings(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'admin']);
 }
 
+export function canManageBookingResources(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
 export function canViewTrainingNotes(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'trainer']);
 }

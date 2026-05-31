@@ -33,7 +33,7 @@ const PROCESSING_STATUSES = new Set([
   'ignored',
 ]);
 const SUBSCRIPTION_TYPES = new Set(['BASIC_CALL', 'ADVANCED_CALL']);
-const DEFAULT_MISSED_CALL_DEADLINE_MINUTES = 5;
+const DEFAULT_MISSED_CALL_DEADLINE_MINUTES = 15;
 const DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS = 10 * 60;
 const DEFAULT_REPORT_DAYS = 30;
 const SUBSCRIPTION_LOCK_NAME = 'padel_park_beeline_xsi_subscription';
@@ -770,6 +770,12 @@ function mapCall(row, actor = null) {
   const mapped = {
     ...raw,
     client: raw.client || null,
+    isNewClient: Boolean(
+      raw.direction === 'inbound' &&
+        raw.clientPhoneNormalized &&
+        !raw.userId &&
+        !raw.client,
+    ),
     processedByAccount: mapAccount(raw.processedByAccount),
   };
 
@@ -893,7 +899,6 @@ async function createMissedCallTask(call, transaction = undefined) {
   if (
     call.callStatus !== 'missed' ||
     call.direction !== 'inbound' ||
-    !call.userId ||
     call.followUpCallTaskId
   ) {
     return null;
@@ -901,48 +906,34 @@ async function createMissedCallTask(call, transaction = undefined) {
 
   const referenceDate = call.startedAt ? new Date(call.startedAt) : new Date();
   const ageMs = Date.now() - referenceDate.getTime();
-  if (Number.isFinite(ageMs) && ageMs > 15 * 60 * 1000) return null;
+  if (
+    Number.isFinite(ageMs) &&
+    ageMs > DEFAULT_MISSED_CALL_DEADLINE_MINUTES * 60 * 1000
+  ) {
+    return null;
+  }
 
   const dueAt = new Date(referenceDate.getTime() + DEFAULT_MISSED_CALL_DEADLINE_MINUTES * 60 * 1000);
-  const client = await db.User.findByPk(call.userId, { transaction });
-  if (!client) return null;
-  const existingTaskClient = await db.CallTaskClient.findOne({
-    include: [
-      {
-        as: 'callTask',
-        model: db.CallTask,
-        required: true,
-        where: {
-          status: { [Op.in]: ['backlog', 'in_progress'] },
-        },
-      },
-    ],
-    order: [['createdAt', 'DESC']],
-    transaction,
-    where: {
-      status: { [Op.in]: ['new', 'no_answer', 'callback', 'doubting'] },
-      userId: client.id,
-    },
-  });
-  if (existingTaskClient) {
-    await call.update(
-      { followUpCallTaskId: existingTaskClient.callTaskId },
-      { transaction },
-    );
-    return existingTaskClient.callTask;
-  }
+  const client = call.userId
+    ? await db.User.findByPk(call.userId, { transaction })
+    : null;
+  const fallbackName = call.clientPhone || 'Новый клиент';
+  const taskTitleName = client?.name || fallbackName;
 
   const task = await db.CallTask.create(
     {
       assignedToAccountId: null,
       clientBaseId: null,
       createdByAccountId: null,
-      description: `Автоматически создано из пропущенного звонка ${call.clientPhone || ''}`.trim(),
+      description: [
+        `Автоматически создано из пропущенного звонка ${call.clientPhone || ''}`.trim(),
+        client ? null : 'Номер не найден в клиентской базе CRM.',
+      ].filter(Boolean).join(' '),
       dueAt,
       scopeType: 'snapshot',
       snapshotClientCount: 1,
       status: 'backlog',
-      title: `Перезвонить: ${client.name}`,
+      title: `Перезвонить: ${taskTitleName}`,
     },
     { transaction },
   );
@@ -950,12 +941,12 @@ async function createMissedCallTask(call, transaction = undefined) {
   await db.CallTaskClient.create(
     {
       callTaskId: task.id,
-      clientName: client.name,
-      clientPhone: client.phone,
+      clientName: client?.name || fallbackName,
+      clientPhone: client?.phone || call.clientPhone || null,
       deadlineAt: dueAt,
-      source: client.source,
+      source: client?.source || 'Новый номер из звонка',
       status: 'new',
-      userId: client.id,
+      userId: client?.id || null,
       visitCount: 0,
     },
     { transaction },

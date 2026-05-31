@@ -53,6 +53,7 @@ export interface TelephonyCall {
   } | null;
   id: number;
   interest?: TelephonyInterest | null;
+  isNewClient?: boolean;
   nextActionAt?: string | null;
   nextActionText?: string | null;
   processedAt?: string | null;

@@ -237,6 +237,14 @@ const bookingPriceRuleBody = z
     weekdays: z.array(bookingWeekday).min(1).optional(),
   })
   .passthrough();
+const bookingResourceBody = z
+  .object({
+    isActive: z.boolean().optional(),
+    name: nameString,
+    sortOrder: optionalNonNegativeNumberValue,
+    type: z.enum(['padel_double', 'padel_single', 'other']).optional(),
+  })
+  .passthrough();
 const bookingBlockBody = z
   .object({
     courtId: id,
@@ -435,6 +443,7 @@ const apiSchemas = {
     exceptionBody: bookingExceptionBody,
     params: idParams,
     priceRuleBody: bookingPriceRuleBody,
+    resourceBody: bookingResourceBody,
     quoteQuery: z
       .object({
         courtId: id,

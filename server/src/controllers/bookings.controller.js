@@ -14,11 +14,35 @@ class BookingsController {
     }
   }
 
-  async getCourts(_req, res) {
+  async getCourts(req, res) {
     try {
-      res.json(await bookingsService.listCourts());
+      res.json(await bookingsService.listBookingResources(req.query));
     } catch (error) {
-      handleError(res, error, 'Ошибка получения кортов');
+      handleError(res, error, 'Ошибка получения колонок бронирования');
+    }
+  }
+
+  async createCourt(req, res) {
+    try {
+      res.status(201).json(await bookingsService.createBookingResource(req.body));
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания колонки бронирования');
+    }
+  }
+
+  async updateCourt(req, res) {
+    try {
+      res.json(await bookingsService.updateBookingResource(req.params.id, req.body));
+    } catch (error) {
+      handleError(res, error, 'Ошибка обновления колонки бронирования');
+    }
+  }
+
+  async archiveCourt(req, res) {
+    try {
+      res.json(await bookingsService.archiveBookingResource(req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка выключения колонки бронирования');
     }
   }
 

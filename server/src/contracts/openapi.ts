@@ -77,7 +77,10 @@ const endpointContracts: EndpointContract[] = [
   { id: 'audit.list', method: 'get', path: '/audit-logs', query: apiSchemas.audit.listQuery, summary: 'List audit logs', tags: ['Audit'] },
 
   { id: 'bookings.schedule', method: 'get', path: '/bookings/schedule', query: apiSchemas.bookings.scheduleQuery, summary: 'Booking schedule by day', tags: ['Bookings'] },
-  { id: 'bookings.courts', method: 'get', path: '/bookings/courts', summary: 'List active courts', tags: ['Bookings'] },
+  { id: 'bookings.courts', method: 'get', path: '/bookings/courts', query: apiSchemas.bookings.statusQuery, summary: 'List booking calendar resources', tags: ['Bookings'] },
+  { id: 'bookings.courtCreate', method: 'post', path: '/bookings/courts', body: apiSchemas.bookings.resourceBody, summary: 'Create booking calendar resource', tags: ['Bookings'] },
+  { id: 'bookings.courtUpdate', method: 'put', path: '/bookings/courts/{id}', body: apiSchemas.bookings.resourceBody.partial().passthrough(), params: apiSchemas.bookings.params, summary: 'Update booking calendar resource', tags: ['Bookings'] },
+  { id: 'bookings.courtArchive', method: 'delete', path: '/bookings/courts/{id}', params: apiSchemas.bookings.params, summary: 'Archive booking calendar resource', tags: ['Bookings'] },
   { id: 'bookings.responsibles', method: 'get', path: '/bookings/responsibles', summary: 'List staff available as booking responsibles', tags: ['Bookings'] },
   { id: 'bookings.analytics', method: 'get', path: '/bookings/analytics', query: apiSchemas.bookings.analyticsQuery, summary: 'Booking analytics report', tags: ['Bookings'] },
   { id: 'bookings.settings', method: 'get', path: '/bookings/settings', summary: 'Get booking settings', tags: ['Bookings'] },

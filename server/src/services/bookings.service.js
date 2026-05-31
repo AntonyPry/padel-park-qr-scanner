@@ -26,6 +26,7 @@ const BOOKING_TYPES = new Set([
   'group_training',
   'corporate',
 ]);
+const BOOKING_RESOURCE_TYPES = new Set(['padel_double', 'padel_single', 'other']);
 const MAX_DURATION_MINUTES = 720;
 const SERIES_STATUSES = new Set(['active', 'archived']);
 const MAX_SERIES_DAYS = 370;
@@ -109,6 +110,23 @@ function normalizeNullableId(value, label) {
     throw appError(`${label} указан некорректно`);
   }
   return id;
+}
+
+function normalizeResourceType(value = 'other') {
+  const type = String(value || 'other');
+  if (!BOOKING_RESOURCE_TYPES.has(type)) {
+    throw appError('Некорректный тип ресурса бронирования');
+  }
+  return type;
+}
+
+function normalizeSortOrder(value, fallback = 0) {
+  if (value === undefined || value === null || value === '') return fallback;
+  const sortOrder = Number(value);
+  if (!Number.isInteger(sortOrder) || sortOrder < 0 || sortOrder > 10000) {
+    throw appError('Порядок колонки должен быть целым числом от 0 до 10000');
+  }
+  return sortOrder;
 }
 
 function normalizeDuration(value) {
@@ -485,7 +503,7 @@ async function lockCourtsForBooking(courtIds, transaction) {
 
   ids.forEach((id) => {
     const court = courtsById.get(id);
-    if (!court || !court.isActive) throw appError('Корт не найден или выключен', 404);
+    if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   });
 
   return courtsById;
@@ -602,7 +620,7 @@ async function assertNoConflict({
   });
 
   if (conflict) {
-    throw appError('На это время корт уже забронирован', 409, {
+    throw appError('На это время ресурс уже забронирован', 409, {
       code: 'BOOKING_TIME_CONFLICT',
       booking: mapBooking(conflict),
     });
@@ -719,14 +737,134 @@ function buildBookingPayload(data, account, client, timing, currentBooking = nul
 }
 
 async function listCourts() {
+  return listBookingResources({ status: 'active' });
+}
+
+async function listBookingResources(query = {}) {
+  const where = {};
+  if (query.status !== 'all') {
+    where.isActive = query.status === 'archived' ? false : true;
+  }
   const courts = await db.Court.findAll({
     order: [
       ['sortOrder', 'ASC'],
       ['name', 'ASC'],
     ],
-    where: { isActive: true },
+    where,
   });
   return courts.map(mapCourt);
+}
+
+async function getNextResourceSortOrder(transaction) {
+  const maxSortOrder = await db.Court.max('sortOrder', { transaction });
+  return Number.isFinite(Number(maxSortOrder)) ? Number(maxSortOrder) + 10 : 10;
+}
+
+async function normalizeBookingResourcePayload(data = {}, current = null, transaction = undefined) {
+  const nextSortOrder = current
+    ? Number(current.sortOrder || 0)
+    : await getNextResourceSortOrder(transaction);
+  const payload = {
+    isActive:
+      data.isActive === undefined
+        ? current?.isActive ?? true
+        : Boolean(data.isActive),
+    name: normalizeClientName(data.name ?? current?.name),
+    sortOrder: normalizeSortOrder(data.sortOrder, nextSortOrder),
+    type: normalizeResourceType(data.type ?? current?.type ?? 'other'),
+  };
+
+  const existing = await db.Court.findOne({
+    transaction,
+    where: {
+      name: payload.name,
+      ...(current ? { id: { [Op.ne]: current.id } } : {}),
+    },
+  });
+  if (existing) {
+    throw appError('Колонка бронирования с таким названием уже существует', 409);
+  }
+
+  return payload;
+}
+
+async function createBookingResource(data = {}) {
+  return db.sequelize.transaction(async (transaction) => {
+    const payload = await normalizeBookingResourcePayload(data, null, transaction);
+    const resource = await db.Court.create(payload, { transaction });
+    return mapCourt(resource);
+  });
+}
+
+async function updateBookingResource(id, data = {}) {
+  return db.sequelize.transaction(async (transaction) => {
+    const resource = await db.Court.findByPk(Number(id), {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (!resource) throw appError('Колонка бронирования не найдена', 404);
+    const payload = await normalizeBookingResourcePayload(data, resource, transaction);
+    if (resource.isActive && payload.isActive === false) {
+      await assertResourceCanBeArchived(resource.id, transaction);
+    }
+    await resource.update(payload, { transaction });
+    return mapCourt(resource);
+  });
+}
+
+async function assertResourceCanBeArchived(resourceId, transaction) {
+  const now = new Date();
+  const [futureBookings, activeSeries, activeBlocks] = await Promise.all([
+    db.Booking.count({
+      transaction,
+      where: {
+        courtId: resourceId,
+        endsAt: { [Op.gte]: now },
+        status: { [Op.ne]: 'canceled' },
+      },
+    }),
+    db.BookingSeries.count({
+      transaction,
+      where: {
+        courtId: resourceId,
+        status: 'active',
+      },
+    }),
+    db.CourtBlock.count({
+      transaction,
+      where: {
+        courtId: resourceId,
+        endsAt: { [Op.gte]: now },
+        status: 'active',
+      },
+    }),
+  ]);
+
+  if (futureBookings || activeSeries || activeBlocks) {
+    throw appError(
+      'Нельзя выключить колонку: на ней есть будущие брони, постоянные брони или активные блокировки',
+      409,
+      {
+        activeBlocks,
+        activeSeries,
+        code: 'BOOKING_RESOURCE_IN_USE',
+        futureBookings,
+      },
+    );
+  }
+}
+
+async function archiveBookingResource(id) {
+  return db.sequelize.transaction(async (transaction) => {
+    const resource = await db.Court.findByPk(Number(id), {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (!resource) throw appError('Колонка бронирования не найдена', 404);
+    await assertResourceCanBeArchived(resource.id, transaction);
+    await resource.update({ isActive: false }, { transaction });
+    return mapCourt(resource);
+  });
 }
 
 async function listResponsibleStaff() {
@@ -1087,7 +1225,7 @@ async function inspectSeriesOccurrence(config, date, transaction) {
         conflictBooking: mapBooking(conflict),
         date,
         endsAt: timing.endsAt,
-        reason: 'На это время корт уже забронирован',
+        reason: 'На это время ресурс уже забронирован',
         startsAt: timing.startsAt,
         status: 'conflict',
       };
@@ -1550,8 +1688,10 @@ async function listBookingHistory(id) {
 }
 
 module.exports = {
+  archiveBookingResource,
   archiveBookingSeries,
   createBooking,
+  createBookingResource,
   createBookingSeries,
   changeBookingStatus,
   getBooking,
@@ -1559,9 +1699,11 @@ module.exports = {
   getSchedule,
   listBookingSeries,
   listBookingHistory,
+  listBookingResources,
   listBookings,
   listCourts,
   listResponsibleStaff,
   previewBookingSeries,
+  updateBookingResource,
   updateBooking,
 };
