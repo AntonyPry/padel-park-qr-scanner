@@ -18,6 +18,8 @@ The catalog is file-based by design. New roles, missions, tasks, routes and chec
 
 Owner and manager paths also include knowledge guides with keys like `owner.knowledge.finances` and `manager.knowledge.telephony`. These guides explain how each CRM section works, where metrics come from and what decisions the role should make from the data. They are intentionally stored next to action tasks so feature releases can update the workflow instruction and the underlying business explanation together.
 
+Knowledge guides are deep first-touch lessons, not short reminders. A release-quality owner/manager guide should cover the screen map, core entities, data sources, lifecycle, formulas, role boundaries, edge cases and at least one management decision example.
+
 ## Role behavior
 
 Every user gets the path for their own role by default.
@@ -92,8 +94,9 @@ Current release-quality coverage:
 
 - `71/71` catalog tasks have instruction-card lessons;
 - `34` owner/manager knowledge guides cover CRM sections, metrics and role-specific interpretation;
+- owner/manager knowledge guides use `10-14` cards per section for first-time-user process depth;
 - `74/74` screenshot-backed instruction cards resolve to real CRM screenshots;
-- `183` final, conceptual or knowledge cards are intentionally text-only;
+- `407` final, conceptual or knowledge cards are intentionally text-only;
 - screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
 - role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
 - trainer screenshots are captured in safe mode without phone numbers or excess personal data;

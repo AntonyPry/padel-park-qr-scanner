@@ -618,6 +618,42 @@
 - Playwright QA новых knowledge guides прошел для owner desktop и manager mobile без console error/warning;
 - screenshots сохранены в `outputs/qa/2026-06-01/onboarding-knowledge-guides/`.
 
+### Onboarding Sprint 23 - Deep owner/manager knowledge guides
+
+Статус: `done`.
+
+Цель:
+
+- довести owner/manager инструкции по разделам до уровня первого знакомства с CRM, а не краткой памятки.
+
+Сделано:
+
+- расширен knowledge-слой для всех `34` owner/manager guides;
+- каждый раздел теперь включает карту чтения экрана, сущности, жизненный цикл, формулы или метрики, ошибки/исключения, пример управленческого решения и самопроверку;
+- ключевые разделы углублены по фактической логике сервисов: телефония, P&L, бронирования, payroll, мотивация, обзвоны, посещения и утилизация;
+- добавлен тестовый baseline: у каждого owner/manager knowledge guide минимум `10` карточек;
+- docs обновлены под deep-guide стандарт, чтобы будущие релизы не откатывали инструкции обратно в короткие обзоры.
+
+Результат:
+
+- catalog по-прежнему содержит `71/71` задач с lesson;
+- owner/manager knowledge guides теперь имеют `10-14` карточек на раздел;
+- text-only cards выросли до `407`, потому что знания по процессам, формулам и edge cases не привязаны к случайным screenshots;
+- screenshot-backed cards остались `74/74`, без искусственных картинок ради заполнения места.
+
+Проверки:
+
+- `server npm run onboarding:audit:strict` прошел;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- Playwright QA deep guides прошел для `owner.knowledge.telephony` desktop и `manager.knowledge.finances` mobile без console error/warning;
+- screenshots сохранены в `outputs/qa/2026-06-01/onboarding-deep-knowledge-guides/`.
+
 ## Sprint 11 - Клиентская CRM 2.0
 
 Цель: сделать карточку клиента главным рабочим инструментом менеджера.

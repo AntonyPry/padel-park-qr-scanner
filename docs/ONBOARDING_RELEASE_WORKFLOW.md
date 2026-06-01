@@ -60,6 +60,20 @@ Instruction screenshots are stored under `client/public/onboarding/<role>/<task-
 Attach screenshots only to instruction cards where the image directly illustrates the text. Leave summary or conceptual cards text-only instead of reusing a nearby screenshot.
 See `docs/ONBOARDING_SCREENSHOTS.md` for the full convention.
 
+## Knowledge guide depth
+
+Owner and manager knowledge guides should be understandable for a person opening CRM for the first time. When a section changes, check that the guide still answers:
+
+- what the screen is for;
+- how to read the screen layout;
+- which entities and statuses live there;
+- where the data comes from;
+- how key metrics and formulas are calculated;
+- which lifecycle or workflow the section supports;
+- which role is responsible for decisions;
+- what edge cases and data-quality traps matter;
+- what a good management decision from this section looks like.
+
 When a feature changes an instructed screen:
 
 1. Open the changed screen locally with the matching demo role account.

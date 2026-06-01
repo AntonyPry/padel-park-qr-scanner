@@ -71,10 +71,17 @@ test('manager and owner have knowledge guides for every CRM section', () => {
         task.lesson.blocks.every((block) => block.type === 'paragraph'),
         true,
       );
+      assert.equal(task.lesson.blocks.length >= 10, true);
     }
   }
 
   const telephony = findOnboardingTask('owner', 'owner.knowledge.telephony');
   assert.equal(telephony.task.route, '/admin/telephony');
-  assert.equal(telephony.task.lesson.blocks.length, 6);
+  assert.equal(telephony.task.lesson.blocks.length >= 13, true);
+  assert.equal(
+    telephony.task.lesson.blocks.some((block) =>
+      block.text.includes('Processing rate = processed / total'),
+    ),
+    true,
+  );
 });
