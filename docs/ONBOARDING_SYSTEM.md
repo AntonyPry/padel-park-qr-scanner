@@ -20,6 +20,10 @@ Owner and manager paths also include knowledge guides with keys like `owner.know
 
 Knowledge guides are deep first-touch lessons, not short reminders. A release-quality owner/manager guide should cover the screen map, core entities, data sources, lifecycle, formulas, role boundaries, edge cases and at least one management decision example.
 
+User-facing knowledge cards must use plain Russian wording. Formulas should first introduce Russian labels, then show the calculation, for example: `Контактность = «Контактировано» / «Всего» * 100%`. Do not expose raw internal names like `Contact rate`, `basePay`, `bookedMinutes`, `P&L` or `payroll` in owner/manager lessons.
+
+The final role-specific card should explain how to use the CRM section: what to open, which filters or fields to inspect and where the system shows the source data. It should not teach the owner or manager how to run the business outside the CRM.
+
 ## Role behavior
 
 Every user gets the path for their own role by default.

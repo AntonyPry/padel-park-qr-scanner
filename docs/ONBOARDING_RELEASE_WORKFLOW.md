@@ -76,6 +76,8 @@ Owner and manager knowledge guides should be understandable for a person opening
 - what a good management decision from this section looks like.
 - whether the screen-map card still has a current real CRM screenshot.
 
+User-facing formulas must use Russian labels and readable formulas, not raw internal field names. Final owner/manager cards should teach how to use the CRM screen and where to inspect data in the system, not give generic business advice.
+
 When a feature changes an instructed screen:
 
 1. Open the changed screen locally with the matching demo role account.

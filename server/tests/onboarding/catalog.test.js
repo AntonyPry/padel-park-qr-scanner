@@ -50,6 +50,49 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     '/admin/utilization',
     '/admin/visits-analytics',
   ];
+  const forbiddenEnglishSnippets = [
+    'Что с этим делает владелец',
+    'Что с этим делает менеджер',
+    'Contact rate',
+    'Completion rate',
+    'Conversion rate',
+    'Overdue rate',
+    'Processing rate',
+    'Booking conversion',
+    'Recording coverage',
+    'Unknown client rate',
+    'Revenue =',
+    'gross =',
+    'Net =',
+    'Margin =',
+    'COGS',
+    'OPEX',
+    'P&L',
+    'payroll',
+    'bookedMinutes',
+    'capacityMinutes',
+    'plannedAmount',
+    'paidAmount',
+    'basePay',
+    'calculatedBonus',
+    'manualAdjustment',
+    'base_hour_rate',
+    'overtime_after_hours',
+    'overtime_hour_rate',
+    'owner role override',
+    'Training mode',
+    'target role',
+    'taskKey',
+    'KPI',
+    'timeline',
+    'snapshot',
+    'no answer',
+    'webhook',
+    'follow-up',
+    'CRM-note',
+    'summary',
+    'sandbox',
+  ];
 
   for (const role of ['manager', 'owner']) {
     const path = getOnboardingPath(role);
@@ -81,6 +124,27 @@ test('manager and owner have knowledge guides for every CRM section', () => {
         1,
       );
       assert.equal(task.lesson.blocks.length >= 10, true);
+      assert.equal(
+        task.lesson.blocks.at(-1).title,
+        'Как пользоваться разделом в CRM',
+      );
+
+      const visibleLessonText = [
+        task.title,
+        task.description,
+        task.lesson.title,
+        task.lesson.summary,
+        ...task.lesson.blocks.flatMap((block) => [block.title, block.text]),
+        ...(task.requirements || []),
+      ].join('\n');
+
+      for (const snippet of forbiddenEnglishSnippets) {
+        assert.equal(
+          visibleLessonText.includes(snippet),
+          false,
+          `${task.key} should not expose raw English/internal wording: ${snippet}`,
+        );
+      }
     }
   }
 
@@ -89,7 +153,9 @@ test('manager and owner have knowledge guides for every CRM section', () => {
   assert.equal(telephony.task.lesson.blocks.length >= 13, true);
   assert.equal(
     telephony.task.lesson.blocks.some((block) =>
-      block.text.includes('Processing rate = processed / total'),
+      block.text.includes(
+        'Доля обработанных = «Обработанные» / «Всего звонков» * 100%',
+      ),
     ),
     true,
   );
