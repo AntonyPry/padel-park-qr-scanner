@@ -10,6 +10,12 @@ Store release-quality instruction screenshots under:
 client/public/onboarding/<role>/<task-slug>/<screen-name>.png
 ```
 
+Shared owner/manager knowledge guide screenshots live under:
+
+```text
+client/public/onboarding/knowledge/<section-slug>/overview.png
+```
+
 Example:
 
 ```text
@@ -76,7 +82,7 @@ Current release baseline:
 
 - `71/71` onboarding tasks have instruction-card lessons;
 - `34` owner/manager knowledge guides are text-first deep guides with `10-14` cards per section;
-- knowledge guides only need screenshots when a card explains a concrete UI state;
-- `74/74` screenshot-backed instruction cards resolve to screenshots;
-- `407` final, conceptual or knowledge cards are intentionally text-only;
+- each owner/manager knowledge guide has one real CRM screenshot on the screen-map card;
+- `108/108` screenshot-backed instruction cards resolve to screenshots;
+- `373` final, conceptual or knowledge cards are intentionally text-only;
 - QA screenshots belong in `outputs/qa/...` and must not be wired into the catalog.

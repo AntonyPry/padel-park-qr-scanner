@@ -654,6 +654,44 @@
 - Playwright QA deep guides прошел для `owner.knowledge.telephony` desktop и `manager.knowledge.finances` mobile без console error/warning;
 - screenshots сохранены в `outputs/qa/2026-06-01/onboarding-deep-knowledge-guides/`.
 
+### Onboarding Sprint 24 - Knowledge guide CRM screenshots
+
+Статус: `done`.
+
+Цель:
+
+- добавить реальные screenshots CRM к owner/manager deep knowledge guides, чтобы новичок видел сам раздел, а не только текст.
+
+Сделано:
+
+- снято `17` shared desktop screenshots для всех owner/manager CRM-разделов;
+- screenshots сохранены в `client/public/onboarding/knowledge/<section-slug>/overview.png`;
+- каждый `owner.knowledge.*` и `manager.knowledge.*` guide получил screenshot на карточке `Карта экрана для первого входа`;
+- телефоны, email, IP и локальное имя владельца замаскированы перед сохранением screenshots;
+- docs обновлены под shared knowledge screenshot path.
+
+Результат:
+
+- catalog по-прежнему содержит `71/71` задач с lesson;
+- owner/manager knowledge guides получили `34` screenshot-backed screen-map cards через `17` shared PNG;
+- общий screenshot coverage вырос до `108/108`;
+- text-only cards стали `373`: формулы, lifecycle, edge cases и самопроверки остаются без искусственных картинок.
+
+Проверки:
+
+- `server npm run onboarding:audit:strict` прошел, screenshot-backed cards `108/108`;
+- `server npm test` прошел;
+- `server npm run typecheck` прошел;
+- `server npm run health` прошел на `127.0.0.1:3005`;
+- `server npm run smoke:api` прошел на `127.0.0.1:3005`;
+- `client npm test` прошел;
+- `client npm run build` прошел;
+- `client npm run smoke:ui` прошел на `127.0.0.1:5174` и `127.0.0.1:3005`;
+- screenshots проверены как PNG `1440x900`, всего `17` файлов;
+- Playwright capture прошел без console error/warning.
+- Playwright UI QA подтвердил загрузку screenshots в `owner.knowledge.telephony` desktop и `manager.knowledge.finances` mobile без console error/warning;
+- UI screenshots сохранены в `outputs/qa/2026-06-01/knowledge-screenshots-in-ui/`.
+
 ## Sprint 11 - Клиентская CRM 2.0
 
 Цель: сделать карточку клиента главным рабочим инструментом менеджера.

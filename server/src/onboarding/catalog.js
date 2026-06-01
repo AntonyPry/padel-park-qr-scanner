@@ -3382,6 +3382,13 @@ function makeKnowledgeLesson(role, section) {
   const roleConfig = KNOWLEDGE_ROLE_CONFIGS[role];
   const lensText = role === 'owner' ? section.ownerLens : section.managerLens;
   const selfCheckItems = CRM_KNOWLEDGE_SELF_CHECKS[section.slug] || [];
+  const screenshots = [
+    {
+      src: `/onboarding/knowledge/${section.slug}/overview.png`,
+      alt: `Экран CRM: ${section.title}`,
+      caption: `Ориентир по реальному экрану раздела «${section.title}».`,
+    },
+  ];
   const cards = [
     ...section.cards,
     ...(CRM_KNOWLEDGE_DEEP_CARDS[section.slug] || []),
@@ -3390,12 +3397,15 @@ function makeKnowledgeLesson(role, section) {
   return {
     title: `${section.title}: как это работает`,
     summary: section.summary,
-    screenshots: [],
+    screenshots,
     blocks: [
       ...cards.map((card) => ({
         title: card.title,
         type: 'paragraph',
         text: card.text,
+        ...(card.title === 'Карта экрана для первого входа'
+          ? { screenshotIndex: 0 }
+          : {}),
         ...(card.items?.length > 0 ? { items: card.items } : {}),
       })),
       ...(selfCheckItems.length > 0

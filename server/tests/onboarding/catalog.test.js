@@ -66,10 +66,19 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     for (const task of knowledgeTasks) {
       assert.equal(task.kind, 'review');
       assert.equal(task.trainingMode.recommended, false);
-      assert.equal(task.lesson.screenshots.length, 0);
+      assert.equal(task.lesson.screenshots.length, 1);
+      assert.equal(
+        task.lesson.screenshots[0].src,
+        `/onboarding/knowledge/${task.key.split('.').at(-1)}/overview.png`,
+      );
       assert.equal(
         task.lesson.blocks.every((block) => block.type === 'paragraph'),
         true,
+      );
+      assert.equal(
+        task.lesson.blocks.filter((block) => Number.isInteger(block.screenshotIndex))
+          .length,
+        1,
       );
       assert.equal(task.lesson.blocks.length >= 10, true);
     }

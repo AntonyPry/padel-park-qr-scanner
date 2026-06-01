@@ -57,6 +57,7 @@ For the onboarding worktree, use the dedicated local ports:
 ## Screenshot refresh
 
 Instruction screenshots are stored under `client/public/onboarding/<role>/<task-slug>/`.
+Shared owner/manager knowledge screenshots are stored under `client/public/onboarding/knowledge/<section-slug>/overview.png`.
 Attach screenshots only to instruction cards where the image directly illustrates the text. Leave summary or conceptual cards text-only instead of reusing a nearby screenshot.
 See `docs/ONBOARDING_SCREENSHOTS.md` for the full convention.
 
@@ -73,6 +74,7 @@ Owner and manager knowledge guides should be understandable for a person opening
 - which role is responsible for decisions;
 - what edge cases and data-quality traps matter;
 - what a good management decision from this section looks like.
+- whether the screen-map card still has a current real CRM screenshot.
 
 When a feature changes an instructed screen:
 

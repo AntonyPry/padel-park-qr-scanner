@@ -81,13 +81,14 @@ The task detail page uses a simple card-reader flow:
 - only one card is visible at a time;
 - navigation is `Назад` / `Далее`;
 - screenshots are shown inside the card and must be real CRM screenshots for release-quality tasks;
-- knowledge guides can be text-only when the card explains calculations, data lineage or management logic rather than a visible UI state;
+- knowledge guides show a real CRM screenshot on the screen-map card and stay text-only when a card explains calculations, data lineage or management logic rather than a visible UI state;
 - the last card completes the instruction;
 - there is no `Попробовать`, no quest bar and no mini-test in the current UI.
 
 Practice targets through `data-onboarding-target` may remain in code for future interactive training, but they are not part of the active onboarding experience.
 
 Instruction screenshots live under `client/public/onboarding/<role>/<task-slug>/`.
+Shared owner/manager section-map screenshots live under `client/public/onboarding/knowledge/<section-slug>/overview.png`.
 For release-quality instructions, only cards with an explicit `screenshotIndex` show a CRM screenshot. If a card is conceptual or summarizes a decision, leave it text-only instead of reusing a nearby screenshot that does not describe the text.
 
 Current release-quality coverage:
@@ -95,9 +96,11 @@ Current release-quality coverage:
 - `71/71` catalog tasks have instruction-card lessons;
 - `34` owner/manager knowledge guides cover CRM sections, metrics and role-specific interpretation;
 - owner/manager knowledge guides use `10-14` cards per section for first-time-user process depth;
-- `74/74` screenshot-backed instruction cards resolve to real CRM screenshots;
-- `407` final, conceptual or knowledge cards are intentionally text-only;
+- `108/108` screenshot-backed instruction cards resolve to real CRM screenshots;
+- `34` owner/manager knowledge screen-map cards use shared real CRM screenshots;
+- `373` final, conceptual or knowledge cards are intentionally text-only;
 - screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
+- shared knowledge screenshots live in `client/public/onboarding/knowledge/<section-slug>/`;
 - role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
 - trainer screenshots are captured in safe mode without phone numbers or excess personal data;
 - owner role override is part of the supported QA path and must keep working for every role.
