@@ -1,4 +1,6 @@
 const clientsService = require('../services/clients.service');
+const clientSkillMapService = require('../services/client-skill-map.service');
+const trainingRecommendationsService = require('../services/training-recommendations.service');
 const { sendError } = require('../utils/api-error');
 
 function handleError(res, error, fallback) {
@@ -32,7 +34,7 @@ class ClientsController {
 
   async update(req, res) {
     try {
-      res.json(await clientsService.updateClient(req.params.id, req.body));
+      res.json(await clientsService.updateClient(req.params.id, req.body, req.account));
     } catch (error) {
       handleError(res, error, 'Ошибка обновления клиента');
     }
@@ -120,6 +122,61 @@ class ClientsController {
       res.json(await clientsService.deleteSavedView(req.account, req.params.viewId));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления представления клиентов');
+    }
+  }
+
+  async getSkillMap(req, res) {
+    try {
+      res.json(
+        await clientSkillMapService.listForClient(
+          req.params.clientId,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения карты навыков клиента');
+    }
+  }
+
+  async updateSkillMap(req, res) {
+    try {
+      res.json(
+        await clientSkillMapService.updateEntry(
+          req.params.clientId,
+          req.params.skillId,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка обновления карты навыков клиента');
+    }
+  }
+
+  async getTrainingRecommendation(req, res) {
+    try {
+      res.json(
+        await trainingRecommendationsService.recommendForClient(
+          req.params.clientId,
+          req.query,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка рекомендации тренировки');
+    }
+  }
+
+  async getGroupTrainingRecommendation(req, res) {
+    try {
+      res.json(
+        await trainingRecommendationsService.recommendForGroup(
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка групповой рекомендации тренировки');
     }
   }
 }

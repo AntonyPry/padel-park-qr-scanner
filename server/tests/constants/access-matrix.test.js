@@ -6,11 +6,21 @@ test('trainer permissions stay limited to training notes and safe client view', 
   assert.equal(ACCESS_MATRIX.clientsView.includes('trainer'), true);
   assert.equal(ACCESS_MATRIX.trainingNotesView.includes('trainer'), true);
   assert.equal(ACCESS_MATRIX.trainingNotesManage.includes('trainer'), true);
+  assert.equal(ACCESS_MATRIX.trainingMethodologyView.includes('trainer'), true);
 
   assert.equal(ACCESS_MATRIX.clientsManage.includes('trainer'), false);
   assert.equal(ACCESS_MATRIX.clientsMerge.includes('trainer'), false);
   assert.equal(ACCESS_MATRIX.financeView.includes('trainer'), false);
   assert.equal(ACCESS_MATRIX.callTasksView.includes('trainer'), false);
+  assert.equal(ACCESS_MATRIX.trainingMethodologyAnalyticsView.includes('trainer'), false);
+  assert.equal(ACCESS_MATRIX.trainingMethodologyManage.includes('trainer'), false);
+});
+
+test('owners and managers can approve methodology exercises', () => {
+  assert.deepEqual(ACCESS_MATRIX.trainingMethodologyManage, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.trainingMethodologyAnalyticsView, ['owner', 'manager']);
+  assert.equal(ACCESS_MATRIX.trainingMethodologyView.includes('owner'), true);
+  assert.equal(ACCESS_MATRIX.trainingMethodologyView.includes('manager'), true);
 });
 
 test('manager can view finances but cannot manage finance operations', () => {

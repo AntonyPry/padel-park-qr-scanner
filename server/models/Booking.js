@@ -132,6 +132,14 @@ module.exports = (sequelize, DataTypes) => {
       as: 'responsibleStaff',
       foreignKey: 'responsibleStaffId',
     });
+    Booking.hasMany(models.BookingParticipant, {
+      as: 'participants',
+      foreignKey: 'bookingId',
+    });
+    Booking.hasOne(models.TrainingPlan, {
+      as: 'trainingPlan',
+      foreignKey: 'bookingId',
+    });
     Booking.hasMany(models.BookingChangeLog, {
       as: 'changeLogs',
       foreignKey: 'bookingId',

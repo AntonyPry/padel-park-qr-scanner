@@ -9,6 +9,8 @@ const router = express.Router();
 const viewClients = requireRole(...ACCESS_MATRIX.clientsView);
 const manageClients = requireRole(...ACCESS_MATRIX.clientsManage);
 const mergeClients = requireRole(...ACCESS_MATRIX.clientsMerge);
+const viewClientSkillMap = requireRole(...ACCESS_MATRIX.trainingNotesView);
+const manageClientSkillMap = requireRole(...ACCESS_MATRIX.trainingNotesManage);
 
 router.get('/clients', viewClients, validate({ query: apiSchemas.clients.listQuery }), clientsController.getAll);
 router.get('/clients/lookup', viewClients, validate({ query: apiSchemas.clients.lookupQuery }), clientsController.lookup);
@@ -18,6 +20,23 @@ router.post('/clients/views', viewClients, validate({ body: apiSchemas.clients.s
 router.put('/clients/views/:viewId', viewClients, validate({ body: apiSchemas.clients.savedViewUpdateBody, params: apiSchemas.clients.viewParams }), clientsController.updateSavedView);
 router.delete('/clients/views/:viewId', viewClients, validate({ params: apiSchemas.clients.viewParams }), clientsController.deleteSavedView);
 router.post('/clients', manageClients, validate({ body: apiSchemas.clients.body }), clientsController.create);
+router.post(
+  '/clients/training-recommendation/group',
+  viewClientSkillMap,
+  validate({ body: apiSchemas.clients.groupTrainingRecommendationBody }),
+  clientsController.getGroupTrainingRecommendation,
+);
+router.get(
+  '/clients/:clientId/training-recommendation',
+  viewClientSkillMap,
+  validate({
+    params: apiSchemas.clients.skillMapParams,
+    query: apiSchemas.clients.trainingRecommendationQuery,
+  }),
+  clientsController.getTrainingRecommendation,
+);
+router.get('/clients/:clientId/skill-map', viewClientSkillMap, validate({ params: apiSchemas.clients.skillMapParams }), clientsController.getSkillMap);
+router.put('/clients/:clientId/skill-map/:skillId', manageClientSkillMap, validate({ body: apiSchemas.clients.skillMapUpdateBody, params: apiSchemas.clients.skillMapEntryParams }), clientsController.updateSkillMap);
 router.get('/clients/:id', viewClients, validate({ params: apiSchemas.clients.params }), clientsController.getOne);
 router.put('/clients/:id', manageClients, validate({ body: apiSchemas.clients.updateBody, params: apiSchemas.clients.params }), clientsController.update);
 router.delete(

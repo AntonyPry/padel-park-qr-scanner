@@ -9,6 +9,8 @@ import {
   GraduationCap,
   History,
   LayoutDashboard,
+  ListChecks,
+  ChartColumn,
   LineChart,
   LogOut,
   ListTree,
@@ -67,6 +69,16 @@ const items = [
     title: 'Тренерский кабинет',
     url: '/admin/trainer',
     icon: BicepsFlexed,
+  },
+  {
+    title: 'Методика',
+    url: '/admin/methodology',
+    icon: ListChecks,
+  },
+  {
+    title: 'Аналитика методики',
+    url: '/admin/methodology-analytics',
+    icon: ChartColumn,
   },
   {
     title: 'Базы клиентов',

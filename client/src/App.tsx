@@ -29,6 +29,8 @@ const TelephonyPage = lazy(() => import('./pages/TelephonyPage'));
 const ReferencesPage = lazy(() => import('./pages/ReferencesPage'));
 const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const TrainerPage = lazy(() => import('./pages/TrainerPage'));
+const MethodologyPage = lazy(() => import('./pages/MethodologyPage'));
+const MethodologyAnalyticsPage = lazy(() => import('./pages/MethodologyAnalyticsPage'));
 
 function PageLoader() {
   return (
@@ -88,6 +90,24 @@ function App() {
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/trainer']}>
                           <TrainerPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/methodology"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/methodology']}>
+                          <MethodologyPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/methodology-analytics"
+                      element={
+                        <RequireRoles
+                          roles={ROUTE_ACCESS['/admin/methodology-analytics']}
+                        >
+                          <MethodologyAnalyticsPage />
                         </RequireRoles>
                       }
                     />

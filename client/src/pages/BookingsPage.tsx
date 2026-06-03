@@ -19,7 +19,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardList,
   Columns3,
+  Dumbbell,
   Eye,
   ListFilter,
   Pencil,
@@ -31,12 +33,14 @@ import {
   Settings,
   Trash2,
   UserCheck,
+  UsersRound,
   XCircle,
 } from 'lucide-react';
 import { addDays, format, startOfMonth, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import {
   createBooking,
+  createBookingTrainingPlan,
   archiveBookingResource,
   archiveBookingSeries,
   archiveBookingException,
@@ -48,6 +52,7 @@ import {
   createBookingSeries,
   createCourtBlock,
   getBookingAnalytics,
+  getBookingTrainingPlan,
   getBookingQuote,
   getBookingSchedule,
   getBookingSettings,
@@ -70,6 +75,7 @@ import {
   type BookingCourtType,
   type BookingDurationMinutes,
   type BookingExceptionPayload,
+  type BookingParticipant,
   type BookingPaymentMethod,
   type BookingPaymentStatus,
   type BookingPriceRulePayload,
@@ -84,6 +90,11 @@ import {
   type BookingType,
   type CourtBlockPayload,
 } from '@/api/bookings';
+import { listClients, type ClientListItem } from '@/api/clients';
+import {
+  quickCompleteTrainingPlan,
+  type TrainingPlan,
+} from '@/api/training-plans';
 import { queryKeys } from '@/api/query-keys';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -121,7 +132,11 @@ import {
 } from '@/components/ui/table';
 import { HelpTooltip, MetricLabel } from '@/components/dashboard-metric';
 import { apiRequest, getApiErrorMessage } from '@/lib/api';
-import { canManageBookingResources, canManageBookings } from '@/lib/permissions';
+import {
+  canManageBookingResources,
+  canManageBookings,
+  canManageTrainingNotes,
+} from '@/lib/permissions';
 import { formatClientPhone, getPhoneDigits } from '@/lib/phone';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
@@ -180,6 +195,10 @@ const BOOKING_TYPE_SHORT_LABELS: Record<BookingType, string> = {
   personal_training: 'Тренировка',
   tournament: 'Турнир',
 };
+const TRAINING_BOOKING_TYPES = new Set<BookingType>([
+  'group_training',
+  'personal_training',
+]);
 const COURT_TYPE_LABELS: Record<BookingCourtType, string> = {
   all: 'Все ресурсы',
   other: 'Другой ресурс',
@@ -280,6 +299,17 @@ interface LookupClient {
 
 interface LookupResponse {
   client: LookupClient | null;
+}
+
+interface GroupParticipantDraft {
+  client: {
+    id: number;
+    name: string;
+    phone?: string | null;
+    status?: 'active' | 'archived';
+  };
+  clientId: number;
+  id?: number;
 }
 
 type ClientLookupState = 'idle' | 'loading' | 'not_found' | 'archived' | 'error';
@@ -660,6 +690,33 @@ function formatResponsibleStaff(staff?: BookingResponsibleStaff | null) {
   return staff.position ? `${staff.name} · ${staff.position}` : staff.name;
 }
 
+function isTrainingBookingType(type?: BookingType | null) {
+  return Boolean(type && TRAINING_BOOKING_TYPES.has(type));
+}
+
+function mapBookingParticipantToDraft(
+  participant: BookingParticipant,
+): GroupParticipantDraft | null {
+  if (!participant.client) return null;
+  return {
+    client: participant.client,
+    clientId: participant.clientId,
+    id: participant.id,
+  };
+}
+
+function mapClientListItemToDraft(client: ClientListItem): GroupParticipantDraft {
+  return {
+    client,
+    clientId: client.id,
+  };
+}
+
+function getTrainingPlanStatusLabel(plan?: { status?: string } | null) {
+  if (!plan) return 'План не создан';
+  return plan.status === 'completed' ? 'Completed' : 'Planned';
+}
+
 function isBookingActive(booking: Booking) {
   return booking.status !== 'canceled';
 }
@@ -751,6 +808,7 @@ export default function BookingsPage() {
   const queryClient = useQueryClient();
   const canEditBookings = canManageBookings(account?.role);
   const canEditBookingResources = canManageBookingResources(account?.role);
+  const canCloseTrainingPlans = canManageTrainingNotes(account?.role);
   const [searchParams, setSearchParams] = useSearchParams();
   const priceManuallyEditedRef = useRef(false);
   const priceQuoteBaselineRef = useRef('');
@@ -809,6 +867,12 @@ export default function BookingsPage() {
   const [lookupClient, setLookupClient] = useState<LookupClient | null>(null);
   const [lookupState, setLookupState] = useState<ClientLookupState>('idle');
   const [lookupError, setLookupError] = useState('');
+  const [groupParticipants, setGroupParticipants] = useState<GroupParticipantDraft[]>([]);
+  const [groupParticipantSearch, setGroupParticipantSearch] = useState('');
+  const [trainingPlanBooking, setTrainingPlanBooking] = useState<Booking | null>(null);
+  const [trainingPlan, setTrainingPlan] = useState<TrainingPlan | null>(null);
+  const [trainingPlanError, setTrainingPlanError] = useState('');
+  const [trainingPlanLoading, setTrainingPlanLoading] = useState(false);
 
   const setBookingDate = useCallback(
     (date: string) => {
@@ -998,6 +1062,10 @@ export default function BookingsPage() {
     control: bookingForm.control,
     name: 'userId',
   });
+  const clientNameValue = useWatch({
+    control: bookingForm.control,
+    name: 'clientName',
+  });
   const priceQuoteKey = useMemo(
     () => getPriceQuoteKey(dateValue, startTimeValue, courtIdValue, durationValue),
     [courtIdValue, dateValue, durationValue, startTimeValue],
@@ -1024,6 +1092,31 @@ export default function BookingsPage() {
     queryFn: () => listBookingSeries('active'),
     queryKey: queryKeys.bookings.series(),
   });
+  const groupParticipantSearchQuery = useQuery({
+    enabled:
+      formOpen &&
+      bookingTypeValue === 'group_training' &&
+      groupParticipantSearch.trim().length >= 2,
+    queryFn: () =>
+      listClients({
+        page: 1,
+        pageSize: 8,
+        q: groupParticipantSearch.trim(),
+        status: 'active',
+      }),
+    queryKey: queryKeys.clients.list({
+      bookingGroupParticipants: true,
+      q: groupParticipantSearch.trim(),
+    }),
+  });
+  const groupParticipantResults = groupParticipantSearchQuery.data?.items ?? [];
+  const selectedGroupParticipantIds = useMemo(
+    () => new Set(groupParticipants.map((participant) => participant.clientId)),
+    [groupParticipants],
+  );
+  const primaryGroupClientId = userIdValue ? Number(userIdValue) : null;
+  const primaryGroupClientName =
+    lookupClient?.name || clientNameValue.trim() || editingBooking?.clientName || '';
 
   const invalidateSchedule = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.bookings.all });
@@ -1232,6 +1325,20 @@ export default function BookingsPage() {
   }, [seriesDraft.phone, seriesOpen]);
 
   useEffect(() => {
+    if (bookingTypeValue !== 'group_training') {
+      setGroupParticipants([]);
+      setGroupParticipantSearch('');
+    }
+  }, [bookingTypeValue]);
+
+  useEffect(() => {
+    if (!primaryGroupClientId) return;
+    setGroupParticipants((current) =>
+      current.filter((participant) => participant.clientId !== primaryGroupClientId),
+    );
+  }, [primaryGroupClientId]);
+
+  useEffect(() => {
     if (!formOpen || !canEditBookings || !courtIdValue || !durationValue || !dateValue || !startTimeValue) return undefined;
     if (priceManuallyEdited) return undefined;
     if (
@@ -1291,6 +1398,8 @@ export default function BookingsPage() {
     setLookupClient(null);
     setLookupState('idle');
     setLookupError('');
+    setGroupParticipants([]);
+    setGroupParticipantSearch('');
     bookingForm.reset(
       getEmptyForm(
         selectedDate,
@@ -1314,6 +1423,15 @@ export default function BookingsPage() {
     setLookupClient(booking.client || null);
     setLookupState('idle');
     setLookupError('');
+    setGroupParticipants(
+      booking.bookingType === 'group_training'
+        ? (booking.participants || [])
+            .filter((participant) => participant.clientId !== booking.userId)
+            .map(mapBookingParticipantToDraft)
+            .filter((participant): participant is GroupParticipantDraft => Boolean(participant))
+        : [],
+    );
+    setGroupParticipantSearch('');
     bookingForm.reset({
       bookingType: booking.bookingType || 'game',
       cancellationReason: booking.cancellationReason || '',
@@ -1336,6 +1454,23 @@ export default function BookingsPage() {
     setFormOpen(true);
   }, [bookingForm, resetAutoPricing]);
 
+  const addGroupParticipant = useCallback((client: ClientListItem) => {
+    if (primaryGroupClientId && client.id === primaryGroupClientId) return;
+    setGroupParticipants((current) => {
+      if (current.some((participant) => participant.clientId === client.id)) {
+        return current;
+      }
+      return [...current, mapClientListItemToDraft(client)];
+    });
+    setGroupParticipantSearch('');
+  }, [primaryGroupClientId]);
+
+  const removeGroupParticipant = useCallback((clientId: number) => {
+    setGroupParticipants((current) =>
+      current.filter((participant) => participant.clientId !== clientId),
+    );
+  }, []);
+
   const submitBooking = bookingForm.handleSubmit(async (values) => {
     const startsAt = buildStartsAtIso(values.date, values.startTime);
     const payload = {
@@ -1351,6 +1486,10 @@ export default function BookingsPage() {
       comment: values.comment.trim() || undefined,
       courtId: Number(values.courtId),
       durationMinutes: Number(values.durationMinutes) as BookingDurationMinutes,
+      groupParticipantIds:
+        values.bookingType === 'group_training'
+          ? groupParticipants.map((participant) => participant.clientId)
+          : undefined,
       paidAmount: values.paidAmount ? Number(values.paidAmount) : 0,
       paymentMethod: values.paymentMethod,
       paymentStatus: values.paymentStatus,
@@ -1417,6 +1556,52 @@ export default function BookingsPage() {
       toast.error(getApiErrorMessage(error, 'Не удалось отметить оплату'));
     }
   };
+
+  const openBookingTrainingPlan = useCallback(async (booking: Booking) => {
+    if (!isTrainingBookingType(booking.bookingType)) return;
+
+    setTrainingPlanBooking(booking);
+    setTrainingPlan(null);
+    setTrainingPlanError('');
+    setTrainingPlanLoading(true);
+    try {
+      const plan = booking.trainingPlan
+        ? await getBookingTrainingPlan(booking.id)
+        : await createBookingTrainingPlan(booking.id);
+      setTrainingPlan(plan);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.bookings.all });
+      if (!booking.trainingPlan && plan) {
+        toast.success('План тренировки создан из брони');
+      }
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Не удалось открыть план тренировки');
+      setTrainingPlanError(message);
+      toast.error(message);
+    } finally {
+      setTrainingPlanLoading(false);
+    }
+  }, [queryClient]);
+
+  const quickCompleteBookingTrainingPlan = useCallback(async () => {
+    if (!trainingPlan) return;
+
+    setTrainingPlanLoading(true);
+    setTrainingPlanError('');
+    try {
+      const completed = await quickCompleteTrainingPlan(trainingPlan.id, {
+        trainedAt: trainingPlan.plannedAt,
+      });
+      setTrainingPlan(completed);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.bookings.all });
+      toast.success('План закрыт как completed');
+    } catch (error) {
+      const message = getApiErrorMessage(error, 'Не удалось закрыть план');
+      setTrainingPlanError(message);
+      toast.error(message);
+    } finally {
+      setTrainingPlanLoading(false);
+    }
+  }, [queryClient, trainingPlan]);
 
   const confirmCancel = async () => {
     if (!cancelBooking) return;
@@ -2018,6 +2203,11 @@ export default function BookingsPage() {
             <div className="text-sm font-medium">
               {BOOKING_TYPE_LABELS[row.original.bookingType] || 'Игра'}
             </div>
+            {row.original.trainingPlan && (
+              <Badge variant="outline" className="text-[10px]">
+                {getTrainingPlanStatusLabel(row.original.trainingPlan)}
+              </Badge>
+            )}
             {row.original.responsibleStaff && (
               <div className="text-xs text-muted-foreground">
                 {formatResponsibleStaff(row.original.responsibleStaff)}
@@ -2095,6 +2285,21 @@ export default function BookingsPage() {
                   <Banknote className="size-4" />
                 </Button>
               )}
+              {canEditBookings && isTrainingBookingType(booking.bookingType) && (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  disabled={booking.status === 'canceled' && !booking.trainingPlan}
+                  onClick={() => void openBookingTrainingPlan(booking)}
+                  title={
+                    booking.trainingPlan
+                      ? 'Открыть план тренировки'
+                      : 'Создать план тренировки'
+                  }
+                >
+                  <ClipboardList className="size-4" />
+                </Button>
+              )}
               {canQuickEdit && (
                 <Button
                   size="icon"
@@ -2118,7 +2323,7 @@ export default function BookingsPage() {
         },
       },
     ],
-    [canEditBookings, openEdit, openPaymentDialog, quickStatus],
+    [canEditBookings, openBookingTrainingPlan, openEdit, openPaymentDialog, quickStatus],
   );
 
   const gridHeight = slots.length * SLOT_HEIGHT;
@@ -2459,6 +2664,11 @@ export default function BookingsPage() {
                             <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
                               {BOOKING_TYPE_SHORT_LABELS[booking.bookingType] || 'Игра'}
                             </span>
+                            {booking.trainingPlan && (
+                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
+                                {getTrainingPlanStatusLabel(booking.trainingPlan)}
+                              </span>
+                            )}
                           </div>
                           <div className="mt-1 truncate font-medium">{booking.clientName}</div>
                           <div className="truncate opacity-80">
@@ -2744,6 +2954,103 @@ export default function BookingsPage() {
               </div>
             </div>
 
+            {bookingTypeValue === 'group_training' && (
+              <div className="rounded-md border bg-muted/20 p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-medium">
+                    <UsersRound className="size-4 text-muted-foreground" />
+                    Участники группы
+                  </div>
+                  <Badge variant="outline">
+                    {1 + groupParticipants.length}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Badge>
+                    {primaryGroupClientName || 'Основной клиент'}
+                  </Badge>
+                  {groupParticipants.map((participant) => (
+                    <span
+                      key={participant.clientId}
+                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-sm"
+                    >
+                      {participant.client.name}
+                      {canEditBookings && (
+                        <button
+                          type="button"
+                          className="text-muted-foreground hover:text-foreground"
+                          onClick={() => removeGroupParticipant(participant.clientId)}
+                          title="Убрать участника"
+                        >
+                          <XCircle className="size-3.5" />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+                {canEditBookings && (
+                  <div className="mt-3 space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        className="pl-9"
+                        value={groupParticipantSearch}
+                        onChange={(event) => setGroupParticipantSearch(event.target.value)}
+                        placeholder="Найти клиента для группы"
+                      />
+                    </div>
+                    {groupParticipantSearchQuery.isLoading && (
+                      <div className="text-xs text-muted-foreground">
+                        Ищем участников...
+                      </div>
+                    )}
+                    {groupParticipantSearchQuery.isError && (
+                      <div className="text-xs text-destructive">
+                        {getApiErrorMessage(
+                          groupParticipantSearchQuery.error,
+                          'Не удалось найти клиентов',
+                        )}
+                      </div>
+                    )}
+                    {groupParticipantSearch.trim().length >= 2 &&
+                      groupParticipantResults.length > 0 && (
+                        <div className="divide-y rounded-md border bg-background">
+                          {groupParticipantResults
+                            .filter(
+                              (client) =>
+                                client.id !== primaryGroupClientId &&
+                                !selectedGroupParticipantIds.has(client.id),
+                            )
+                            .map((client) => (
+                              <button
+                                key={client.id}
+                                type="button"
+                                className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-muted/60"
+                                onClick={() => addGroupParticipant(client)}
+                              >
+                                <span>
+                                  <span className="font-medium">{client.name}</span>
+                                  <span className="ml-2 text-xs text-muted-foreground">
+                                    {client.phone}
+                                  </span>
+                                </span>
+                                <Plus className="size-4 text-muted-foreground" />
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                    {groupParticipantSearch.trim().length >= 2 &&
+                      !groupParticipantSearchQuery.isLoading &&
+                      groupParticipantResults.length === 0 && (
+                        <div className="text-xs text-muted-foreground">
+                          Активные клиенты не найдены.
+                        </div>
+                      )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid gap-4 md:grid-cols-5">
               <div className="space-y-2">
                 <Label>Статус</Label>
@@ -2918,6 +3225,18 @@ export default function BookingsPage() {
                       <XCircle className="mr-2 size-4" />
                       Подготовить отмену
                     </Button>
+                    {isTrainingBookingType(editingBooking.bookingType) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={editingBooking.status === 'canceled' && !editingBooking.trainingPlan}
+                        onClick={() => void openBookingTrainingPlan(editingBooking)}
+                      >
+                        <ClipboardList className="mr-2 size-4" />
+                        {editingBooking.trainingPlan ? 'Открыть план' : 'Создать план'}
+                      </Button>
+                    )}
                   </div>
                 )}
 	                <div className="space-y-2 text-sm">
@@ -2966,6 +3285,157 @@ export default function BookingsPage() {
               )}
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(trainingPlanBooking)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTrainingPlanBooking(null);
+            setTrainingPlan(null);
+            setTrainingPlanError('');
+          }
+        }}
+      >
+        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>План тренировки</DialogTitle>
+            <DialogDescription>
+              {trainingPlanBooking
+                ? `${BOOKING_TYPE_LABELS[trainingPlanBooking.bookingType]} · ${formatDateTime(trainingPlanBooking.startsAt)}`
+                : 'Связанный план брони'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {trainingPlanLoading && (
+            <div className="rounded-md border py-8 text-center text-sm text-muted-foreground">
+              Загружаем план тренировки...
+            </div>
+          )}
+
+          {trainingPlanError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+              {trainingPlanError}
+            </div>
+          )}
+
+          {!trainingPlanLoading && trainingPlan && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge>{getTrainingPlanStatusLabel(trainingPlan)}</Badge>
+                <Badge variant="outline">
+                  {trainingPlan.kind === 'group' ? 'group' : 'personal'}
+                </Badge>
+                <Badge variant="outline">
+                  {trainingPlan.plannedExercises.length} упр.
+                </Badge>
+              </div>
+
+              <div className="grid gap-3 text-sm sm:grid-cols-2">
+                <div className="rounded-md border p-3">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    Бронь
+                  </div>
+                  <div className="mt-1 font-medium">
+                    {trainingPlan.booking?.court?.name || trainingPlanBooking?.court?.name || 'Ресурс не указан'}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {trainingPlan.booking?.startsAt
+                      ? `${formatDateTime(trainingPlan.booking.startsAt)} - ${formatTime(trainingPlan.booking.endsAt)}`
+                      : formatDate(trainingPlan.plannedAt)}
+                  </div>
+                </div>
+                <div className="rounded-md border p-3">
+                  <div className="text-xs font-medium text-muted-foreground">
+                    Тренер
+                  </div>
+                  <div className="mt-1 font-medium">
+                    {trainingPlan.trainer?.name || trainingPlanBooking?.responsibleStaff?.name || 'Не выбран'}
+                  </div>
+                  <div className="mt-1 text-muted-foreground">
+                    {trainingPlan.completedAt
+                      ? `Completed ${formatDateTime(trainingPlan.completedAt)}`
+                      : 'Ожидает занятия'}
+                  </div>
+                </div>
+              </div>
+
+              {trainingPlan.goal && (
+                <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                  <div className="text-xs font-medium text-muted-foreground">Цель</div>
+                  <div className="mt-1">{trainingPlan.goal}</div>
+                </div>
+              )}
+
+              <div>
+                <div className="mb-2 flex items-center gap-2 font-medium">
+                  <UsersRound className="size-4 text-muted-foreground" />
+                  Участники
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {trainingPlan.participants.map((participant) => (
+                    <Badge key={participant.id} variant="outline">
+                      {participant.client?.name || `Клиент ${participant.clientId}`}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div className="mb-2 flex items-center gap-2 font-medium">
+                  <Dumbbell className="size-4 text-muted-foreground" />
+                  Упражнения
+                </div>
+                <div className="divide-y rounded-md border">
+                  {trainingPlan.plannedExercises.map((exercise) => (
+                    <div key={exercise.id} className="p-3 text-sm">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {exercise.blockTitle && (
+                          <Badge variant="outline">{exercise.blockTitle}</Badge>
+                        )}
+                        {exercise.exercise?.eLevel && (
+                          <Badge>{exercise.exercise.eLevel}</Badge>
+                        )}
+                        <span className="font-medium">
+                          {exercise.exercise?.name || exercise.exerciseName}
+                        </span>
+                      </div>
+                      {exercise.reasonSnapshot && (
+                        <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                          {exercise.reasonSnapshot}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setTrainingPlanBooking(null);
+                setTrainingPlan(null);
+                setTrainingPlanError('');
+              }}
+            >
+              Закрыть
+            </Button>
+            {trainingPlan?.status === 'planned' && canCloseTrainingPlans && (
+              <Button
+                type="button"
+                disabled={trainingPlanLoading}
+                onClick={() => void quickCompleteBookingTrainingPlan()}
+              >
+                <CheckCircle2 className="mr-2 size-4" />
+                Закрыть completed
+              </Button>
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -7,6 +7,8 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/bookings': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/trainer': ['owner', 'manager', 'trainer'],
+  '/admin/methodology': ['owner', 'manager', 'trainer'],
+  '/admin/methodology-analytics': ['owner', 'manager'],
   '/admin/client-bases': ['owner', 'manager'],
   '/admin/call-tasks': ['owner', 'manager', 'admin'],
   '/admin/telephony': ['owner', 'manager', 'admin', 'viewer'],
@@ -68,6 +70,18 @@ export function canViewTrainingNotes(role: AccountRole | null | undefined) {
 }
 
 export function canManageTrainingNotes(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'trainer']);
+}
+
+export function canManageMethodology(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canViewMethodologyAnalytics(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canCreateMethodologyDraft(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'trainer']);
 }
 

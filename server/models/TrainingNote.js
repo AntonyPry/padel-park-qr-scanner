@@ -45,6 +45,14 @@ module.exports = (sequelize, DataTypes) => {
       as: 'trainerAccount',
       foreignKey: 'trainerAccountId',
     });
+    TrainingNote.hasMany(models.TrainingNoteExercise, {
+      as: 'exerciseResults',
+      foreignKey: 'trainingNoteId',
+    });
+    TrainingNote.hasOne(models.TrainingPlanParticipant, {
+      as: 'planParticipant',
+      foreignKey: 'trainingNoteId',
+    });
   };
 
   return TrainingNote;

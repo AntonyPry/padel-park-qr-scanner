@@ -1,4 +1,5 @@
 import { apiRequest } from '@/lib/api';
+import type { TrainingPlan } from '@/api/training-plans';
 
 export type BookingStatus = 'new' | 'confirmed' | 'canceled' | 'arrived' | 'no_show';
 export type BookingPaymentStatus = 'unpaid' | 'partial' | 'paid' | 'refunded';
@@ -45,6 +46,20 @@ export interface BookingResponsibleStaff {
   status?: 'active' | 'inactive' | 'archived';
 }
 
+export interface BookingParticipant {
+  client?: BookingClient | null;
+  clientId: number;
+  id: number;
+}
+
+export interface BookingTrainingPlanSummary {
+  completedAt?: string | null;
+  id: number;
+  kind: 'personal' | 'group';
+  plannedAt: string;
+  status: 'planned' | 'completed';
+}
+
 export interface Booking {
   bookingType: BookingType;
   canceledAt?: string | null;
@@ -62,6 +77,7 @@ export interface Booking {
   id: number;
   isFirstBooking?: boolean;
   paidAmount: number;
+  participants?: BookingParticipant[];
   paymentMethod: BookingPaymentMethod;
   paymentStatus: BookingPaymentStatus;
   price: number;
@@ -70,6 +86,7 @@ export interface Booking {
   source: BookingSource;
   startsAt: string;
   status: BookingStatus;
+  trainingPlan?: BookingTrainingPlanSummary | null;
   updatedAt: string;
   userId: number;
 }
@@ -228,6 +245,7 @@ export interface BookingPayload {
   comment?: string;
   courtId: number;
   durationMinutes: BookingDurationMinutes;
+  groupParticipantIds?: number[];
   paidAmount?: number;
   paymentMethod?: BookingPaymentMethod;
   paymentStatus?: BookingPaymentStatus;
@@ -252,6 +270,7 @@ export interface BookingSeriesPayload {
   courtId: number;
   durationMinutes: BookingDurationMinutes;
   endsOn: string;
+  groupParticipantIds?: number[];
   name: string;
   paymentMethod?: BookingPaymentMethod;
   paymentStatus?: BookingPaymentStatus;
@@ -396,6 +415,22 @@ export async function createBooking(payload: BookingPayload) {
     body: JSON.stringify(payload),
     method: 'POST',
   }, 'Не удалось создать бронь');
+}
+
+export async function getBookingTrainingPlan(bookingId: number) {
+  return apiRequest<TrainingPlan | null>(
+    `/api/bookings/${bookingId}/training-plan`,
+    {},
+    'Не удалось загрузить план тренировки по брони',
+  );
+}
+
+export async function createBookingTrainingPlan(bookingId: number) {
+  return apiRequest<TrainingPlan>(
+    `/api/bookings/${bookingId}/training-plan`,
+    { method: 'POST' },
+    'Не удалось создать план тренировки по брони',
+  );
 }
 
 export async function getBookingSettings() {

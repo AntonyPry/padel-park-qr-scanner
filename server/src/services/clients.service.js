@@ -7,6 +7,8 @@ const {
 } = require('../utils/phone');
 const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
+const clientSkillMapService = require('./client-skill-map.service');
+const trainingNotesService = require('./training-notes.service');
 
 const CLIENT_ATTRIBUTES = [
   'id',
@@ -52,6 +54,11 @@ const CLIENT_VIEW_FILTER_KEYS = new Set([
   'visitCountMin',
 ]);
 const CLIENT_IDENTITY_FIELDS = ['telegramId', 'vkId', 'webId'];
+const TRAINER_HIDDEN_CLIENT_FIELDS = new Set([
+  'phone',
+  'phoneNormalized',
+  ...CLIENT_IDENTITY_FIELDS,
+]);
 const CALL_CLIENT_STATUS_WEIGHT = {
   new: 0,
   no_answer: 1,
@@ -235,13 +242,12 @@ function sanitizeClientForAccount(client, account) {
   if (!client) return client;
   if (!isTrainer(account)) return client;
 
+  const safeClient = Object.fromEntries(
+    Object.entries(client).filter(([key]) => !TRAINER_HIDDEN_CLIENT_FIELDS.has(key)),
+  );
+
   return {
-    ...client,
-    telegramId: null,
-    vkId: null,
-    webId: null,
-    phone: 'Скрыт',
-    phoneNormalized: null,
+    ...safeClient,
     mergedIntoUserId: null,
     mergedByAccountId: null,
     note: null,
@@ -250,6 +256,23 @@ function sanitizeClientForAccount(client, account) {
 
 function sanitizeClientsForAccount(clients, account) {
   return clients.map((client) => sanitizeClientForAccount(client, account));
+}
+
+function buildTrainerClientDetailsResponse({
+  client,
+  mergedInto = null,
+  skillMap = [],
+  trainingNotes = [],
+}) {
+  const response = {
+    client: sanitizeClientForAccount(client, { role: 'trainer' }),
+    skillMap,
+    trainingNotes,
+  };
+  if (mergedInto) {
+    response.mergedInto = sanitizeClientForAccount(mergedInto, { role: 'trainer' });
+  }
+  return response;
 }
 
 function mapAccount(account) {
@@ -948,43 +971,9 @@ async function getStatsByClientIds(ids) {
 }
 
 async function listTrainingNotes(clientId) {
-  const notes = await db.TrainingNote.findAll({
-    where: { userId: clientId },
-    include: [
-      {
-        model: db.Account,
-        as: 'trainerAccount',
-        attributes: ['id', 'role', 'staffId'],
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
-      },
-    ],
-    order: [
-      ['trainedAt', 'DESC'],
-      ['createdAt', 'DESC'],
-    ],
+  return trainingNotesService.listByClient(clientId, {
     limit: 50,
-  });
-
-  return notes.map((note) => {
-    const raw = note.toJSON();
-    const trainer = raw.trainerAccount;
-
-    return {
-      id: raw.id,
-      trainedAt: raw.trainedAt,
-      level: raw.level,
-      exercises: raw.exercises || '',
-      note: raw.note || '',
-      createdAt: raw.createdAt,
-      updatedAt: raw.updatedAt,
-      trainer: trainer
-        ? {
-            id: trainer.id,
-            name: trainer.Staff?.name || 'Тренер',
-            role: trainer.role,
-          }
-        : null,
-    };
+    skipClientCheck: true,
   });
 }
 
@@ -1074,9 +1063,12 @@ async function getClientDetails(id, account = null) {
 
   if (client.mergedIntoUserId) {
     const includeOperationalHistory = !isTrainer(account);
-    const trainingNotes = canViewTrainingNotes(account)
-      ? await listTrainingNotes(client.id)
-      : [];
+    const [trainingNotes, skillMap] = canViewTrainingNotes(account)
+      ? await Promise.all([
+          listTrainingNotes(client.id),
+          clientSkillMapService.listForClient(client.id, account),
+        ])
+      : [[], []];
     const [bookings, bookingSeries, bookingStats, telephonyCalls] = includeOperationalHistory
       ? await Promise.all([
           listClientBookings(client.id, { limit: 50 }),
@@ -1085,6 +1077,20 @@ async function getClientDetails(id, account = null) {
           listClientTelephonyCalls(client.id, account, { limit: 30 }),
         ])
       : [[], [], getEmptyBookingStats(), []];
+    const safeClient = sanitizeClientForAccount(mapClient(client), account);
+    const safeMergedInto = sanitizeClientForAccount(
+      mapClient(await db.User.findByPk(client.mergedIntoUserId)),
+      account,
+    );
+
+    if (isTrainer(account)) {
+      return buildTrainerClientDetailsResponse({
+        client: safeClient,
+        mergedInto: safeMergedInto,
+        skillMap,
+        trainingNotes,
+      });
+    }
 
     return {
       bookingSeries,
@@ -1093,11 +1099,8 @@ async function getClientDetails(id, account = null) {
       activeCallTasks: includeOperationalHistory
         ? await listClientActiveCallTasks(client.id, account)
         : [],
-      client: sanitizeClientForAccount(mapClient(client), account),
-      mergedInto: sanitizeClientForAccount(
-        mapClient(await db.User.findByPk(client.mergedIntoUserId)),
-        account,
-      ),
+      client: safeClient,
+      mergedInto: safeMergedInto,
       visits: [],
       duplicateCandidates: [],
       timeline: includeOperationalHistory
@@ -1111,6 +1114,7 @@ async function getClientDetails(id, account = null) {
           })
         : [],
       telephonyCalls,
+      skillMap,
       trainingNotes,
     };
   }
@@ -1121,6 +1125,7 @@ async function getClientDetails(id, account = null) {
     visits,
     duplicateCandidates,
     trainingNotes,
+    skillMap,
     bookings,
     bookingSeries,
     bookingStats,
@@ -1131,23 +1136,36 @@ async function getClientDetails(id, account = null) {
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
     isTrainer(account) ? [] : getDuplicateCandidates(client),
     canViewTrainingNotes(account) ? listTrainingNotes(client.id) : [],
+    canViewTrainingNotes(account)
+      ? clientSkillMapService.listForClient(client.id, account)
+      : [],
     includeOperationalHistory ? listClientBookings(client.id, { limit: 50 }) : [],
     includeOperationalHistory ? listClientBookingSeries(client.id, { limit: 30 }) : [],
     includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
     includeOperationalHistory ? listClientActiveCallTasks(client.id, account) : [],
     includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
   ]);
+  const safeClient = sanitizeClientForAccount(
+    mapClient({ ...client.toJSON(), ...stats }),
+    account,
+  );
+
+  if (isTrainer(account)) {
+    return buildTrainerClientDetailsResponse({
+      client: safeClient,
+      skillMap,
+      trainingNotes,
+    });
+  }
 
   return {
     activeCallTasks,
     bookingSeries,
     bookingStats,
     bookings,
-    client: sanitizeClientForAccount(
-      mapClient({ ...client.toJSON(), ...stats }),
-      account,
-    ),
+    client: safeClient,
     duplicateCandidates: sanitizeClientsForAccount(duplicateCandidates, account),
+    skillMap,
     timeline: includeOperationalHistory
       ? await listClientTimeline(client.id, {
           account,
@@ -1855,7 +1873,9 @@ async function createClient(data, actor = null) {
         ...trainingMarker,
       });
 
-      const result = await getClientDetails(client.id);
+      await clientSkillMapService.syncActiveSkillsForClient(client);
+
+      const result = await getClientDetails(client.id, actor);
       await onboardingService.recordEventSafe(actor, 'client.created', {
         entityId: result.client?.id || client.id,
         entityType: 'client',
@@ -1970,21 +1990,28 @@ async function registerClientFromMessenger({
         status: 'active',
       });
 
+      await clientSkillMapService.syncActiveSkillsForClient(client);
+
       return getClientDetails(client.id);
     },
   );
 }
 
-async function updateClient(id, data) {
+async function updateClient(id, data, actor = null) {
   const normalizedPhonePayload = 'phone' in data ? normalizePhonePayload(data.phone) : null;
 
   return withClientIdentityLocks(
     getClientIdentityLockKeys(data, normalizedPhonePayload?.phoneNormalized),
-    async () => updateClientAfterIdentityLock(id, data, normalizedPhonePayload),
+    async () => updateClientAfterIdentityLock(id, data, normalizedPhonePayload, actor),
   );
 }
 
-async function updateClientAfterIdentityLock(id, data, normalizedPhonePayload = null) {
+async function updateClientAfterIdentityLock(
+  id,
+  data,
+  normalizedPhonePayload = null,
+  actor = null,
+) {
   const client = await getClientOrFail(id);
   const payload = {};
 
@@ -2054,7 +2081,7 @@ async function updateClientAfterIdentityLock(id, data, normalizedPhonePayload = 
   }
 
   await client.update(payload);
-  return getClientDetails(client.id);
+  return getClientDetails(client.id, actor);
 }
 
 async function resolveCanonicalClient(client) {
@@ -2217,6 +2244,81 @@ async function mergeCallTaskClientsForDuplicate(primary, duplicate, transaction)
   await refreshCallTaskClientCounters(affectedTaskIds, transaction);
 }
 
+function getComparableDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function shouldUseDuplicateSkillMapText(primaryRow, duplicateRow) {
+  const primaryDate = getComparableDate(primaryRow.lastTrainedAt);
+  const duplicateDate = getComparableDate(duplicateRow.lastTrainedAt);
+
+  if (!primaryDate && duplicateDate) return true;
+  if (primaryDate && duplicateDate && duplicateDate > primaryDate) return true;
+  return false;
+}
+
+async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction) {
+  if (!db.ClientTrainingSkill) return;
+
+  await clientSkillMapService.syncActiveSkillsForClient(primary, { transaction });
+  const duplicateRows = await db.ClientTrainingSkill.findAll({
+    transaction,
+    where: { userId: duplicate.id },
+  });
+  if (duplicateRows.length === 0) return;
+
+  for (const duplicateRow of duplicateRows) {
+    const primaryRow = await db.ClientTrainingSkill.findOne({
+      transaction,
+      where: {
+        trainingSkillId: duplicateRow.trainingSkillId,
+        userId: primary.id,
+      },
+    });
+
+    if (!primaryRow) {
+      await duplicateRow.update(
+        {
+          userId: primary.id,
+          updatedByAccountId: actor?.id || duplicateRow.updatedByAccountId || null,
+        },
+        { transaction },
+      );
+      continue;
+    }
+
+    const useDuplicateText = shouldUseDuplicateSkillMapText(
+      primaryRow,
+      duplicateRow,
+    );
+    await primaryRow.update(
+      {
+        lastTrainedAt: getLatestDate(
+          primaryRow.lastTrainedAt,
+          duplicateRow.lastTrainedAt,
+        ) || null,
+        latestAssessment: useDuplicateText
+          ? duplicateRow.latestAssessment || primaryRow.latestAssessment || null
+          : primaryRow.latestAssessment || duplicateRow.latestAssessment || null,
+        latestExercises: useDuplicateText
+          ? duplicateRow.latestExercises || primaryRow.latestExercises || null
+          : primaryRow.latestExercises || duplicateRow.latestExercises || null,
+        level: Math.max(Number(primaryRow.level || 0), Number(duplicateRow.level || 0)),
+        nextEStep: useDuplicateText
+          ? duplicateRow.nextEStep || primaryRow.nextEStep || null
+          : primaryRow.nextEStep || duplicateRow.nextEStep || null,
+        repeatFlag: Boolean(primaryRow.repeatFlag || duplicateRow.repeatFlag),
+        updatedByAccountId: actor?.id || primaryRow.updatedByAccountId || null,
+      },
+      { transaction },
+    );
+
+    await duplicateRow.destroy({ transaction });
+  }
+}
+
 async function mergeClients(primaryClientId, duplicateClientIds, actor) {
   const primaryId = Number(primaryClientId);
   const duplicateIds = Array.from(
@@ -2298,6 +2400,7 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
           },
         );
       }
+      await mergeSkillMapForDuplicate(primary, duplicate, actor, transaction);
       await mergeCallTaskClientsForDuplicate(primary, duplicate, transaction);
 
       const primaryUpdates = {};
@@ -2460,4 +2563,8 @@ module.exports = {
   registerClientFromMessenger,
   updateClient,
   updateSavedView,
+  __testing: {
+    buildTrainerClientDetailsResponse,
+    sanitizeClientForAccount,
+  },
 };

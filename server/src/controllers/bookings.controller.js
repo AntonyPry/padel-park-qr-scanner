@@ -110,6 +110,26 @@ class BookingsController {
     }
   }
 
+  async getTrainingPlan(req, res) {
+    try {
+      res.json(
+        await bookingsService.getBookingTrainingPlan(req.params.id, req.account),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения плана тренировки по брони');
+    }
+  }
+
+  async createTrainingPlan(req, res) {
+    try {
+      res.status(201).json(
+        await bookingsService.createBookingTrainingPlan(req.params.id, req.account),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания плана тренировки по брони');
+    }
+  }
+
   async listSeries(req, res) {
     try {
       res.json(await bookingsService.listBookingSeries(req.query));

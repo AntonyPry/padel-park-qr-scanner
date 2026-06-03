@@ -23,6 +23,8 @@ const originalAccountModel = db.Account;
 const originalSequelize = db.sequelize;
 const originalBookingChangeLogModel = db.BookingChangeLog;
 const originalVisitCategoryAssignmentModel = db.VisitCategoryAssignment;
+const originalTrainingPlanExerciseModel = db.TrainingPlanExercise;
+const originalTrainingPlanParticipantModel = db.TrainingPlanParticipant;
 const trainingModelNames = [
   'User',
   'Visit',
@@ -33,7 +35,10 @@ const trainingModelNames = [
   'CallTask',
   'CallTaskClient',
   'CallTaskAttempt',
+  'TrainingPlan',
   'TrainingNote',
+  'ClientTrainingSkillHistory',
+  'ClientTrainingSkill',
 ];
 const originalTrainingModels = new Map(
   trainingModelNames.map((name) => [name, db[name]]),
@@ -47,6 +52,8 @@ after(() => {
   db.sequelize = originalSequelize;
   db.BookingChangeLog = originalBookingChangeLogModel;
   db.VisitCategoryAssignment = originalVisitCategoryAssignmentModel;
+  db.TrainingPlanExercise = originalTrainingPlanExerciseModel;
+  db.TrainingPlanParticipant = originalTrainingPlanParticipantModel;
   for (const [name, model] of originalTrainingModels) {
     db[name] = model;
   }
@@ -394,6 +401,16 @@ test('owner cleanup removes dependent training data without touching progress', 
       return 1;
     },
   };
+  db.TrainingPlanExercise = {
+    async destroy() {
+      throw new Error('plan exercises should be removed by TrainingPlan cascade');
+    },
+  };
+  db.TrainingPlanParticipant = {
+    async destroy() {
+      throw new Error('plan participants should be removed by TrainingPlan cascade');
+    },
+  };
 
   for (const name of trainingModelNames) {
     db[name] = {
@@ -450,6 +467,7 @@ test('owner cleanup removes dependent training data without touching progress', 
   assert.equal(result.deleted.bookingChangeLogs, 2);
   assert.equal(result.deleted.visitCategoryAssignments, 1);
   assert.equal(result.deleted.onboardingEvents, 4);
+  assert.equal(result.deleted.trainingPlans, 1);
   assert.equal(result.deleted.clients, 3);
   assert.equal(result.remaining.totalRecords, 0);
 
@@ -491,7 +509,10 @@ test('owner cleanup removes dependent training data without touching progress', 
       'CallTaskClient',
       'CallTask',
       'ClientBase',
+      'ClientTrainingSkillHistory',
+      'TrainingPlan',
       'TrainingNote',
+      'ClientTrainingSkill',
       'Booking',
       'BookingSeries',
       'Finance',

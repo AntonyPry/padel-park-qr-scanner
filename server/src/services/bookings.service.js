@@ -3,6 +3,7 @@ const db = require('../../models');
 const bookingRulesService = require('./booking-rules.service');
 const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
+const trainingPlansService = require('./training-plans.service');
 const {
   formatRussianPhone,
   getPhoneLookupDigits,
@@ -26,7 +27,9 @@ const BOOKING_TYPES = new Set([
   'group_training',
   'corporate',
 ]);
+const TRAINING_BOOKING_TYPES = new Set(['personal_training', 'group_training']);
 const BOOKING_RESOURCE_TYPES = new Set(['padel_double', 'padel_single', 'other']);
+const MAX_GROUP_PARTICIPANTS = 12;
 const MAX_DURATION_MINUTES = 720;
 const SERIES_STATUSES = new Set(['active', 'archived']);
 const MAX_SERIES_DAYS = 370;
@@ -110,6 +113,40 @@ function normalizeNullableId(value, label) {
     throw appError(`${label} указан некорректно`);
   }
   return id;
+}
+
+function normalizePositiveId(value, label) {
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw appError(`${label} указан некорректно`);
+  }
+  return id;
+}
+
+function normalizeGroupParticipantIds(data = {}, primaryUserId = null, bookingType = 'game') {
+  if (bookingType !== 'group_training') return [];
+
+  const source = Array.isArray(data.groupParticipantIds)
+    ? data.groupParticipantIds
+    : Array.isArray(data.participantIds)
+      ? data.participantIds
+      : [];
+  const ids = Array.from(
+    new Set(
+      [
+        primaryUserId,
+        ...source,
+      ]
+        .filter((value) => value !== undefined && value !== null && value !== '' && value !== 'none')
+        .map((value) => normalizePositiveId(value, 'Участник группы')),
+    ),
+  );
+
+  if (ids.length > MAX_GROUP_PARTICIPANTS) {
+    throw appError(`В групповой тренировке можно выбрать до ${MAX_GROUP_PARTICIPANTS} участников`);
+  }
+
+  return ids;
 }
 
 function normalizeResourceType(value = 'other') {
@@ -316,6 +353,29 @@ function mapCourt(court) {
   };
 }
 
+function mapBookingParticipant(participant) {
+  if (!participant) return null;
+  const raw = participant.toJSON ? participant.toJSON() : participant;
+  const client = raw.client || raw.User;
+  return {
+    client: mapClient(client),
+    clientId: Number(raw.userId),
+    id: raw.id,
+  };
+}
+
+function mapBookingTrainingPlan(plan) {
+  if (!plan) return null;
+  const raw = plan.toJSON ? plan.toJSON() : plan;
+  return {
+    completedAt: raw.completedAt || null,
+    id: raw.id,
+    kind: raw.kind,
+    plannedAt: raw.plannedAt,
+    status: raw.status,
+  };
+}
+
 function mapBooking(booking) {
   const raw = booking.toJSON ? booking.toJSON() : booking;
   return {
@@ -332,8 +392,13 @@ function mapBooking(booking) {
     endsAt: raw.endsAt,
     durationMinutes: Number(raw.durationMinutes || 0),
     bookingType: raw.bookingType || 'game',
+    participants: (raw.participants || [])
+      .map(mapBookingParticipant)
+      .filter(Boolean)
+      .sort((left, right) => String(left.client?.name || '').localeCompare(String(right.client?.name || ''))),
     responsibleStaffId: raw.responsibleStaffId || null,
     responsibleStaff: mapStaff(raw.responsibleStaff),
+    trainingPlan: mapBookingTrainingPlan(raw.trainingPlan),
     isFirstBooking: Boolean(raw.isFirstBooking),
     status: raw.status,
     paymentStatus: raw.paymentStatus,
@@ -408,6 +473,12 @@ function getBookingIncludes() {
     db.User,
     { as: 'series', model: db.BookingSeries },
     { as: 'responsibleStaff', model: db.Staff },
+    {
+      as: 'participants',
+      model: db.BookingParticipant,
+      include: [{ as: 'client', model: db.User }],
+    },
+    { as: 'trainingPlan', model: db.TrainingPlan },
     { as: 'createdBy', model: db.Account, include: [db.Staff] },
     { as: 'updatedBy', model: db.Account, include: [db.Staff] },
   ];
@@ -575,6 +646,48 @@ async function resolveClient(data, transaction, trainingMarker = {}) {
       webId,
       ...trainingMarker,
     },
+    { transaction },
+  );
+}
+
+async function loadGroupParticipantsOrFail(participantIds, transaction) {
+  if (participantIds.length === 0) return [];
+
+  const clients = await db.User.findAll({
+    transaction,
+    where: {
+      id: { [Op.in]: participantIds },
+      mergedIntoUserId: null,
+    },
+  });
+  const clientById = new Map(clients.map((client) => [Number(client.id), client]));
+  const missingId = participantIds.find((idValue) => !clientById.has(Number(idValue)));
+  if (missingId) throw appError(`Участник группы ${missingId} не найден`, 404);
+
+  const archivedClient = participantIds
+    .map((idValue) => clientById.get(Number(idValue)))
+    .find((client) => client.status === 'archived');
+  if (archivedClient) {
+    throw appError(`Клиент ${archivedClient.name || archivedClient.id} в архиве`, 409);
+  }
+
+  return participantIds.map((idValue) => clientById.get(Number(idValue)));
+}
+
+async function syncBookingParticipants(booking, participantIds, transaction) {
+  const ids = Array.from(new Set(participantIds.map(Number).filter(Boolean)));
+  await db.BookingParticipant.destroy({
+    transaction,
+    where: { bookingId: booking.id },
+  });
+
+  if (ids.length === 0) return;
+
+  await db.BookingParticipant.bulkCreate(
+    ids.map((userId) => ({
+      bookingId: booking.id,
+      userId,
+    })),
     { transaction },
   );
 }
@@ -1298,6 +1411,12 @@ async function createBookingSeries(data, account) {
     }
 
     const client = await resolveClient(data, transaction, trainingMarker);
+    const participantIds = normalizeGroupParticipantIds(
+      data,
+      client.id,
+      config.bookingType,
+    );
+    await loadGroupParticipantsOrFail(participantIds, transaction);
     const series = await db.BookingSeries.create(
       {
         clientName: client.name,
@@ -1361,6 +1480,7 @@ async function createBookingSeries(data, account) {
         },
         { transaction },
       );
+      await syncBookingParticipants(booking, participantIds, transaction);
       const fullBooking = await getBookingOrFail(booking.id, transaction);
       await recordChange(fullBooking, 'created', account, { reason: `Серия: ${series.name}` }, transaction);
       createdBookings.push(mapBooking(fullBooking));
@@ -1534,20 +1654,28 @@ async function createBooking(data, account) {
     const client = await resolveClient(data, transaction, trainingMarker);
     const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
     const pricedData = await applyAutomaticPrice(data, court.id, timing);
+    const bookingPayload = buildBookingPayload(
+      { ...pricedData, responsibleStaffId },
+      account,
+      client,
+      timing,
+    );
+    const participantIds = normalizeGroupParticipantIds(
+      data,
+      client.id,
+      bookingPayload.bookingType,
+    );
+    await loadGroupParticipantsOrFail(participantIds, transaction);
 
     const booking = await db.Booking.create(
       {
-        ...buildBookingPayload(
-          { ...pricedData, responsibleStaffId },
-          account,
-          client,
-          timing,
-        ),
+        ...bookingPayload,
         createdByAccountId: account?.id || null,
         ...trainingMarker,
       },
       { transaction },
     );
+    await syncBookingParticipants(booking, participantIds, transaction);
 
     const fullBooking = await getBookingOrFail(booking.id, transaction);
     await recordChange(fullBooking, 'created', account, {}, transaction);
@@ -1608,7 +1736,26 @@ async function updateBooking(id, data, account) {
       timing,
       booking,
     );
+    const participantPayloadWasProvided =
+      data.groupParticipantIds !== undefined ||
+      data.participantIds !== undefined;
+    const shouldSyncParticipants =
+      participantPayloadWasProvided ||
+      before.bookingType !== payload.bookingType ||
+      before.userId !== payload.userId;
+    const participantInput = participantPayloadWasProvided
+      ? data
+      : { groupParticipantIds: before.participants?.map((participant) => participant.clientId) || [] };
+    const participantIds = shouldSyncParticipants
+      ? normalizeGroupParticipantIds(participantInput, client.id, payload.bookingType)
+      : null;
+    if (participantIds) {
+      await loadGroupParticipantsOrFail(participantIds, transaction);
+    }
     await booking.update(payload, { transaction });
+    if (participantIds) {
+      await syncBookingParticipants(booking, participantIds, transaction);
+    }
     const updated = await getBookingOrFail(booking.id, transaction);
     const after = mapBooking(updated);
     const isRescheduled =
@@ -1677,6 +1824,19 @@ async function getBooking(id) {
   return mapBooking(await getBookingOrFail(id));
 }
 
+async function getBookingTrainingPlan(id, account) {
+  const booking = await getBookingOrFail(id);
+  if (!TRAINING_BOOKING_TYPES.has(booking.bookingType)) return null;
+  return trainingPlansService.getByBookingId(booking.id, account, {
+    allowBookingViewer: true,
+  });
+}
+
+async function createBookingTrainingPlan(id, account) {
+  await getBookingOrFail(id);
+  return trainingPlansService.createFromBooking(id, account);
+}
+
 async function listBookingHistory(id) {
   await getBookingOrFail(id);
   const rows = await db.BookingChangeLog.findAll({
@@ -1696,6 +1856,7 @@ module.exports = {
   changeBookingStatus,
   getBooking,
   getBookingAnalytics,
+  getBookingTrainingPlan,
   getSchedule,
   listBookingSeries,
   listBookingHistory,
@@ -1704,6 +1865,10 @@ module.exports = {
   listCourts,
   listResponsibleStaff,
   previewBookingSeries,
+  createBookingTrainingPlan,
   updateBookingResource,
   updateBooking,
+  __testing: {
+    normalizeGroupParticipantIds,
+  },
 };

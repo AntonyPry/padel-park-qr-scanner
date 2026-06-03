@@ -6,9 +6,11 @@ import {
   useState,
 } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   CalendarDays,
+  CheckCircle2,
   Dumbbell,
   History,
   Pencil,
@@ -30,6 +32,43 @@ import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import {
+  ClientSkillMap,
+  type ClientSkillMapItem,
+  type ClientSkillMapPayload,
+} from '@/components/client-skill-map';
+import {
+  TrainingNoteExerciseEditor,
+  TrainingNoteExerciseList,
+} from '@/components/training-note-exercises';
+import {
+  GroupTrainingRecommendationPanel,
+  type GroupTrainingClientOption,
+} from '@/components/group-training-recommendation-panel';
+import { TrainingRecommendationPanel } from '@/components/training-recommendation-panel';
+import {
+  TrainingPlanLifecyclePanel,
+} from '@/components/training-plan-lifecycle';
+import type {
+  GroupTrainingRecommendation,
+  TrainingRecommendation,
+} from '@/api/training-recommendations';
+import {
+  completeTrainingPlan,
+  createTrainingPlan,
+  listTrainingPlans,
+  quickCompleteTrainingPlan,
+  type TrainingPlan,
+  type TrainingPlanExercisePayload,
+  updateTrainingPlanExercises,
+} from '@/api/training-plans';
+import {
+  createExerciseFormResult,
+  type TrainingNoteExerciseFormResult,
+  type TrainingNoteExerciseResult,
+  toExerciseResultForm,
+  toExerciseResultPayload,
+} from '@/lib/training-note-exercises';
 import { DataTable } from '@/components/data-table';
 import { HelpTooltip, MetricCard } from '@/components/dashboard-metric';
 import { Input } from '@/components/ui/input';
@@ -49,6 +88,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { listMethodologyExercises } from '@/api/methodology';
+import { queryKeys } from '@/api/query-keys';
 import { apiFetch } from '@/lib/api';
 import { useAuth } from '@/lib/useAuth';
 
@@ -87,6 +128,7 @@ interface ClientsResponse {
 
 interface TrainingNote {
   createdAt: string;
+  exerciseResults: TrainingNoteExerciseResult[];
   exercises: string;
   id: number;
   level: TrainingLevel;
@@ -102,11 +144,13 @@ interface TrainingNote {
 
 interface ClientDetails {
   client: Client;
+  skillMap: ClientSkillMapItem[];
   trainingNotes: TrainingNote[];
 }
 
 interface TrainingFormState {
-  exercises: string;
+  exerciseResults: TrainingNoteExerciseFormResult[];
+  legacyExercises: string;
   level: TrainingLevel;
   note: string;
   trainedAt: string;
@@ -127,24 +171,49 @@ function getTodayDate() {
 
 function getEmptyTrainingForm(): TrainingFormState {
   return {
-    exercises: '',
+    exerciseResults: [],
+    legacyExercises: '',
     level: 'D',
     note: '',
     trainedAt: getTodayDate(),
   };
 }
 const trainingFormSchema = z.object({
-  exercises: z.string().trim().min(1, 'Укажите упражнения'),
+  exerciseResults: z.array(
+    z.object({
+      canAdvance: z.boolean(),
+      comment: z.string().max(240, 'Комментарий до 240 символов'),
+      rating: z.number().min(1).max(5),
+      repeatExercise: z.boolean(),
+      repeatSkill: z.boolean(),
+      trainingExerciseId: z.string().min(1),
+    }),
+  ),
+  legacyExercises: z.string(),
   level: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']),
   note: z.string(),
   trainedAt: z.string().min(1, 'Укажите дату'),
-});
+}).refine(
+  (values) =>
+    values.exerciseResults.length > 0 ||
+    values.legacyExercises.trim().length > 0 ||
+    values.note.trim().length > 0,
+  { message: 'Выберите упражнение или оставьте заметку', path: ['exerciseResults'] },
+);
 
 function formatDate(value?: string | null) {
   if (!value) return '-';
   return new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' }).format(
     new Date(value),
   );
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  return new Intl.DateTimeFormat('ru-RU', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date(value));
 }
 
 async function readError(response: Response, fallback: string) {
@@ -192,6 +261,27 @@ function getLatestNote(notes: TrainingNote[]) {
   return notes[0] || null;
 }
 
+function mapClientToGroupOption(client: Client): GroupTrainingClientOption {
+  return {
+    id: client.id,
+    latestLevel: client.training?.latestLevel || null,
+    name: client.name,
+    notesCount: client.training?.notesCount || 0,
+  };
+}
+
+function getPlanParticipantNames(plan: TrainingPlan) {
+  return plan.participants
+    .map((participant) => participant.client?.name)
+    .filter(Boolean)
+    .join(', ');
+}
+
+function getPlanSortTime(plan: TrainingPlan) {
+  const rawDate = plan.booking?.startsAt || `${plan.plannedAt}T00:00:00`;
+  return new Date(rawDate).getTime();
+}
+
 export default function TrainerPage() {
   const { account } = useAuth();
   const [clients, setClients] = useState<Client[]>([]);
@@ -207,8 +297,16 @@ export default function TrainerPage() {
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [trainingLevel, setTrainingLevel] = useState<'all' | TrainingLevel>('all');
+  const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
+  const [trainingPlansError, setTrainingPlansError] = useState<string | null>(null);
+  const [trainingPlansLoading, setTrainingPlansLoading] = useState(false);
+  const [activePlan, setActivePlan] = useState<TrainingPlan | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const [groupClientIds, setGroupClientIds] = useState<number[]>([]);
+  const [groupClientOptionsById, setGroupClientOptionsById] = useState<
+    Record<number, GroupTrainingClientOption>
+  >({});
   const detailsPanelRef = useRef<HTMLElement | null>(null);
   const detailsRequestIdRef = useRef(0);
   const trainingForm = useForm<TrainingFormState>({
@@ -240,6 +338,38 @@ export default function TrainerPage() {
     [page, totalPages],
   );
   const selectedClientId = details?.client.id || null;
+  const selectedClientPlans = useMemo(
+    () =>
+      trainingPlans.filter((plan) =>
+        plan.participants.some((participant) => participant.clientId === selectedClientId),
+      ),
+    [selectedClientId, trainingPlans],
+  );
+  const upcomingTrainingPlans = useMemo(
+    () =>
+      trainingPlans
+        .filter((plan) => plan.status === 'planned')
+        .sort((left, right) => getPlanSortTime(left) - getPlanSortTime(right))
+        .slice(0, 6),
+    [trainingPlans],
+  );
+  const selectedGroupIdSet = useMemo(
+    () => new Set(groupClientIds),
+    [groupClientIds],
+  );
+  const selectedGroupClients = useMemo(
+    () =>
+      groupClientIds
+        .map((clientId) => groupClientOptionsById[clientId])
+        .filter((client): client is GroupTrainingClientOption => Boolean(client)),
+    [groupClientIds, groupClientOptionsById],
+  );
+  const allPageClientsSelected = useMemo(
+    () =>
+      clients.length > 0 &&
+      clients.every((client) => selectedGroupIdSet.has(client.id)),
+    [clients, selectedGroupIdSet],
+  );
   const latestNote = useMemo(
     () => getLatestNote(details?.trainingNotes || []),
     [details?.trainingNotes],
@@ -248,6 +378,13 @@ export default function TrainerPage() {
     () => getLevelDelta(details?.trainingNotes || []),
     [details?.trainingNotes],
   );
+  const approvedExerciseFilters = useMemo(() => ({ status: 'approved' as const }), []);
+  const exercisesQuery = useQuery({
+    enabled: Boolean(details?.client && details.client.status !== 'archived'),
+    queryFn: () => listMethodologyExercises(approvedExerciseFilters),
+    queryKey: queryKeys.methodology.exercises(approvedExerciseFilters),
+  });
+  const methodologyExercises = exercisesQuery.data || [];
 
   const fetchClients = useCallback(async () => {
     setClientsLoading(true);
@@ -261,6 +398,13 @@ export default function TrainerPage() {
 
       const data = (await response.json()) as ClientsResponse;
       setClients(data.items);
+      setGroupClientOptionsById((current) => {
+        const next = { ...current };
+        data.items.forEach((client) => {
+          next[client.id] = mapClientToGroupOption(client);
+        });
+        return next;
+      });
       setTotal(data.total);
       setTotalPages(data.totalPages);
     } catch {
@@ -269,6 +413,36 @@ export default function TrainerPage() {
       setClientsLoading(false);
     }
   }, [queryString]);
+
+  const upsertTrainingPlan = useCallback((plan: TrainingPlan) => {
+    setTrainingPlans((current) => {
+      const exists = current.some((item) => item.id === plan.id);
+      const next = exists
+        ? current.map((item) => (item.id === plan.id ? plan : item))
+        : [plan, ...current];
+
+      return next.sort((left, right) => {
+        if (left.status !== right.status) return left.status === 'planned' ? -1 : 1;
+        return new Date(right.plannedAt).getTime() - new Date(left.plannedAt).getTime();
+      });
+    });
+  }, []);
+
+  const fetchTrainingPlans = useCallback(async () => {
+    setTrainingPlansLoading(true);
+    setTrainingPlansError(null);
+    try {
+      setTrainingPlans(await listTrainingPlans({ status: 'all' }));
+    } catch (error) {
+      setTrainingPlansError(
+        error instanceof Error
+          ? error.message
+          : 'Не удалось загрузить планы тренировок',
+      );
+    } finally {
+      setTrainingPlansLoading(false);
+    }
+  }, []);
 
   const loadDetails = useCallback(async (clientId: number) => {
     const requestId = detailsRequestIdRef.current + 1;
@@ -285,7 +459,13 @@ export default function TrainerPage() {
         return;
       }
 
-      setDetails((await response.json()) as ClientDetails);
+      const data = (await response.json()) as ClientDetails;
+      setDetails({
+        ...data,
+        skillMap: data.skillMap || [],
+        trainingNotes: data.trainingNotes || [],
+      });
+      setActivePlan(null);
       setEditingNote(null);
       setForm(getEmptyTrainingForm());
       if (window.innerWidth < 1024) {
@@ -308,6 +488,16 @@ export default function TrainerPage() {
     }
   }, [setForm]);
 
+  const refreshSkillMap = useCallback(async (clientId: number) => {
+    const response = await apiFetch(`/api/clients/${clientId}/skill-map`);
+    if (!response.ok) return;
+
+    const skillMap = (await response.json()) as ClientSkillMapItem[];
+    setDetails((current) =>
+      current?.client.id === clientId ? { ...current, skillMap } : current,
+    );
+  }, []);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void fetchClients();
@@ -317,8 +507,45 @@ export default function TrainerPage() {
   }, [fetchClients]);
 
   useEffect(() => {
+    void fetchTrainingPlans();
+  }, [fetchTrainingPlans]);
+
+  useEffect(() => {
     setPage(1);
   }, [q, trainingLevel]);
+
+  const toggleGroupClient = useCallback((client: Client) => {
+    setGroupClientOptionsById((current) => ({
+      ...current,
+      [client.id]: mapClientToGroupOption(client),
+    }));
+    setGroupClientIds((current) =>
+      current.includes(client.id)
+        ? current.filter((clientId) => clientId !== client.id)
+        : [...current, client.id],
+    );
+  }, []);
+
+  const toggleCurrentPageGroupSelection = useCallback(() => {
+    setGroupClientOptionsById((current) => {
+      const next = { ...current };
+      clients.forEach((client) => {
+        next[client.id] = mapClientToGroupOption(client);
+      });
+      return next;
+    });
+    setGroupClientIds((current) => {
+      const pageIds = new Set(clients.map((client) => client.id));
+      if (clients.length > 0 && clients.every((client) => current.includes(client.id))) {
+        return current.filter((clientId) => !pageIds.has(clientId));
+      }
+      return Array.from(new Set([...current, ...clients.map((client) => client.id)]));
+    });
+  }, [clients]);
+
+  const removeGroupClient = useCallback((clientId: number) => {
+    setGroupClientIds((current) => current.filter((id) => id !== clientId));
+  }, []);
 
   const canChangeNote = useCallback(
     (note: TrainingNote) => {
@@ -329,14 +556,174 @@ export default function TrainerPage() {
   );
 
   const resetForm = () => {
+    setActivePlan(null);
     setEditingNote(null);
     setForm(getEmptyTrainingForm());
   };
 
+  const applyRecommendedExercises = useCallback((exerciseIds: number[]) => {
+    const currentForm = trainingForm.getValues();
+    setActivePlan(null);
+    setEditingNote(null);
+    setForm({
+      ...currentForm,
+      exerciseResults: exerciseIds.map(createExerciseFormResult),
+      legacyExercises: '',
+    });
+  }, [setForm, trainingForm]);
+
+  const hasDuplicatePlanExercises = useCallback(
+    (plannedExercises: TrainingPlanExercisePayload[]) => {
+      const ids = plannedExercises.map((item) => Number(item.trainingExerciseId));
+      return new Set(ids).size !== ids.length;
+    },
+    [],
+  );
+
+  const createPersonalPlanFromRecommendation = useCallback(async (
+    recommendation: TrainingRecommendation,
+    plannedExercises: TrainingPlanExercisePayload[],
+  ) => {
+    if (!details?.client) return;
+    if (hasDuplicatePlanExercises(plannedExercises)) {
+      toast.error('В плане не должно быть одинаковых упражнений');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const plan = await createTrainingPlan({
+        clientIds: [details.client.id],
+        goal: recommendation.goal,
+        kind: 'personal',
+        plannedAt: recommendation.asOfDate,
+        plannedExercises,
+        sourceSnapshot: {
+          generatedAt: recommendation.generatedAt,
+          prioritySkillIds: recommendation.prioritySkills.map((skill) => skill.skillId),
+          summary: recommendation.summary,
+        },
+        sourceType: 'personal_recommendation',
+      });
+      upsertTrainingPlan(plan);
+      toast.success('План тренировки создан');
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Не удалось создать план тренировки',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [details?.client, hasDuplicatePlanExercises, upsertTrainingPlan]);
+
+  const createGroupPlanFromRecommendation = useCallback(async (
+    recommendation: GroupTrainingRecommendation,
+    plannedExercises: TrainingPlanExercisePayload[],
+  ) => {
+    if (hasDuplicatePlanExercises(plannedExercises)) {
+      toast.error('В плане не должно быть одинаковых упражнений');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const plan = await createTrainingPlan({
+        clientIds: recommendation.clientIds,
+        goal: recommendation.goal,
+        kind: 'group',
+        plannedAt: recommendation.asOfDate,
+        plannedExercises,
+        sourceSnapshot: {
+          generatedAt: recommendation.generatedAt,
+          participants: recommendation.participants,
+          prioritySkillIds: recommendation.prioritySkills.map((skill) => skill.skillId),
+          summary: recommendation.summary,
+        },
+        sourceType: 'group_recommendation',
+      });
+      upsertTrainingPlan(plan);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Не удалось создать групповой план',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [hasDuplicatePlanExercises, upsertTrainingPlan]);
+
+  const replacePlanExercises = useCallback(async (
+    plan: TrainingPlan,
+    plannedExercises: TrainingPlanExercisePayload[],
+  ) => {
+    if (hasDuplicatePlanExercises(plannedExercises)) {
+      toast.error('Это упражнение уже есть в плане');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      const updatedPlan = await updateTrainingPlanExercises(
+        plan.id,
+        plannedExercises,
+      );
+      upsertTrainingPlan(updatedPlan);
+      toast.success('Упражнение в плане заменено');
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Не удалось заменить упражнение',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [hasDuplicatePlanExercises, upsertTrainingPlan]);
+
+  const quickCompletePlan = useCallback(async (plan: TrainingPlan) => {
+    setSaving(true);
+    try {
+      const completedPlan = await quickCompleteTrainingPlan(plan.id, {
+        trainedAt: plan.plannedAt,
+      });
+      upsertTrainingPlan(completedPlan);
+      if (
+        details?.client &&
+        completedPlan.participants.some(
+          (participant) => participant.clientId === details.client.id,
+        )
+      ) {
+        await loadDetails(details.client.id);
+      }
+      void fetchClients();
+      toast.success('План закрыт как completed');
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Не удалось быстро закрыть план',
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, [details?.client, fetchClients, loadDetails, upsertTrainingPlan]);
+
+  const startPlanCompletion = useCallback((plan: TrainingPlan) => {
+    setActivePlan(plan);
+    setEditingNote(null);
+    setForm({
+      exerciseResults: plan.plannedExercises.map((item) =>
+        createExerciseFormResult(item.trainingExerciseId),
+      ),
+      legacyExercises: '',
+      level: latestNote?.level || details?.client.training?.latestLevel || 'D',
+      note: plan.goal ? `Цель плана: ${plan.goal}` : '',
+      trainedAt: plan.plannedAt,
+    });
+  }, [details?.client.training?.latestLevel, latestNote?.level, setForm]);
+
   const startEdit = (note: TrainingNote) => {
+    const exerciseResults = note.exerciseResults || [];
+    setActivePlan(null);
     setEditingNote(note);
     setForm({
-      exercises: note.exercises,
+      exerciseResults: exerciseResults.map(toExerciseResultForm),
+      legacyExercises: exerciseResults.length > 0 ? '' : note.exercises,
       level: note.level,
       note: note.note,
       trainedAt: note.trainedAt,
@@ -348,13 +735,37 @@ export default function TrainerPage() {
 
     setSaving(true);
     try {
+      if (activePlan && !editingNote) {
+        const completedPlan = await completeTrainingPlan(activePlan.id, {
+          exerciseResults: toExerciseResultPayload(values.exerciseResults),
+          level: values.level,
+          note: values.note,
+          trainedAt: values.trainedAt,
+        });
+        upsertTrainingPlan(completedPlan);
+        resetForm();
+        await loadDetails(details.client.id);
+        void fetchClients();
+        toast.success('План подтвержден, дневник обновлен');
+        return;
+      }
+
       const response = await apiFetch(
         editingNote
           ? `/api/training-notes/${editingNote.id}`
           : `/api/clients/${details.client.id}/training-notes`,
         {
           method: editingNote ? 'PUT' : 'POST',
-          body: JSON.stringify(values),
+          body: JSON.stringify({
+            exerciseResults: toExerciseResultPayload(values.exerciseResults),
+            exercises:
+              values.exerciseResults.length > 0
+                ? undefined
+                : values.legacyExercises,
+            level: values.level,
+            note: values.note,
+            trainedAt: values.trainedAt,
+          }),
         },
       );
 
@@ -366,8 +777,13 @@ export default function TrainerPage() {
       const trainingNotes = (await response.json()) as TrainingNote[];
       setDetails({ ...details, trainingNotes });
       resetForm();
+      void refreshSkillMap(details.client.id);
       void fetchClients();
       toast.success(editingNote ? 'Тренировка обновлена' : 'Тренировка сохранена');
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : 'Не удалось сохранить тренировку',
+      );
     } finally {
       setSaving(false);
     }
@@ -375,6 +791,35 @@ export default function TrainerPage() {
     const firstError = Object.values(errors)[0];
     toast.error(firstError?.message || 'Проверьте поля тренировки');
   });
+
+  const saveSkillMap = async (
+    skillId: number,
+    payload: ClientSkillMapPayload,
+  ) => {
+    if (!details?.client) return;
+
+    const response = await apiFetch(
+      `/api/clients/${details.client.id}/skill-map/${skillId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!response.ok) {
+      const message = await readError(response, 'Не удалось сохранить карту навыков');
+      toast.error(message);
+      throw new Error(message);
+    }
+
+    const skillMap = (await response.json()) as ClientSkillMapItem[];
+    setDetails((current) =>
+      current?.client.id === details.client.id
+        ? { ...current, skillMap }
+        : current,
+    );
+    toast.success('Карта навыков обновлена');
+  };
 
   const deleteNote = (note: TrainingNote) => {
     setPendingAction({
@@ -398,6 +843,7 @@ export default function TrainerPage() {
           current ? { ...current, trainingNotes } : current,
         );
         if (editingNote?.id === note.id) resetForm();
+        if (details?.client.id) void refreshSkillMap(details.client.id);
         void fetchClients();
         toast.success('Тренировка удалена');
       },
@@ -416,6 +862,33 @@ export default function TrainerPage() {
   };
   const clientColumns: ColumnDef<Client>[] = [
     {
+      id: 'groupSelect',
+      header: () => (
+        <input
+          type="checkbox"
+          aria-label="Выбрать клиентов на странице для группы"
+          checked={allPageClientsSelected}
+          disabled={clients.length === 0 || clientsLoading}
+          className="h-4 w-4 accent-primary"
+          onChange={toggleCurrentPageGroupSelection}
+          onClick={(event) => event.stopPropagation()}
+        />
+      ),
+      cell: ({ row }) => {
+        const client = row.original;
+        return (
+          <input
+            type="checkbox"
+            aria-label={`Выбрать ${client.name} для групповой тренировки`}
+            checked={selectedGroupIdSet.has(client.id)}
+            className="h-4 w-4 accent-primary"
+            onChange={() => toggleGroupClient(client)}
+            onClick={(event) => event.stopPropagation()}
+          />
+        );
+      },
+    },
+    {
       accessorKey: 'name',
       header: 'Клиент',
       cell: ({ row }) => {
@@ -423,10 +896,22 @@ export default function TrainerPage() {
 
         return (
           <div className="min-w-44">
-            <div className="font-medium">{client.name}</div>
+            <div className="break-words font-medium">{client.name}</div>
             <div className="mt-1 flex flex-wrap gap-1">
-              <Badge variant="outline">{client.segment}</Badge>
-              {client.source && <Badge variant="secondary">{client.source}</Badge>}
+              <Badge
+                variant="outline"
+                className="h-auto min-h-5 whitespace-normal break-words text-left"
+              >
+                {client.segment}
+              </Badge>
+              {client.source && (
+                <Badge
+                  variant="secondary"
+                  className="h-auto min-h-5 whitespace-normal break-words text-left"
+                >
+                  {client.source}
+                </Badge>
+              )}
             </div>
           </div>
         );
@@ -447,7 +932,9 @@ export default function TrainerPage() {
       header: 'Уровень',
       cell: ({ row }) =>
         row.original.training?.latestLevel ? (
-          <Badge>{row.original.training.latestLevel}</Badge>
+          <Badge className="h-auto min-h-5 whitespace-normal break-words text-left">
+            {row.original.training.latestLevel}
+          </Badge>
         ) : (
           <span className="text-muted-foreground">-</span>
         ),
@@ -510,8 +997,95 @@ export default function TrainerPage() {
         />
       </div>
 
+      <section className="rounded-md border bg-card">
+        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="flex items-center gap-2 font-medium">
+              <CalendarDays className="h-4 w-4 text-muted-foreground" />
+              Ближайшие planned-тренировки
+            </div>
+            <div className="mt-1 text-sm text-muted-foreground">
+              Планы из рекомендаций и бронирований, назначенные на тренера.
+            </div>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchTrainingPlans()}
+            disabled={trainingPlansLoading}
+          >
+            <RefreshCw className="mr-2 h-4 w-4" />
+            Обновить
+          </Button>
+        </div>
+        <div className="p-4">
+          {trainingPlansError && (
+            <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              {trainingPlansError}
+            </div>
+          )}
+          {trainingPlansLoading ? (
+            <div className="rounded-md border py-6 text-center text-sm text-muted-foreground">
+              Загружаем ближайшие планы...
+            </div>
+          ) : upcomingTrainingPlans.length === 0 ? (
+            <div className="rounded-md border border-dashed py-6 text-center text-sm text-muted-foreground">
+              Ближайших planned-планов нет.
+            </div>
+          ) : (
+            <div className="grid gap-3 lg:grid-cols-2">
+              {upcomingTrainingPlans.map((plan) => (
+                <article key={plan.id} className="rounded-md border p-3">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge>{plan.kind === 'group' ? 'group' : 'personal'}</Badge>
+                        {plan.bookingId && <Badge variant="outline">booking</Badge>}
+                        <span className="text-sm text-muted-foreground">
+                          {plan.booking?.startsAt
+                            ? formatDateTime(plan.booking.startsAt)
+                            : formatDate(plan.plannedAt)}
+                        </span>
+                      </div>
+                      <div className="mt-2 truncate font-medium">
+                        {plan.goal || 'План тренировки'}
+                      </div>
+                      <div className="mt-1 text-sm text-muted-foreground">
+                        {plan.booking?.court?.name || 'Ресурс не указан'} ·{' '}
+                        {plan.plannedExercises.length} упр.
+                      </div>
+                      <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {getPlanParticipantNames(plan) || 'Участники не указаны'}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={saving || plan.plannedExercises.length === 0}
+                      onClick={() => void quickCompletePlan(plan)}
+                    >
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                      Completed
+                    </Button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <GroupTrainingRecommendationPanel
+        clients={selectedGroupClients}
+        disabled={saving}
+        onCreatePlan={createGroupPlanFromRecommendation}
+        onClear={() => setGroupClientIds([])}
+        onRemoveClient={removeGroupClient}
+      />
+
       <div className="grid gap-4 lg:min-h-[620px] lg:grid-cols-[minmax(0,1fr)_minmax(420px,0.9fr)]">
-        <section className="rounded-md border bg-card lg:min-h-[620px]">
+        <section className="min-w-0 rounded-md border bg-card lg:min-h-[620px]">
           <div className="border-b p-4">
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
               <div className="min-w-0 flex-1">
@@ -568,24 +1142,22 @@ export default function TrainerPage() {
             </div>
           )}
 
-          <div className="overflow-x-auto">
-            <DataTable
-              columns={clientColumns}
-              data={clients}
-              emptyText="Клиентов по текущему фильтру нет."
-              errorText={clientsError || undefined}
-              loading={clientsLoading}
-              loadingText="Загружаем клиентов..."
-              minWidthClassName="min-w-[720px]"
-              onRetry={() => void fetchClients()}
-              getRowProps={(row) => ({
-                className: `cursor-pointer ${
-                  selectedClientId === row.original.id ? 'bg-muted/70' : ''
-                }`,
-                onClick: () => void loadDetails(row.original.id),
-              })}
-            />
-          </div>
+          <DataTable
+            columns={clientColumns}
+            data={clients}
+            emptyText="Клиентов по текущему фильтру нет."
+            errorText={clientsError || undefined}
+            loading={clientsLoading}
+            loadingText="Загружаем клиентов..."
+            minWidthClassName="min-w-[720px]"
+            onRetry={() => void fetchClients()}
+            getRowProps={(row) => ({
+              className: `cursor-pointer ${
+                selectedClientId === row.original.id ? 'bg-muted/70' : ''
+              }`,
+              onClick: () => void loadDetails(row.original.id),
+            })}
+          />
 
           <div className="flex flex-col gap-3 border-t p-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
@@ -629,7 +1201,7 @@ export default function TrainerPage() {
 
         <section
           ref={detailsPanelRef}
-          className="scroll-mt-14 rounded-md border bg-card lg:min-h-[620px]"
+          className="min-w-0 scroll-mt-14 rounded-md border bg-card lg:min-h-[620px]"
         >
           {detailsError && (
             <div className="border-b border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -702,23 +1274,74 @@ export default function TrainerPage() {
                 />
               </div>
 
+              {details?.client.status !== 'archived' && (
+                <div className="border-b p-4">
+                  <TrainingRecommendationPanel
+                    clientId={details?.client.id}
+                    disabled={saving}
+                    onCreatePlan={createPersonalPlanFromRecommendation}
+                    onApplyExercises={applyRecommendedExercises}
+                  />
+                </div>
+              )}
+
+              <div className="border-b p-4">
+                {trainingPlansError && (
+                  <div className="mb-3 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                    {trainingPlansError}
+                  </div>
+                )}
+                {trainingPlansLoading ? (
+                  <div className="rounded-md border py-6 text-center text-sm text-muted-foreground">
+                    Загружаем планы тренировок...
+                  </div>
+                ) : (
+                  <TrainingPlanLifecyclePanel
+                    disabled={saving || details?.client.status === 'archived'}
+                    exercises={methodologyExercises}
+                    plans={selectedClientPlans}
+                    onReplaceExercise={replacePlanExercises}
+                    onStartCompletion={startPlanCompletion}
+                  />
+                )}
+              </div>
+
+              <div className="border-b p-4">
+                <ClientSkillMap
+                  canEdit={details?.client.status !== 'archived'}
+                  disabledReason={
+                    details?.client.status === 'archived'
+                      ? 'Клиент в архиве, карта навыков доступна только для просмотра.'
+                      : undefined
+                  }
+                  items={details?.skillMap || []}
+                  onSave={saveSkillMap}
+                />
+              </div>
+
               <form className="border-b p-4" onSubmit={submitTraining}>
                 <div className="mb-3 flex items-center justify-between gap-3">
                   <div>
                     <div className="font-medium">
-                      {editingNote ? 'Редактировать запись' : 'Новая тренировка'}
+                      {editingNote
+                        ? 'Редактировать запись'
+                        : activePlan
+                          ? 'Подтвердить факт по плану'
+                          : 'Новая completed-тренировка'}
                     </div>
                     <div className="text-sm text-muted-foreground">
-                      Дата, уровень, упражнения и заметка тренера.
+                      {activePlan
+                        ? 'Заполните реальные оценки и отметки: они обновят дневник и карту навыков.'
+                        : 'Дата, уровень и результаты упражнений.'}
                     </div>
                   </div>
-                  {editingNote && (
+                  {(editingNote || activePlan) && (
                     <Button type="button" variant="ghost" onClick={resetForm}>
                       Отменить
                     </Button>
                   )}
                 </div>
-                <div className="grid gap-3 sm:grid-cols-[150px_120px_1fr]">
+                <div className="grid gap-3 sm:grid-cols-[150px_120px]">
                   <div>
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">
                       Дата
@@ -753,22 +1376,39 @@ export default function TrainerPage() {
                       </SelectContent>
                     </Select>
                   </div>
+                </div>
+                <div className="mt-3">
+                  <TrainingNoteExerciseEditor
+                    disabled={saving}
+                    exercises={methodologyExercises}
+                    value={form.exerciseResults}
+                    onChange={(exerciseResults) =>
+                      setForm({ ...form, exerciseResults })
+                    }
+                  />
+                  {exercisesQuery.isError && (
+                    <div className="mt-2 text-sm text-destructive">
+                      Не удалось загрузить упражнения методической базы.
+                    </div>
+                  )}
+                </div>
+                {editingNote && form.exerciseResults.length === 0 && (
                   <div>
                     <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                      Упражнения
+                      Текст упражнений старой записи
                     </label>
                     <Input
-                      value={form.exercises}
+                      value={form.legacyExercises}
                       onChange={(event) =>
-                        setForm({ ...form, exercises: event.target.value })
+                        setForm({ ...form, legacyExercises: event.target.value })
                       }
                       placeholder="Например: свечи, выход к сетке, bandeja"
                     />
                   </div>
-                </div>
+                )}
                 <div className="mt-3">
                   <label className="mb-1 block text-xs font-medium text-muted-foreground">
-                    Заметка
+                    Общая заметка
                   </label>
                   <textarea
                     value={form.note}
@@ -781,13 +1421,19 @@ export default function TrainerPage() {
                 </div>
                 <Button type="submit" className="mt-3" disabled={saving}>
                   <Save className="mr-2 h-4 w-4" />
-                  {saving ? 'Сохраняем...' : editingNote ? 'Сохранить' : 'Добавить'}
+                  {saving
+                    ? 'Сохраняем...'
+                    : activePlan
+                      ? 'Подтвердить факт'
+                      : editingNote
+                        ? 'Сохранить'
+                        : 'Добавить completed'}
                 </Button>
               </form>
 
               <div className="flex-1 p-4">
                 <div className="mb-3 flex items-center gap-1.5">
-                  <div className="font-medium">История прогресса</div>
+                  <div className="font-medium">Completed: история прогресса</div>
                   <HelpTooltip>
                     Записи отсортированы от новых к старым. Цветной бейдж
                     показывает уровень клиента на дату тренировки.
@@ -813,14 +1459,16 @@ export default function TrainerPage() {
                                 {note.trainer?.name || 'Тренер'}
                               </span>
                             </div>
-                            {note.exercises && (
+                            {note.exerciseResults?.length > 0 ? (
+                              <TrainingNoteExerciseList results={note.exerciseResults} />
+                            ) : note.exercises ? (
                               <div className="mt-2 text-sm">
                                 <span className="text-muted-foreground">
                                   Упражнения:{' '}
                                 </span>
                                 {note.exercises}
                               </div>
-                            )}
+                            ) : null}
                             {note.note && (
                               <div className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
                                 {note.note}

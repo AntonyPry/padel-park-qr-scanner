@@ -69,6 +69,12 @@ function inferEntity(path = '') {
     return { entityType: 'payroll_period', entityId: normalizedPath.split('/')[3] };
   }
   if (first === 'motivation') return { entityType: `motivation:${second || 'unknown'}`, entityId: third };
+  if (first === 'methodology' && second === 'skills') {
+    return { entityType: 'training_skill', entityId: third };
+  }
+  if (first === 'methodology' && second === 'exercises') {
+    return { entityType: 'training_exercise', entityId: third };
+  }
   if (first === 'shifts') return { entityType: 'shift', entityId: second };
   if (first === 'finance') return { entityType: 'finance', entityId: second };
   if (first === 'training-notes') return { entityType: 'training_note', entityId: second };
