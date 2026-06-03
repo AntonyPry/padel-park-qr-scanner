@@ -1,4 +1,9 @@
 import type { AuditAction } from '@/api/audit';
+import type {
+  MethodologyExerciseFilters,
+  MethodologySkillFilters,
+} from '@/api/methodology';
+import type { MethodologyAnalyticsFilters } from '@/api/methodology-analytics';
 import type { ReferenceStatus, ReferenceType } from '@/lib/references';
 
 export const queryKeys = {
@@ -25,6 +30,19 @@ export const queryKeys = {
     all: ['clients'] as const,
     list: (params: Record<string, unknown>) =>
       [...queryKeys.clients.all, 'list', params] as const,
+    trainingRecommendation: (
+      clientId: number | null,
+      params: { date?: string; goal?: string },
+    ) => [...queryKeys.clients.all, 'training-recommendation', clientId, params] as const,
+  },
+  methodology: {
+    all: ['methodology'] as const,
+    analytics: (params: MethodologyAnalyticsFilters) =>
+      [...queryKeys.methodology.all, 'analytics', params] as const,
+    exercises: (params: MethodologyExerciseFilters) =>
+      [...queryKeys.methodology.all, 'exercises', params] as const,
+    skills: (params: MethodologySkillFilters) =>
+      [...queryKeys.methodology.all, 'skills', params] as const,
   },
   onboarding: {
     all: ['onboarding'] as const,
@@ -52,6 +70,13 @@ export const queryKeys = {
     report: (params: Record<string, unknown>) =>
       [...queryKeys.telephony.all, 'report', params] as const,
     stats: () => [...queryKeys.telephony.all, 'stats'] as const,
+  },
+  trainingPlans: {
+    all: ['training-plans'] as const,
+    detail: (planId: number | null) =>
+      [...queryKeys.trainingPlans.all, 'detail', planId] as const,
+    list: (params: Record<string, unknown>) =>
+      [...queryKeys.trainingPlans.all, 'list', params] as const,
   },
   utilization: {
     all: ['utilization'] as const,

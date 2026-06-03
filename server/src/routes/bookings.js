@@ -172,6 +172,18 @@ router.get(
   validate({ params: apiSchemas.bookings.params }),
   bookingsController.getOne,
 );
+router.get(
+  '/bookings/:id/training-plan',
+  manageBookings,
+  validate({ params: apiSchemas.bookings.params }),
+  bookingsController.getTrainingPlan,
+);
+router.post(
+  '/bookings/:id/training-plan',
+  manageBookings,
+  validate({ params: apiSchemas.bookings.params }),
+  bookingsController.createTrainingPlan,
+);
 router.put(
   '/bookings/:id',
   manageBookings,

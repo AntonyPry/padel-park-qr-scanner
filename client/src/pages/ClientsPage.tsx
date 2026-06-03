@@ -8,6 +8,7 @@ import {
   useState,
 } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Activity,
@@ -43,6 +44,22 @@ import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import {
+  ClientSkillMap,
+  type ClientSkillMapItem,
+  type ClientSkillMapPayload,
+} from '@/components/client-skill-map';
+import {
+  TrainingNoteExerciseEditor,
+  TrainingNoteExerciseList,
+} from '@/components/training-note-exercises';
+import { TrainingRecommendationPanel } from '@/components/training-recommendation-panel';
+import {
+  createExerciseFormResult,
+  type TrainingNoteExerciseFormResult,
+  type TrainingNoteExerciseResult,
+  toExerciseResultPayload,
+} from '@/lib/training-note-exercises';
 import {
   Dialog,
   DialogContent,
@@ -88,6 +105,8 @@ import {
   MetricLabel,
 } from '@/components/dashboard-metric';
 import { completeOnboardingPracticeStep } from '@/api/onboarding';
+import { listMethodologyExercises } from '@/api/methodology';
+import { queryKeys } from '@/api/query-keys';
 import { apiFetch } from '@/lib/api';
 import {
   getStoredActiveOnboardingQuest,
@@ -177,6 +196,7 @@ interface ClientDetails {
   client: Client;
   duplicateCandidates: Client[];
   mergedInto?: Client | null;
+  skillMap: ClientSkillMapItem[];
   telephonyCalls: ClientTelephonyCall[];
   timeline: ClientTimelineItem[];
   trainingNotes: TrainingNote[];
@@ -384,6 +404,7 @@ interface TrainingNote {
   trainedAt: string;
   level: TrainingLevel;
   exercises: string;
+  exerciseResults: TrainingNoteExerciseResult[];
   note: string;
   trainer?: {
     id: number;
@@ -397,7 +418,7 @@ interface TrainingNote {
 type TrainingLevel = 'D' | 'D+' | 'C' | 'C+' | 'B' | 'B+' | 'A';
 
 interface TrainingFormState {
-  exercises: string;
+  exerciseResults: TrainingNoteExerciseFormResult[];
   level: TrainingLevel;
   note: string;
   trainedAt: string;
@@ -480,7 +501,7 @@ function getTodayDate() {
 }
 
 const EMPTY_TRAINING_FORM: TrainingFormState = {
-  exercises: '',
+  exerciseResults: [],
   level: 'D',
   note: '',
   trainedAt: getTodayDate(),
@@ -1085,6 +1106,17 @@ export default function ClientsPage() {
     trainedAt: getTodayDate(),
   });
   const [trainingSaving, setTrainingSaving] = useState(false);
+  const approvedExerciseFilters = useMemo(() => ({ status: 'approved' as const }), []);
+  const exercisesQuery = useQuery({
+    enabled: Boolean(
+      canEditTraining &&
+        details?.client &&
+        details.client.status !== 'archived',
+    ),
+    queryFn: () => listMethodologyExercises(approvedExerciseFilters),
+    queryKey: queryKeys.methodology.exercises(approvedExerciseFilters),
+  });
+  const methodologyExercises = exercisesQuery.data || [];
   const [selectedMergeIds, setSelectedMergeIds] = useState<number[]>([]);
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
@@ -1643,8 +1675,10 @@ export default function ClientsPage() {
           upcomingCount: 0,
         },
         bookings: data.bookings || [],
+        duplicateCandidates: data.duplicateCandidates || [],
         telephonyCalls: data.telephonyCalls || [],
         timeline: data.timeline || [],
+        skillMap: data.skillMap || [],
         trainingNotes: data.trainingNotes || [],
         visits: data.visits || [],
       });
@@ -1841,7 +1875,12 @@ export default function ClientsPage() {
         `/api/clients/${details.client.id}/training-notes`,
         {
           method: 'POST',
-          body: JSON.stringify(trainingForm),
+          body: JSON.stringify({
+            exerciseResults: toExerciseResultPayload(trainingForm.exerciseResults),
+            level: trainingForm.level,
+            note: trainingForm.note,
+            trainedAt: trainingForm.trainedAt,
+          }),
         },
       );
 
@@ -1858,6 +1897,42 @@ export default function ClientsPage() {
     } finally {
       setTrainingSaving(false);
     }
+  };
+
+  const handleSkillMapSave = async (
+    skillId: number,
+    payload: ClientSkillMapPayload,
+  ) => {
+    if (!details?.client) return;
+
+    const res = await apiFetch(
+      `/api/clients/${details.client.id}/skill-map/${skillId}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      },
+    );
+
+    if (!res.ok) {
+      const message = await readError(res, 'Не удалось сохранить карту навыков');
+      toast.error(message);
+      throw new Error(message);
+    }
+
+    const skillMap = (await res.json()) as ClientSkillMapItem[];
+    setDetails((current) =>
+      current?.client.id === details.client.id
+        ? { ...current, skillMap }
+        : current,
+    );
+    toast.success('Карта навыков обновлена');
+  };
+
+  const applyRecommendedExercises = (exerciseIds: number[]) => {
+    setTrainingForm((current) => ({
+      ...current,
+      exerciseResults: exerciseIds.map(createExerciseFormResult),
+    }));
   };
 
   const createClientCallTask = clientCallTaskForm.handleSubmit(async (values) => {
@@ -4022,6 +4097,19 @@ export default function ClientsPage() {
                   </div>
 
                   {canViewTraining && (
+                    <ClientSkillMap
+                      canEdit={canEditTraining && details.client.status !== 'archived'}
+                      disabledReason={
+                        details.client.status === 'archived'
+                          ? 'Клиент в архиве, карта навыков доступна только для просмотра.'
+                          : undefined
+                      }
+                      items={details.skillMap || []}
+                      onSave={handleSkillMapSave}
+                    />
+                  )}
+
+                  {canViewTraining && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
@@ -4044,11 +4132,19 @@ export default function ClientsPage() {
                         )}
 
                         {canEditTraining && details.client.status !== 'archived' && (
+                          <TrainingRecommendationPanel
+                            clientId={details.client.id}
+                            disabled={trainingSaving}
+                            onApplyExercises={applyRecommendedExercises}
+                          />
+                        )}
+
+                        {canEditTraining && details.client.status !== 'archived' && (
                           <form
                             onSubmit={handleTrainingSave}
                             className="rounded-md border p-3"
                           >
-                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[160px_140px_1fr]">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[160px_140px]">
                               <div>
                                 <label className="mb-1 block text-xs font-medium">
                                   Дата
@@ -4090,25 +4186,28 @@ export default function ClientsPage() {
                                   </SelectContent>
                                 </Select>
                               </div>
-                              <div>
-                                <label className="mb-1 block text-xs font-medium">
-                                  Упражнения
-                                </label>
-                                <Input
-                                  value={trainingForm.exercises}
-                                  onChange={(event) =>
-                                    setTrainingForm({
-                                      ...trainingForm,
-                                      exercises: event.target.value,
-                                    })
-                                  }
-                                  placeholder="Что делали на тренировке"
-                                />
-                              </div>
+                            </div>
+                            <div className="mt-3">
+                              <TrainingNoteExerciseEditor
+                                disabled={trainingSaving}
+                                exercises={methodologyExercises}
+                                value={trainingForm.exerciseResults}
+                                onChange={(exerciseResults) =>
+                                  setTrainingForm({
+                                    ...trainingForm,
+                                    exerciseResults,
+                                  })
+                                }
+                              />
+                              {exercisesQuery.isError && (
+                                <div className="mt-2 text-sm text-destructive">
+                                  Не удалось загрузить упражнения методической базы.
+                                </div>
+                              )}
                             </div>
                             <div className="mt-3">
                               <label className="mb-1 block text-xs font-medium">
-                                Заметка
+                                Общая заметка
                               </label>
                               <textarea
                                 value={trainingForm.note}
@@ -4152,14 +4251,16 @@ export default function ClientsPage() {
                                     {entry.trainer?.name || 'Тренер'}
                                   </div>
                                 </div>
-                                {entry.exercises && (
+                                {entry.exerciseResults?.length > 0 ? (
+                                  <TrainingNoteExerciseList results={entry.exerciseResults} />
+                                ) : entry.exercises ? (
                                   <div className="mt-3 text-sm">
                                     <span className="text-muted-foreground">
                                       Упражнения:{' '}
                                     </span>
                                     {entry.exercises}
                                   </div>
-                                )}
+                                ) : null}
                                 {entry.note && (
                                   <div className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">
                                     {entry.note}

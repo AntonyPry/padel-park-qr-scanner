@@ -4,6 +4,13 @@ const { PNL_GROUP_VALUES } = require('../constants/catalog');
 const {
   ONBOARDING_CLIENT_CHECKPOINT_EVENTS,
 } = require('../onboarding/catalog');
+const {
+  TRAINING_EXERCISE_E_LEVEL_VALUES,
+  TRAINING_EXERCISE_FORMAT_VALUES,
+  TRAINING_EXERCISE_STATUS_VALUES,
+  TRAINING_SKILL_DIRECTION_VALUES,
+  TRAINING_SKILL_STATUS_VALUES,
+} = require('../constants/training-methodology');
 
 const id = z.union([
   z.number().int().positive(),
@@ -84,6 +91,8 @@ const idParams = z.object({ id });
 const viewIdParams = z.object({ viewId: id });
 const clientIdParams = z.object({ clientId: id });
 const noteIdParams = z.object({ noteId: id });
+const trainingPlanIdParams = z.object({ planId: id });
+const clientSkillMapEntryParams = z.object({ clientId: id, skillId: id });
 const baseIdParams = z.object({ baseId: id });
 const taskClientIdParams = z.object({ taskClientId: id });
 const typeParams = z.object({
@@ -93,6 +102,55 @@ const referenceParams = z.object({
   id,
   type: z.enum(['client-sources', 'visit-categories']),
 });
+const trainingMethodologySkillDirection = z.enum(TRAINING_SKILL_DIRECTION_VALUES);
+const trainingMethodologySkillStatus = z.enum(TRAINING_SKILL_STATUS_VALUES);
+const trainingMethodologyExerciseStatus = z.enum(TRAINING_EXERCISE_STATUS_VALUES);
+const trainingMethodologyELevel = z.enum(TRAINING_EXERCISE_E_LEVEL_VALUES);
+const trainingMethodologyFormat = z.enum(TRAINING_EXERCISE_FORMAT_VALUES);
+const optionalTrainingMethodologySkillLevel = z
+  .union([
+    z.number().int().min(0).max(5),
+    z.string().trim().regex(/^[0-5]$/, 'Уровень навыка должен быть от 0 до 5'),
+    z.literal(''),
+    z.null(),
+  ])
+  .optional();
+const optionalTrainingMethodologyELevel = z
+  .union([trainingMethodologyELevel, z.literal(''), z.null()])
+  .optional();
+const trainingMethodologyStatusQuery = z.enum([
+  ...TRAINING_EXERCISE_STATUS_VALUES,
+  'all',
+]);
+const trainingMethodologySkillStatusQuery = z.enum([
+  ...TRAINING_SKILL_STATUS_VALUES,
+  'all',
+]);
+const trainingNoteExerciseRating = z.union([
+  z.number().int().min(1).max(5),
+  z.string().trim().regex(/^[1-5]$/, 'Оценка упражнения должна быть от 1 до 5'),
+]);
+const trainingNoteExerciseComment = z
+  .union([
+    z.string().trim().max(240, 'Комментарий по упражнению должен быть не длиннее 240 символов'),
+    z.literal(''),
+    z.null(),
+  ])
+  .optional();
+const trainingNoteExerciseResult = z
+  .object({
+    canAdvance: optionalBoolValue,
+    comment: trainingNoteExerciseComment,
+    rating: trainingNoteExerciseRating,
+    repeatExercise: optionalBoolValue,
+    repeatSkill: optionalBoolValue,
+    trainingExerciseId: id,
+  })
+  .passthrough();
+const trainingNoteExerciseResults = z
+  .array(trainingNoteExerciseResult)
+  .max(20, 'В одной записи можно указать до 20 упражнений')
+  .optional();
 const dateRangeQuery = z
   .object({
     from: optionalDateOnly,
@@ -171,6 +229,144 @@ const clientUpdateBody = clientBody
   .partial()
   .extend({
     status: archiveStatus.optional(),
+  })
+  .passthrough();
+
+const clientSkillMapLevel = z
+  .union([
+    z.number().int().min(0).max(5),
+    z.string().trim().regex(/^[0-5]$/, 'Уровень навыка должен быть от 0 до 5'),
+  ])
+  .optional();
+
+const clientSkillMapUpdateBody = z
+  .object({
+    lastTrainedAt: z.union([dateOnly, z.literal(''), z.null()]).optional(),
+    latestAssessment: optionalString,
+    latestExercises: optionalString,
+    level: clientSkillMapLevel,
+    nextEStep: optionalTrainingMethodologyELevel,
+    repeatFlag: optionalBoolValue,
+  })
+  .passthrough();
+
+const trainingRecommendationQuery = z
+  .object({
+    date: optionalDateOnly,
+    goal: z
+      .union([
+        z.string().trim().max(160, 'Цель тренировки слишком длинная'),
+        z.literal(''),
+        z.null(),
+      ])
+      .optional(),
+  })
+  .passthrough();
+
+const groupTrainingRecommendationBody = z
+  .object({
+    clientIds: z
+      .array(id)
+      .min(2, 'Выберите минимум 2 клиентов для группы')
+      .max(12, 'В группе можно выбрать до 12 клиентов'),
+    date: optionalDateOnly,
+    goal: z
+      .union([
+        z.string().trim().max(160, 'Тема тренировки слишком длинная'),
+        z.literal(''),
+        z.null(),
+      ])
+      .optional(),
+  })
+  .passthrough();
+
+const trainingPlanSourceType = z.enum([
+  'manual',
+  'personal_recommendation',
+  'group_recommendation',
+]);
+const trainingPlanExercise = z
+  .object({
+    blockKey: optionalString,
+    blockTitle: optionalString,
+    exerciseId: id.optional(),
+    id: id.optional(),
+    reason: z.unknown().optional(),
+    reasonSnapshot: z.unknown().optional(),
+    title: optionalString,
+    trainingExerciseId: id.optional(),
+  })
+  .passthrough()
+  .refine(
+    (value: {
+      exerciseId?: unknown;
+      id?: unknown;
+      trainingExerciseId?: unknown;
+    }) => Boolean(value.trainingExerciseId || value.exerciseId || value.id),
+    'Укажите упражнение плана',
+  );
+const trainingPlanExercises = z
+  .array(trainingPlanExercise)
+  .min(1, 'Добавьте упражнения в план тренировки')
+  .max(20, 'В плане можно указать до 20 упражнений');
+const trainingPlanParticipantResult = z
+  .object({
+    clientId: id,
+    exercises: optionalString,
+    exerciseResults: trainingNoteExerciseResults,
+    level: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']).optional(),
+    note: optionalString,
+    trainedAt: dateOnly.optional(),
+  })
+  .passthrough();
+const trainingPlanBody = z
+  .object({
+    clientId: id.optional(),
+    clientIds: z.array(id).optional(),
+    exercises: trainingPlanExercises.optional(),
+    goal: z
+      .union([
+        z.string().trim().max(160, 'Цель плана слишком длинная'),
+        z.literal(''),
+        z.null(),
+      ])
+      .optional(),
+    kind: z.enum(['personal', 'group']),
+    notes: optionalString,
+    plannedAt: dateOnly.optional(),
+    plannedExercises: trainingPlanExercises.optional(),
+    sourceSnapshot: z.unknown().optional(),
+    sourceType: trainingPlanSourceType.optional(),
+  })
+  .passthrough()
+  .refine((value: { exercises?: unknown; plannedExercises?: unknown }) => Boolean(value.plannedExercises || value.exercises), {
+    message: 'Добавьте упражнения в план тренировки',
+    path: ['plannedExercises'],
+  });
+const trainingPlanExercisesBody = z
+  .object({
+    exercises: trainingPlanExercises.optional(),
+    plannedExercises: trainingPlanExercises.optional(),
+  })
+  .passthrough()
+  .refine((value: { exercises?: unknown; plannedExercises?: unknown }) => Boolean(value.plannedExercises || value.exercises), {
+    message: 'Добавьте упражнения в план тренировки',
+    path: ['plannedExercises'],
+  });
+const trainingPlanCompleteBody = z
+  .object({
+    exercises: optionalString,
+    exerciseResults: trainingNoteExerciseResults,
+    level: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']).optional(),
+    note: optionalString,
+    participantResults: z.array(trainingPlanParticipantResult).optional(),
+    trainedAt: dateOnly.optional(),
+  })
+  .passthrough();
+const trainingPlanQuickCompleteBody = z
+  .object({
+    note: optionalString,
+    trainedAt: dateOnly.optional(),
   })
   .passthrough();
 
@@ -282,6 +478,10 @@ const bookingSeriesBody = z
     courtId: id,
     durationMinutes: bookingDuration,
     endsOn: dateOnly,
+    groupParticipantIds: z
+      .array(id)
+      .max(12, 'В групповой тренировке можно выбрать до 12 участников')
+      .optional(),
     name: nameString,
     paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
     paymentStatus: z.enum(['unpaid', 'partial', 'paid', 'refunded']).optional(),
@@ -314,6 +514,10 @@ const bookingShape = {
   courtId: id,
   date: optionalDateOnly,
   durationMinutes: bookingDuration,
+  groupParticipantIds: z
+    .array(id)
+    .max(12, 'В групповой тренировке можно выбрать до 12 участников')
+    .optional(),
   paidAmount: optionalNonNegativeNumberValue,
   paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
   paymentStatus: z.enum(['unpaid', 'partial', 'paid', 'refunded']).optional(),
@@ -369,6 +573,49 @@ const taskClientStatus = z.enum([
   'booked',
   'refused',
 ]);
+
+const trainingMethodologySkillBody = z
+  .object({
+    description: optionalString,
+    direction: trainingMethodologySkillDirection,
+    name: nameString,
+    status: trainingMethodologySkillStatus.optional(),
+  })
+  .passthrough();
+
+const trainingMethodologySkillUpdateBody = z
+  .object({
+    description: optionalString,
+    direction: trainingMethodologySkillDirection.optional(),
+    name: nameString.optional(),
+    status: trainingMethodologySkillStatus.optional(),
+  })
+  .passthrough();
+
+const trainingMethodologyExerciseBody = z
+  .object({
+    additionalSkillIds: z.array(id).optional(),
+    complication: optionalString,
+    description: optionalString,
+    eLevel: optionalTrainingMethodologyELevel,
+    formats: z.array(trainingMethodologyFormat).optional(),
+    mainSkillId: nullableId,
+    name: nameString,
+    simplification: optionalString,
+    skillLevel: optionalTrainingMethodologySkillLevel,
+    skillLevelMax: optionalTrainingMethodologySkillLevel,
+    skillLevelMin: optionalTrainingMethodologySkillLevel,
+    status: trainingMethodologyExerciseStatus.optional(),
+    successCriterion: optionalString,
+  })
+  .passthrough();
+
+const trainingMethodologyExerciseUpdateBody = trainingMethodologyExerciseBody
+  .extend({
+    name: nameString.optional(),
+  })
+  .partial()
+  .passthrough();
 
 const apiSchemas = {
   access: {
@@ -796,6 +1043,11 @@ const apiSchemas = {
     params: idParams,
     savedViewBody,
     savedViewUpdateBody,
+    groupTrainingRecommendationBody,
+    skillMapEntryParams: clientSkillMapEntryParams,
+    skillMapParams: clientIdParams,
+    skillMapUpdateBody: clientSkillMapUpdateBody,
+    trainingRecommendationQuery,
     updateBody: clientUpdateBody,
     viewParams: viewIdParams,
   },
@@ -843,6 +1095,37 @@ const apiSchemas = {
       body: z.object({ value: nonNegativeNumberValue }).passthrough(),
       params: z.object({ key: requiredString }),
     },
+    withId: { params: idParams },
+  },
+  methodology: {
+    analyticsQuery: dateRangeQuery
+      .extend({
+        trainerAccountId: nullableId,
+      })
+      .passthrough(),
+    exerciseBody: trainingMethodologyExerciseBody,
+    exerciseListQuery: z
+      .object({
+        direction: trainingMethodologySkillDirection.optional(),
+        eLevel: trainingMethodologyELevel.optional(),
+        format: trainingMethodologyFormat.optional(),
+        mainSkillId: nullableId,
+        q: optionalString,
+        skillId: nullableId,
+        skillLevel: optionalTrainingMethodologySkillLevel,
+        status: trainingMethodologyStatusQuery.optional(),
+      })
+      .passthrough(),
+    exerciseUpdateBody: trainingMethodologyExerciseUpdateBody,
+    skillBody: trainingMethodologySkillBody,
+    skillListQuery: z
+      .object({
+        direction: trainingMethodologySkillDirection.optional(),
+        q: optionalString,
+        status: trainingMethodologySkillStatusQuery.optional(),
+      })
+      .passthrough(),
+    skillUpdateBody: trainingMethodologySkillUpdateBody,
     withId: { params: idParams },
   },
   references: {
@@ -908,6 +1191,7 @@ const apiSchemas = {
     body: z
       .object({
         exercises: optionalString,
+        exerciseResults: trainingNoteExerciseResults,
         level: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']),
         note: optionalString,
         trainedAt: dateOnly,
@@ -918,11 +1202,28 @@ const apiSchemas = {
     updateBody: z
       .object({
         exercises: optionalString,
+        exerciseResults: trainingNoteExerciseResults,
         level: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']).optional(),
         note: optionalString,
         trainedAt: dateOnly.optional(),
       })
       .passthrough(),
+  },
+  trainingPlans: {
+    body: trainingPlanBody,
+    completeBody: trainingPlanCompleteBody,
+    exercisesBody: trainingPlanExercisesBody,
+    listQuery: z
+      .object({
+        bookingId: nullableId,
+        clientId: nullableId,
+        from: optionalDateOnly,
+        status: z.enum(['planned', 'completed', 'all']).optional(),
+        to: optionalDateOnly,
+      })
+      .passthrough(),
+    params: trainingPlanIdParams,
+    quickCompleteBody: trainingPlanQuickCompleteBody,
   },
   utilization: {
     body: z.union([

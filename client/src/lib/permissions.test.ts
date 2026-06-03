@@ -5,7 +5,9 @@ import {
   canManageBookings,
   canManageClients,
   canManageFinance,
+  canManageMethodology,
   canManageTelephony,
+  canViewMethodologyAnalytics,
   canWorkTelephony,
   canViewTrainingNotes,
   getDefaultPath,
@@ -20,10 +22,22 @@ describe('permissions', () => {
 
   it('keeps trainer away from common CRM management sections', () => {
     expect(canAccessPath('trainer', '/admin/trainer')).toBe(true);
+    expect(canAccessPath('trainer', '/admin/methodology')).toBe(true);
+    expect(canAccessPath('trainer', '/admin/methodology-analytics')).toBe(false);
     expect(canAccessPath('trainer', '/admin/onboarding')).toBe(true);
     expect(canAccessPath('trainer', '/admin/clients')).toBe(false);
     expect(canManageClients('trainer')).toBe(false);
+    expect(canManageMethodology('trainer')).toBe(false);
+    expect(canViewMethodologyAnalytics('trainer')).toBe(false);
     expect(canViewTrainingNotes('trainer')).toBe(true);
+  });
+
+  it('allows owners and managers to manage methodology approvals', () => {
+    expect(canManageMethodology('owner')).toBe(true);
+    expect(canManageMethodology('manager')).toBe(true);
+    expect(canManageMethodology('admin')).toBe(false);
+    expect(canViewMethodologyAnalytics('owner')).toBe(true);
+    expect(canViewMethodologyAnalytics('manager')).toBe(true);
   });
 
   it('separates finance management from finance visibility', () => {

@@ -117,7 +117,6 @@ export function DataTable<TData>({
       pagination,
     },
   });
-  const colSpan = Math.max(columns.length, 1);
   const pageCount = pageSize ? table.getPageCount() : 1;
   const currentPage = table.getState().pagination.pageIndex + 1;
   const paginationItems = useMemo(
@@ -135,6 +134,7 @@ export function DataTable<TData>({
   const errorMessage = errorText?.trim();
   const showError = Boolean(errorMessage) && !loading && data.length === 0;
   const showInlineError = Boolean(errorMessage) && !loading && data.length > 0;
+  const showEmpty = !showError && !loading && table.getRowModel().rows.length === 0;
 
   return (
     <div>
@@ -157,92 +157,89 @@ export function DataTable<TData>({
           </div>
         </div>
       )}
-      <Table className={cn(minWidthClassName, tableClassName)}>
-        <TableHeader>
-          {table.getHeaderGroups().map((headerGroup) => (
-            <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header) => (
-                <TableHead
-                  key={header.id}
-                  className={header.column.columnDef.meta?.headerClassName}
-                  style={{ width: header.column.columnDef.size }}
-                >
-                  {header.isPlaceholder
-                    ? null
-                    : flexRender(
-                        header.column.columnDef.header,
-                        header.getContext(),
-                      )}
-                </TableHead>
-              ))}
-            </TableRow>
-          ))}
-        </TableHeader>
-        <TableBody>
-          {loading && data.length === 0 && (
-            <TableRow>
-              <TableCell
-                colSpan={colSpan}
-                className="py-10 text-center text-muted-foreground"
-              >
-                {loadingText}
-              </TableCell>
-            </TableRow>
-          )}
-          {showError && (
-            <TableRow>
-              <TableCell colSpan={colSpan} className="py-8">
-                <div className="mx-auto flex max-w-[560px] flex-col items-center gap-3 text-center text-destructive">
-                  <AlertTriangle className="h-5 w-5" />
-                  <div>
-                    <div className="font-medium">Не удалось загрузить данные</div>
-                    <div className="mt-1 text-sm text-destructive/85">
-                      {errorMessage}
-                    </div>
-                  </div>
-                  {onRetry && (
-                    <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      {retryText}
-                    </Button>
-                  )}
-                </div>
-              </TableCell>
-            </TableRow>
-          )}
-          {!showError && !loading && table.getRowModel().rows.length === 0 && (
-            <TableRow>
-              <TableCell
-                colSpan={colSpan}
-                className="py-10 text-center text-muted-foreground"
-              >
-                {emptyText}
-              </TableCell>
-            </TableRow>
-          )}
-          {table.getRowModel().rows.map((row) => {
-            const rowProps = getRowProps?.(row) ?? {};
-
-            return (
-              <TableRow
-                {...rowProps}
-                key={row.id}
-                className={cn(rowProps.className, getRowClassName?.(row))}
-              >
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell
-                    key={cell.id}
-                    className={cell.column.columnDef.meta?.cellClassName}
-                    style={{ width: cell.column.columnDef.size }}
+      <div className="w-full overflow-x-auto">
+        <Table className={cn(minWidthClassName, tableClassName)}>
+          <TableHeader>
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead
+                    key={header.id}
+                    className={cn(
+                      'whitespace-normal align-top',
+                      header.column.columnDef.meta?.headerClassName,
+                    )}
+                    style={{ width: header.column.columnDef.size }}
                   >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
+                    {header.isPlaceholder
+                      ? null
+                      : flexRender(
+                          header.column.columnDef.header,
+                          header.getContext(),
+                        )}
+                  </TableHead>
                 ))}
               </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getRowModel().rows.map((row) => {
+              const rowProps = getRowProps?.(row) ?? {};
+
+              return (
+                <TableRow
+                  {...rowProps}
+                  key={row.id}
+                  className={cn(rowProps.className, getRowClassName?.(row))}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell
+                      key={cell.id}
+                      className={cn(
+                        'whitespace-normal align-top',
+                        cell.column.columnDef.meta?.cellClassName,
+                      )}
+                      style={{ width: cell.column.columnDef.size }}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </div>
+
+      {loading && data.length === 0 && (
+        <div className="border-t px-4 py-10 text-center text-sm text-muted-foreground">
+          <span className="block min-w-0 break-words">{loadingText}</span>
+        </div>
+      )}
+      {showError && (
+        <div className="border-t px-4 py-8">
+          <div className="mx-auto flex max-w-[560px] flex-col items-center gap-3 text-center text-destructive">
+            <AlertTriangle className="h-5 w-5" />
+            <div className="min-w-0">
+              <div className="font-medium">Не удалось загрузить данные</div>
+              <div className="mt-1 break-words text-sm text-destructive/85">
+                {errorMessage}
+              </div>
+            </div>
+            {onRetry && (
+              <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+                <RefreshCw className="mr-2 h-4 w-4" />
+                {retryText}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+      {showEmpty && (
+        <div className="border-t px-4 py-10 text-center text-sm text-muted-foreground">
+          <span className="block min-w-0 break-words">{emptyText}</span>
+        </div>
+      )}
 
       {pageSize && pageCount > 1 && (
         <div className="flex flex-col gap-3 border-t px-3 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">

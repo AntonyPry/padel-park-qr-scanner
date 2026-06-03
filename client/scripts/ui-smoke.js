@@ -69,6 +69,8 @@ const ROUTES = [
   '/admin/bookings',
   '/admin/clients',
   '/admin/trainer',
+  '/admin/methodology',
+  '/admin/methodology-analytics',
   '/admin/client-bases',
   '/admin/call-tasks',
   '/admin/telephony',

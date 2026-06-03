@@ -36,6 +36,9 @@ type AccessKey =
   | 'telephonyManage'
   | 'telephonyView'
   | 'telephonyWork'
+  | 'trainingMethodologyAnalyticsView'
+  | 'trainingMethodologyManage'
+  | 'trainingMethodologyView'
   | 'trainingNotesManage'
   | 'trainingNotesView'
   | 'utilizationManage'
@@ -77,6 +80,9 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   telephonyManage: ['owner', 'manager'],
   telephonyView: ['owner', 'manager', 'admin', 'viewer'],
   telephonyWork: ['owner', 'manager', 'admin'],
+  trainingMethodologyAnalyticsView: ['owner', 'manager'],
+  trainingMethodologyManage: ['owner', 'manager'],
+  trainingMethodologyView: ['owner', 'manager', 'trainer'],
   trainingNotesManage: ['owner', 'manager', 'trainer'],
   trainingNotesView: ['owner', 'manager', 'trainer'],
   utilizationManage: ['owner', 'manager'],

@@ -25,6 +25,8 @@ const visitsAnalyticsRoutes = require('./visits-analytics');
 const motivationRoutes = require('./motivation');
 const referencesRoutes = require('./references');
 const trainingNotesRoutes = require('./training-notes');
+const trainingPlansRoutes = require('./training-plans');
+const trainingMethodologyRoutes = require('./training-methodology');
 const telephonyRoutes = require('./telephony');
 const onboardingRoutes = require('./onboarding');
 
@@ -83,6 +85,8 @@ router.use(visitsAnalyticsRoutes);
 router.use(motivationRoutes);
 router.use(referencesRoutes);
 router.use(trainingNotesRoutes);
+router.use(trainingPlansRoutes);
+router.use(trainingMethodologyRoutes);
 router.use(telephonyRoutes);
 router.use(onboardingRoutes);
 

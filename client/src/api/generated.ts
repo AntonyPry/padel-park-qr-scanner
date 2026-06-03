@@ -66,6 +66,8 @@ export const apiEndpoints = {
   "bookings.seriesArchive": { method: "POST", path: "/bookings/series/{id}/archive", responseType: "json" },
   "bookings.create": { method: "POST", path: "/bookings", responseType: "json" },
   "bookings.get": { method: "GET", path: "/bookings/{id}", responseType: "json" },
+  "bookings.trainingPlan.get": { method: "GET", path: "/bookings/{id}/training-plan", responseType: "json" },
+  "bookings.trainingPlan.create": { method: "POST", path: "/bookings/{id}/training-plan", responseType: "json" },
   "bookings.update": { method: "PUT", path: "/bookings/{id}", responseType: "json" },
   "bookings.status": { method: "PATCH", path: "/bookings/{id}/status", responseType: "json" },
   "bookings.history": { method: "GET", path: "/bookings/{id}/history", responseType: "json" },
@@ -126,6 +128,10 @@ export const apiEndpoints = {
   "clients.views.update": { method: "PUT", path: "/clients/views/{viewId}", responseType: "json" },
   "clients.views.delete": { method: "DELETE", path: "/clients/views/{viewId}", responseType: "json" },
   "clients.create": { method: "POST", path: "/clients", responseType: "json" },
+  "clients.groupTrainingRecommendation": { method: "POST", path: "/clients/training-recommendation/group", responseType: "json" },
+  "clients.trainingRecommendation": { method: "GET", path: "/clients/{clientId}/training-recommendation", responseType: "json" },
+  "clients.skillMap.list": { method: "GET", path: "/clients/{clientId}/skill-map", responseType: "json" },
+  "clients.skillMap.update": { method: "PUT", path: "/clients/{clientId}/skill-map/{skillId}", responseType: "json" },
   "clients.get": { method: "GET", path: "/clients/{id}", responseType: "json" },
   "clients.update": { method: "PUT", path: "/clients/{id}", responseType: "json" },
   "clients.deletePermanent": { method: "DELETE", path: "/clients/{id}/permanent", responseType: "json" },
@@ -171,6 +177,22 @@ export const apiEndpoints = {
   "trainingNotes.create": { method: "POST", path: "/clients/{clientId}/training-notes", responseType: "json" },
   "trainingNotes.update": { method: "PUT", path: "/training-notes/{noteId}", responseType: "json" },
   "trainingNotes.delete": { method: "DELETE", path: "/training-notes/{noteId}", responseType: "json" },
+  "trainingPlans.list": { method: "GET", path: "/training-plans", responseType: "json" },
+  "trainingPlans.create": { method: "POST", path: "/training-plans", responseType: "json" },
+  "trainingPlans.get": { method: "GET", path: "/training-plans/{planId}", responseType: "json" },
+  "trainingPlans.updateExercises": { method: "PUT", path: "/training-plans/{planId}/exercises", responseType: "json" },
+  "trainingPlans.complete": { method: "POST", path: "/training-plans/{planId}/complete", responseType: "json" },
+  "trainingPlans.quickComplete": { method: "POST", path: "/training-plans/{planId}/quick-complete", responseType: "json" },
+  "methodology.analytics": { method: "GET", path: "/methodology/analytics", responseType: "json" },
+  "methodology.skills.list": { method: "GET", path: "/methodology/skills", responseType: "json" },
+  "methodology.skills.create": { method: "POST", path: "/methodology/skills", responseType: "json" },
+  "methodology.skills.update": { method: "PUT", path: "/methodology/skills/{id}", responseType: "json" },
+  "methodology.exercises.list": { method: "GET", path: "/methodology/exercises", responseType: "json" },
+  "methodology.exercises.create": { method: "POST", path: "/methodology/exercises", responseType: "json" },
+  "methodology.exercises.update": { method: "PUT", path: "/methodology/exercises/{id}", responseType: "json" },
+  "methodology.exercises.approve": { method: "POST", path: "/methodology/exercises/{id}/approve", responseType: "json" },
+  "methodology.exercises.archive": { method: "POST", path: "/methodology/exercises/{id}/archive", responseType: "json" },
+  "methodology.exercises.restore": { method: "POST", path: "/methodology/exercises/{id}/restore", responseType: "json" },
   "utilization.list": { method: "GET", path: "/utilization", responseType: "json" },
   "utilization.upsert": { method: "POST", path: "/utilization", responseType: "json" },
   "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json" },
@@ -529,6 +551,7 @@ export type BookingsSeriesPreviewBody = {
   courtId: number | string;
   durationMinutes: number | string;
   endsOn: string;
+  groupParticipantIds?: Array<number | string>;
   name: string;
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
@@ -556,6 +579,7 @@ export type BookingsSeriesCreateBody = {
   courtId: number | string;
   durationMinutes: number | string;
   endsOn: string;
+  groupParticipantIds?: Array<number | string>;
   name: string;
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
@@ -593,6 +617,7 @@ export type BookingsCreateBody = {
   courtId: number | string;
   date?: string | "";
   durationMinutes: number | string;
+  groupParticipantIds?: Array<number | string>;
   paidAmount?: number | string | "" | null;
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
@@ -606,6 +631,12 @@ export type BookingsCreateBody = {
   [key: string]: unknown;
 };
 export type BookingsGetParams = {
+  id: number | string;
+};
+export type BookingsTrainingPlanGetParams = {
+  id: number | string;
+};
+export type BookingsTrainingPlanCreateParams = {
   id: number | string;
 };
 export type BookingsUpdateParams = {
@@ -627,6 +658,7 @@ export type BookingsUpdateBody = {
   courtId?: number | string;
   date?: string | "";
   durationMinutes?: number | string;
+  groupParticipantIds?: Array<number | string>;
   paidAmount?: number | string | "" | null;
   paymentMethod?: "unknown" | "cash" | "cashless" | "mixed";
   paymentStatus?: "unpaid" | "partial" | "paid" | "refunded";
@@ -1025,6 +1057,36 @@ export type ClientsCreateBody = {
   webId?: string | "" | null;
   [key: string]: unknown;
 };
+export type ClientsGroupTrainingRecommendationBody = {
+  clientIds: Array<number | string>;
+  date?: string | "";
+  goal?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ClientsTrainingRecommendationParams = {
+  clientId: number | string;
+};
+export type ClientsTrainingRecommendationQuery = {
+  date?: string | "";
+  goal?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ClientsSkillMapListParams = {
+  clientId: number | string;
+};
+export type ClientsSkillMapUpdateParams = {
+  clientId: number | string;
+  skillId: number | string;
+};
+export type ClientsSkillMapUpdateBody = {
+  lastTrainedAt?: string | "" | null;
+  latestAssessment?: string | "" | null;
+  latestExercises?: string | "" | null;
+  level?: number | string;
+  nextEStep?: "E1" | "E2" | "E3" | "E4" | "E5" | "E6" | "E7" | "" | null;
+  repeatFlag?: boolean | "true" | "false" | "1" | "0";
+  [key: string]: unknown;
+};
 export type ClientsGetParams = {
   id: number | string;
 };
@@ -1265,6 +1327,15 @@ export type TrainingNotesCreateParams = {
 };
 export type TrainingNotesCreateBody = {
   exercises?: string | "" | null;
+  exerciseResults?: Array<{
+    canAdvance?: boolean | "true" | "false" | "1" | "0";
+    comment?: string | "" | null;
+    rating: number | string;
+    repeatExercise?: boolean | "true" | "false" | "1" | "0";
+    repeatSkill?: boolean | "true" | "false" | "1" | "0";
+    trainingExerciseId: number | string;
+    [key: string]: unknown;
+  }>;
   level: "D" | "D+" | "C" | "C+" | "B" | "B+" | "A";
   note?: string | "" | null;
   trainedAt: string;
@@ -1275,6 +1346,15 @@ export type TrainingNotesUpdateParams = {
 };
 export type TrainingNotesUpdateBody = {
   exercises?: string | "" | null;
+  exerciseResults?: Array<{
+    canAdvance?: boolean | "true" | "false" | "1" | "0";
+    comment?: string | "" | null;
+    rating: number | string;
+    repeatExercise?: boolean | "true" | "false" | "1" | "0";
+    repeatSkill?: boolean | "true" | "false" | "1" | "0";
+    trainingExerciseId: number | string;
+    [key: string]: unknown;
+  }>;
   level?: "D" | "D+" | "C" | "C+" | "B" | "B+" | "A";
   note?: string | "" | null;
   trainedAt?: string;
@@ -1282,6 +1362,206 @@ export type TrainingNotesUpdateBody = {
 };
 export type TrainingNotesDeleteParams = {
   noteId: number | string;
+};
+export type TrainingPlansListQuery = {
+  bookingId?: number | string | "" | null;
+  clientId?: number | string | "" | null;
+  from?: string | "";
+  status?: "planned" | "completed" | "all";
+  to?: string | "";
+  [key: string]: unknown;
+};
+export type TrainingPlansCreateBody = {
+  clientId?: number | string;
+  clientIds?: Array<number | string>;
+  exercises?: Array<{
+    blockKey?: string | "" | null;
+    blockTitle?: string | "" | null;
+    exerciseId?: number | string;
+    id?: number | string;
+    reason?: unknown;
+    reasonSnapshot?: unknown;
+    title?: string | "" | null;
+    trainingExerciseId?: number | string;
+    [key: string]: unknown;
+  }>;
+  goal?: string | "" | null;
+  kind: "personal" | "group";
+  notes?: string | "" | null;
+  plannedAt?: string;
+  plannedExercises?: Array<{
+    blockKey?: string | "" | null;
+    blockTitle?: string | "" | null;
+    exerciseId?: number | string;
+    id?: number | string;
+    reason?: unknown;
+    reasonSnapshot?: unknown;
+    title?: string | "" | null;
+    trainingExerciseId?: number | string;
+    [key: string]: unknown;
+  }>;
+  sourceSnapshot?: unknown;
+  sourceType?: "manual" | "personal_recommendation" | "group_recommendation";
+  [key: string]: unknown;
+};
+export type TrainingPlansGetParams = {
+  planId: number | string;
+};
+export type TrainingPlansUpdateExercisesParams = {
+  planId: number | string;
+};
+export type TrainingPlansUpdateExercisesBody = {
+  exercises?: Array<{
+    blockKey?: string | "" | null;
+    blockTitle?: string | "" | null;
+    exerciseId?: number | string;
+    id?: number | string;
+    reason?: unknown;
+    reasonSnapshot?: unknown;
+    title?: string | "" | null;
+    trainingExerciseId?: number | string;
+    [key: string]: unknown;
+  }>;
+  plannedExercises?: Array<{
+    blockKey?: string | "" | null;
+    blockTitle?: string | "" | null;
+    exerciseId?: number | string;
+    id?: number | string;
+    reason?: unknown;
+    reasonSnapshot?: unknown;
+    title?: string | "" | null;
+    trainingExerciseId?: number | string;
+    [key: string]: unknown;
+  }>;
+  [key: string]: unknown;
+};
+export type TrainingPlansCompleteParams = {
+  planId: number | string;
+};
+export type TrainingPlansCompleteBody = {
+  exercises?: string | "" | null;
+  exerciseResults?: Array<{
+    canAdvance?: boolean | "true" | "false" | "1" | "0";
+    comment?: string | "" | null;
+    rating: number | string;
+    repeatExercise?: boolean | "true" | "false" | "1" | "0";
+    repeatSkill?: boolean | "true" | "false" | "1" | "0";
+    trainingExerciseId: number | string;
+    [key: string]: unknown;
+  }>;
+  level?: "D" | "D+" | "C" | "C+" | "B" | "B+" | "A";
+  note?: string | "" | null;
+  participantResults?: Array<{
+    clientId: number | string;
+    exercises?: string | "" | null;
+    exerciseResults?: Array<{
+      canAdvance?: boolean | "true" | "false" | "1" | "0";
+      comment?: string | "" | null;
+      rating: number | string;
+      repeatExercise?: boolean | "true" | "false" | "1" | "0";
+      repeatSkill?: boolean | "true" | "false" | "1" | "0";
+      trainingExerciseId: number | string;
+      [key: string]: unknown;
+    }>;
+    level?: "D" | "D+" | "C" | "C+" | "B" | "B+" | "A";
+    note?: string | "" | null;
+    trainedAt?: string;
+    [key: string]: unknown;
+  }>;
+  trainedAt?: string;
+  [key: string]: unknown;
+};
+export type TrainingPlansQuickCompleteParams = {
+  planId: number | string;
+};
+export type TrainingPlansQuickCompleteBody = {
+  note?: string | "" | null;
+  trainedAt?: string;
+  [key: string]: unknown;
+};
+export type MethodologyAnalyticsQuery = {
+  from?: string | "";
+  to?: string | "";
+  trainerAccountId?: number | string | "" | null;
+  [key: string]: unknown;
+};
+export type MethodologySkillsListQuery = {
+  direction?: "technique" | "tactics" | "game_situations" | "pair_interaction" | "physical_coordination";
+  q?: string | "" | null;
+  status?: "active" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type MethodologySkillsCreateBody = {
+  description?: string | "" | null;
+  direction: "technique" | "tactics" | "game_situations" | "pair_interaction" | "physical_coordination";
+  name: string;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type MethodologySkillsUpdateParams = {
+  id: number | string;
+};
+export type MethodologySkillsUpdateBody = {
+  description?: string | "" | null;
+  direction?: "technique" | "tactics" | "game_situations" | "pair_interaction" | "physical_coordination";
+  name?: string;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type MethodologyExercisesListQuery = {
+  direction?: "technique" | "tactics" | "game_situations" | "pair_interaction" | "physical_coordination";
+  eLevel?: "E1" | "E2" | "E3" | "E4" | "E5" | "E6" | "E7";
+  format?: "personal" | "pair" | "group" | "game";
+  mainSkillId?: number | string | "" | null;
+  q?: string | "" | null;
+  skillId?: number | string | "" | null;
+  skillLevel?: number | string | "" | null;
+  status?: "draft" | "approved" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type MethodologyExercisesCreateBody = {
+  additionalSkillIds?: Array<number | string>;
+  complication?: string | "" | null;
+  description?: string | "" | null;
+  eLevel?: "E1" | "E2" | "E3" | "E4" | "E5" | "E6" | "E7" | "" | null;
+  formats?: Array<"personal" | "pair" | "group" | "game">;
+  mainSkillId?: number | string | "" | null;
+  name: string;
+  simplification?: string | "" | null;
+  skillLevel?: number | string | "" | null;
+  skillLevelMax?: number | string | "" | null;
+  skillLevelMin?: number | string | "" | null;
+  status?: "draft" | "approved" | "archived";
+  successCriterion?: string | "" | null;
+  [key: string]: unknown;
+};
+export type MethodologyExercisesUpdateParams = {
+  id: number | string;
+};
+export type MethodologyExercisesUpdateBody = {
+  additionalSkillIds?: Array<number | string>;
+  complication?: string | "" | null;
+  description?: string | "" | null;
+  eLevel?: "E1" | "E2" | "E3" | "E4" | "E5" | "E6" | "E7" | "" | null;
+  formats?: Array<"personal" | "pair" | "group" | "game">;
+  mainSkillId?: number | string | "" | null;
+  name?: string;
+  simplification?: string | "" | null;
+  skillLevel?: number | string | "" | null;
+  skillLevelMax?: number | string | "" | null;
+  skillLevelMin?: number | string | "" | null;
+  status?: "draft" | "approved" | "archived";
+  successCriterion?: string | "" | null;
+  [key: string]: unknown;
+};
+export type MethodologyExercisesApproveParams = {
+  id: number | string;
+};
+export type MethodologyExercisesArchiveParams = {
+  id: number | string;
+};
+export type MethodologyExercisesRestoreParams = {
+  id: number | string;
 };
 export type UtilizationUpsertBody = {
   booked1?: number | string | "" | null;
@@ -1374,6 +1654,8 @@ export interface ApiEndpointRequestMap {
   "bookings.seriesArchive": ApiEndpointRequest<BookingsSeriesArchiveParams, undefined, BookingsSeriesArchiveBody>;
   "bookings.create": ApiEndpointRequest<undefined, undefined, BookingsCreateBody>;
   "bookings.get": ApiEndpointRequest<BookingsGetParams, undefined, undefined>;
+  "bookings.trainingPlan.get": ApiEndpointRequest<BookingsTrainingPlanGetParams, undefined, undefined>;
+  "bookings.trainingPlan.create": ApiEndpointRequest<BookingsTrainingPlanCreateParams, undefined, undefined>;
   "bookings.update": ApiEndpointRequest<BookingsUpdateParams, undefined, BookingsUpdateBody>;
   "bookings.status": ApiEndpointRequest<BookingsStatusParams, undefined, BookingsStatusBody>;
   "bookings.history": ApiEndpointRequest<BookingsHistoryParams, undefined, undefined>;
@@ -1434,6 +1716,10 @@ export interface ApiEndpointRequestMap {
   "clients.views.update": ApiEndpointRequest<ClientsViewsUpdateParams, undefined, ClientsViewsUpdateBody>;
   "clients.views.delete": ApiEndpointRequest<ClientsViewsDeleteParams, undefined, undefined>;
   "clients.create": ApiEndpointRequest<undefined, undefined, ClientsCreateBody>;
+  "clients.groupTrainingRecommendation": ApiEndpointRequest<undefined, undefined, ClientsGroupTrainingRecommendationBody>;
+  "clients.trainingRecommendation": ApiEndpointRequest<ClientsTrainingRecommendationParams, ClientsTrainingRecommendationQuery, undefined>;
+  "clients.skillMap.list": ApiEndpointRequest<ClientsSkillMapListParams, undefined, undefined>;
+  "clients.skillMap.update": ApiEndpointRequest<ClientsSkillMapUpdateParams, undefined, ClientsSkillMapUpdateBody>;
   "clients.get": ApiEndpointRequest<ClientsGetParams, undefined, undefined>;
   "clients.update": ApiEndpointRequest<ClientsUpdateParams, undefined, ClientsUpdateBody>;
   "clients.deletePermanent": ApiEndpointRequest<ClientsDeletePermanentParams, undefined, undefined>;
@@ -1479,6 +1765,22 @@ export interface ApiEndpointRequestMap {
   "trainingNotes.create": ApiEndpointRequest<TrainingNotesCreateParams, undefined, TrainingNotesCreateBody>;
   "trainingNotes.update": ApiEndpointRequest<TrainingNotesUpdateParams, undefined, TrainingNotesUpdateBody>;
   "trainingNotes.delete": ApiEndpointRequest<TrainingNotesDeleteParams, undefined, undefined>;
+  "trainingPlans.list": ApiEndpointRequest<undefined, TrainingPlansListQuery, undefined>;
+  "trainingPlans.create": ApiEndpointRequest<undefined, undefined, TrainingPlansCreateBody>;
+  "trainingPlans.get": ApiEndpointRequest<TrainingPlansGetParams, undefined, undefined>;
+  "trainingPlans.updateExercises": ApiEndpointRequest<TrainingPlansUpdateExercisesParams, undefined, TrainingPlansUpdateExercisesBody>;
+  "trainingPlans.complete": ApiEndpointRequest<TrainingPlansCompleteParams, undefined, TrainingPlansCompleteBody>;
+  "trainingPlans.quickComplete": ApiEndpointRequest<TrainingPlansQuickCompleteParams, undefined, TrainingPlansQuickCompleteBody>;
+  "methodology.analytics": ApiEndpointRequest<undefined, MethodologyAnalyticsQuery, undefined>;
+  "methodology.skills.list": ApiEndpointRequest<undefined, MethodologySkillsListQuery, undefined>;
+  "methodology.skills.create": ApiEndpointRequest<undefined, undefined, MethodologySkillsCreateBody>;
+  "methodology.skills.update": ApiEndpointRequest<MethodologySkillsUpdateParams, undefined, MethodologySkillsUpdateBody>;
+  "methodology.exercises.list": ApiEndpointRequest<undefined, MethodologyExercisesListQuery, undefined>;
+  "methodology.exercises.create": ApiEndpointRequest<undefined, undefined, MethodologyExercisesCreateBody>;
+  "methodology.exercises.update": ApiEndpointRequest<MethodologyExercisesUpdateParams, undefined, MethodologyExercisesUpdateBody>;
+  "methodology.exercises.approve": ApiEndpointRequest<MethodologyExercisesApproveParams, undefined, undefined>;
+  "methodology.exercises.archive": ApiEndpointRequest<MethodologyExercisesArchiveParams, undefined, undefined>;
+  "methodology.exercises.restore": ApiEndpointRequest<MethodologyExercisesRestoreParams, undefined, undefined>;
   "utilization.list": ApiEndpointRequest<undefined, undefined, undefined>;
   "utilization.upsert": ApiEndpointRequest<undefined, undefined, UtilizationUpsertBody>;
   "visitsAnalytics.get": ApiEndpointRequest<undefined, VisitsAnalyticsGetQuery, undefined>;
