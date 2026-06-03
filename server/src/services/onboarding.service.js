@@ -18,7 +18,18 @@ const TRAINING_DATA_ENTITIES = [
   { key: 'callTasks', label: 'Задачи обзвона', modelName: 'CallTask' },
   { key: 'callTaskClients', label: 'Клиенты в обзвонах', modelName: 'CallTaskClient' },
   { key: 'callTaskAttempts', label: 'Попытки звонков', modelName: 'CallTaskAttempt' },
+  { key: 'trainingPlans', label: 'Планы тренировок', modelName: 'TrainingPlan' },
   { key: 'trainingNotes', label: 'Тренерские заметки', modelName: 'TrainingNote' },
+  {
+    key: 'clientTrainingSkillHistories',
+    label: 'История карт навыков клиентов',
+    modelName: 'ClientTrainingSkillHistory',
+  },
+  {
+    key: 'clientTrainingSkills',
+    label: 'Карты навыков клиентов',
+    modelName: 'ClientTrainingSkill',
+  },
   {
     key: 'onboardingEvents',
     label: 'События обучения',
@@ -998,6 +1009,12 @@ async function cleanupTrainingData(actor, query = {}) {
       { key: 'callTaskClients', modelName: 'CallTaskClient' },
       { key: 'callTasks', modelName: 'CallTask' },
       { key: 'clientBases', modelName: 'ClientBase' },
+      {
+        key: 'clientTrainingSkillHistories',
+        modelName: 'ClientTrainingSkillHistory',
+      },
+      { key: 'clientTrainingSkills', modelName: 'ClientTrainingSkill' },
+      { key: 'trainingPlans', modelName: 'TrainingPlan' },
       { key: 'trainingNotes', modelName: 'TrainingNote' },
       { key: 'bookings', modelName: 'Booking' },
       { key: 'bookingSeries', modelName: 'BookingSeries' },

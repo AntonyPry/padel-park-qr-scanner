@@ -137,9 +137,9 @@ Training-created data is marked with:
 - `trainingRole`
 - `trainingAccountId`
 
-The first protected entity set includes clients, visits, bookings, booking series, manual finance records, client bases, call tasks, call task clients, call attempts and training notes.
+The protected entity set includes clients, visits, bookings, booking series, manual finance records, client bases, call tasks, call task clients, call attempts, training notes, training plans, client skill maps and client skill-map history.
 
-Production reports and high-level analytics must exclude `isTraining = true` rows by default. Current protected aggregates include finance reports, booking analytics, visits analytics, call task reports and client-base/client list calculations. Operational screens can later add an explicit training scope if trainees need to inspect their own sandbox records after creation.
+Production reports and high-level analytics must exclude `isTraining = true` rows by default. Current protected aggregates include finance reports, booking analytics, visits analytics, call task reports, client-base/client list calculations and training methodology analytics. Operational screens can later add an explicit training scope if trainees need to inspect their own sandbox records after creation.
 
 Owners can inspect and clean training data from `/api/onboarding/training-data`. The cleanup is role-scoped when `role` is provided and removes training rows plus dependent booking/visit records while leaving onboarding progress intact.
 
@@ -153,7 +153,9 @@ Owners can inspect completion metrics from `/api/onboarding/metrics`. The endpoi
 
 Review-only tasks can be completed by opening the relevant CRM screen. The browser records a small allowlisted event through `POST /api/onboarding/events`; action events like booking creation are intentionally blocked from this endpoint and must still come from backend product services.
 
-Current route-view events cover audit, bookings schedule review, call-task report review, finances, onboarding training-data review, references, utilization and visits analytics.
+Current route-view events cover audit, bookings schedule review, call-task report review, finances, methodology, methodology analytics, onboarding training-data review, references, trainer cabinet, utilization and visits analytics.
+
+When several onboarding tasks share the same route, the route-view payload should include the active `taskKey`; catalog checkpoints for those tasks must use `conditions.taskKey` so one screen open does not progress sibling tasks.
 
 ## Checkpoint events
 
@@ -165,29 +167,39 @@ CRM services record semantic events through `onboardingService.recordEventSafe(.
 - verifies optional checkpoint conditions against the event payload;
 - marks matching task practice as progressed for future interactive training; the current card-reader UI completes tasks from the instruction page.
 
-Integrated backend product events:
+Integrated product and route-review events:
 
 - `access.visit_created`
 - `account.created`
+- `audit.viewed` (client-side route review event)
 - `booking.cancelled`
 - `booking.created`
 - `booking.moved`
 - `booking.paid`
+- `booking.schedule_viewed` (client-side route review event)
 - `call_task.attempt_logged`
+- `call_task.created`
+- `call_task.report_viewed` (client-side route review event)
+- `catalog.category_updated`
+- `catalog.rule_updated`
 - `client.created`
 - `client.viewed`
 - `client_base.created`
-- `call_task.created`
-- `catalog.category_updated`
-- `catalog.rule_updated`
 - `finance.record_created`
+- `finance.report_viewed` (client-side route review event)
+- `methodology.analytics_viewed` (client-side route review event)
+- `methodology.viewed` (client-side route review event)
 - `motivation.rule_updated`
 - `payroll.reviewed`
+- `reference.viewed` (client-side route review event)
 - `report.exported`
+- `report.viewed` (client-side route review event)
 - `shift.approved`
+- `training_level.updated`
 - `training_note.created`
 - `training_note.updated`
-- `training_level.updated`
+- `trainer.viewed` (client-side route review event)
+- `utilization.viewed` (client-side route review event)
 
 Use `recordEventSafe` inside product services so onboarding failures never block the user's real CRM action.
 

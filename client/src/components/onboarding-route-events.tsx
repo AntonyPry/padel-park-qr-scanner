@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import {
@@ -6,6 +6,10 @@ import {
   type OnboardingClientEventPayload,
 } from '@/api/onboarding';
 import { queryKeys } from '@/api/query-keys';
+import {
+  getStoredActiveOnboardingQuest,
+  ONBOARDING_QUEST_EVENT,
+} from '@/lib/onboarding-quest';
 import { useAuth } from '@/lib/useAuth';
 
 const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
@@ -33,6 +37,18 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
     eventKey: 'finance.report_viewed',
     payload: { route: '/admin/finances' },
   },
+  '/admin/methodology': {
+    entityId: '/admin/methodology',
+    entityType: 'route',
+    eventKey: 'methodology.viewed',
+    payload: { route: '/admin/methodology' },
+  },
+  '/admin/methodology-analytics': {
+    entityId: '/admin/methodology-analytics',
+    entityType: 'route',
+    eventKey: 'methodology.analytics_viewed',
+    payload: { route: '/admin/methodology-analytics' },
+  },
   '/admin/onboarding': {
     entityId: '/admin/onboarding',
     entityType: 'route',
@@ -44,6 +60,12 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
     entityType: 'route',
     eventKey: 'reference.viewed',
     payload: { route: '/admin/references' },
+  },
+  '/admin/trainer': {
+    entityId: '/admin/trainer',
+    entityType: 'route',
+    eventKey: 'trainer.viewed',
+    payload: { route: '/admin/trainer' },
   },
   '/admin/utilization': {
     entityId: '/admin/utilization',
@@ -72,12 +94,48 @@ export function OnboardingRouteEvents() {
   const location = useLocation();
   const queryClient = useQueryClient();
   const recordedKeys = useRef(new Set<string>());
-  const routeEvent = ROUTE_EVENTS[normalizePathname(location.pathname)];
+  const [activeQuest, setActiveQuest] = useState(() =>
+    getStoredActiveOnboardingQuest(),
+  );
+  const normalizedPathname = normalizePathname(location.pathname);
+  const baseRouteEvent = ROUTE_EVENTS[normalizedPathname];
+  const routeEvent = useMemo(() => {
+    if (!baseRouteEvent) return undefined;
+    if (
+      !activeQuest?.taskKey ||
+      normalizePathname(activeQuest.route) !== normalizedPathname
+    ) {
+      return baseRouteEvent;
+    }
+
+    return {
+      ...baseRouteEvent,
+      ...(activeQuest.role ? { role: activeQuest.role } : {}),
+      payload: {
+        ...(baseRouteEvent.payload || {}),
+        taskKey: activeQuest.taskKey,
+      },
+    };
+  }, [activeQuest, baseRouteEvent, normalizedPathname]);
   const eventKey = routeEvent?.eventKey;
   const payloadSignature = useMemo(
     () => JSON.stringify(routeEvent?.payload || {}),
     [routeEvent],
   );
+
+  useEffect(() => {
+    const refreshActiveQuest = () => {
+      setActiveQuest(getStoredActiveOnboardingQuest());
+    };
+
+    window.addEventListener(ONBOARDING_QUEST_EVENT, refreshActiveQuest);
+    window.addEventListener('storage', refreshActiveQuest);
+
+    return () => {
+      window.removeEventListener(ONBOARDING_QUEST_EVENT, refreshActiveQuest);
+      window.removeEventListener('storage', refreshActiveQuest);
+    };
+  }, []);
 
   useEffect(() => {
     if (!account?.id || !routeEvent || !eventKey) return;

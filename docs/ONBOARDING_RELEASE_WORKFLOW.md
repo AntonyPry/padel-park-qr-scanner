@@ -78,6 +78,32 @@ Owner and manager knowledge guides should be understandable for a person opening
 
 User-facing formulas must use Russian labels and readable formulas, not raw internal field names. Final owner/manager cards should teach how to use the CRM screen and where to inspect data in the system, not give generic business advice.
 
+## Training methodology releases
+
+When a feature changes the training methodology flow, update onboarding for these scenarios before release:
+
+- methodology base: skills, directions, exercise statuses, formats, exercise steps and approval rules;
+- client skill map: level 0-5, last trained date, latest exercise, latest assessment, repeat flag and next exercise step;
+- structured training note: exercise results, ratings, repeat flags and safe free-text note;
+- skill-map algorithm: how ratings, repeat flags, exercise steps and level ranges affect advancement;
+- personal and group recommendations: input data, priority reasons, anti-repeat behavior and manual blocks;
+- training plans: planned state, completed state, fact recording and participant training notes;
+- booking link: training booking type, responsible trainer, participants and auto-created plan;
+- senior trainer analytics: methodology coverage, plan/fact match and deviation examples.
+
+For owner and manager knowledge cards, explain formulas with Russian labels. Example: `Совпадение плана и факта = «Упражнения плана, записанные по факту» / «Упражнения в плане» * 100%`.
+
+For trainer-facing instructions, keep the safe-role boundary explicit: no phones, external IDs, CRM sales notes, call history or full client-base management context.
+
+When wiring checkpoints for methodology scenarios, keep sibling tasks narrow:
+
+- route-review events on shared screens should include `payload.taskKey` from the active onboarding task;
+- ordinary training note creation should emit `structured: false`;
+- structured training note creation should emit `structured: true`;
+- booking schedule review and training-plan-link tasks should not share an unconditional checkpoint.
+
+If the methodology screens are only present in the feature branch, text-only onboarding cards are acceptable in the instructions branch. Capture and attach real screenshots for `/admin/methodology`, `/admin/methodology-analytics`, `/admin/trainer` and changed booking/client states after merging feature + instructions.
+
 When a feature changes an instructed screen:
 
 1. Open the changed screen locally with the matching demo role account.

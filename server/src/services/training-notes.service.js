@@ -158,6 +158,7 @@ async function create(clientId, data, actor) {
       clientId: Number(clientId),
       level: trainingNote.level,
       noteId: trainingNote.id,
+      structured: false,
     },
   });
   await onboardingService.recordEventSafe(actor, 'training_level.updated', {
