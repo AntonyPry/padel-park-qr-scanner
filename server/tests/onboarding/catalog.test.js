@@ -40,6 +40,8 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     '/admin/client-bases',
     '/admin/clients',
     '/admin/finances',
+    '/admin/methodology',
+    '/admin/methodology-analytics',
     '/admin/motivation',
     '/admin/onboarding',
     '/admin/references',
@@ -92,6 +94,12 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     'CRM-note',
     'summary',
     'sandbox',
+    'repeat flag',
+    'E-step',
+    'fallback',
+    'planned',
+    'completed',
+    'isTraining',
   ];
 
   for (const role of ['manager', 'owner']) {
@@ -100,7 +108,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
       .filter((mission) => mission.key.startsWith(`${role}.knowledge-`))
       .flatMap((mission) => mission.tasks);
 
-    assert.equal(knowledgeTasks.length, 17);
+    assert.equal(knowledgeTasks.length, 19);
     assert.deepEqual(
       knowledgeTasks.map((task) => task.route).sort(),
       expectedKnowledgeRoutes,
@@ -109,11 +117,15 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     for (const task of knowledgeTasks) {
       assert.equal(task.kind, 'review');
       assert.equal(task.trainingMode.recommended, false);
-      assert.equal(task.lesson.screenshots.length, 1);
-      assert.equal(
-        task.lesson.screenshots[0].src,
-        `/onboarding/knowledge/${task.key.split('.').at(-1)}/overview.png`,
-      );
+      if (task.route === '/admin/methodology' || task.route === '/admin/methodology-analytics') {
+        assert.equal(task.lesson.screenshots.length, 0);
+      } else {
+        assert.equal(task.lesson.screenshots.length, 1);
+        assert.equal(
+          task.lesson.screenshots[0].src,
+          `/onboarding/knowledge/${task.key.split('.').at(-1)}/overview.png`,
+        );
+      }
       assert.equal(
         task.lesson.blocks.every((block) => block.type === 'paragraph'),
         true,
@@ -121,7 +133,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
       assert.equal(
         task.lesson.blocks.filter((block) => Number.isInteger(block.screenshotIndex))
           .length,
-        1,
+        task.lesson.screenshots.length > 0 ? 1 : 0,
       );
       assert.equal(task.lesson.blocks.length >= 10, true);
       assert.equal(
@@ -159,4 +171,56 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     ),
     true,
   );
+
+  const methodology = findOnboardingTask('owner', 'owner.knowledge.methodology');
+  assert.equal(methodology.task.route, '/admin/methodology');
+  assert.equal(methodology.task.lesson.blocks.length >= 10, true);
+
+  const methodologyAnalytics = findOnboardingTask(
+    'manager',
+    'manager.knowledge.methodology-analytics',
+  );
+  assert.equal(methodologyAnalytics.task.route, '/admin/methodology-analytics');
+  assert.equal(
+    methodologyAnalytics.task.lesson.blocks.some((block) =>
+      block.text.includes(
+        'Совпадение = «Количество упражнений из плана, которые есть в фактической записи» / «Количество упражнений в плане» * 100%',
+      ),
+    ),
+    true,
+  );
+});
+
+test('training methodology onboarding scenarios are wired by role', () => {
+  const adminBookingPlan = findOnboardingTask('admin', 'admin.booking.training-plan-link');
+  assert.equal(adminBookingPlan.task.route, '/admin/bookings');
+  assert.equal(adminBookingPlan.task.checkpoint.event, 'booking.schedule_viewed');
+  assert.deepEqual(adminBookingPlan.task.checkpoint.conditions, {
+    taskKey: 'admin.booking.training-plan-link',
+  });
+  assert.equal(adminBookingPlan.task.trainingMode.recommended, false);
+
+  const trainerPlan = findOnboardingTask('trainer', 'trainer.training-plan.lifecycle');
+  assert.equal(trainerPlan.task.route, '/admin/trainer');
+  assert.equal(trainerPlan.task.checkpoint.event, 'trainer.viewed');
+  assert.deepEqual(trainerPlan.task.checkpoint.conditions, {
+    taskKey: 'trainer.training-plan.lifecycle',
+  });
+  assert.equal(
+    trainerPlan.task.lesson.blocks.some((block) =>
+      block.text.includes('После завершения CRM создает или обновляет тренировочные записи'),
+    ),
+    true,
+  );
+
+  const managerAnalytics = findOnboardingTask(
+    'manager',
+    'manager.methodology.analytics-review',
+  );
+  assert.equal(managerAnalytics.task.route, '/admin/methodology-analytics');
+  assert.equal(managerAnalytics.task.checkpoint.event, 'methodology.analytics_viewed');
+
+  const ownerBase = findOnboardingTask('owner', 'owner.methodology.review-base');
+  assert.equal(ownerBase.task.route, '/admin/methodology');
+  assert.equal(ownerBase.task.checkpoint.event, 'methodology.viewed');
 });

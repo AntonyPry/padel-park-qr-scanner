@@ -377,10 +377,10 @@ test('owner can inspect onboarding completion metrics by role', async () => {
   assert.equal(metrics.summary.activeAccounts, 4);
   assert.equal(metrics.summary.roles, 6);
   assert.equal(admin.totalAccounts, 2);
-  assert.equal(admin.taskCount, 8);
+  assert.equal(admin.taskCount, 9);
   assert.equal(admin.completedTaskSlots, 3);
-  assert.equal(admin.totalTaskSlots, 16);
-  assert.equal(admin.percent, 19);
+  assert.equal(admin.totalTaskSlots, 18);
+  assert.equal(admin.percent, 17);
   assert.equal(admin.startedAccounts, 2);
   assert.equal(admin.completedAccounts, 0);
   assert.equal(admin.lastCompletedAt, '2026-05-31T10:00:00.000Z');
@@ -395,7 +395,7 @@ test('owner can inspect onboarding completion metrics by role', async () => {
   );
   assert.equal(trainer.totalAccounts, 1);
   assert.equal(trainer.completedTaskSlots, 1);
-  assert.equal(trainer.percent, 25);
+  assert.equal(trainer.percent, 10);
 });
 
 test('non-owner cannot inspect onboarding metrics', async () => {
@@ -616,9 +616,9 @@ test('owner cleanup removes dependent training data without touching progress', 
       'CallTask',
       'ClientBase',
       'ClientTrainingSkillHistory',
+      'ClientTrainingSkill',
       'TrainingPlan',
       'TrainingNote',
-      'ClientTrainingSkill',
       'Booking',
       'BookingSeries',
       'Finance',
@@ -642,6 +642,41 @@ test('checkpoint conditions support exact nested payload matches', () => {
       { source: 'walk_in' },
     ),
     false,
+  );
+});
+
+test('specific training methodology checkpoints do not over-progress sibling tasks', () => {
+  assert.deepEqual(
+    listMatchingTasks('trainer', 'trainer.viewed', {
+      route: '/admin/trainer',
+    }).map((task) => task.key),
+    [],
+  );
+  assert.deepEqual(
+    listMatchingTasks('trainer', 'trainer.viewed', {
+      route: '/admin/trainer',
+      taskKey: 'trainer.recommendation.group-review',
+    }).map((task) => task.key),
+    ['trainer.recommendation.group-review'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('trainer', 'training_note.created', {
+      structured: false,
+    }).map((task) => task.key),
+    ['trainer.training-note.create'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('trainer', 'training_note.created', {
+      structured: true,
+    }).map((task) => task.key),
+    ['trainer.training-note.structured-record'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('admin', 'booking.schedule_viewed', {
+      route: '/admin/bookings',
+      taskKey: 'admin.booking.training-plan-link',
+    }).map((task) => task.key),
+    ['admin.booking.training-plan-link'],
   );
 });
 

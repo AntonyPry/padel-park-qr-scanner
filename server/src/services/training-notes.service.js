@@ -356,6 +356,7 @@ async function createRecord(clientId, data, actor, options = {}) {
 
 async function create(clientId, data, actor) {
   const trainingNote = await createRecord(clientId, data, actor);
+  const structured = Array.isArray(data.exerciseResults) && data.exerciseResults.length > 0;
 
   await onboardingService.recordEventSafe(actor, 'training_note.created', {
     entityId: trainingNote.id,
@@ -364,6 +365,7 @@ async function create(clientId, data, actor) {
       clientId: Number(clientId),
       level: trainingNote.level,
       noteId: trainingNote.id,
+      structured,
     },
   });
   await onboardingService.recordEventSafe(actor, 'training_level.updated', {

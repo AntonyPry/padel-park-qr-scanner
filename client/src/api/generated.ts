@@ -379,7 +379,7 @@ export type OnboardingQuizAttemptBody = {
 export type OnboardingRecordEventBody = {
   entityId?: string | "" | null;
   entityType?: string | "" | null;
-  eventKey: "audit.viewed" | "booking.schedule_viewed" | "call_task.report_viewed" | "finance.report_viewed" | "reference.viewed" | "report.viewed" | "utilization.viewed";
+  eventKey: "audit.viewed" | "booking.schedule_viewed" | "call_task.report_viewed" | "finance.report_viewed" | "methodology.analytics_viewed" | "methodology.viewed" | "reference.viewed" | "report.viewed" | "trainer.viewed" | "utilization.viewed";
   payload?: Record<string, unknown> | null;
   role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
   [key: string]: unknown;

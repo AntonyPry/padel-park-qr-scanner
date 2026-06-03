@@ -830,6 +830,7 @@ async function complete(planId, data = {}, actor = null) {
           eventKey: 'training_note.updated',
           level: payload.level,
           noteId: note.id,
+          structured: payload.exerciseResults.length > 0,
         });
       } else {
         const note = await trainingNotesService.createRecord(
@@ -850,6 +851,7 @@ async function complete(planId, data = {}, actor = null) {
           eventKey: 'training_note.created',
           level: payload.level,
           noteId: note.id,
+          structured: payload.exerciseResults.length > 0,
         });
       }
     }
@@ -872,6 +874,7 @@ async function complete(planId, data = {}, actor = null) {
         level: event.level,
         noteId: event.noteId,
         planId: plan.id,
+        structured: event.structured,
       },
     });
     if (event.eventKey === 'training_note.created') {

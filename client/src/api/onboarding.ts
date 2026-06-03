@@ -258,8 +258,11 @@ export interface OnboardingClientEventPayload {
     | 'booking.schedule_viewed'
     | 'call_task.report_viewed'
     | 'finance.report_viewed'
+    | 'methodology.analytics_viewed'
+    | 'methodology.viewed'
     | 'reference.viewed'
     | 'report.viewed'
+    | 'trainer.viewed'
     | 'utilization.viewed';
   payload?: Record<string, unknown> | null;
   role?: AccountRole;

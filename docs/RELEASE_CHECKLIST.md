@@ -15,6 +15,8 @@
 - `client`: `npm run build`
 - Check `Onboarding impact` for every user-facing feature in the release. Update onboarding catalog, checkpoint events, role paths, skills, badges and in-app instructions before deploy.
 - If a feature creates or changes production data, verify its training-mode marker fields and report exclusions, or explicitly mark it as not training-safe yet.
+- For training methodology releases, verify onboarding covers methodology base, client skill map, structured training notes, skill-map update algorithm, personal recommendations, group recommendations, planned and completed training plans, booking links and senior trainer analytics.
+- Verify trainer-facing instructions and screens do not expose phones, external IDs, CRM sales notes, call history or full client-base management context.
 - Create and verify a database backup before switching traffic.
 
 ## After deploy
@@ -24,6 +26,7 @@
 - Run UI smoke against the deployed frontend and API.
 - Save smoke screenshots and `report.json` from `outputs/qa/<date>/ui-smoke`.
 - Verify login, client creation, duplicate restore, bases, call tasks, payroll, motivation, catalog, references and access monitor.
+- Verify methodology, methodology analytics, trainer cabinet, client skill map, training recommendations, training plan lifecycle and training booking plan link.
 - Verify onboarding opens for the changed roles and owner role override can view the affected role path.
 
 ## Rollback
