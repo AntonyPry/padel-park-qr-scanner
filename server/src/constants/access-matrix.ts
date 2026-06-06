@@ -10,11 +10,17 @@ type AccessKey =
   | 'clientsView'
   | 'clientBasesManage'
   | 'clientBasesView'
+  | 'clientSubscriptionsRedeem'
+  | 'clientSubscriptionsView'
+  | 'certificatesRedeem'
+  | 'certificatesView'
   | 'callTasksManage'
   | 'callTasksView'
   | 'callTasksWork'
   | 'catalogManage'
   | 'catalogView'
+  | 'corporateClientsView'
+  | 'corporateDepositsManage'
   | 'financeManage'
   | 'financeView'
   | 'financeExport'
@@ -25,6 +31,10 @@ type AccessKey =
   | 'payrollPay'
   | 'payrollReview'
   | 'payrollView'
+  | 'prepaymentSalesManage'
+  | 'prepaymentSalesView'
+  | 'prepaymentsDashboardView'
+  | 'prepaymentSettingsManage'
   | 'referencesManage'
   | 'referencesView'
   | 'reportsView'
@@ -32,6 +42,8 @@ type AccessKey =
   | 'shiftsOperate'
   | 'staffManage'
   | 'staffView'
+  | 'subscriptionTypesManage'
+  | 'subscriptionTypesView'
   | 'systemUsersManage'
   | 'telephonyManage'
   | 'telephonyView'
@@ -54,11 +66,17 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   clientsView: ['owner', 'manager', 'admin', 'viewer', 'trainer'],
   clientBasesManage: ['owner', 'manager'],
   clientBasesView: ['owner', 'manager'],
+  clientSubscriptionsRedeem: ['owner', 'manager', 'admin'],
+  clientSubscriptionsView: ['owner', 'manager', 'admin', 'viewer'],
+  certificatesRedeem: ['owner', 'manager', 'admin'],
+  certificatesView: ['owner', 'manager', 'admin', 'viewer'],
   callTasksManage: ['owner', 'manager'],
   callTasksView: ['owner', 'manager', 'admin'],
   callTasksWork: ['owner', 'manager', 'admin'],
   catalogManage: ['owner', 'accountant'],
   catalogView: ['owner', 'manager', 'accountant', 'viewer'],
+  corporateClientsView: ['owner', 'manager', 'accountant', 'viewer'],
+  corporateDepositsManage: ['owner', 'accountant'],
   financeManage: ['owner', 'accountant'],
   financeView: ['owner', 'manager', 'accountant', 'viewer'],
   financeExport: ['owner', 'manager', 'accountant'],
@@ -69,6 +87,10 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   payrollPay: ['owner', 'accountant'],
   payrollReview: ['owner', 'manager', 'accountant'],
   payrollView: ['owner', 'manager', 'accountant'],
+  prepaymentSalesManage: ['owner', 'manager'],
+  prepaymentSalesView: ['owner', 'manager'],
+  prepaymentsDashboardView: ['owner', 'manager', 'admin', 'accountant'],
+  prepaymentSettingsManage: ['owner', 'manager'],
   referencesManage: ['owner', 'manager'],
   referencesView: ['owner', 'manager', 'admin', 'accountant', 'viewer'],
   reportsView: ['owner', 'manager', 'accountant', 'viewer'],
@@ -76,6 +98,8 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   shiftsOperate: ['owner', 'manager', 'admin'],
   staffManage: ['owner', 'manager'],
   staffView: ['owner', 'manager', 'accountant', 'viewer'],
+  subscriptionTypesManage: ['owner', 'manager'],
+  subscriptionTypesView: ['owner', 'manager'],
   systemUsersManage: ['owner', 'manager'],
   telephonyManage: ['owner', 'manager'],
   telephonyView: ['owner', 'manager', 'admin', 'viewer'],

@@ -1,5 +1,6 @@
 import {
   type ComponentProps,
+  Fragment,
   type ReactNode,
   useCallback,
   useEffect,
@@ -30,6 +31,7 @@ import {
   RotateCcw,
   Save,
   Search,
+  Ticket,
   Trash2,
   UserRoundCheck,
   Users,
@@ -112,6 +114,8 @@ import {
   canManageCallTasks,
   canManageTrainingNotes,
   canMergeClients,
+  canRedeemClientSubscriptions,
+  canViewClientSubscriptions,
   canViewTrainingNotes,
 } from '@/lib/permissions';
 import type { ReferenceItem } from '@/lib/references';
@@ -174,6 +178,53 @@ interface ClientVisit {
   createdAt: string;
 }
 
+type ClientSubscriptionStatus = 'active' | 'canceled' | 'expired' | 'used';
+type ClientSubscriptionRedemptionStatus = 'active' | 'reversed';
+
+interface ClientSubscriptionActor {
+  email?: string | null;
+  id: number;
+  name?: string | null;
+  role?: string | null;
+}
+
+interface ClientSubscriptionRedemption {
+  clientId: number;
+  clientSubscriptionId: number;
+  comment?: string | null;
+  createdAt?: string;
+  id: number;
+  quantity: number;
+  redeemedAt: string;
+  redeemedBy?: ClientSubscriptionActor | null;
+  redeemedByAccountId?: number | null;
+  reversalReason?: string | null;
+  reversedAt?: string | null;
+  reversedBy?: ClientSubscriptionActor | null;
+  reversedByAccountId?: number | null;
+  serviceType: string;
+  status: ClientSubscriptionRedemptionStatus;
+  trainingKind?: 'group' | 'personal' | string | null;
+}
+
+interface ClientSubscription {
+  id: number;
+  bonusPersonalSessions: number;
+  expiresAt?: string | null;
+  isUnlimited: boolean;
+  pricePaid: number;
+  remainingSessions: number | null;
+  saleAmount: number;
+  sessionsTotal: number | null;
+  sessionsUsed: number;
+  startsAt: string;
+  status: ClientSubscriptionStatus;
+  timeSegment?: string | null;
+  trainingKind?: 'group' | 'personal' | string | null;
+  typeName: string;
+  redemptions?: ClientSubscriptionRedemption[];
+}
+
 interface ClientsResponse {
   items: Client[];
   page: number;
@@ -189,6 +240,7 @@ interface ClientDetails {
   bookingStats: ClientBookingStats;
   bookings: ClientBooking[];
   client: Client;
+  clientSubscriptions?: ClientSubscription[];
   duplicateCandidates: Client[];
   mergedInto?: Client | null;
   skillMap: ClientSkillMapItem[];
@@ -643,6 +695,33 @@ const CALL_CLIENT_STATUS_LABELS: Record<string, string> = {
   refused: 'Отказ',
 };
 
+const CLIENT_SUBSCRIPTION_STATUS_LABELS: Record<ClientSubscriptionStatus, string> = {
+  active: 'Активен',
+  canceled: 'Отменен',
+  expired: 'Истек',
+  used: 'Использован',
+};
+
+const CLIENT_SUBSCRIPTION_REDEMPTION_STATUS_LABELS: Record<
+  ClientSubscriptionRedemptionStatus,
+  string
+> = {
+  active: 'Списано',
+  reversed: 'Отменено',
+};
+
+const SUBSCRIPTION_TRAINING_KIND_LABELS: Record<string, string> = {
+  group: 'Групповой',
+  personal: 'Персональный',
+};
+
+const SUBSCRIPTION_TIME_SEGMENT_LABELS: Record<string, string> = {
+  all: 'Любое время',
+  off_peak: 'Будни 10:00-17:00',
+  single: 'Разовое',
+  standard: 'День/вечер/выходные',
+};
+
 function getPhoneDigits(value: string) {
   const digits = value.replace(/\D/g, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
@@ -689,6 +768,26 @@ function formatDate(value?: string | null) {
 
 function formatCurrency(value?: number | null) {
   return `${Number(value || 0).toLocaleString('ru-RU')} ₽`;
+}
+
+function formatSubscriptionRemaining(subscription: ClientSubscription) {
+  if (subscription.isUnlimited) return 'Безлимит';
+  return `${subscription.remainingSessions ?? 0} из ${
+    subscription.sessionsTotal ?? 0
+  }`;
+}
+
+function formatSubscriptionActor(actor?: ClientSubscriptionActor | null) {
+  if (!actor) return 'Система';
+  return actor.name || actor.email || 'Система';
+}
+
+function formatSubscriptionRedemptionService(redemption: ClientSubscriptionRedemption) {
+  if (redemption.serviceType !== 'training') return redemption.serviceType;
+  if (redemption.trainingKind) {
+    return SUBSCRIPTION_TRAINING_KIND_LABELS[redemption.trainingKind] || redemption.trainingKind;
+  }
+  return 'Тренировка';
 }
 
 function formatDuration(seconds?: number | null) {
@@ -1019,6 +1118,8 @@ export default function ClientsPage() {
   const canMerge = canMergeClients(account?.role);
   const canViewTraining = canViewTrainingNotes(account?.role);
   const canEditTraining = canManageTrainingNotes(account?.role);
+  const canViewSubscriptions = canViewClientSubscriptions(account?.role);
+  const canRedeemSubscriptions = canRedeemClientSubscriptions(account?.role);
   const canViewClientTelephony = ['owner', 'manager', 'admin', 'viewer'].includes(
     account?.role || '',
   );
@@ -1093,6 +1194,21 @@ export default function ClientsPage() {
     trainedAt: getTodayDate(),
   });
   const [trainingSaving, setTrainingSaving] = useState(false);
+  const [redemptionDialogSubscription, setRedemptionDialogSubscription] =
+    useState<ClientSubscription | null>(null);
+  const [redemptionForm, setRedemptionForm] = useState({
+    comment: '',
+    redeemedAt: getTodayDate(),
+    trainingKind: 'group',
+  });
+  const [redemptionSaving, setRedemptionSaving] = useState(false);
+  const [reverseRedemptionDialog, setReverseRedemptionDialog] =
+    useState<{
+      redemption: ClientSubscriptionRedemption;
+      subscription: ClientSubscription;
+    } | null>(null);
+  const [reverseReason, setReverseReason] = useState('');
+  const [reverseSaving, setReverseSaving] = useState(false);
   const approvedExerciseFilters = useMemo(() => ({ status: 'approved' as const }), []);
   const exercisesQuery = useQuery({
     enabled: Boolean(
@@ -1104,6 +1220,15 @@ export default function ClientsPage() {
     queryKey: queryKeys.methodology.exercises(approvedExerciseFilters),
   });
   const methodologyExercises = exercisesQuery.data || [];
+  const clientSubscriptions = details?.clientSubscriptions || [];
+  const activeClientSubscriptions = clientSubscriptions.filter(
+    (subscription) => subscription.status === 'active',
+  );
+  const historicalClientSubscriptions = clientSubscriptions.filter(
+    (subscription) => subscription.status !== 'active',
+  );
+  const canMutateSubscriptions =
+    canRedeemSubscriptions && details?.client.status !== 'archived';
   const [selectedMergeIds, setSelectedMergeIds] = useState<number[]>([]);
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
@@ -1641,6 +1766,7 @@ export default function ClientsPage() {
           upcomingCount: 0,
         },
         bookings: data.bookings || [],
+        clientSubscriptions: data.clientSubscriptions || [],
         duplicateCandidates: data.duplicateCandidates || [],
         telephonyCalls: data.telephonyCalls || [],
         timeline: data.timeline || [],
@@ -1662,10 +1788,111 @@ export default function ClientsPage() {
     setDetailsLoading(false);
     setDetails(null);
     setSelectedMergeIds([]);
+    setRedemptionDialogSubscription(null);
+    setReverseRedemptionDialog(null);
     if (searchParams.has('clientId')) {
       const nextSearchParams = new URLSearchParams(searchParams);
       nextSearchParams.delete('clientId');
       setSearchParams(nextSearchParams, { replace: true });
+    }
+  };
+
+  const updateClientSubscriptionInDetails = (subscription: ClientSubscription) => {
+    setDetails((current) => {
+      if (!current) return current;
+      const items = current.clientSubscriptions || [];
+      return {
+        ...current,
+        clientSubscriptions: items.map((item) =>
+          item.id === subscription.id ? subscription : item,
+        ),
+      };
+    });
+  };
+
+  const openRedemptionDialog = (subscription: ClientSubscription) => {
+    setRedemptionDialogSubscription(subscription);
+    setRedemptionForm({
+      comment: '',
+      redeemedAt: getTodayDate(),
+      trainingKind: subscription.trainingKind === 'personal' ? 'personal' : 'group',
+    });
+  };
+
+  const handleRedemptionSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!redemptionDialogSubscription) return;
+
+    setRedemptionSaving(true);
+    try {
+      const res = await apiFetch(
+        `/api/client-subscriptions/${redemptionDialogSubscription.id}/redemptions`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            comment: redemptionForm.comment.trim(),
+            quantity: 1,
+            redeemedAt: redemptionForm.redeemedAt,
+            serviceType: 'training',
+            trainingKind: redemptionForm.trainingKind,
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось списать абонемент'));
+        return;
+      }
+
+      const data = (await res.json()) as {
+        redemption: ClientSubscriptionRedemption;
+        subscription: ClientSubscription;
+      };
+      updateClientSubscriptionInDetails(data.subscription);
+      setRedemptionDialogSubscription(null);
+      toast.success('Тренировка списана');
+    } finally {
+      setRedemptionSaving(false);
+    }
+  };
+
+  const openReverseRedemptionDialog = (
+    subscription: ClientSubscription,
+    redemption: ClientSubscriptionRedemption,
+  ) => {
+    setReverseRedemptionDialog({ redemption, subscription });
+    setReverseReason('');
+  };
+
+  const handleReverseRedemption = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!reverseRedemptionDialog) return;
+
+    setReverseSaving(true);
+    try {
+      const { redemption, subscription } = reverseRedemptionDialog;
+      const res = await apiFetch(
+        `/api/client-subscriptions/${subscription.id}/redemptions/${redemption.id}/reverse`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason: reverseReason.trim() }),
+        },
+      );
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось отменить списание'));
+        return;
+      }
+
+      const data = (await res.json()) as {
+        redemption: ClientSubscriptionRedemption;
+        subscription: ClientSubscription;
+      };
+      updateClientSubscriptionInDetails(data.subscription);
+      setReverseRedemptionDialog(null);
+      toast.success('Списание отменено');
+    } finally {
+      setReverseSaving(false);
     }
   };
 
@@ -2056,6 +2283,93 @@ export default function ClientsPage() {
       title: 'Объединить группу дублей?',
     });
   };
+
+  const renderSubscriptionHistory = (subscription: ClientSubscription) => {
+    const redemptions = subscription.redemptions || [];
+
+    return (
+      <div className="mt-3 border-t pt-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <History className="h-3.5 w-3.5" />
+          История списаний
+        </div>
+        {redemptions.length === 0 ? (
+          <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+            Списаний пока нет.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {redemptions.map((redemption) => (
+              <div
+                key={redemption.id}
+                className="rounded-md border bg-muted/20 p-2 text-xs"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Badge
+                        variant={
+                          redemption.status === 'reversed'
+                            ? 'outline'
+                            : 'default'
+                        }
+                      >
+                        {
+                          CLIENT_SUBSCRIPTION_REDEMPTION_STATUS_LABELS[
+                            redemption.status
+                          ]
+                        }
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {formatDate(redemption.redeemedAt)}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {formatSubscriptionRedemptionService(redemption)}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      {formatSubscriptionActor(redemption.redeemedBy)}
+                      {redemption.quantity > 1 ? ` · ${redemption.quantity} занятий` : ''}
+                    </div>
+                    {redemption.comment && (
+                      <div className="mt-1 break-words text-foreground">
+                        {redemption.comment}
+                      </div>
+                    )}
+                    {redemption.status === 'reversed' && (
+                      <div className="mt-1 text-muted-foreground">
+                        Отменено:{' '}
+                        {formatDateTime(redemption.reversedAt)} ·{' '}
+                        {formatSubscriptionActor(redemption.reversedBy)}
+                        {redemption.reversalReason
+                          ? ` · ${redemption.reversalReason}`
+                          : ''}
+                      </div>
+                    )}
+                  </div>
+                  {canMutateSubscriptions && redemption.status === 'active' && (
+                    <TooltipIconButton
+                      type="button"
+                      label="Отменить списание"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() =>
+                        openReverseRedemptionDialog(subscription, redemption)
+                      }
+                      disabled={reverseSaving}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </TooltipIconButton>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const clientColumns: ColumnDef<Client>[] = [
     {
       accessorKey: 'name',
@@ -3226,6 +3540,156 @@ export default function ClientsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={Boolean(redemptionDialogSubscription)}
+        onOpenChange={(open) => !open && setRedemptionDialogSubscription(null)}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Списать тренировку</DialogTitle>
+            <DialogDescription>
+              {redemptionDialogSubscription?.typeName || 'Абонемент клиента'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleRedemptionSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Дата
+                </label>
+                <Input
+                  type="date"
+                  value={redemptionForm.redeemedAt}
+                  onChange={(event) =>
+                    setRedemptionForm((prev) => ({
+                      ...prev,
+                      redeemedAt: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Тренировка
+                </label>
+                <Select
+                  value={redemptionForm.trainingKind}
+                  onValueChange={(value) =>
+                    setRedemptionForm((prev) => ({
+                      ...prev,
+                      trainingKind: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="group">Групповая</SelectItem>
+                    <SelectItem value="personal">Персональная</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Остаток</span>
+                <span className="font-medium">
+                  {redemptionDialogSubscription
+                    ? formatSubscriptionRemaining(redemptionDialogSubscription)
+                    : '-'}
+                </span>
+              </div>
+              <div className="mt-1 flex justify-between gap-3">
+                <span className="text-muted-foreground">Действует до</span>
+                <span>
+                  {formatDate(redemptionDialogSubscription?.expiresAt)}
+                </span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Комментарий
+              </label>
+              <textarea
+                value={redemptionForm.comment}
+                onChange={(event) =>
+                  setRedemptionForm((prev) => ({
+                    ...prev,
+                    comment: event.target.value,
+                  }))
+                }
+                className="min-h-[96px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Услуга, тренер, бронь или причина ручного списания"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={redemptionSaving}>
+              <Dumbbell className="mr-2 h-4 w-4" />
+              {redemptionSaving ? 'Списание...' : 'Списать 1 тренировку'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(reverseRedemptionDialog)}
+        onOpenChange={(open) => !open && setReverseRedemptionDialog(null)}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Отменить списание</DialogTitle>
+            <DialogDescription>
+              {reverseRedemptionDialog
+                ? `${formatDate(reverseRedemptionDialog.redemption.redeemedAt)} · ${reverseRedemptionDialog.subscription.typeName}`
+                : 'Абонемент клиента'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleReverseRedemption} className="space-y-4">
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Списал</span>
+                <span className="min-w-0 break-words text-right">
+                  {formatSubscriptionActor(
+                    reverseRedemptionDialog?.redemption.redeemedBy,
+                  )}
+                </span>
+              </div>
+              <div className="mt-1 flex justify-between gap-3">
+                <span className="text-muted-foreground">Услуга</span>
+                <span>
+                  {reverseRedemptionDialog
+                    ? formatSubscriptionRedemptionService(
+                        reverseRedemptionDialog.redemption,
+                      )
+                    : '-'}
+                </span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Причина
+              </label>
+              <textarea
+                value={reverseReason}
+                onChange={(event) => setReverseReason(event.target.value)}
+                className="min-h-[96px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Например: списали не того клиента"
+              />
+            </div>
+            <Button
+              type="submit"
+              className="w-full"
+              variant="outline"
+              disabled={reverseSaving}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              {reverseSaving ? 'Отмена...' : 'Отменить списание'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
@@ -3485,6 +3949,187 @@ export default function ClientsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {canViewSubscriptions && (
+                    <div className="rounded-md border">
+                      <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 font-medium">
+                            <Ticket className="h-4 w-4 text-muted-foreground" />
+                            Абонементы
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            Остаток занятий, срок действия и история списаний.
+                          </div>
+                        </div>
+                        <Badge variant="outline">
+                          {activeClientSubscriptions.length} активных
+                        </Badge>
+                      </div>
+                      <div className="space-y-4 p-4">
+                        {clientSubscriptions.length === 0 ? (
+                          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                            Абонементов по клиенту пока нет.
+                          </div>
+                        ) : (
+                          <>
+                            {activeClientSubscriptions.length > 0 && (
+                              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                {activeClientSubscriptions.map((subscription) => (
+                                  <div
+                                    key={subscription.id}
+                                    className="rounded-md border p-3 text-sm"
+                                  >
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                      <div className="min-w-0">
+                                        <div className="break-words font-medium">
+                                          {subscription.typeName}
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-1">
+                                          <Badge variant="default">
+                                            {
+                                              CLIENT_SUBSCRIPTION_STATUS_LABELS[
+                                                subscription.status
+                                              ]
+                                            }
+                                          </Badge>
+                                          {subscription.trainingKind && (
+                                            <Badge variant="outline">
+                                              {SUBSCRIPTION_TRAINING_KIND_LABELS[
+                                                subscription.trainingKind
+                                              ] || subscription.trainingKind}
+                                            </Badge>
+                                          )}
+                                          {subscription.timeSegment && (
+                                            <Badge variant="outline">
+                                              {SUBSCRIPTION_TIME_SEGMENT_LABELS[
+                                                subscription.timeSegment
+                                              ] || subscription.timeSegment}
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="shrink-0 text-right">
+                                        <div className="text-lg font-semibold">
+                                          {formatSubscriptionRemaining(
+                                            subscription,
+                                          )}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                          осталось
+                                        </div>
+                                        {canMutateSubscriptions && (
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            className="mt-2"
+                                            onClick={() =>
+                                              openRedemptionDialog(subscription)
+                                            }
+                                          >
+                                            <Dumbbell className="mr-2 h-4 w-4" />
+                                            Списать
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                                      <div>
+                                        Начало: {formatDate(subscription.startsAt)}
+                                      </div>
+                                      <div>
+                                        До: {formatDate(subscription.expiresAt)}
+                                      </div>
+                                      <div>
+                                        Использовано: {subscription.sessionsUsed}
+                                      </div>
+                                      <div>
+                                        Оплата:{' '}
+                                        {formatCurrency(subscription.saleAmount)}
+                                      </div>
+                                    </div>
+                                    {subscription.bonusPersonalSessions > 0 && (
+                                      <div className="mt-2 text-xs text-muted-foreground">
+                                        Бонусные персональные:{' '}
+                                        {subscription.bonusPersonalSessions}
+                                      </div>
+                                    )}
+                                    {renderSubscriptionHistory(subscription)}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {historicalClientSubscriptions.length > 0 && (
+                              <div className="overflow-x-auto rounded-md border">
+                                <Table className="min-w-[720px] table-fixed">
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Тип</TableHead>
+                                      <TableHead className="w-[130px]">
+                                        Статус
+                                      </TableHead>
+                                      <TableHead className="w-[150px]">
+                                        Остаток
+                                      </TableHead>
+                                      <TableHead className="w-[140px]">
+                                        Срок
+                                      </TableHead>
+                                      <TableHead className="w-[130px]">
+                                        Оплата
+                                      </TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {historicalClientSubscriptions.map(
+                                      (subscription) => (
+                                        <Fragment key={subscription.id}>
+                                          <TableRow>
+                                            <TableCell className="truncate font-medium">
+                                              {subscription.typeName}
+                                            </TableCell>
+                                            <TableCell>
+                                              <Badge variant="outline">
+                                                {
+                                                  CLIENT_SUBSCRIPTION_STATUS_LABELS[
+                                                    subscription.status
+                                                  ]
+                                                }
+                                              </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                              {formatSubscriptionRemaining(
+                                                subscription,
+                                              )}
+                                            </TableCell>
+                                            <TableCell>
+                                              {formatDate(subscription.expiresAt)}
+                                            </TableCell>
+                                            <TableCell>
+                                              {formatCurrency(
+                                                subscription.saleAmount,
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                          <TableRow>
+                                            <TableCell colSpan={5}>
+                                              {renderSubscriptionHistory(
+                                                subscription,
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                        </Fragment>
+                                      ),
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   {canViewClientTelephony && (
                     <div className="rounded-md border">

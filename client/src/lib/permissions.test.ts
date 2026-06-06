@@ -4,10 +4,20 @@ import {
   canManageBookingResources,
   canManageBookings,
   canManageClients,
+  canManageCorporateDeposits,
   canManageFinance,
   canManageMethodology,
+  canManagePrepaymentSales,
+  canManagePrepaymentSettings,
+  canManageSubscriptionTypes,
   canManageTelephony,
+  canRedeemCertificates,
+  canRedeemClientSubscriptions,
+  canViewCertificates,
+  canViewClientSubscriptions,
+  canViewCorporateClients,
   canViewMethodologyAnalytics,
+  canViewPrepaymentsDashboard,
   canWorkTelephony,
   canViewTrainingNotes,
   getDefaultPath,
@@ -44,6 +54,57 @@ describe('permissions', () => {
     expect(canAccessPath('manager', '/admin/finances')).toBe(true);
     expect(canManageFinance('manager')).toBe(false);
     expect(canManageFinance('accountant')).toBe(true);
+  });
+
+  it('keeps prepayment sale settings separate from catalog management', () => {
+    expect(canAccessPath('manager', '/admin/catalog')).toBe(true);
+    expect(canAccessPath('manager', '/admin/prepayments')).toBe(true);
+    expect(canAccessPath('admin', '/admin/prepayments')).toBe(true);
+    expect(canAccessPath('accountant', '/admin/prepayments')).toBe(true);
+    expect(canViewPrepaymentsDashboard('owner')).toBe(true);
+    expect(canViewPrepaymentsDashboard('trainer')).toBe(false);
+    expect(canManagePrepaymentSettings('manager')).toBe(true);
+    expect(canManagePrepaymentSales('manager')).toBe(true);
+    expect(canManagePrepaymentSettings('accountant')).toBe(false);
+  });
+
+  it('keeps subscription balances away from trainers', () => {
+    expect(canManageSubscriptionTypes('owner')).toBe(true);
+    expect(canManageSubscriptionTypes('manager')).toBe(true);
+    expect(canManageSubscriptionTypes('accountant')).toBe(false);
+    expect(canViewClientSubscriptions('admin')).toBe(true);
+    expect(canRedeemClientSubscriptions('admin')).toBe(true);
+    expect(canRedeemClientSubscriptions('viewer')).toBe(false);
+    expect(canViewClientSubscriptions('accountant')).toBe(false);
+    expect(canRedeemClientSubscriptions('accountant')).toBe(false);
+    expect(canViewClientSubscriptions('trainer')).toBe(false);
+    expect(canRedeemClientSubscriptions('trainer')).toBe(false);
+    expect(canAccessPath('accountant', '/admin/clients')).toBe(false);
+  });
+
+  it('keeps certificate balances available to admins without leaking to trainers', () => {
+    expect(canAccessPath('admin', '/admin/certificates')).toBe(true);
+    expect(canViewCertificates('viewer')).toBe(true);
+    expect(canRedeemCertificates('admin')).toBe(true);
+    expect(canRedeemCertificates('viewer')).toBe(false);
+    expect(canViewCertificates('accountant')).toBe(false);
+    expect(canRedeemCertificates('accountant')).toBe(false);
+    expect(canViewCertificates('trainer')).toBe(false);
+    expect(canRedeemCertificates('trainer')).toBe(false);
+  });
+
+  it('keeps corporate balances on finance visibility and deposits on finance management', () => {
+    expect(canAccessPath('owner', '/admin/corporate-clients')).toBe(true);
+    expect(canAccessPath('manager', '/admin/corporate-clients')).toBe(true);
+    expect(canAccessPath('accountant', '/admin/corporate-clients')).toBe(true);
+    expect(canAccessPath('viewer', '/admin/corporate-clients')).toBe(true);
+    expect(canAccessPath('admin', '/admin/corporate-clients')).toBe(false);
+    expect(canViewCorporateClients('manager')).toBe(true);
+    expect(canViewCorporateClients('trainer')).toBe(false);
+    expect(canManageCorporateDeposits('owner')).toBe(true);
+    expect(canManageCorporateDeposits('accountant')).toBe(true);
+    expect(canManageCorporateDeposits('manager')).toBe(false);
+    expect(canManageCorporateDeposits('admin')).toBe(false);
   });
 
   it('allows admins to operate bookings by phone', () => {

@@ -1,11 +1,13 @@
 import {
   Activity,
   BicepsFlexed,
+  Building2,
   CalendarDays,
   CircleDollarSign,
   ContactRound,
   Database,
   Filter,
+  Gift,
   GraduationCap,
   History,
   LayoutDashboard,
@@ -19,6 +21,7 @@ import {
   UserCog,
   Users,
   Wallet,
+  WalletCards,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -89,6 +92,21 @@ const items = [
     title: 'Задачи обзвона',
     url: '/admin/call-tasks',
     icon: PhoneCall,
+  },
+  {
+    title: 'Предоплаты',
+    url: '/admin/prepayments',
+    icon: WalletCards,
+  },
+  {
+    title: 'Сертификаты',
+    url: '/admin/certificates',
+    icon: Gift,
+  },
+  {
+    title: 'Корпоративные клиенты',
+    url: '/admin/corporate-clients',
+    icon: Building2,
   },
   {
     title: 'Телефония',

@@ -8,6 +8,7 @@ const {
 const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const clientSkillMapService = require('./client-skill-map.service');
+const subscriptionsService = require('./subscriptions.service');
 const trainingNotesService = require('./training-notes.service');
 
 const CLIENT_ATTRIBUTES = [
@@ -236,6 +237,12 @@ function isTrainer(account) {
 
 function canViewTrainingNotes(account) {
   return ['owner', 'manager', 'trainer'].includes(account?.role);
+}
+
+function canViewClientSubscriptions(account) {
+  return ['owner', 'manager', 'admin', 'accountant', 'viewer'].includes(
+    account?.role,
+  );
 }
 
 function sanitizeClientForAccount(client, account) {
@@ -1069,14 +1076,23 @@ async function getClientDetails(id, account = null) {
           clientSkillMapService.listForClient(client.id, account),
         ])
       : [[], []];
-    const [bookings, bookingSeries, bookingStats, telephonyCalls] = includeOperationalHistory
+    const [
+      bookings,
+      bookingSeries,
+      bookingStats,
+      telephonyCalls,
+      clientSubscriptions,
+    ] = includeOperationalHistory
       ? await Promise.all([
           listClientBookings(client.id, { limit: 50 }),
           listClientBookingSeries(client.id, { limit: 30 }),
           getClientBookingStats(client.id),
           listClientTelephonyCalls(client.id, account, { limit: 30 }),
+          canViewClientSubscriptions(account)
+            ? subscriptionsService.listClientSubscriptions(client.id)
+            : [],
         ])
-      : [[], [], getEmptyBookingStats(), []];
+      : [[], [], getEmptyBookingStats(), [], []];
     const safeClient = sanitizeClientForAccount(mapClient(client), account);
     const safeMergedInto = sanitizeClientForAccount(
       mapClient(await db.User.findByPk(client.mergedIntoUserId)),
@@ -1100,6 +1116,7 @@ async function getClientDetails(id, account = null) {
         ? await listClientActiveCallTasks(client.id, account)
         : [],
       client: safeClient,
+      clientSubscriptions,
       mergedInto: safeMergedInto,
       visits: [],
       duplicateCandidates: [],
@@ -1131,6 +1148,7 @@ async function getClientDetails(id, account = null) {
     bookingStats,
     activeCallTasks,
     telephonyCalls,
+    clientSubscriptions,
   ] = await Promise.all([
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
@@ -1144,6 +1162,9 @@ async function getClientDetails(id, account = null) {
     includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
     includeOperationalHistory ? listClientActiveCallTasks(client.id, account) : [],
     includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
+    includeOperationalHistory && canViewClientSubscriptions(account)
+      ? subscriptionsService.listClientSubscriptions(client.id)
+      : [],
   ]);
   const safeClient = sanitizeClientForAccount(
     mapClient({ ...client.toJSON(), ...stats }),
@@ -1164,6 +1185,7 @@ async function getClientDetails(id, account = null) {
     bookingStats,
     bookings,
     client: safeClient,
+    clientSubscriptions,
     duplicateCandidates: sanitizeClientsForAccount(duplicateCandidates, account),
     skillMap,
     timeline: includeOperationalHistory
@@ -2513,6 +2535,7 @@ async function removeArchivedClient(id) {
     telephonyCallsCount,
     bookingCount,
     bookingSeriesCount,
+    clientSubscriptionsCount,
     mergedClientsCount,
   ] =
     await Promise.all([
@@ -2522,6 +2545,9 @@ async function removeArchivedClient(id) {
       db.TelephonyCall ? db.TelephonyCall.count({ where: { userId: client.id } }) : 0,
       db.Booking ? db.Booking.count({ where: { userId: client.id } }) : 0,
       db.BookingSeries ? db.BookingSeries.count({ where: { userId: client.id } }) : 0,
+      db.ClientSubscription
+        ? db.ClientSubscription.count({ where: { clientId: client.id } })
+        : 0,
       db.User.count({ where: { mergedIntoUserId: client.id } }),
     ]);
 
@@ -2532,10 +2558,11 @@ async function removeArchivedClient(id) {
     telephonyCallsCount > 0 ||
     bookingCount > 0 ||
     bookingSeriesCount > 0 ||
+    clientSubscriptionsCount > 0 ||
     mergedClientsCount > 0
   ) {
     throw appError(
-      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
+      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
       409,
     );
   }

@@ -62,6 +62,34 @@ function inferEntity(path = '') {
   if (first === 'catalog' && second === 'rules') {
     return { entityType: 'catalog_rule', entityId: third };
   }
+  if (first === 'catalog' && second === 'sale-settings') {
+    return { entityType: 'evotor_sale_setting', entityId: third };
+  }
+  if (first === 'catalog' && second === 'pending-sales') {
+    return { entityType: 'pending_sale', entityId: third };
+  }
+  if (
+    first === 'corporate-clients' &&
+    (third === 'deposits' || third === 'spendings')
+  ) {
+    const entryId = normalizedPath.split('/')[3];
+    if (entryId) {
+      return { entityType: 'corporate_ledger_entry', entityId: entryId };
+    }
+    return { entityType: 'corporate_client', entityId: second };
+  }
+  if (first === 'corporate-clients') {
+    return { entityType: 'corporate_client', entityId: second };
+  }
+  if (first === 'subscriptions' && second === 'types') {
+    return { entityType: 'subscription_type', entityId: third };
+  }
+  if (first === 'client-subscriptions') {
+    return { entityType: 'client_subscription', entityId: second };
+  }
+  if (first === 'clients' && third === 'subscriptions') {
+    return { entityType: 'client_subscription', entityId: second };
+  }
   if (first === 'categories') return { entityType: 'catalog_category', entityId: second };
   if (first === 'rules') return { entityType: 'catalog_rule', entityId: second };
   if (first === 'references') return { entityType: `reference:${second || 'unknown'}`, entityId: third };
@@ -87,6 +115,7 @@ function inferAction(method, path = '', statusCode) {
   if (statusCode >= 400) return `${method.toLowerCase()}.failed`;
   if (normalizedPath.endsWith('/restore')) return 'restore';
   if (normalizedPath.endsWith('/permanent')) return 'delete_permanent';
+  if (normalizedPath.endsWith('/reverse')) return 'reverse';
   if (normalizedPath.endsWith('/sync')) return 'sync';
   if (normalizedPath.endsWith('/recurring/run')) return 'run_recurring';
   if (normalizedPath.endsWith('/attempts')) return 'create_attempt';

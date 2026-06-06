@@ -61,6 +61,18 @@ module.exports = (sequelize, DataTypes) => {
       as: 'items',
       foreignKey: 'receiptId',
     });
+    Receipt.hasMany(models.PendingSale, {
+      as: 'pendingSales',
+      foreignKey: 'receiptId',
+    });
+    Receipt.hasMany(models.ClientSubscription, {
+      as: 'clientSubscriptions',
+      foreignKey: 'sourceReceiptId',
+    });
+    Receipt.hasMany(models.Certificate, {
+      as: 'certificates',
+      foreignKey: 'sourceReceiptId',
+    });
   };
 
   return Receipt;

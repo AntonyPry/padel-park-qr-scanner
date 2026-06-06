@@ -19,5 +19,11 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
     },
   });
+  CatalogRule.associate = (models) => {
+    CatalogRule.hasMany(models.PendingSale, {
+      as: 'pendingSales',
+      foreignKey: 'catalogRuleId',
+    });
+  };
   return CatalogRule;
 };

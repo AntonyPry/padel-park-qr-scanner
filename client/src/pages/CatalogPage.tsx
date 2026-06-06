@@ -2,11 +2,21 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useForm } from 'react-hook-form';
+import { useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { toast } from '@/components/ui/toast';
 import { ErrorState } from '@/components/error-state';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select,
   SelectContent,
@@ -23,7 +33,12 @@ import {
   Tag,
   Percent,
   ArchiveRestore,
+  Ban,
+  Link2,
+  Pencil,
   Search,
+  Ticket,
+  XCircle,
   RefreshCw,
 } from 'lucide-react';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
@@ -37,6 +52,9 @@ import type { MotivationBonusRule } from '@/lib/motivation';
 import {
   canManageCatalog,
   canManageMotivation,
+  canManagePrepaymentSales,
+  canManagePrepaymentSettings,
+  canManageSubscriptionTypes,
 } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 
@@ -66,8 +84,165 @@ interface CatalogRule {
   status?: 'active' | 'archived';
 }
 
+type SaleIntent = 'normal' | 'subscription' | 'certificate';
+type PendingSaleStatus = 'pending' | 'linked' | 'ignored' | 'canceled' | 'all';
+type SubscriptionTypeStatus = 'active' | 'archived';
+type SubscriptionTrainingKind = 'group' | 'personal';
+type SubscriptionTimeSegment = 'all' | 'off_peak' | 'single' | 'standard';
+
+interface SaleSetting {
+  id: number;
+  itemName: string;
+  saleIntent: SaleIntent;
+  saleSettings?: {
+    certificateType?: 'money' | 'service';
+    serviceName?: string | null;
+    serviceType?: string | null;
+    subscriptionTypeId?: number | null;
+    unitsTotal?: number | null;
+    validityDays?: number | null;
+    [key: string]: unknown;
+  } | null;
+}
+
+interface PendingSaleHistory {
+  id: number;
+  action: string;
+  fromStatus?: string | null;
+  toStatus?: string | null;
+  reason?: string | null;
+  role?: string | null;
+  createdAt: string;
+}
+
+interface PendingSale {
+  id: number;
+  receiptId: number;
+  receiptItemId: number;
+  itemName: string;
+  saleIntent: Exclude<SaleIntent, 'normal'>;
+  status: Exclude<PendingSaleStatus, 'all'>;
+  category?: string | null;
+  quantity: number;
+  price: number;
+  amount: number;
+  evotorId?: string | null;
+  receiptDateTime?: string | null;
+  clientId?: number | null;
+  client?: {
+    id: number;
+    name: string;
+    phone: string;
+    status: string;
+  } | null;
+  statusReason?: string | null;
+  history?: PendingSaleHistory[];
+  createdAt: string;
+}
+
+interface ClientCandidate {
+  id: number;
+  name: string;
+  phone: string;
+  status: 'active' | 'archived';
+}
+
+interface SubscriptionType {
+  id: number;
+  name: string;
+  serviceType: 'training' | string;
+  trainingKind: SubscriptionTrainingKind;
+  timeSegment?: SubscriptionTimeSegment | null;
+  sessionsTotal: number | null;
+  isUnlimited: boolean;
+  validityDays: number;
+  price: number;
+  bonusPersonalSessions: number;
+  status: SubscriptionTypeStatus;
+  description?: string | null;
+}
+
+interface SubscriptionTypeFormState {
+  bonusPersonalSessions: string;
+  description: string;
+  isUnlimited: 'false' | 'true';
+  name: string;
+  price: string;
+  sessionsTotal: string;
+  timeSegment: SubscriptionTimeSegment;
+  trainingKind: SubscriptionTrainingKind;
+  validityDays: string;
+}
+
+interface CertificateLinkFormState {
+  amountTotal: string;
+  certificateType: 'money' | 'service';
+  code: string;
+  serviceName: string;
+  unitsTotal: string;
+  validityDays: string;
+}
+
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<void>;
+};
+
+const SALE_INTENT_OPTIONS: Array<{ label: string; value: SaleIntent }> = [
+  { value: 'normal', label: 'Обычная' },
+  { value: 'subscription', label: 'Абонемент' },
+  { value: 'certificate', label: 'Сертификат' },
+];
+
+const SALE_INTENT_LABELS: Record<SaleIntent, string> = {
+  certificate: 'Сертификат',
+  normal: 'Обычная',
+  subscription: 'Абонемент',
+};
+
+const PENDING_STATUS_LABELS: Record<PendingSaleStatus, string> = {
+  all: 'Все',
+  canceled: 'Отменены',
+  ignored: 'Игнор',
+  linked: 'Привязаны',
+  pending: 'В ожидании',
+};
+
+const SUBSCRIPTION_STATUS_LABELS: Record<SubscriptionTypeStatus, string> = {
+  active: 'Активные',
+  archived: 'Архив',
+};
+
+const TRAINING_KIND_LABELS: Record<SubscriptionTrainingKind, string> = {
+  group: 'Групповые',
+  personal: 'Персональные',
+};
+
+const TIME_SEGMENT_LABELS: Record<SubscriptionTimeSegment, string> = {
+  all: 'Любое время',
+  off_peak: 'Будни 10:00-17:00',
+  single: 'Разовое',
+  standard: 'День/вечер/выходные',
+};
+
+const EMPTY_SUBSCRIPTION_TYPE_FORM: SubscriptionTypeFormState = {
+  bonusPersonalSessions: '0',
+  description: '',
+  isUnlimited: 'false',
+  name: '',
+  price: '',
+  sessionsTotal: '4',
+  timeSegment: 'all',
+  trainingKind: 'group',
+  validityDays: '30',
+};
+
+const EMPTY_CERTIFICATE_LINK_FORM: CertificateLinkFormState = {
+  amountTotal: '',
+  certificateType: 'money',
+  code: '',
+  serviceName: '',
+  unitsTotal: '1',
+  validityDays: '365',
 };
 
 const categoryFormSchema = z.object({
@@ -104,28 +279,81 @@ async function readError(response: Response, fallback: string) {
   }
 }
 
+function normalizeItemKey(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function formatMoney(value: number) {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 0,
+    style: 'currency',
+    currency: 'RUB',
+  }).format(Number(value) || 0);
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleString('ru-RU', {
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    month: '2-digit',
+    year: '2-digit',
+  });
+}
+
 export default function CatalogPage() {
   const { account } = useAuth();
+  const [searchParams] = useSearchParams();
   const canEditCatalog = canManageCatalog(account?.role);
   const canEditMotivation = canManageMotivation(account?.role);
+  const canEditSaleSettings = canManagePrepaymentSettings(account?.role);
+  const canEditPendingSales = canManagePrepaymentSales(account?.role);
+  const canEditSubscriptionTypes = canManageSubscriptionTypes(account?.role);
   const [unmapped, setUnmapped] = useState<string[]>([]);
   const [rules, setRules] = useState<CatalogRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [bonusRules, setBonusRules] = useState<MotivationBonusRule[]>([]);
+  const [saleSettings, setSaleSettings] = useState<SaleSetting[]>([]);
+  const [pendingSales, setPendingSales] = useState<PendingSale[]>([]);
+  const [subscriptionTypes, setSubscriptionTypes] = useState<SubscriptionType[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(true);
   const [catalogError, setCatalogError] = useState('');
 
   const [activeTab, setActiveTab] = useState<
-    'unmapped' | 'rules' | 'categories'
+    'unmapped' | 'rules' | 'categories' | 'pending' | 'subscriptions'
   >('unmapped');
   const [catalogStatus, setCatalogStatus] = useState<'active' | 'archived'>(
     'active',
   );
+  const [subscriptionTypeStatus, setSubscriptionTypeStatus] =
+    useState<SubscriptionTypeStatus>('active');
+  const [pendingStatus, setPendingStatus] =
+    useState<PendingSaleStatus>('pending');
   const [catalogSearch, setCatalogSearch] = useState('');
   const [selections, setSelections] = useState<Record<string, string>>({});
+  const [saleSettingSavingKey, setSaleSettingSavingKey] = useState('');
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const [linkDialogSale, setLinkDialogSale] = useState<PendingSale | null>(null);
+  const [clientSearchInput, setClientSearchInput] = useState('');
+  const [clientCandidates, setClientCandidates] = useState<ClientCandidate[]>([]);
+  const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const [clientSearchError, setClientSearchError] = useState('');
+  const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
+  const [linkComment, setLinkComment] = useState('');
+  const [certificateLinkForm, setCertificateLinkForm] =
+    useState<CertificateLinkFormState>(EMPTY_CERTIFICATE_LINK_FORM);
+  const [linkLoading, setLinkLoading] = useState(false);
+  const [subscriptionDialogOpen, setSubscriptionDialogOpen] = useState(false);
+  const [editingSubscriptionType, setEditingSubscriptionType] =
+    useState<SubscriptionType | null>(null);
+  const [subscriptionForm, setSubscriptionForm] =
+    useState<SubscriptionTypeFormState>(EMPTY_SUBSCRIPTION_TYPE_FORM);
+  const [subscriptionSaving, setSubscriptionSaving] = useState(false);
   const categoryForm = useForm<CategoryFormValues>({
     defaultValues: EMPTY_CATEGORY_FORM,
     resolver: zodResolver(categoryFormSchema),
@@ -133,15 +361,44 @@ export default function CatalogPage() {
   const newCatParentId = categoryForm.watch('parentId');
   const newCatGroup = categoryForm.watch('group');
 
+  useEffect(() => {
+    const tab = searchParams.get('tab');
+    if (
+      tab === 'unmapped' ||
+      tab === 'rules' ||
+      tab === 'categories' ||
+      tab === 'pending' ||
+      tab === 'subscriptions'
+    ) {
+      setActiveTab(tab);
+    }
+  }, [searchParams]);
+
   const fetchData = useCallback(async () => {
     setCatalogLoading(true);
     setCatalogError('');
     try {
-      const [unmappedRes, rulesRes, catRes, bonusRulesRes] = await Promise.all([
+      const pendingQuery = new URLSearchParams({ status: pendingStatus });
+      const [
+        unmappedRes,
+        rulesRes,
+        catRes,
+        bonusRulesRes,
+        saleSettingsRes,
+        pendingSalesRes,
+        subscriptionTypesRes,
+      ] = await Promise.all([
         apiFetch('/api/catalog/unmapped'),
         apiFetch(`/api/catalog/rules?status=${catalogStatus}`),
         apiFetch(`/api/catalog/categories?status=${catalogStatus}`),
         apiFetch('/api/motivation/bonus-rules'),
+        apiFetch('/api/catalog/sale-settings'),
+        canEditPendingSales
+          ? apiFetch(`/api/catalog/pending-sales?${pendingQuery.toString()}`)
+          : Promise.resolve(null),
+        canEditSubscriptionTypes
+          ? apiFetch('/api/subscriptions/types?status=all')
+          : Promise.resolve(null),
       ]);
 
       const errors: string[] = [];
@@ -173,6 +430,36 @@ export default function CatalogPage() {
         errors.push(await readError(bonusRulesRes, 'Не удалось загрузить мотивации категорий'));
       }
 
+      if (saleSettingsRes.ok) {
+        setSaleSettings((await saleSettingsRes.json()) as SaleSetting[]);
+      } else {
+        setSaleSettings([]);
+        errors.push(await readError(saleSettingsRes, 'Не удалось загрузить настройки продаж'));
+      }
+
+      if (pendingSalesRes?.ok) {
+        setPendingSales((await pendingSalesRes.json()) as PendingSale[]);
+      } else if (pendingSalesRes) {
+        setPendingSales([]);
+        errors.push(await readError(pendingSalesRes, 'Не удалось загрузить очередь продаж'));
+      } else {
+        setPendingSales([]);
+      }
+
+      if (subscriptionTypesRes?.ok) {
+        setSubscriptionTypes((await subscriptionTypesRes.json()) as SubscriptionType[]);
+      } else if (subscriptionTypesRes) {
+        setSubscriptionTypes([]);
+        errors.push(
+          await readError(
+            subscriptionTypesRes,
+            'Не удалось загрузить типы абонементов',
+          ),
+        );
+      } else {
+        setSubscriptionTypes([]);
+      }
+
       if (errors.length > 0) {
         setCatalogError(errors.join('. '));
       }
@@ -182,15 +469,27 @@ export default function CatalogPage() {
       setRules([]);
       setCategories([]);
       setBonusRules([]);
+      setSaleSettings([]);
+      setPendingSales([]);
+      setSubscriptionTypes([]);
       setCatalogError(getApiErrorMessage(e, 'Не удалось загрузить справочник товаров'));
     } finally {
       setCatalogLoading(false);
     }
-  }, [catalogStatus]);
+  }, [canEditPendingSales, canEditSubscriptionTypes, catalogStatus, pendingStatus]);
 
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    if (activeTab === 'pending' && !canEditPendingSales) {
+      setActiveTab('rules');
+    }
+    if (activeTab === 'subscriptions' && !canEditSubscriptionTypes) {
+      setActiveTab('rules');
+    }
+  }, [activeTab, canEditPendingSales, canEditSubscriptionTypes]);
 
   const motivationByCategoryId = useMemo(() => {
     const map = new Map<number, MotivationBonusRule>();
@@ -201,21 +500,78 @@ export default function CatalogPage() {
     });
     return map;
   }, [bonusRules]);
+  const saleSettingByItemName = useMemo(() => {
+    const map = new Map<string, SaleSetting>();
+    saleSettings.forEach((setting) => {
+      map.set(normalizeItemKey(setting.itemName), setting);
+    });
+    return map;
+  }, [saleSettings]);
+  const activeSubscriptionTypes = useMemo(
+    () => subscriptionTypes.filter((type) => type.status === 'active'),
+    [subscriptionTypes],
+  );
+  const subscriptionTypeById = useMemo(() => {
+    const map = new Map<number, SubscriptionType>();
+    subscriptionTypes.forEach((type) => {
+      map.set(type.id, type);
+    });
+    return map;
+  }, [subscriptionTypes]);
+  const getSaleIntent = useCallback(
+    (itemName: string): SaleIntent =>
+      saleSettingByItemName.get(normalizeItemKey(itemName))?.saleIntent ||
+      'normal',
+    [saleSettingByItemName],
+  );
+  const getSubscriptionTypeId = useCallback(
+    (itemName: string): number | null => {
+      const id = saleSettingByItemName.get(
+        normalizeItemKey(itemName),
+      )?.saleSettings?.subscriptionTypeId;
+      return typeof id === 'number' && Number.isFinite(id) ? id : null;
+    },
+    [saleSettingByItemName],
+  );
   const normalizedCatalogSearch = catalogSearch.trim().toLowerCase();
   const filteredUnmapped = useMemo(() => {
     if (!normalizedCatalogSearch) return unmapped;
-    return unmapped.filter((itemName) =>
-      itemName.toLowerCase().includes(normalizedCatalogSearch),
-    );
-  }, [normalizedCatalogSearch, unmapped]);
+    return unmapped.filter((itemName) => {
+      const intent = getSaleIntent(itemName);
+      const subscriptionTypeName =
+        subscriptionTypeById.get(getSubscriptionTypeId(itemName) || 0)?.name ||
+        '';
+      return [itemName, SALE_INTENT_LABELS[intent], subscriptionTypeName].some((value) =>
+        value.toLowerCase().includes(normalizedCatalogSearch),
+      );
+    });
+  }, [
+    getSaleIntent,
+    getSubscriptionTypeId,
+    normalizedCatalogSearch,
+    subscriptionTypeById,
+    unmapped,
+  ]);
   const filteredRules = useMemo(() => {
     if (!normalizedCatalogSearch) return rules;
     return rules.filter((rule) =>
-      [rule.itemName, rule.category].some((value) =>
+      [
+        rule.itemName,
+        rule.category,
+        SALE_INTENT_LABELS[getSaleIntent(rule.itemName)],
+        subscriptionTypeById.get(getSubscriptionTypeId(rule.itemName) || 0)
+          ?.name || '',
+      ].some((value) =>
         value.toLowerCase().includes(normalizedCatalogSearch),
       ),
     );
-  }, [normalizedCatalogSearch, rules]);
+  }, [
+    getSaleIntent,
+    getSubscriptionTypeId,
+    normalizedCatalogSearch,
+    rules,
+    subscriptionTypeById,
+  ]);
   const filteredCategories = useMemo(() => {
     if (!normalizedCatalogSearch) return categories;
     return categories.filter((category) =>
@@ -227,6 +583,77 @@ export default function CatalogPage() {
       ].some((value) => value.toLowerCase().includes(normalizedCatalogSearch)),
     );
   }, [categories, motivationByCategoryId, normalizedCatalogSearch]);
+  const filteredPendingSales = useMemo(() => {
+    if (!normalizedCatalogSearch) return pendingSales;
+    return pendingSales.filter((sale) =>
+      [
+        sale.itemName,
+        sale.category || '',
+        sale.client?.name || '',
+        sale.client?.phone || '',
+        sale.evotorId || '',
+        SALE_INTENT_LABELS[sale.saleIntent],
+        PENDING_STATUS_LABELS[sale.status],
+      ].some((value) => value.toLowerCase().includes(normalizedCatalogSearch)),
+    );
+  }, [normalizedCatalogSearch, pendingSales]);
+  const filteredSubscriptionTypes = useMemo(() => {
+    const byStatus = subscriptionTypes.filter(
+      (type) => type.status === subscriptionTypeStatus,
+    );
+    if (!normalizedCatalogSearch) return byStatus;
+    return byStatus.filter((type) =>
+      [
+        type.name,
+        TRAINING_KIND_LABELS[type.trainingKind],
+        TIME_SEGMENT_LABELS[type.timeSegment || 'all'],
+        String(type.price),
+        type.isUnlimited ? 'безлимит' : `${type.sessionsTotal} занятий`,
+      ].some((value) => value.toLowerCase().includes(normalizedCatalogSearch)),
+    );
+  }, [normalizedCatalogSearch, subscriptionTypeStatus, subscriptionTypes]);
+
+  const handleSaveSaleSetting = async (
+    itemName: string,
+    saleIntent: SaleIntent,
+    saleSettings?: SaleSetting['saleSettings'],
+  ) => {
+    const savingKey = `${itemName}:${saleIntent}`;
+    setSaleSettingSavingKey(savingKey);
+    try {
+      const payload = {
+        itemName,
+        saleIntent,
+        saleSettings:
+          saleIntent === 'subscription' && saleSettings
+            ? saleSettings
+            : null,
+      };
+      const res = await apiFetch('/api/catalog/sale-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось сохранить тип продажи'));
+        return;
+      }
+
+      const setting = (await res.json()) as SaleSetting;
+      setSaleSettings((prev) => {
+        const next = prev.filter(
+          (item) => normalizeItemKey(item.itemName) !== normalizeItemKey(itemName),
+        );
+        next.push(setting);
+        return next.sort((a, b) => a.itemName.localeCompare(b.itemName, 'ru'));
+      });
+      await fetchData();
+      toast.success('Тип продажи сохранен');
+    } finally {
+      setSaleSettingSavingKey('');
+    }
+  };
 
   const handleSaveRule = async (itemName: string) => {
     const category = selections[itemName];
@@ -250,6 +677,187 @@ export default function CatalogPage() {
     });
     await fetchData();
     toast.success('Правило товара сохранено');
+  };
+
+  const openLinkDialog = (sale: PendingSale) => {
+    const saleSettings =
+      saleSettingByItemName.get(normalizeItemKey(sale.itemName))?.saleSettings ||
+      {};
+    setLinkDialogSale(sale);
+    setClientSearchInput('');
+    setClientCandidates([]);
+    setClientSearchError('');
+    setSelectedClientId(null);
+    setLinkComment('');
+    setCertificateLinkForm({
+      amountTotal:
+        sale.saleIntent === 'certificate'
+          ? String(Number(sale.amount || 0) || '')
+          : '',
+      certificateType:
+        saleSettings.certificateType === 'service' ? 'service' : 'money',
+      code: '',
+      serviceName:
+        typeof saleSettings.serviceName === 'string'
+          ? saleSettings.serviceName
+          : sale.itemName,
+      unitsTotal: typeof saleSettings.unitsTotal === 'number'
+        ? String(saleSettings.unitsTotal)
+        : String(Math.max(1, Math.round(Number(sale.quantity || 1)))),
+      validityDays: typeof saleSettings.validityDays === 'number'
+        ? String(saleSettings.validityDays)
+        : '365',
+    });
+  };
+
+  const updateCertificateLinkForm = (
+    field: keyof CertificateLinkFormState,
+    value: string,
+  ) => {
+    setCertificateLinkForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const loadClientCandidates = useCallback(async (query: string) => {
+    const search = query.trim();
+    if (search.length < 2) {
+      setClientCandidates([]);
+      setClientSearchError('');
+      setClientSearchLoading(false);
+      return;
+    }
+
+    setClientSearchLoading(true);
+    setClientSearchError('');
+    try {
+      const params = new URLSearchParams({
+        pageSize: '10',
+        q: search,
+        status: 'active',
+      });
+      const res = await apiFetch(`/api/clients?${params.toString()}`);
+      if (!res.ok) {
+        setClientCandidates([]);
+        setClientSearchError(await readError(res, 'Не удалось найти клиентов'));
+        return;
+      }
+
+      const data = (await res.json()) as { items?: ClientCandidate[] };
+      setClientCandidates(data.items || []);
+    } catch (error) {
+      setClientCandidates([]);
+      setClientSearchError(getApiErrorMessage(error, 'Не удалось найти клиентов'));
+    } finally {
+      setClientSearchLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!linkDialogSale) return;
+    const timeout = window.setTimeout(() => {
+      void loadClientCandidates(clientSearchInput);
+    }, 300);
+    return () => window.clearTimeout(timeout);
+  }, [clientSearchInput, linkDialogSale, loadClientCandidates]);
+
+  const handleLinkPendingSale = async () => {
+    if (!linkDialogSale || !selectedClientId) return;
+    const certificatePayload =
+      linkDialogSale.saleIntent === 'certificate'
+        ? {
+            amountTotal:
+              certificateLinkForm.certificateType === 'money'
+                ? certificateLinkForm.amountTotal
+                : undefined,
+            certificateType: certificateLinkForm.certificateType,
+            code: certificateLinkForm.code,
+            serviceName:
+              certificateLinkForm.certificateType === 'service'
+                ? certificateLinkForm.serviceName
+                : undefined,
+            unitsTotal:
+              certificateLinkForm.certificateType === 'service'
+                ? certificateLinkForm.unitsTotal
+                : undefined,
+            validityDays: certificateLinkForm.validityDays,
+          }
+        : undefined;
+
+    setLinkLoading(true);
+    try {
+      const res = await apiFetch(
+        `/api/catalog/pending-sales/${linkDialogSale.id}/link`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            certificate: certificatePayload,
+            clientId: selectedClientId,
+            comment: linkComment,
+          }),
+        },
+      );
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось привязать продажу'));
+        return;
+      }
+
+      setLinkDialogSale(null);
+      await fetchData();
+      toast.success('Продажа привязана к клиенту');
+    } finally {
+      setLinkLoading(false);
+    }
+  };
+
+  const executeIgnorePendingSale = async (sale: PendingSale) => {
+    const res = await apiFetch(`/api/catalog/pending-sales/${sale.id}/ignore`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Игнорировано вручную' }),
+    });
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось игнорировать продажу'));
+      return;
+    }
+
+    await fetchData();
+    toast.success('Продажа убрана из очереди');
+  };
+
+  const executeCancelPendingSale = async (sale: PendingSale) => {
+    const res = await apiFetch(`/api/catalog/pending-sales/${sale.id}/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'Отменено вручную' }),
+    });
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось отменить продажу'));
+      return;
+    }
+
+    await fetchData();
+    toast.success('Продажа отменена');
+  };
+
+  const requestIgnorePendingSale = (sale: PendingSale) => {
+    setPendingAction({
+      confirmLabel: 'Игнорировать',
+      description: `Строка «${sale.itemName}» останется в истории, но исчезнет из рабочей очереди.`,
+      isDestructive: true,
+      onConfirm: () => executeIgnorePendingSale(sale),
+      title: 'Игнорировать продажу?',
+    });
+  };
+
+  const requestCancelPendingSale = (sale: PendingSale) => {
+    setPendingAction({
+      confirmLabel: 'Отменить',
+      description: `Строка «${sale.itemName}» получит статус отмены. Источник из чека и история сохранятся.`,
+      isDestructive: true,
+      onConfirm: () => executeCancelPendingSale(sale),
+      title: 'Отменить продажу?',
+    });
   };
 
   const executeArchiveRule = async (rule: CatalogRule) => {
@@ -317,6 +925,154 @@ export default function CatalogPage() {
       isDestructive: true,
       onConfirm: () => executePermanentDeleteRule(rule),
       title: 'Удалить правило из архива?',
+    });
+  };
+
+  const openCreateSubscriptionType = () => {
+    setEditingSubscriptionType(null);
+    setSubscriptionForm(EMPTY_SUBSCRIPTION_TYPE_FORM);
+    setSubscriptionDialogOpen(true);
+  };
+
+  const openEditSubscriptionType = (type: SubscriptionType) => {
+    setEditingSubscriptionType(type);
+    setSubscriptionForm({
+      bonusPersonalSessions: String(type.bonusPersonalSessions || 0),
+      description: type.description || '',
+      isUnlimited: type.isUnlimited ? 'true' : 'false',
+      name: type.name,
+      price: String(type.price || ''),
+      sessionsTotal: type.sessionsTotal === null ? '' : String(type.sessionsTotal),
+      timeSegment: type.timeSegment || 'all',
+      trainingKind: type.trainingKind,
+      validityDays: String(type.validityDays || 30),
+    });
+    setSubscriptionDialogOpen(true);
+  };
+
+  const updateSubscriptionForm = (
+    key: keyof SubscriptionTypeFormState,
+    value: string,
+  ) => {
+    setSubscriptionForm((prev) => ({
+      ...prev,
+      [key]: value,
+    }));
+  };
+
+  const buildSubscriptionPayload = () => ({
+    bonusPersonalSessions: subscriptionForm.bonusPersonalSessions || '0',
+    description: subscriptionForm.description,
+    isUnlimited: subscriptionForm.isUnlimited === 'true',
+    name: subscriptionForm.name,
+    price: subscriptionForm.price,
+    serviceType: 'training',
+    sessionsTotal:
+      subscriptionForm.isUnlimited === 'true'
+        ? null
+        : subscriptionForm.sessionsTotal,
+    timeSegment: subscriptionForm.timeSegment,
+    trainingKind: subscriptionForm.trainingKind,
+    validityDays: subscriptionForm.validityDays,
+  });
+
+  const handleSaveSubscriptionType = async () => {
+    setSubscriptionSaving(true);
+    try {
+      const endpoint = editingSubscriptionType
+        ? `/api/subscriptions/types/${editingSubscriptionType.id}`
+        : '/api/subscriptions/types';
+      const res = await apiFetch(endpoint, {
+        method: editingSubscriptionType ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildSubscriptionPayload()),
+      });
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось сохранить тип абонемента'));
+        return;
+      }
+
+      setSubscriptionDialogOpen(false);
+      setEditingSubscriptionType(null);
+      await fetchData();
+      toast.success(
+        editingSubscriptionType
+          ? 'Тип абонемента обновлен'
+          : 'Тип абонемента создан',
+      );
+    } finally {
+      setSubscriptionSaving(false);
+    }
+  };
+
+  const executeArchiveSubscriptionType = async (type: SubscriptionType) => {
+    const res = await apiFetch(`/api/subscriptions/types/${type.id}/archive`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось архивировать тип абонемента'));
+      return;
+    }
+
+    await fetchData();
+    toast.success('Тип абонемента отправлен в архив');
+  };
+
+  const executeRestoreSubscriptionType = async (type: SubscriptionType) => {
+    const res = await apiFetch(`/api/subscriptions/types/${type.id}/restore`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось восстановить тип абонемента'));
+      return;
+    }
+
+    await fetchData();
+    toast.success('Тип абонемента восстановлен');
+  };
+
+  const executePermanentDeleteSubscriptionType = async (
+    type: SubscriptionType,
+  ) => {
+    const res = await apiFetch(`/api/subscriptions/types/${type.id}/permanent`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) {
+      toast.error(await readError(res, 'Не удалось удалить тип абонемента'));
+      return;
+    }
+
+    await fetchData();
+    toast.success('Тип абонемента удален из архива');
+  };
+
+  const requestArchiveSubscriptionType = (type: SubscriptionType) => {
+    setPendingAction({
+      confirmLabel: 'В архив',
+      description: `Тип «${type.name}» исчезнет из активных настроек продаж. Уже купленные клиентские абонементы сохранят условия.`,
+      isDestructive: true,
+      onConfirm: () => executeArchiveSubscriptionType(type),
+      title: 'Архивировать тип абонемента?',
+    });
+  };
+
+  const requestRestoreSubscriptionType = (type: SubscriptionType) => {
+    setPendingAction({
+      confirmLabel: 'Восстановить',
+      description: `Тип «${type.name}» снова можно будет выбрать в настройках продаж Эвотора.`,
+      onConfirm: () => executeRestoreSubscriptionType(type),
+      title: 'Восстановить тип абонемента?',
+    });
+  };
+
+  const requestPermanentDeleteSubscriptionType = (type: SubscriptionType) => {
+    setPendingAction({
+      confirmLabel: 'Удалить навсегда',
+      description: `Тип «${type.name}» будет удален без возможности восстановления. Сервер не даст удалить тип, если по нему уже есть клиентские абонементы.`,
+      isDestructive: true,
+      onConfirm: () => executePermanentDeleteSubscriptionType(type),
+      title: 'Удалить тип абонемента из архива?',
     });
   };
 
@@ -437,10 +1193,17 @@ export default function CatalogPage() {
   };
   const activeTabLabel = {
     categories: 'категориям',
+    pending: 'очереди продаж',
     rules: 'правилам',
+    subscriptions: 'типам абонементов',
     unmapped: 'товарам без правил',
   }[activeTab];
-  const hasCatalogData = unmapped.length > 0 || rules.length > 0 || categories.length > 0;
+  const hasCatalogData =
+    unmapped.length > 0 ||
+    rules.length > 0 ||
+    categories.length > 0 ||
+    pendingSales.length > 0 ||
+    subscriptionTypes.length > 0;
 
   // ФУНКЦИЯ ДЛЯ ОБНОВЛЕНИЯ РОДИТЕЛЯ ИЗ ТАБЛИЦЫ
   const handleUpdateParent = async (
@@ -524,6 +1287,97 @@ export default function CatalogPage() {
       (c) => c.id !== catId && !isDescendant(c.id, catId),
     );
   };
+  const renderSaleIntentSelect = (itemName: string) => {
+    const value = getSaleIntent(itemName);
+    const saving = saleSettingSavingKey.startsWith(`${itemName}:`);
+
+    return (
+      <Select
+        value={value}
+        disabled={!canEditSaleSettings || saving}
+        onValueChange={(nextValue) =>
+          handleSaveSaleSetting(itemName, nextValue as SaleIntent)
+        }
+      >
+        <SelectTrigger className="w-[180px]">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {SALE_INTENT_OPTIONS.map((option) => (
+            <SelectItem key={option.value} value={option.value}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
+  const renderSubscriptionTypeSelect = (itemName: string) => {
+    const intent = getSaleIntent(itemName);
+    if (intent !== 'subscription') {
+      return <span className="text-sm text-muted-foreground">-</span>;
+    }
+
+    const value = getSubscriptionTypeId(itemName);
+    const saving = saleSettingSavingKey.startsWith(`${itemName}:`);
+
+    return (
+      <Select
+        value={value ? String(value) : 'none'}
+        disabled={!canEditSaleSettings || saving || activeSubscriptionTypes.length === 0}
+        onValueChange={(nextValue) =>
+          handleSaveSaleSetting(
+            itemName,
+            'subscription',
+            nextValue === 'none'
+              ? null
+              : { subscriptionTypeId: Number(nextValue) },
+          )
+        }
+      >
+        <SelectTrigger className="w-[260px]">
+          <SelectValue
+            placeholder={
+              activeSubscriptionTypes.length === 0
+                ? 'Нет активных типов'
+                : 'Выберите тип'
+            }
+          />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="none">Тип не выбран</SelectItem>
+          {activeSubscriptionTypes.map((type) => (
+            <SelectItem key={type.id} value={String(type.id)}>
+              {type.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    );
+  };
+  const renderSaleIntentBadge = (intent: SaleIntent) => {
+    if (intent === 'subscription') {
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Ticket className="h-3 w-3" />
+          {SALE_INTENT_LABELS[intent]}
+        </Badge>
+      );
+    }
+    if (intent === 'certificate') {
+      return (
+        <Badge variant="outline" className="gap-1 border-primary/40 text-primary">
+          <Ticket className="h-3 w-3" />
+          {SALE_INTENT_LABELS[intent]}
+        </Badge>
+      );
+    }
+    return <Badge variant="outline">{SALE_INTENT_LABELS[intent]}</Badge>;
+  };
+  const formatSubscriptionSessions = (type: SubscriptionType) => {
+    if (type.isUnlimited) return 'Безлимит';
+    return `${type.sessionsTotal || 0} занятий`;
+  };
   const unmappedColumns: ColumnDef<string>[] = [
     {
       id: 'itemName',
@@ -558,6 +1412,18 @@ export default function CatalogPage() {
           </Select>
         );
       },
+    },
+    {
+      id: 'saleIntent',
+      header: 'Тип продажи',
+      size: 210,
+      cell: ({ row }) => renderSaleIntentSelect(row.original),
+    },
+    {
+      id: 'subscriptionType',
+      header: 'Тип абонемента',
+      size: 290,
+      cell: ({ row }) => renderSubscriptionTypeSelect(row.original),
     },
     {
       id: 'actions',
@@ -608,6 +1474,18 @@ export default function CatalogPage() {
       },
     },
     {
+      id: 'saleIntent',
+      header: 'Тип продажи',
+      size: 210,
+      cell: ({ row }) => renderSaleIntentSelect(row.original.itemName),
+    },
+    {
+      id: 'subscriptionType',
+      header: 'Тип абонемента',
+      size: 290,
+      cell: ({ row }) => renderSubscriptionTypeSelect(row.original.itemName),
+    },
+    {
       id: 'actions',
       header: '',
       size: 90,
@@ -652,6 +1530,278 @@ export default function CatalogPage() {
           >
             <Trash2 className="h-4 w-4 text-destructive" />
           </Button>
+        );
+      },
+    },
+  ];
+  const pendingSaleColumns: ColumnDef<PendingSale>[] = [
+    {
+      accessorKey: 'itemName',
+      header: 'Строка Эвотора',
+      size: 220,
+      cell: ({ row }) => (
+        <div className="min-w-0">
+          <div className="truncate font-medium">{row.original.itemName}</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {row.original.category || 'P&L: неразобрано'}
+          </div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'saleIntent',
+      header: 'Тип',
+      size: 140,
+      cell: ({ row }) => renderSaleIntentBadge(row.original.saleIntent),
+    },
+    {
+      accessorKey: 'amount',
+      header: 'Сумма',
+      size: 120,
+      cell: ({ row }) => (
+        <span className="font-medium">{formatMoney(row.original.amount)}</span>
+      ),
+    },
+    {
+      id: 'receipt',
+      header: 'Чек',
+      size: 180,
+      cell: ({ row }) => (
+        <div className="min-w-0 text-sm">
+          <div className="truncate">{row.original.evotorId || '-'}</div>
+          <div className="text-xs text-muted-foreground">
+            {formatDateTime(row.original.receiptDateTime)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'client',
+      header: 'Клиент',
+      size: 180,
+      cell: ({ row }) =>
+        row.original.client ? (
+          <div className="min-w-0 text-sm">
+            <div className="truncate font-medium">{row.original.client.name}</div>
+            <div className="text-xs text-muted-foreground">
+              {row.original.client.phone}
+            </div>
+          </div>
+        ) : (
+          <span className="text-muted-foreground">Не привязан</span>
+        ),
+    },
+    {
+      accessorKey: 'status',
+      header: 'Статус',
+      size: 130,
+      cell: ({ row }) => (
+        <Badge
+          variant={row.original.status === 'pending' ? 'default' : 'outline'}
+        >
+          {PENDING_STATUS_LABELS[row.original.status]}
+        </Badge>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 150,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const sale = row.original;
+        if (!canEditPendingSales) return null;
+
+        if (sale.status === 'pending') {
+          return (
+            <div className="flex justify-end gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => openLinkDialog(sale)}
+                aria-label={`Привязать продажу ${sale.itemName}`}
+                title="Привязать"
+              >
+                <Link2 className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => requestIgnorePendingSale(sale)}
+                aria-label={`Игнорировать продажу ${sale.itemName}`}
+                title="Игнорировать"
+              >
+                <Ban className="h-4 w-4 text-muted-foreground" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => requestCancelPendingSale(sale)}
+                aria-label={`Отменить продажу ${sale.itemName}`}
+                title="Отменить"
+              >
+                <XCircle className="h-4 w-4 text-destructive" />
+              </Button>
+            </div>
+          );
+        }
+
+        if (sale.status === 'linked') {
+          return (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => requestCancelPendingSale(sale)}
+              aria-label={`Отменить привязанную продажу ${sale.itemName}`}
+              title="Отменить"
+            >
+              <XCircle className="h-4 w-4 text-destructive" />
+            </Button>
+          );
+        }
+
+        return null;
+      },
+    },
+  ];
+  const subscriptionTypeColumns: ColumnDef<SubscriptionType>[] = [
+    {
+      accessorKey: 'name',
+      header: 'Тип абонемента',
+      size: 260,
+      cell: ({ row }) => (
+        <div className="min-w-0">
+          <div className="truncate font-medium">{row.original.name}</div>
+          {row.original.description && (
+            <div className="mt-1 truncate text-xs text-muted-foreground">
+              {row.original.description}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      id: 'kind',
+      header: 'Формат',
+      size: 190,
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <Badge variant="outline">
+            {TRAINING_KIND_LABELS[row.original.trainingKind]}
+          </Badge>
+          <div className="text-xs text-muted-foreground">
+            {TIME_SEGMENT_LABELS[row.original.timeSegment || 'all']}
+          </div>
+        </div>
+      ),
+    },
+    {
+      id: 'limits',
+      header: 'Остаток и срок',
+      size: 180,
+      cell: ({ row }) => (
+        <div className="text-sm">
+          <div className="font-medium">
+            {formatSubscriptionSessions(row.original)}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {row.original.validityDays} дней
+          </div>
+        </div>
+      ),
+    },
+    {
+      accessorKey: 'price',
+      header: 'Цена',
+      size: 130,
+      cell: ({ row }) => (
+        <span className="font-medium">{formatMoney(row.original.price)}</span>
+      ),
+    },
+    {
+      id: 'bonus',
+      header: 'Бонус',
+      size: 130,
+      cell: ({ row }) =>
+        row.original.bonusPersonalSessions > 0 ? (
+          <Badge variant="secondary">
+            +{row.original.bonusPersonalSessions} перс.
+          </Badge>
+        ) : (
+          <span className="text-muted-foreground">-</span>
+        ),
+    },
+    {
+      accessorKey: 'status',
+      header: 'Статус',
+      size: 120,
+      cell: ({ row }) => (
+        <Badge
+          variant={row.original.status === 'active' ? 'default' : 'outline'}
+        >
+          {SUBSCRIPTION_STATUS_LABELS[row.original.status]}
+        </Badge>
+      ),
+    },
+    {
+      id: 'actions',
+      header: '',
+      size: 130,
+      meta: {
+        cellClassName: 'text-right',
+        headerClassName: 'text-right',
+      },
+      cell: ({ row }) => {
+        const type = row.original;
+        if (!canEditSubscriptionTypes) return null;
+
+        return (
+          <div className="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => openEditSubscriptionType(type)}
+              aria-label={`Изменить тип абонемента ${type.name}`}
+              title="Изменить"
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            {type.status === 'archived' ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => requestRestoreSubscriptionType(type)}
+                  aria-label={`Восстановить тип абонемента ${type.name}`}
+                  title="Восстановить"
+                >
+                  <ArchiveRestore className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => requestPermanentDeleteSubscriptionType(type)}
+                  aria-label={`Удалить навсегда тип абонемента ${type.name}`}
+                  title="Удалить навсегда"
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </>
+            ) : (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => requestArchiveSubscriptionType(type)}
+                aria-label={`Архивировать тип абонемента ${type.name}`}
+                title="В архив"
+              >
+                <Trash2 className="h-4 w-4 text-destructive" />
+              </Button>
+            )}
+          </div>
         );
       },
     },
@@ -809,6 +1959,15 @@ export default function CatalogPage() {
     },
   ];
 
+  const certificateLinkInvalid =
+    linkDialogSale?.saleIntent === 'certificate' &&
+    (Number(certificateLinkForm.validityDays) <= 0 ||
+      (certificateLinkForm.certificateType === 'money' &&
+        Number(certificateLinkForm.amountTotal) <= 0) ||
+      (certificateLinkForm.certificateType === 'service' &&
+        (Number(certificateLinkForm.unitsTotal) <= 0 ||
+          !certificateLinkForm.serviceName.trim())));
+
   return (
     <div className="p-6 md:p-8 space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -821,24 +1980,42 @@ export default function CatalogPage() {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={catalogStatus}
-            onValueChange={(value) => {
-              const nextStatus = value as 'active' | 'archived';
-              setCatalogStatus(nextStatus);
-              if (nextStatus === 'archived' && activeTab === 'unmapped') {
-                setActiveTab('rules');
+          {activeTab !== 'pending' && activeTab !== 'subscriptions' && (
+            <Select
+              value={catalogStatus}
+              onValueChange={(value) => {
+                const nextStatus = value as 'active' | 'archived';
+                setCatalogStatus(nextStatus);
+                if (nextStatus === 'archived' && activeTab === 'unmapped') {
+                  setActiveTab('rules');
+                }
+              }}
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Активные</SelectItem>
+                <SelectItem value="archived">Архив</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
+          {activeTab === 'subscriptions' && (
+            <Select
+              value={subscriptionTypeStatus}
+              onValueChange={(value) =>
+                setSubscriptionTypeStatus(value as SubscriptionTypeStatus)
               }
-            }}
-          >
-            <SelectTrigger className="w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Активные</SelectItem>
-              <SelectItem value="archived">Архив</SelectItem>
-            </SelectContent>
-          </Select>
+            >
+              <SelectTrigger className="w-[150px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">Активные</SelectItem>
+                <SelectItem value="archived">Архив</SelectItem>
+              </SelectContent>
+            </Select>
+          )}
           <div className="flex bg-muted p-1 rounded-md">
             <Button
               variant={activeTab === 'unmapped' ? 'default' : 'ghost'}
@@ -865,6 +2042,24 @@ export default function CatalogPage() {
             >
               Правила ({rules.length})
             </Button>
+            {canEditPendingSales && (
+              <Button
+                variant={activeTab === 'pending' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveTab('pending')}
+              >
+                Очередь ({pendingSales.length})
+              </Button>
+            )}
+            {canEditSubscriptionTypes && (
+              <Button
+                variant={activeTab === 'subscriptions' ? 'default' : 'ghost'}
+                size="sm"
+                onClick={() => setActiveTab('subscriptions')}
+              >
+                Абонементы ({subscriptionTypes.length})
+              </Button>
+            )}
             <Button
               variant={activeTab === 'categories' ? 'default' : 'ghost'}
               size="sm"
@@ -893,6 +2088,13 @@ export default function CatalogPage() {
             `Показано ${filteredRules.length} из ${rules.length}`}
           {activeTab === 'categories' &&
             `Показано ${filteredCategories.length} из ${categories.length}`}
+          {activeTab === 'pending' &&
+            `Показано ${filteredPendingSales.length} из ${pendingSales.length}`}
+          {activeTab === 'subscriptions' &&
+            `Показано ${filteredSubscriptionTypes.length} из ${
+              subscriptionTypes.filter((type) => type.status === subscriptionTypeStatus)
+                .length
+            }`}
         </div>
       </div>
 
@@ -939,7 +2141,7 @@ export default function CatalogPage() {
                 emptyText="По текущему поиску товаров не найдено."
                 loading={catalogLoading}
                 loadingText="Загрузка товаров..."
-                minWidthClassName="min-w-[680px]"
+                minWidthClassName="min-w-[1140px]"
                 pageSize={25}
               />
             ) : null}
@@ -959,12 +2161,86 @@ export default function CatalogPage() {
               emptyText="Сохраненных правил пока нет."
               loading={catalogLoading}
               loadingText="Загрузка правил..."
-              minWidthClassName="min-w-[640px]"
+              minWidthClassName="min-w-[1100px]"
               pageSize={25}
             />
           </CardContent>
         </Card>
       )}
+
+      {(!catalogError || hasCatalogData) &&
+        activeTab === 'pending' &&
+        canEditPendingSales && (
+          <Card>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle>Очередь привязки продаж</CardTitle>
+              <Select
+                value={pendingStatus}
+                onValueChange={(value) => setPendingStatus(value as PendingSaleStatus)}
+              >
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(
+                    [
+                      'pending',
+                      'linked',
+                      'ignored',
+                      'canceled',
+                      'all',
+                    ] as PendingSaleStatus[]
+                  ).map((status) => (
+                    <SelectItem key={status} value={status}>
+                      {PENDING_STATUS_LABELS[status]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </CardHeader>
+            <CardContent>
+              <DataTable
+                columns={pendingSaleColumns}
+                data={filteredPendingSales}
+                emptyText="В очереди нет продаж по текущему фильтру."
+                loading={catalogLoading}
+                loadingText="Загрузка очереди..."
+                minWidthClassName="min-w-[1020px]"
+                pageSize={25}
+              />
+            </CardContent>
+          </Card>
+        )}
+
+      {(!catalogError || hasCatalogData) &&
+        activeTab === 'subscriptions' &&
+        canEditSubscriptionTypes && (
+          <Card>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <CardTitle>Типы абонементов</CardTitle>
+              <Button
+                type="button"
+                size="sm"
+                onClick={openCreateSubscriptionType}
+                disabled={!canEditSubscriptionTypes}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Тип
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <DataTable
+                columns={subscriptionTypeColumns}
+                data={filteredSubscriptionTypes}
+                emptyText="Типы абонементов не найдены."
+                loading={catalogLoading}
+                loadingText="Загрузка типов абонементов..."
+                minWidthClassName="min-w-[1040px]"
+                pageSize={25}
+              />
+            </CardContent>
+          </Card>
+        )}
 
       {(!catalogError || hasCatalogData) && activeTab === 'categories' && (
         <Card>
@@ -1086,6 +2362,413 @@ export default function CatalogPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={Boolean(linkDialogSale)}
+        onOpenChange={(open) => {
+          if (!open && !linkLoading) setLinkDialogSale(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Привязать продажу</DialogTitle>
+            <DialogDescription>
+              {linkDialogSale
+                ? `${linkDialogSale.itemName} · ${formatMoney(linkDialogSale.amount)}`
+                : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="pending-sale-client-search">Клиент</Label>
+              <Input
+                id="pending-sale-client-search"
+                value={clientSearchInput}
+                onChange={(event) => {
+                  setClientSearchInput(event.target.value);
+                  setSelectedClientId(null);
+                }}
+                placeholder="Имя или телефон"
+              />
+            </div>
+
+            <div className="min-h-[120px] rounded-md border">
+              {clientSearchLoading && (
+                <div className="flex items-center gap-2 p-3 text-sm text-muted-foreground">
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                  Поиск клиентов...
+                </div>
+              )}
+              {!clientSearchLoading && clientSearchError && (
+                <div className="p-3 text-sm text-destructive">
+                  {clientSearchError}
+                </div>
+              )}
+              {!clientSearchLoading &&
+                !clientSearchError &&
+                clientSearchInput.trim().length < 2 && (
+                  <div className="p-3 text-sm text-muted-foreground">
+                    Введите минимум 2 символа.
+                  </div>
+                )}
+              {!clientSearchLoading &&
+                !clientSearchError &&
+                clientSearchInput.trim().length >= 2 &&
+                clientCandidates.length === 0 && (
+                  <div className="p-3 text-sm text-muted-foreground">
+                    Клиенты не найдены.
+                  </div>
+                )}
+              {!clientSearchLoading &&
+                !clientSearchError &&
+                clientCandidates.length > 0 && (
+                  <div className="divide-y">
+                    {clientCandidates.map((client) => (
+                      <button
+                        key={client.id}
+                        type="button"
+                        className={
+                          selectedClientId === client.id
+                            ? 'flex w-full items-center justify-between gap-3 bg-primary/10 px-3 py-2 text-left'
+                            : 'flex w-full items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted'
+                        }
+                        onClick={() => setSelectedClientId(client.id)}
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-medium">
+                            {client.name}
+                          </span>
+                          <span className="block text-xs text-muted-foreground">
+                            {client.phone}
+                          </span>
+                        </span>
+                        {selectedClientId === client.id && (
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+            </div>
+
+            {linkDialogSale?.saleIntent === 'certificate' && (
+              <div className="grid grid-cols-1 gap-4 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Тип сертификата</Label>
+                  <Select
+                    value={certificateLinkForm.certificateType}
+                    onValueChange={(value) =>
+                      updateCertificateLinkForm(
+                        'certificateType',
+                        value as CertificateLinkFormState['certificateType'],
+                      )
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="money">Денежный</SelectItem>
+                      <SelectItem value="service">Услуга/пакет</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pending-sale-certificate-code">Код</Label>
+                  <Input
+                    id="pending-sale-certificate-code"
+                    value={certificateLinkForm.code}
+                    onChange={(event) =>
+                      updateCertificateLinkForm('code', event.target.value)
+                    }
+                    placeholder="Авто"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="pending-sale-certificate-validity">
+                    Срок, дней
+                  </Label>
+                  <Input
+                    id="pending-sale-certificate-validity"
+                    type="number"
+                    min="1"
+                    value={certificateLinkForm.validityDays}
+                    onChange={(event) =>
+                      updateCertificateLinkForm('validityDays', event.target.value)
+                    }
+                  />
+                </div>
+                {certificateLinkForm.certificateType === 'money' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="pending-sale-certificate-amount">
+                      Номинал
+                    </Label>
+                    <Input
+                      id="pending-sale-certificate-amount"
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={certificateLinkForm.amountTotal}
+                      onChange={(event) =>
+                        updateCertificateLinkForm('amountTotal', event.target.value)
+                      }
+                    />
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <Label htmlFor="pending-sale-certificate-units">
+                        Количество
+                      </Label>
+                      <Input
+                        id="pending-sale-certificate-units"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={certificateLinkForm.unitsTotal}
+                        onChange={(event) =>
+                          updateCertificateLinkForm('unitsTotal', event.target.value)
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label htmlFor="pending-sale-certificate-service">
+                        Услуга
+                      </Label>
+                      <Input
+                        id="pending-sale-certificate-service"
+                        value={certificateLinkForm.serviceName}
+                        onChange={(event) =>
+                          updateCertificateLinkForm(
+                            'serviceName',
+                            event.target.value,
+                          )
+                        }
+                        placeholder={linkDialogSale.itemName}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <Label htmlFor="pending-sale-link-comment">Комментарий</Label>
+              <Input
+                id="pending-sale-link-comment"
+                value={linkComment}
+                onChange={(event) => setLinkComment(event.target.value)}
+                placeholder="Опционально"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setLinkDialogSale(null)}
+              disabled={linkLoading}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleLinkPendingSale()}
+              disabled={!selectedClientId || linkLoading || Boolean(certificateLinkInvalid)}
+            >
+              {linkLoading ? 'Привязываем...' : 'Привязать'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={subscriptionDialogOpen}
+        onOpenChange={(open) => {
+          if (!open && !subscriptionSaving) {
+            setSubscriptionDialogOpen(false);
+            setEditingSubscriptionType(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[620px]">
+          <DialogHeader>
+            <DialogTitle>
+              {editingSubscriptionType
+                ? 'Изменить тип абонемента'
+                : 'Новый тип абонемента'}
+            </DialogTitle>
+            <DialogDescription>
+              Тариф для продаж Эвотора и будущих клиентских абонементов.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="subscription-type-name">Название</Label>
+              <Input
+                id="subscription-type-name"
+                value={subscriptionForm.name}
+                onChange={(event) =>
+                  updateSubscriptionForm('name', event.target.value)
+                }
+                placeholder="Например: Групповые 4 занятия"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Формат</Label>
+              <Select
+                value={subscriptionForm.trainingKind}
+                onValueChange={(value) =>
+                  updateSubscriptionForm(
+                    'trainingKind',
+                    value as SubscriptionTrainingKind,
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="group">Групповые</SelectItem>
+                  <SelectItem value="personal">Персональные</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Период</Label>
+              <Select
+                value={subscriptionForm.timeSegment}
+                onValueChange={(value) =>
+                  updateSubscriptionForm(
+                    'timeSegment',
+                    value as SubscriptionTimeSegment,
+                  )
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">Любое время</SelectItem>
+                  <SelectItem value="off_peak">Будни 10:00-17:00</SelectItem>
+                  <SelectItem value="standard">
+                    День/вечер/выходные
+                  </SelectItem>
+                  <SelectItem value="single">Разовое</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Занятия</Label>
+              <Select
+                value={subscriptionForm.isUnlimited}
+                onValueChange={(value) =>
+                  updateSubscriptionForm('isUnlimited', value)
+                }
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="false">Фиксированно</SelectItem>
+                  <SelectItem value="true">Безлимит</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subscription-type-sessions">Количество</Label>
+              <Input
+                id="subscription-type-sessions"
+                type="number"
+                min="1"
+                value={subscriptionForm.sessionsTotal}
+                onChange={(event) =>
+                  updateSubscriptionForm('sessionsTotal', event.target.value)
+                }
+                disabled={subscriptionForm.isUnlimited === 'true'}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subscription-type-validity">Срок, дней</Label>
+              <Input
+                id="subscription-type-validity"
+                type="number"
+                min="1"
+                value={subscriptionForm.validityDays}
+                onChange={(event) =>
+                  updateSubscriptionForm('validityDays', event.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subscription-type-price">Цена</Label>
+              <Input
+                id="subscription-type-price"
+                type="number"
+                min="0"
+                step="1"
+                value={subscriptionForm.price}
+                onChange={(event) =>
+                  updateSubscriptionForm('price', event.target.value)
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="subscription-type-bonus">Бонус перс.</Label>
+              <Input
+                id="subscription-type-bonus"
+                type="number"
+                min="0"
+                value={subscriptionForm.bonusPersonalSessions}
+                onChange={(event) =>
+                  updateSubscriptionForm(
+                    'bonusPersonalSessions',
+                    event.target.value,
+                  )
+                }
+              />
+            </div>
+            <div className="space-y-2 sm:col-span-2">
+              <Label htmlFor="subscription-type-description">Описание</Label>
+              <Input
+                id="subscription-type-description"
+                value={subscriptionForm.description}
+                onChange={(event) =>
+                  updateSubscriptionForm('description', event.target.value)
+                }
+                placeholder="Опционально"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setSubscriptionDialogOpen(false);
+                setEditingSubscriptionType(null);
+              }}
+              disabled={subscriptionSaving}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleSaveSubscriptionType()}
+              disabled={
+                subscriptionSaving ||
+                !subscriptionForm.name.trim() ||
+                !subscriptionForm.price ||
+                !subscriptionForm.validityDays ||
+                (subscriptionForm.isUnlimited === 'false' &&
+                  !subscriptionForm.sessionsTotal)
+              }
+            >
+              {subscriptionSaving ? 'Сохраняем...' : 'Сохранить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <ConfirmActionDialog
         action={pendingAction}
