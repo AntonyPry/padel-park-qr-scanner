@@ -3753,13 +3753,15 @@ export default function ClientsPage() {
       </Dialog>
 
       <Dialog open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()}>
-        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 pr-8">
-              <Users className="h-5 w-5 text-muted-foreground" />
-              {details?.client.name || 'Клиент'}
+            <DialogTitle className="flex min-w-0 items-start gap-2 pr-8">
+              <Users className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 break-words leading-snug">
+                {details?.client.name || 'Клиент'}
+              </span>
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="break-words pr-8">
               Карточка клиента, бронирования, история визитов и возможные дубли.
             </DialogDescription>
           </DialogHeader>
@@ -3771,8 +3773,8 @@ export default function ClientsPage() {
           )}
 
           {details && !detailsLoading && (
-            <div className="space-y-5">
-              <div className="sticky top-0 z-20 -mx-3 flex flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+            <div className="min-w-0 space-y-5">
+              <div className="sticky top-0 z-20 -mx-3 flex min-w-0 flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Badge
@@ -3791,7 +3793,7 @@ export default function ClientsPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex min-w-0 flex-wrap gap-2">
                   {!isTrainerAccount && getPhoneHref(details.client.phone) && (
                     <Button asChild variant="outline" size="sm">
                       <a href={getPhoneHref(details.client.phone)}>
@@ -3852,7 +3854,7 @@ export default function ClientsPage() {
               ) : (
                 <>
                   <div
-                    className={`grid grid-cols-1 gap-4 ${
+                    className={`grid min-w-0 grid-cols-1 gap-4 ${
                       isTrainerAccount ? 'md:grid-cols-2' : 'md:grid-cols-3'
                     }`}
                   >
@@ -3888,7 +3890,7 @@ export default function ClientsPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="min-w-0 rounded-md border p-4">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div className="font-medium">Данные клиента</div>
