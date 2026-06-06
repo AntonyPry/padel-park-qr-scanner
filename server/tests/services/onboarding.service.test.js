@@ -41,6 +41,8 @@ const trainingModelNames = [
   'CallTask',
   'CallTaskClient',
   'CallTaskAttempt',
+  'CorporateClient',
+  'CorporateLedgerEntry',
   'TrainingPlan',
   'TrainingNote',
   'ClientTrainingSkillHistory',
@@ -377,10 +379,10 @@ test('owner can inspect onboarding completion metrics by role', async () => {
   assert.equal(metrics.summary.activeAccounts, 4);
   assert.equal(metrics.summary.roles, 6);
   assert.equal(admin.totalAccounts, 2);
-  assert.equal(admin.taskCount, 9);
+  assert.equal(admin.taskCount, 12);
   assert.equal(admin.completedTaskSlots, 3);
-  assert.equal(admin.totalTaskSlots, 18);
-  assert.equal(admin.percent, 17);
+  assert.equal(admin.totalTaskSlots, 24);
+  assert.equal(admin.percent, 13);
   assert.equal(admin.startedAccounts, 2);
   assert.equal(admin.completedAccounts, 0);
   assert.equal(admin.lastCompletedAt, '2026-05-31T10:00:00.000Z');
@@ -614,6 +616,8 @@ test('owner cleanup removes dependent training data without touching progress', 
       'CallTaskAttempt',
       'CallTaskClient',
       'CallTask',
+      'CorporateLedgerEntry',
+      'CorporateClient',
       'ClientBase',
       'ClientTrainingSkillHistory',
       'ClientTrainingSkill',
@@ -677,6 +681,36 @@ test('specific training methodology checkpoints do not over-progress sibling tas
       taskKey: 'admin.booking.training-plan-link',
     }).map((task) => task.key),
     ['admin.booking.training-plan-link'],
+  );
+});
+
+test('prepayments route checkpoints require active task context', () => {
+  assert.deepEqual(
+    listMatchingTasks('manager', 'prepayments.viewed', {
+      route: '/admin/prepayments',
+    }).map((task) => task.key),
+    [],
+  );
+  assert.deepEqual(
+    listMatchingTasks('manager', 'prepayments.viewed', {
+      route: '/admin/prepayments',
+      taskKey: 'manager.prepayments.dashboard-review',
+    }).map((task) => task.key),
+    ['manager.prepayments.dashboard-review'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('owner', 'corporate_clients.viewed', {
+      route: '/admin/corporate-clients',
+      taskKey: 'owner.corporate.lifecycle-review',
+    }).map((task) => task.key),
+    ['owner.corporate.lifecycle-review'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('admin', 'certificates.viewed', {
+      route: '/admin/certificates',
+      taskKey: 'admin.certificate.redemption-review',
+    }).map((task) => task.key),
+    ['admin.certificate.redemption-review'],
   );
 });
 

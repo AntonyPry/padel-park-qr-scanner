@@ -137,7 +137,7 @@ Training-created data is marked with:
 - `trainingRole`
 - `trainingAccountId`
 
-The protected entity set includes clients, visits, bookings, booking series, manual finance records, client bases, call tasks, call task clients, call attempts, training notes, training plans, client skill maps and client skill-map history.
+The protected entity set includes clients, visits, bookings, booking series, manual finance records, client bases, call tasks, call task clients, call attempts, training notes, training plans, client skill maps, client skill-map history, corporate clients and corporate balance ledger entries.
 
 Production reports and high-level analytics must exclude `isTraining = true` rows by default. Current protected aggregates include finance reports, booking analytics, visits analytics, call task reports, client-base/client list calculations and training methodology analytics. Operational screens can later add an explicit training scope if trainees need to inspect their own sandbox records after creation.
 
@@ -153,7 +153,7 @@ Owners can inspect completion metrics from `/api/onboarding/metrics`. The endpoi
 
 Review-only tasks can be completed by opening the relevant CRM screen. The browser records a small allowlisted event through `POST /api/onboarding/events`; action events like booking creation are intentionally blocked from this endpoint and must still come from backend product services.
 
-Current route-view events cover audit, bookings schedule review, call-task report review, finances, methodology, methodology analytics, onboarding training-data review, references, trainer cabinet, utilization and visits analytics.
+Current route-view events cover audit, bookings schedule review, call-task report review, catalog, clients, certificates, corporate clients, finances, methodology, methodology analytics, onboarding training-data review, prepayments, references, trainer cabinet, utilization and visits analytics.
 
 When several onboarding tasks share the same route, the route-view payload should include the active `taskKey`; catalog checkpoints for those tasks must use `conditions.taskKey` so one screen open does not progress sibling tasks.
 
@@ -180,17 +180,22 @@ Integrated product and route-review events:
 - `call_task.attempt_logged`
 - `call_task.created`
 - `call_task.report_viewed` (client-side route review event)
+- `catalog.viewed` (client-side route review event)
 - `catalog.category_updated`
 - `catalog.rule_updated`
+- `certificates.viewed` (client-side route review event)
 - `client.created`
 - `client.viewed`
+- `clients.viewed` (client-side route review event)
 - `client_base.created`
+- `corporate_clients.viewed` (client-side route review event)
 - `finance.record_created`
 - `finance.report_viewed` (client-side route review event)
 - `methodology.analytics_viewed` (client-side route review event)
 - `methodology.viewed` (client-side route review event)
 - `motivation.rule_updated`
 - `payroll.reviewed`
+- `prepayments.viewed` (client-side route review event)
 - `reference.viewed` (client-side route review event)
 - `report.exported`
 - `report.viewed` (client-side route review event)

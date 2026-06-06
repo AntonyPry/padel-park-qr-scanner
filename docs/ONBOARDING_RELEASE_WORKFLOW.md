@@ -104,6 +104,40 @@ When wiring checkpoints for methodology scenarios, keep sibling tasks narrow:
 
 If the methodology screens are only present in the feature branch, text-only onboarding cards are acceptable in the instructions branch. Capture and attach real screenshots for `/admin/methodology`, `/admin/methodology-analytics`, `/admin/trainer` and changed booking/client states after merging feature + instructions.
 
+## Prepayments releases
+
+When a feature changes prepayments, subscriptions, certificates or corporate balances, update onboarding for these scenarios before release:
+
+- Evotor sale settings: how a receipt item remains normal revenue or creates a subscription/certificate obligation;
+- pending sale queue: why an item waits for client binding, what to check before binding, and when to ignore/cancel;
+- subscription lifecycle: type, activation from sale, remaining sessions, expiry, redemption, reversal and status;
+- certificate lifecycle: code, money/service type, expiry, remaining value or units, redemption, reversal and status;
+- corporate balances: client card, deposit, linked manual finance income, spending, reversal, period details and export;
+- unified prepayments screen: summary cards, filters, expiry/low-balance indicators and quick links.
+
+Prefer backend product events for action checkpoints. Before strict release, the feature branch should record semantic events for:
+
+- sale setting saved;
+- pending sale linked, ignored or canceled;
+- subscription type saved;
+- client subscription redeemed and redemption reversed;
+- certificate redeemed and redemption reversed;
+- corporate client created/updated;
+- corporate deposit created/canceled;
+- corporate spending created/reversed;
+- corporate details exported.
+
+Until those backend events exist, onboarding tasks for these flows should stay review/instruction-first and use allowlisted route-view events only for reading screens. Shared route-view checkpoints must include active `taskKey` conditions so opening `/admin/prepayments`, `/admin/catalog`, `/admin/clients`, `/admin/certificates` or `/admin/corporate-clients` does not progress sibling tasks.
+
+Training safety gate for this epic:
+
+- corporate clients and corporate ledger entries must use standard training markers and cleanup;
+- any training-mode deposits must keep linked `Finance` records training-marked;
+- pending sales, client subscriptions, certificates and redemption history must either support training markers/cleanup or remain outside action training tasks;
+- production reports, prepayments summaries, certificate lists and corporate balances must exclude training rows by default.
+
+If prepayment screens are only present in the feature branch, text-only onboarding cards are acceptable in the instructions branch. Capture real screenshots for `/admin/prepayments`, `/admin/certificates`, `/admin/corporate-clients`, changed `/admin/catalog` tabs and changed client subscription cards after merging feature + instructions.
+
 When a feature changes an instructed screen:
 
 1. Open the changed screen locally with the matching demo role account.
