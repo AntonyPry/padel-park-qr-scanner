@@ -18,6 +18,12 @@ const TRAINING_DATA_ENTITIES = [
   { key: 'callTasks', label: 'Задачи обзвона', modelName: 'CallTask' },
   { key: 'callTaskClients', label: 'Клиенты в обзвонах', modelName: 'CallTaskClient' },
   { key: 'callTaskAttempts', label: 'Попытки звонков', modelName: 'CallTaskAttempt' },
+  { key: 'corporateClients', label: 'Корпоративные клиенты', modelName: 'CorporateClient' },
+  {
+    key: 'corporateLedgerEntries',
+    label: 'Операции корпоративных балансов',
+    modelName: 'CorporateLedgerEntry',
+  },
   { key: 'trainingPlans', label: 'Планы тренировок', modelName: 'TrainingPlan' },
   { key: 'trainingNotes', label: 'Тренерские заметки', modelName: 'TrainingNote' },
   {
@@ -1008,6 +1014,11 @@ async function cleanupTrainingData(actor, query = {}) {
       { key: 'callTaskAttempts', modelName: 'CallTaskAttempt' },
       { key: 'callTaskClients', modelName: 'CallTaskClient' },
       { key: 'callTasks', modelName: 'CallTask' },
+      {
+        key: 'corporateLedgerEntries',
+        modelName: 'CorporateLedgerEntry',
+      },
+      { key: 'corporateClients', modelName: 'CorporateClient' },
       { key: 'clientBases', modelName: 'ClientBase' },
       {
         key: 'clientTrainingSkillHistories',

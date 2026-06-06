@@ -7,6 +7,23 @@ const {
   validateOnboardingCatalog,
 } = require('../../src/onboarding/catalog');
 
+function getTaskVisibleText(task) {
+  return [
+    task.title,
+    task.description,
+    task.lesson?.title,
+    task.lesson?.summary,
+    ...(task.lesson?.blocks || []).flatMap((block) => [
+      block.title,
+      block.text,
+      ...(block.items || []),
+    ]),
+    ...(task.requirements || []),
+  ]
+    .filter(Boolean)
+    .join('\n');
+}
+
 test('onboarding catalog has a valid path for every account role', () => {
   assert.deepEqual(validateOnboardingCatalog(), []);
 
@@ -37,13 +54,16 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     '/admin/bookings',
     '/admin/call-tasks',
     '/admin/catalog',
+    '/admin/certificates',
     '/admin/client-bases',
     '/admin/clients',
+    '/admin/corporate-clients',
     '/admin/finances',
     '/admin/methodology',
     '/admin/methodology-analytics',
     '/admin/motivation',
     '/admin/onboarding',
+    '/admin/prepayments',
     '/admin/references',
     '/admin/staff',
     '/admin/telephony',
@@ -108,7 +128,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
       .filter((mission) => mission.key.startsWith(`${role}.knowledge-`))
       .flatMap((mission) => mission.tasks);
 
-    assert.equal(knowledgeTasks.length, 19);
+    assert.equal(knowledgeTasks.length, 22);
     assert.deepEqual(
       knowledgeTasks.map((task) => task.route).sort(),
       expectedKnowledgeRoutes,
@@ -117,7 +137,15 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     for (const task of knowledgeTasks) {
       assert.equal(task.kind, 'review');
       assert.equal(task.trainingMode.recommended, false);
-      if (task.route === '/admin/methodology' || task.route === '/admin/methodology-analytics') {
+      if (
+        [
+          '/admin/certificates',
+          '/admin/corporate-clients',
+          '/admin/methodology',
+          '/admin/methodology-analytics',
+          '/admin/prepayments',
+        ].includes(task.route)
+      ) {
         assert.equal(task.lesson.screenshots.length, 0);
       } else {
         assert.equal(task.lesson.screenshots.length, 1);
@@ -141,14 +169,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
         'Как пользоваться разделом в CRM',
       );
 
-      const visibleLessonText = [
-        task.title,
-        task.description,
-        task.lesson.title,
-        task.lesson.summary,
-        ...task.lesson.blocks.flatMap((block) => [block.title, block.text]),
-        ...(task.requirements || []),
-      ].join('\n');
+      const visibleLessonText = getTaskVisibleText(task);
 
       for (const snippet of forbiddenEnglishSnippets) {
         assert.equal(
@@ -223,4 +244,98 @@ test('training methodology onboarding scenarios are wired by role', () => {
   const ownerBase = findOnboardingTask('owner', 'owner.methodology.review-base');
   assert.equal(ownerBase.task.route, '/admin/methodology');
   assert.equal(ownerBase.task.checkpoint.event, 'methodology.viewed');
+});
+
+test('prepayments onboarding scenarios are wired by role', () => {
+  const adminDashboard = findOnboardingTask(
+    'admin',
+    'admin.prepayments.dashboard-review',
+  );
+  assert.equal(adminDashboard.task.route, '/admin/prepayments');
+  assert.equal(adminDashboard.task.checkpoint.event, 'prepayments.viewed');
+  assert.deepEqual(adminDashboard.task.checkpoint.conditions, {
+    taskKey: 'admin.prepayments.dashboard-review',
+  });
+  assert.equal(adminDashboard.task.trainingMode.recommended, false);
+
+  const managerMapping = findOnboardingTask(
+    'manager',
+    'manager.prepayments.sale-mapping',
+  );
+  assert.equal(managerMapping.task.route, '/admin/catalog');
+  assert.equal(managerMapping.task.checkpoint.event, 'catalog.viewed');
+  assert.equal(
+    managerMapping.task.lesson.blocks.some((block) =>
+      block.text.includes('Тип продажи отвечает, нужно ли после продажи'),
+    ),
+    true,
+  );
+
+  const ownerCorporate = findOnboardingTask(
+    'owner',
+    'owner.corporate.lifecycle-review',
+  );
+  assert.equal(ownerCorporate.task.route, '/admin/corporate-clients');
+  assert.equal(ownerCorporate.task.checkpoint.event, 'corporate_clients.viewed');
+  assert.deepEqual(ownerCorporate.task.checkpoint.conditions, {
+    taskKey: 'owner.corporate.lifecycle-review',
+  });
+
+  const accountantPrepayments = findOnboardingTask(
+    'accountant',
+    'accountant.prepayments.dashboard-review',
+  );
+  assert.equal(accountantPrepayments.task.route, '/admin/prepayments');
+  assert.equal(accountantPrepayments.task.checkpoint.event, 'prepayments.viewed');
+});
+
+test('prepayments role wording does not describe hidden dashboard sections', () => {
+  const adminTasks = [
+    findOnboardingTask('admin', 'admin.prepayments.dashboard-review').task,
+    findOnboardingTask('admin', 'admin.subscription.redemption-review').task,
+    findOnboardingTask('admin', 'admin.certificate.redemption-review').task,
+  ];
+  const accountantTasks = [
+    findOnboardingTask('accountant', 'accountant.prepayments.dashboard-review').task,
+    findOnboardingTask('accountant', 'accountant.corporate.deposit-review').task,
+    findOnboardingTask('accountant', 'accountant.corporate.export-review').task,
+  ];
+
+  const adminText = adminTasks.map(getTaskVisibleText).join('\n');
+  const accountantText = accountantTasks.map(getTaskVisibleText).join('\n');
+
+  [
+    'ожидающие продажи',
+    'ожидающая привязка продажи',
+    'очередь продаж',
+    'корпоративные остатки',
+    'корпоративный остаток',
+    'корпоративными балансами',
+  ].forEach((snippet) => {
+    assert.equal(
+      adminText.includes(snippet),
+      false,
+      `admin prepayments wording should not describe hidden section: ${snippet}`,
+    );
+  });
+
+  [
+    'ожидающие продажи',
+    'очередь продаж',
+    'активные абонементы',
+    'активный абонемент',
+    'активные сертификаты',
+    'сертификаты и корпоративные',
+  ].forEach((snippet) => {
+    assert.equal(
+      accountantText.includes(snippet),
+      false,
+      `accountant prepayments wording should not describe hidden section: ${snippet}`,
+    );
+  });
+
+  assert.equal(adminText.includes('абонемент'), true);
+  assert.equal(adminText.includes('сертификат'), true);
+  assert.equal(accountantText.includes('корпоратив'), true);
+  assert.equal(accountantText.includes('финансов'), true);
 });

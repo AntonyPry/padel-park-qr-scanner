@@ -31,6 +31,30 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
     eventKey: 'call_task.report_viewed',
     payload: { route: '/admin/call-tasks' },
   },
+  '/admin/catalog': {
+    entityId: '/admin/catalog',
+    entityType: 'route',
+    eventKey: 'catalog.viewed',
+    payload: { route: '/admin/catalog' },
+  },
+  '/admin/certificates': {
+    entityId: '/admin/certificates',
+    entityType: 'route',
+    eventKey: 'certificates.viewed',
+    payload: { route: '/admin/certificates' },
+  },
+  '/admin/clients': {
+    entityId: '/admin/clients',
+    entityType: 'route',
+    eventKey: 'clients.viewed',
+    payload: { route: '/admin/clients' },
+  },
+  '/admin/corporate-clients': {
+    entityId: '/admin/corporate-clients',
+    entityType: 'route',
+    eventKey: 'corporate_clients.viewed',
+    payload: { route: '/admin/corporate-clients' },
+  },
   '/admin/finances': {
     entityId: '/admin/finances',
     entityType: 'route',
@@ -54,6 +78,12 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
     entityType: 'route',
     eventKey: 'report.viewed',
     payload: { report: 'onboarding_training_data', route: '/admin/onboarding' },
+  },
+  '/admin/prepayments': {
+    entityId: '/admin/prepayments',
+    entityType: 'route',
+    eventKey: 'prepayments.viewed',
+    payload: { route: '/admin/prepayments' },
   },
   '/admin/references': {
     entityId: '/admin/references',
