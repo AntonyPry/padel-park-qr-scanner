@@ -114,6 +114,54 @@ module.exports = (sequelize, DataTypes) => {
       as: 'onboardingEvents',
       foreignKey: 'accountId',
     });
+    Account.hasMany(models.EvotorSaleSetting, {
+      as: 'createdEvotorSaleSettings',
+      foreignKey: 'createdByAccountId',
+    });
+    Account.hasMany(models.EvotorSaleSetting, {
+      as: 'updatedEvotorSaleSettings',
+      foreignKey: 'updatedByAccountId',
+    });
+    Account.hasMany(models.PendingSale, {
+      as: 'linkedPendingSales',
+      foreignKey: 'linkedByAccountId',
+    });
+    Account.hasMany(models.PendingSale, {
+      as: 'ignoredPendingSales',
+      foreignKey: 'ignoredByAccountId',
+    });
+    Account.hasMany(models.PendingSale, {
+      as: 'canceledPendingSales',
+      foreignKey: 'canceledByAccountId',
+    });
+    Account.hasMany(models.PendingSaleHistory, {
+      as: 'pendingSaleHistory',
+      foreignKey: 'accountId',
+    });
+    Account.hasMany(models.ClientSubscriptionRedemption, {
+      as: 'subscriptionRedemptions',
+      foreignKey: 'redeemedByAccountId',
+    });
+    Account.hasMany(models.ClientSubscriptionRedemption, {
+      as: 'reversedSubscriptionRedemptions',
+      foreignKey: 'reversedByAccountId',
+    });
+    Account.hasMany(models.Certificate, {
+      as: 'createdCertificates',
+      foreignKey: 'createdByAccountId',
+    });
+    Account.hasMany(models.Certificate, {
+      as: 'canceledCertificates',
+      foreignKey: 'canceledByAccountId',
+    });
+    Account.hasMany(models.CertificateRedemption, {
+      as: 'certificateRedemptions',
+      foreignKey: 'redeemedByAccountId',
+    });
+    Account.hasMany(models.CertificateRedemption, {
+      as: 'reversedCertificateRedemptions',
+      foreignKey: 'reversedByAccountId',
+    });
     Account.hasMany(models.BookingSeries, {
       as: 'createdBookingSeries',
       foreignKey: 'createdByAccountId',

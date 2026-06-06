@@ -65,6 +65,68 @@ const optionalString = z.union([z.string().trim(), z.literal(''), z.null()]).opt
 const jsonObject = z.record(z.string(), z.unknown());
 const optionalJsonObject = z.union([jsonObject, z.null()]).optional();
 const accountRoleValue = z.enum(ACCOUNT_ROLE_VALUES);
+const saleIntentValue = z.enum(['normal', 'subscription', 'certificate']);
+const pendingSaleStatusValue = z.enum([
+  'pending',
+  'linked',
+  'ignored',
+  'canceled',
+  'all',
+]);
+const subscriptionTypeStatusValue = z.enum(['active', 'archived', 'all']);
+const clientSubscriptionStatusValue = z.enum([
+  'active',
+  'expired',
+  'used',
+  'canceled',
+  'all',
+]);
+const certificateTypeValue = z.enum(['money', 'service']);
+const certificateStatusValue = z.enum([
+  'active',
+  'expired',
+  'redeemed',
+  'canceled',
+  'all',
+]);
+const corporateClientStatusValue = z.enum(['active', 'archived', 'all']);
+const corporateLedgerStatusValue = z.enum(['active', 'canceled', 'all']);
+const corporateLedgerTypeValue = z.enum(['deposit', 'spending', 'all']);
+const prepaymentsDashboardTypeValue = z.enum([
+  'all',
+  'pending_sales',
+  'subscriptions',
+  'certificates',
+  'corporate_balances',
+]);
+const prepaymentsDashboardStatusValue = z.enum([
+  'all',
+  'pending',
+  'linked',
+  'ignored',
+  'active',
+  'expiring_soon',
+  'low_balance',
+  'expired',
+  'used',
+  'redeemed',
+  'canceled',
+  'archived',
+]);
+const prepaymentsDashboardExpiryValue = z.enum([
+  'all',
+  'expiring_soon',
+  'expired',
+  'valid',
+]);
+const subscriptionServiceTypeValue = z.enum(['training']);
+const subscriptionTrainingKindValue = z.enum(['group', 'personal']);
+const subscriptionTimeSegmentValue = z.enum([
+  'single',
+  'off_peak',
+  'standard',
+  'all',
+]);
 const onboardingTaskKey = z
   .string()
   .trim()
@@ -88,6 +150,7 @@ const paginationQuery = z
   })
   .passthrough();
 const idParams = z.object({ id });
+const redemptionIdParams = z.object({ id, redemptionId: id });
 const viewIdParams = z.object({ viewId: id });
 const clientIdParams = z.object({ clientId: id });
 const noteIdParams = z.object({ noteId: id });
@@ -277,6 +340,113 @@ const groupTrainingRecommendationBody = z
         z.null(),
       ])
       .optional(),
+  })
+  .passthrough();
+
+const subscriptionTypeBody = z
+  .object({
+    bonusPersonalSessions: optionalNonNegativeNumberValue,
+    description: optionalString,
+    isUnlimited: optionalBoolValue,
+    metadata: optionalJsonObject,
+    name: nameString,
+    price: nonNegativeNumberValue,
+    serviceType: subscriptionServiceTypeValue.optional(),
+    sessionsTotal: nullableId,
+    timeSegment: subscriptionTimeSegmentValue.optional(),
+    trainingKind: subscriptionTrainingKindValue,
+    validityDays: id,
+  })
+  .passthrough();
+
+const subscriptionRedemptionBody = z
+  .object({
+    comment: optionalString,
+    metadata: optionalJsonObject,
+    quantity: z.union([id, z.literal(''), z.null()]).optional(),
+    redeemedAt: optionalDateTime,
+    serviceType: subscriptionServiceTypeValue.optional(),
+    trainingKind: subscriptionTrainingKindValue.optional(),
+  })
+  .passthrough();
+
+const subscriptionRedemptionReverseBody = z
+  .object({
+    reason: optionalString,
+  })
+  .passthrough();
+
+const certificateSalePayload = z
+  .object({
+    amountTotal: positiveNumberValue.optional(),
+    certificateType: certificateTypeValue.optional(),
+    code: optionalString,
+    metadata: optionalJsonObject,
+    serviceName: optionalString,
+    serviceType: optionalString,
+    startsAt: optionalDateTime,
+    title: optionalString,
+    type: certificateTypeValue.optional(),
+    unitsTotal: z.union([id, z.literal(''), z.null()]).optional(),
+    validityDays: z.union([id, z.literal(''), z.null()]).optional(),
+  })
+  .passthrough();
+
+const certificateRedemptionBody = z
+  .object({
+    amount: positiveNumberValue.optional(),
+    comment: optionalString,
+    metadata: optionalJsonObject,
+    quantity: z.union([id, z.literal(''), z.null()]).optional(),
+    redeemedAt: optionalDateTime,
+  })
+  .passthrough();
+
+const certificateRedemptionReverseBody = z
+  .object({
+    reason: optionalString,
+  })
+  .passthrough();
+
+const corporateClientBody = z
+  .object({
+    comment: optionalString,
+    contactEmail: optionalString,
+    contactName: optionalString,
+    contactPhone: optionalString,
+    name: nameString,
+  })
+  .passthrough();
+
+const corporateDepositBody = z
+  .object({
+    amount: positiveNumberValue.optional(),
+    category: optionalString,
+    comment: optionalString,
+    date: optionalDateOnly,
+    financeId: nullableId,
+    metadata: optionalJsonObject,
+  })
+  .passthrough();
+
+const corporateSpendingBody = z
+  .object({
+    amount: positiveNumberValue,
+    bookingId: nullableId,
+    clientId: nullableId,
+    comment: optionalString,
+    date: dateOnly,
+    metadata: optionalJsonObject,
+    participantName: optionalString,
+    service: requiredString.max(160, 'Название услуги слишком длинное'),
+    trainingNoteId: nullableId,
+    visitId: nullableId,
+  })
+  .passthrough();
+
+const corporateReasonBody = z
+  .object({
+    reason: optionalString,
   })
   .passthrough();
 
@@ -993,10 +1163,35 @@ const apiSchemas = {
       })
       .passthrough(),
     listQuery: z.object({ status: z.enum(['active', 'archived', 'all']).optional() }).passthrough(),
+    pendingSaleLinkBody: z
+      .object({
+        certificate: certificateSalePayload.optional(),
+        clientId: id,
+        comment: optionalString,
+      })
+      .passthrough(),
+    pendingSaleReasonBody: z
+      .object({
+        reason: optionalString,
+      })
+      .passthrough(),
+    pendingSalesQuery: z
+      .object({
+        saleIntent: saleIntentValue.optional(),
+        status: pendingSaleStatusValue.optional(),
+      })
+      .passthrough(),
     ruleBody: z
       .object({
         category: nameString,
         itemName: nameString,
+      })
+      .passthrough(),
+    saleSettingBody: z
+      .object({
+        itemName: nameString,
+        saleIntent: saleIntentValue,
+        saleSettings: optionalJsonObject,
       })
       .passthrough(),
     withId: { params: idParams },
@@ -1024,6 +1219,66 @@ const apiSchemas = {
       })
       .passthrough(),
     withId: { params: idParams },
+  },
+  certificates: {
+    clientListQuery: z
+      .object({
+        certificateType: certificateTypeValue.optional(),
+        q: optionalString,
+        status: certificateStatusValue.optional(),
+      })
+      .passthrough(),
+    clientParams: clientIdParams,
+    listQuery: z
+      .object({
+        certificateType: certificateTypeValue.optional(),
+        clientId: nullableId,
+        code: optionalString,
+        q: optionalString,
+        status: certificateStatusValue.optional(),
+      })
+      .passthrough(),
+    redemptionBody: certificateRedemptionBody,
+    redemptionReverse: {
+      body: certificateRedemptionReverseBody,
+      params: redemptionIdParams,
+    },
+    withId: { params: idParams },
+  },
+  corporateClients: {
+    body: corporateClientBody,
+    depositBody: corporateDepositBody,
+    entryParams: z.object({ id, entryId: id }),
+    ledgerQuery: dateRangeQuery
+      .extend({
+        status: corporateLedgerStatusValue.optional(),
+        type: corporateLedgerTypeValue.optional(),
+      })
+      .passthrough(),
+    listQuery: z
+      .object({
+        q: optionalString,
+        status: corporateClientStatusValue.optional(),
+      })
+      .passthrough(),
+    reasonBody: corporateReasonBody,
+    spendingBody: corporateSpendingBody,
+    updateBody: corporateClientBody.partial().passthrough(),
+    withId: { params: idParams },
+  },
+  prepaymentsDashboard: {
+    query: z
+      .object({
+        expiringDays: z.union([id, z.literal('')]).optional(),
+        expiry: prepaymentsDashboardExpiryValue.optional(),
+        limit: z.union([id, z.literal('')]).optional(),
+        lowBalanceThreshold: optionalNonNegativeNumberValue,
+        q: optionalString,
+        query: optionalString,
+        status: prepaymentsDashboardStatusValue.optional(),
+        type: prepaymentsDashboardTypeValue.optional(),
+      })
+      .passthrough(),
   },
   clients: {
     body: clientBody,
@@ -1186,6 +1441,27 @@ const apiSchemas = {
       .passthrough(),
     listQuery: z.object({ status: statusFilter.optional() }).passthrough(),
     params: idParams,
+  },
+  subscriptions: {
+    clientListQuery: z
+      .object({
+        status: clientSubscriptionStatusValue.optional(),
+      })
+      .passthrough(),
+    clientParams: clientIdParams,
+    redemptionBody: subscriptionRedemptionBody,
+    redemptionReverse: {
+      body: subscriptionRedemptionReverseBody,
+      params: redemptionIdParams,
+    },
+    typeBody: subscriptionTypeBody,
+    typeListQuery: z
+      .object({
+        status: subscriptionTypeStatusValue.optional(),
+      })
+      .passthrough(),
+    typeUpdateBody: subscriptionTypeBody.partial().passthrough(),
+    withId: { params: idParams },
   },
   trainingNotes: {
     body: z

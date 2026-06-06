@@ -1,5 +1,6 @@
 const catalogService = require('../services/catalog.service');
 const onboardingService = require('../services/onboarding.service');
+const pendingSaleService = require('../services/pending-sale.service');
 const { sendError } = require('../utils/api-error');
 
 function handleError(res, error, fallback) {
@@ -143,6 +144,78 @@ class CatalogController {
       res.json(await catalogService.removeArchivedRule(req.params.id));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления правила из архива');
+    }
+  }
+
+  // Настройки продаж Эвотора
+  async getSaleSettings(req, res) {
+    try {
+      res.json(await pendingSaleService.getSaleSettings());
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения настроек продаж');
+    }
+  }
+
+  async saveSaleSetting(req, res) {
+    try {
+      const setting = await pendingSaleService.saveSaleSetting(
+        req.body,
+        req.account,
+      );
+      res.status(201).json(setting);
+    } catch (error) {
+      handleError(res, error, 'Ошибка сохранения настройки продажи');
+    }
+  }
+
+  // Очередь привязки продаж
+  async getPendingSales(req, res) {
+    try {
+      res.json(await pendingSaleService.listPendingSales(req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения очереди продаж');
+    }
+  }
+
+  async linkPendingSale(req, res) {
+    try {
+      res.json(
+        await pendingSaleService.linkPendingSale(
+          req.params.id,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка привязки продажи к клиенту');
+    }
+  }
+
+  async ignorePendingSale(req, res) {
+    try {
+      res.json(
+        await pendingSaleService.ignorePendingSale(
+          req.params.id,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка игнорирования продажи');
+    }
+  }
+
+  async cancelPendingSale(req, res) {
+    try {
+      res.json(
+        await pendingSaleService.cancelPendingSale(
+          req.params.id,
+          req.body,
+          req.account,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка отмены продажи');
     }
   }
 }

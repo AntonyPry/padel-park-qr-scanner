@@ -29,6 +29,26 @@ module.exports = (sequelize, DataTypes) => {
       });
       User.hasMany(models.Booking, { foreignKey: 'userId' });
       User.hasMany(models.BookingSeries, { foreignKey: 'userId' });
+      User.hasMany(models.PendingSale, {
+        as: 'pendingSales',
+        foreignKey: 'clientId',
+      });
+      User.hasMany(models.ClientSubscription, {
+        as: 'clientSubscriptions',
+        foreignKey: 'clientId',
+      });
+      User.hasMany(models.ClientSubscriptionRedemption, {
+        as: 'subscriptionRedemptions',
+        foreignKey: 'clientId',
+      });
+      User.hasMany(models.Certificate, {
+        as: 'certificates',
+        foreignKey: 'clientId',
+      });
+      User.hasMany(models.CertificateRedemption, {
+        as: 'certificateRedemptions',
+        foreignKey: 'clientId',
+      });
     }
   }
 

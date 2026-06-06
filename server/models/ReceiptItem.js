@@ -49,6 +49,18 @@ module.exports = (sequelize, DataTypes) => {
 
   ReceiptItem.associate = (models) => {
     ReceiptItem.belongsTo(models.Receipt, { foreignKey: 'receiptId' });
+    ReceiptItem.hasOne(models.PendingSale, {
+      as: 'pendingSale',
+      foreignKey: 'receiptItemId',
+    });
+    ReceiptItem.hasOne(models.ClientSubscription, {
+      as: 'clientSubscription',
+      foreignKey: 'sourceReceiptItemId',
+    });
+    ReceiptItem.hasOne(models.Certificate, {
+      as: 'certificate',
+      foreignKey: 'sourceReceiptItemId',
+    });
   };
 
   return ReceiptItem;

@@ -11,6 +11,9 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/methodology-analytics': ['owner', 'manager'],
   '/admin/client-bases': ['owner', 'manager'],
   '/admin/call-tasks': ['owner', 'manager', 'admin'],
+  '/admin/prepayments': ['owner', 'manager', 'admin', 'accountant'],
+  '/admin/certificates': ['owner', 'manager', 'admin', 'viewer'],
+  '/admin/corporate-clients': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/telephony': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
@@ -107,6 +110,46 @@ export function canWorkTelephony(role: AccountRole | null | undefined) {
 
 export function canManageCatalog(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'accountant']);
+}
+
+export function canManagePrepaymentSales(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManagePrepaymentSettings(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canViewPrepaymentsDashboard(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin', 'accountant']);
+}
+
+export function canViewClientSubscriptions(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin', 'viewer']);
+}
+
+export function canRedeemClientSubscriptions(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+}
+
+export function canViewCertificates(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin', 'viewer']);
+}
+
+export function canRedeemCertificates(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+}
+
+export function canViewCorporateClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'accountant', 'viewer']);
+}
+
+export function canManageCorporateDeposits(role: AccountRole | null | undefined) {
+  return canManageFinance(role);
+}
+
+export function canManageSubscriptionTypes(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canManageReferences(role: AccountRole | null | undefined) {

@@ -1,5 +1,6 @@
 // src/services/evotor.service.js
 const db = require('../../models');
+const pendingSaleService = require('./pending-sale.service');
 
 function normalizePaymentType(value) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -242,82 +243,93 @@ class EvotorService {
       return { alreadyProcessed: true };
     }
 
-    // 3. Считаем суммы и определяем тип оплаты
-    const totalAmt = getReceiptTotalAmount(receiptData);
-    const isPayback = receiptData.type === 'PAYBACK';
-    const multiplier = isPayback ? -1 : 1;
+    return db.sequelize.transaction(async (transaction) => {
+      // 3. Считаем суммы и определяем тип оплаты
+      const totalAmt = getReceiptTotalAmount(receiptData);
+      const isPayback = receiptData.type === 'PAYBACK';
+      const multiplier = isPayback ? -1 : 1;
 
-    const { cash, cashless, paymentDetails, paymentParseStatus } = splitPayments(
-      receiptData,
-      totalAmt,
-      multiplier,
-    );
+      const { cash, cashless, paymentDetails, paymentParseStatus } = splitPayments(
+        receiptData,
+        totalAmt,
+        multiplier,
+      );
 
-    // 4. Сохраняем заголовок чека
-    const newReceipt = await db.Receipt.create({
-      evotorId,
-      dateTime: receiptData.dateTime || receiptData.closeDate || new Date(),
-      type: receiptData.type || 'SELL',
-      totalAmount: totalAmt * multiplier,
-      cash,
-      cashless,
-      // Новые поля
-      employeeId: receiptData.employeeId || null,
-      shiftId: receiptData.shiftId || null,
-      totalTax: (Number(receiptData.totalTax) || 0) * multiplier,
-      totalDiscount: (Number(receiptData.totalDiscount) || 0) * multiplier,
-      paymentDetails,
-      paymentParseStatus,
-      paymentSource:
-        receiptData.paymentSource ||
-        receiptData.payment_source ||
-        receiptData.paymentType ||
-        receiptData.payment_type ||
-        receiptData.paymentMethod ||
-        'UNKNOWN',
-    });
-
-    // 5. Парсим и сохраняем позиции (items)
-    const positions = receiptData.positions || receiptData.items || [];
-
-    if (positions.length > 0) {
-      const itemsToInsert = positions.map((pos) => {
-        // Базовые поля
-        const quantity = Number(pos.quantity) || 1;
-        const price = Number(pos.price) || 0;
-
-        // В Эвоторе sumPrice - это обычно итоговая сумма позиции со всеми скидками
-        // Если её нет, считаем по старинке
-        let finalSum = Number(pos.sumPrice);
-        if (isNaN(finalSum)) {
-          finalSum = Number(pos.resultPrice || pos.sum || quantity * price);
-        }
-
-        return {
-          receiptId: newReceipt.id,
-          name: pos.name || 'Неизвестный товар',
-          quantity: quantity * multiplier,
-          price: price,
-          sum: finalSum * multiplier,
-
+      // 4. Сохраняем заголовок чека
+      const newReceipt = await db.Receipt.create(
+        {
+          evotorId,
+          dateTime: receiptData.dateTime || receiptData.closeDate || new Date(),
+          type: receiptData.type || 'SELL',
+          totalAmount: totalAmt * multiplier,
+          cash,
+          cashless,
           // Новые поля
-          itemType: pos.itemType || null,
-          measureName: pos.measureName || null,
-          costPrice: Number(pos.costPrice) || 0,
-          sumPrice: finalSum * multiplier,
-          tax: (Number(pos.tax) || 0) * multiplier,
-          taxPercent: Number(pos.taxPercent) || 0,
-          discount: (Number(pos.discount) || 0) * multiplier,
-        };
-      });
+          employeeId: receiptData.employeeId || null,
+          shiftId: receiptData.shiftId || null,
+          totalTax: (Number(receiptData.totalTax) || 0) * multiplier,
+          totalDiscount: (Number(receiptData.totalDiscount) || 0) * multiplier,
+          paymentDetails,
+          paymentParseStatus,
+          paymentSource:
+            receiptData.paymentSource ||
+            receiptData.payment_source ||
+            receiptData.paymentType ||
+            receiptData.payment_type ||
+            receiptData.paymentMethod ||
+            'UNKNOWN',
+        },
+        { transaction },
+      );
 
-      await db.ReceiptItem.bulkCreate(itemsToInsert);
-    }
+      // 5. Парсим и сохраняем позиции (items)
+      const positions = receiptData.positions || receiptData.items || [];
 
-    return {
-      alreadyProcessed: false,
-      receipt: newReceipt,
-    };
+      if (positions.length > 0) {
+        const itemsToInsert = positions.map((pos) => {
+          // Базовые поля
+          const quantity = Number(pos.quantity) || 1;
+          const price = Number(pos.price) || 0;
+
+          // В Эвоторе sumPrice - это обычно итоговая сумма позиции со всеми скидками
+          // Если её нет, считаем по старинке
+          let finalSum = Number(pos.sumPrice);
+          if (isNaN(finalSum)) {
+            finalSum = Number(pos.resultPrice || pos.sum || quantity * price);
+          }
+
+          return {
+            receiptId: newReceipt.id,
+            name: pos.name || 'Неизвестный товар',
+            quantity: quantity * multiplier,
+            price: price,
+            sum: finalSum * multiplier,
+
+            // Новые поля
+            itemType: pos.itemType || null,
+            measureName: pos.measureName || null,
+            costPrice: Number(pos.costPrice) || 0,
+            sumPrice: finalSum * multiplier,
+            tax: (Number(pos.tax) || 0) * multiplier,
+            taxPercent: Number(pos.taxPercent) || 0,
+            discount: (Number(pos.discount) || 0) * multiplier,
+          };
+        });
+
+        await db.ReceiptItem.bulkCreate(itemsToInsert, { transaction });
+      }
+
+      const pendingSales = await pendingSaleService.createPendingSalesForReceipt(
+        newReceipt.id,
+        { transaction },
+      );
+
+      return {
+        alreadyProcessed: false,
+        pendingSales,
+        receipt: newReceipt,
+      };
+    });
   }
 }
 

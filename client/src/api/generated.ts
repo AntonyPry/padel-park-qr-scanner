@@ -77,12 +77,48 @@ export const apiEndpoints = {
   "catalog.categories.restore": { method: "POST", path: "/catalog/categories/{id}/restore", responseType: "json" },
   "catalog.categories.deletePermanent": { method: "DELETE", path: "/catalog/categories/{id}/permanent", responseType: "json" },
   "catalog.categories.archive": { method: "DELETE", path: "/catalog/categories/{id}", responseType: "json" },
+  "catalog.saleSettings.list": { method: "GET", path: "/catalog/sale-settings", responseType: "json" },
+  "catalog.saleSettings.save": { method: "POST", path: "/catalog/sale-settings", responseType: "json" },
+  "catalog.pendingSales.list": { method: "GET", path: "/catalog/pending-sales", responseType: "json" },
+  "catalog.pendingSales.link": { method: "POST", path: "/catalog/pending-sales/{id}/link", responseType: "json" },
+  "catalog.pendingSales.ignore": { method: "POST", path: "/catalog/pending-sales/{id}/ignore", responseType: "json" },
+  "catalog.pendingSales.cancel": { method: "POST", path: "/catalog/pending-sales/{id}/cancel", responseType: "json" },
   "catalog.unmapped": { method: "GET", path: "/catalog/unmapped", responseType: "json" },
   "catalog.rules.list": { method: "GET", path: "/catalog/rules", responseType: "json" },
   "catalog.rules.create": { method: "POST", path: "/catalog/rules", responseType: "json" },
   "catalog.rules.restore": { method: "POST", path: "/catalog/rules/{id}/restore", responseType: "json" },
   "catalog.rules.deletePermanent": { method: "DELETE", path: "/catalog/rules/{id}/permanent", responseType: "json" },
   "catalog.rules.archive": { method: "DELETE", path: "/catalog/rules/{id}", responseType: "json" },
+  "subscriptions.types.list": { method: "GET", path: "/subscriptions/types", responseType: "json" },
+  "subscriptions.types.create": { method: "POST", path: "/subscriptions/types", responseType: "json" },
+  "subscriptions.types.update": { method: "PUT", path: "/subscriptions/types/{id}", responseType: "json" },
+  "subscriptions.types.archive": { method: "POST", path: "/subscriptions/types/{id}/archive", responseType: "json" },
+  "subscriptions.types.restore": { method: "POST", path: "/subscriptions/types/{id}/restore", responseType: "json" },
+  "subscriptions.types.deletePermanent": { method: "DELETE", path: "/subscriptions/types/{id}/permanent", responseType: "json" },
+  "subscriptions.client.list": { method: "GET", path: "/clients/{clientId}/subscriptions", responseType: "json" },
+  "subscriptions.client.get": { method: "GET", path: "/client-subscriptions/{id}", responseType: "json" },
+  "subscriptions.client.redemptions": { method: "GET", path: "/client-subscriptions/{id}/redemptions", responseType: "json" },
+  "subscriptions.client.redeem": { method: "POST", path: "/client-subscriptions/{id}/redemptions", responseType: "json" },
+  "subscriptions.client.reverseRedemption": { method: "POST", path: "/client-subscriptions/{id}/redemptions/{redemptionId}/reverse", responseType: "json" },
+  "certificates.list": { method: "GET", path: "/certificates", responseType: "json" },
+  "certificates.client.list": { method: "GET", path: "/clients/{clientId}/certificates", responseType: "json" },
+  "certificates.get": { method: "GET", path: "/certificates/{id}", responseType: "json" },
+  "certificates.redemptions": { method: "GET", path: "/certificates/{id}/redemptions", responseType: "json" },
+  "certificates.redeem": { method: "POST", path: "/certificates/{id}/redemptions", responseType: "json" },
+  "certificates.reverseRedemption": { method: "POST", path: "/certificates/{id}/redemptions/{redemptionId}/reverse", responseType: "json" },
+  "corporateClients.list": { method: "GET", path: "/corporate-clients", responseType: "json" },
+  "corporateClients.create": { method: "POST", path: "/corporate-clients", responseType: "json" },
+  "corporateClients.get": { method: "GET", path: "/corporate-clients/{id}", responseType: "json" },
+  "corporateClients.update": { method: "PUT", path: "/corporate-clients/{id}", responseType: "json" },
+  "corporateClients.archive": { method: "POST", path: "/corporate-clients/{id}/archive", responseType: "json" },
+  "corporateClients.restore": { method: "POST", path: "/corporate-clients/{id}/restore", responseType: "json" },
+  "corporateClients.ledger": { method: "GET", path: "/corporate-clients/{id}/ledger", responseType: "json" },
+  "corporateClients.ledgerExport": { method: "GET", path: "/corporate-clients/{id}/ledger/export", responseType: "blob" },
+  "corporateClients.deposit": { method: "POST", path: "/corporate-clients/{id}/deposits", responseType: "json" },
+  "corporateClients.depositCancel": { method: "POST", path: "/corporate-clients/{id}/deposits/{entryId}/cancel", responseType: "json" },
+  "corporateClients.spending": { method: "POST", path: "/corporate-clients/{id}/spendings", responseType: "json" },
+  "corporateClients.spendingReverse": { method: "POST", path: "/corporate-clients/{id}/spendings/{entryId}/reverse", responseType: "json" },
+  "prepayments.dashboard": { method: "GET", path: "/prepayments/dashboard", responseType: "json" },
   "clientBases.list": { method: "GET", path: "/client-bases", responseType: "json" },
   "clientBases.create": { method: "POST", path: "/client-bases", responseType: "json" },
   "clientBases.clients": { method: "GET", path: "/client-bases/{id}/clients", responseType: "json" },
@@ -711,6 +747,35 @@ export type CatalogCategoriesDeletePermanentParams = {
 export type CatalogCategoriesArchiveParams = {
   id: number | string;
 };
+export type CatalogSaleSettingsSaveBody = {
+  itemName: string;
+  saleIntent: "normal" | "subscription" | "certificate";
+  saleSettings?: Record<string, unknown> | null;
+  [key: string]: unknown;
+};
+export type CatalogPendingSalesListQuery = {
+  saleIntent?: "normal" | "subscription" | "certificate";
+  status?: "pending" | "linked" | "ignored" | "canceled" | "all";
+  [key: string]: unknown;
+};
+export type CatalogPendingSalesLinkParams = {
+  id: number | string;
+};
+export type CatalogPendingSalesLinkBody = Record<string, unknown>;
+export type CatalogPendingSalesIgnoreParams = {
+  id: number | string;
+};
+export type CatalogPendingSalesIgnoreBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
+export type CatalogPendingSalesCancelParams = {
+  id: number | string;
+};
+export type CatalogPendingSalesCancelBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
 export type CatalogRulesListQuery = {
   status?: "active" | "archived" | "all";
   [key: string]: unknown;
@@ -728,6 +793,222 @@ export type CatalogRulesDeletePermanentParams = {
 };
 export type CatalogRulesArchiveParams = {
   id: number | string;
+};
+export type SubscriptionsTypesListQuery = {
+  status?: "active" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type SubscriptionsTypesCreateBody = {
+  bonusPersonalSessions?: number | string | "" | null;
+  description?: string | "" | null;
+  isUnlimited?: boolean | "true" | "false" | "1" | "0";
+  metadata?: Record<string, unknown> | null;
+  name: string;
+  price: number | string;
+  serviceType?: "training";
+  sessionsTotal?: number | string | "" | null;
+  timeSegment?: "single" | "off_peak" | "standard" | "all";
+  trainingKind: "group" | "personal";
+  validityDays: number | string;
+  [key: string]: unknown;
+};
+export type SubscriptionsTypesUpdateParams = {
+  id: number | string;
+};
+export type SubscriptionsTypesUpdateBody = {
+  bonusPersonalSessions?: number | string | "" | null;
+  description?: string | "" | null;
+  isUnlimited?: boolean | "true" | "false" | "1" | "0";
+  metadata?: Record<string, unknown> | null;
+  name?: string;
+  price?: number | string;
+  serviceType?: "training";
+  sessionsTotal?: number | string | "" | null;
+  timeSegment?: "single" | "off_peak" | "standard" | "all";
+  trainingKind?: "group" | "personal";
+  validityDays?: number | string;
+  [key: string]: unknown;
+};
+export type SubscriptionsTypesArchiveParams = {
+  id: number | string;
+};
+export type SubscriptionsTypesRestoreParams = {
+  id: number | string;
+};
+export type SubscriptionsTypesDeletePermanentParams = {
+  id: number | string;
+};
+export type SubscriptionsClientListParams = {
+  clientId: number | string;
+};
+export type SubscriptionsClientListQuery = {
+  status?: "active" | "expired" | "used" | "canceled" | "all";
+  [key: string]: unknown;
+};
+export type SubscriptionsClientGetParams = {
+  id: number | string;
+};
+export type SubscriptionsClientRedemptionsParams = {
+  id: number | string;
+};
+export type SubscriptionsClientRedeemParams = {
+  id: number | string;
+};
+export type SubscriptionsClientRedeemBody = Record<string, unknown>;
+export type SubscriptionsClientReverseRedemptionParams = {
+  id: number | string;
+  redemptionId: number | string;
+};
+export type SubscriptionsClientReverseRedemptionBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
+export type CertificatesListQuery = {
+  certificateType?: "money" | "service";
+  clientId?: number | string | "" | null;
+  code?: string | "" | null;
+  q?: string | "" | null;
+  status?: "active" | "expired" | "redeemed" | "canceled" | "all";
+  [key: string]: unknown;
+};
+export type CertificatesClientListParams = {
+  clientId: number | string;
+};
+export type CertificatesClientListQuery = {
+  certificateType?: "money" | "service";
+  q?: string | "" | null;
+  status?: "active" | "expired" | "redeemed" | "canceled" | "all";
+  [key: string]: unknown;
+};
+export type CertificatesGetParams = {
+  id: number | string;
+};
+export type CertificatesRedemptionsParams = {
+  id: number | string;
+};
+export type CertificatesRedeemParams = {
+  id: number | string;
+};
+export type CertificatesRedeemBody = Record<string, unknown>;
+export type CertificatesReverseRedemptionParams = {
+  id: number | string;
+  redemptionId: number | string;
+};
+export type CertificatesReverseRedemptionBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
+export type CorporateClientsListQuery = {
+  q?: string | "" | null;
+  status?: "active" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type CorporateClientsCreateBody = {
+  comment?: string | "" | null;
+  contactEmail?: string | "" | null;
+  contactName?: string | "" | null;
+  contactPhone?: string | "" | null;
+  name: string;
+  [key: string]: unknown;
+};
+export type CorporateClientsGetParams = {
+  id: number | string;
+};
+export type CorporateClientsUpdateParams = {
+  id: number | string;
+};
+export type CorporateClientsUpdateBody = {
+  comment?: string | "" | null;
+  contactEmail?: string | "" | null;
+  contactName?: string | "" | null;
+  contactPhone?: string | "" | null;
+  name?: string;
+  [key: string]: unknown;
+};
+export type CorporateClientsArchiveParams = {
+  id: number | string;
+};
+export type CorporateClientsArchiveBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
+export type CorporateClientsRestoreParams = {
+  id: number | string;
+};
+export type CorporateClientsLedgerParams = {
+  id: number | string;
+};
+export type CorporateClientsLedgerQuery = {
+  from?: string | "";
+  to?: string | "";
+  status?: "active" | "canceled" | "all";
+  type?: "deposit" | "spending" | "all";
+  [key: string]: unknown;
+};
+export type CorporateClientsLedgerExportParams = {
+  id: number | string;
+};
+export type CorporateClientsLedgerExportQuery = {
+  from?: string | "";
+  to?: string | "";
+  status?: "active" | "canceled" | "all";
+  type?: "deposit" | "spending" | "all";
+  [key: string]: unknown;
+};
+export type CorporateClientsDepositParams = {
+  id: number | string;
+};
+export type CorporateClientsDepositBody = {
+  amount?: number | string;
+  category?: string | "" | null;
+  comment?: string | "" | null;
+  date?: string | "";
+  financeId?: number | string | "" | null;
+  metadata?: Record<string, unknown> | null;
+  [key: string]: unknown;
+};
+export type CorporateClientsDepositCancelParams = {
+  id: number | string;
+  entryId: number | string;
+};
+export type CorporateClientsDepositCancelBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
+export type CorporateClientsSpendingParams = {
+  id: number | string;
+};
+export type CorporateClientsSpendingBody = {
+  amount: number | string;
+  bookingId?: number | string | "" | null;
+  clientId?: number | string | "" | null;
+  comment?: string | "" | null;
+  date: string;
+  metadata?: Record<string, unknown> | null;
+  participantName?: string | "" | null;
+  service: string;
+  trainingNoteId?: number | string | "" | null;
+  visitId?: number | string | "" | null;
+  [key: string]: unknown;
+};
+export type CorporateClientsSpendingReverseParams = {
+  id: number | string;
+  entryId: number | string;
+};
+export type CorporateClientsSpendingReverseBody = {
+  reason?: string | "" | null;
+  [key: string]: unknown;
+};
+export type PrepaymentsDashboardQuery = {
+  expiringDays?: number | string | "";
+  expiry?: "all" | "expiring_soon" | "expired" | "valid";
+  limit?: number | string | "";
+  lowBalanceThreshold?: number | string | "" | null;
+  q?: string | "" | null;
+  query?: string | "" | null;
+  status?: "all" | "pending" | "linked" | "ignored" | "active" | "expiring_soon" | "low_balance" | "expired" | "used" | "redeemed" | "canceled" | "archived";
+  type?: "all" | "pending_sales" | "subscriptions" | "certificates" | "corporate_balances";
+  [key: string]: unknown;
 };
 export type ClientBasesListQuery = {
   status?: "active" | "archived" | "all";
@@ -1665,12 +1946,48 @@ export interface ApiEndpointRequestMap {
   "catalog.categories.restore": ApiEndpointRequest<CatalogCategoriesRestoreParams, undefined, undefined>;
   "catalog.categories.deletePermanent": ApiEndpointRequest<CatalogCategoriesDeletePermanentParams, undefined, undefined>;
   "catalog.categories.archive": ApiEndpointRequest<CatalogCategoriesArchiveParams, undefined, undefined>;
+  "catalog.saleSettings.list": ApiEndpointRequest<undefined, undefined, undefined>;
+  "catalog.saleSettings.save": ApiEndpointRequest<undefined, undefined, CatalogSaleSettingsSaveBody>;
+  "catalog.pendingSales.list": ApiEndpointRequest<undefined, CatalogPendingSalesListQuery, undefined>;
+  "catalog.pendingSales.link": ApiEndpointRequest<CatalogPendingSalesLinkParams, undefined, CatalogPendingSalesLinkBody>;
+  "catalog.pendingSales.ignore": ApiEndpointRequest<CatalogPendingSalesIgnoreParams, undefined, CatalogPendingSalesIgnoreBody>;
+  "catalog.pendingSales.cancel": ApiEndpointRequest<CatalogPendingSalesCancelParams, undefined, CatalogPendingSalesCancelBody>;
   "catalog.unmapped": ApiEndpointRequest<undefined, undefined, undefined>;
   "catalog.rules.list": ApiEndpointRequest<undefined, CatalogRulesListQuery, undefined>;
   "catalog.rules.create": ApiEndpointRequest<undefined, undefined, CatalogRulesCreateBody>;
   "catalog.rules.restore": ApiEndpointRequest<CatalogRulesRestoreParams, undefined, undefined>;
   "catalog.rules.deletePermanent": ApiEndpointRequest<CatalogRulesDeletePermanentParams, undefined, undefined>;
   "catalog.rules.archive": ApiEndpointRequest<CatalogRulesArchiveParams, undefined, undefined>;
+  "subscriptions.types.list": ApiEndpointRequest<undefined, SubscriptionsTypesListQuery, undefined>;
+  "subscriptions.types.create": ApiEndpointRequest<undefined, undefined, SubscriptionsTypesCreateBody>;
+  "subscriptions.types.update": ApiEndpointRequest<SubscriptionsTypesUpdateParams, undefined, SubscriptionsTypesUpdateBody>;
+  "subscriptions.types.archive": ApiEndpointRequest<SubscriptionsTypesArchiveParams, undefined, undefined>;
+  "subscriptions.types.restore": ApiEndpointRequest<SubscriptionsTypesRestoreParams, undefined, undefined>;
+  "subscriptions.types.deletePermanent": ApiEndpointRequest<SubscriptionsTypesDeletePermanentParams, undefined, undefined>;
+  "subscriptions.client.list": ApiEndpointRequest<SubscriptionsClientListParams, SubscriptionsClientListQuery, undefined>;
+  "subscriptions.client.get": ApiEndpointRequest<SubscriptionsClientGetParams, undefined, undefined>;
+  "subscriptions.client.redemptions": ApiEndpointRequest<SubscriptionsClientRedemptionsParams, undefined, undefined>;
+  "subscriptions.client.redeem": ApiEndpointRequest<SubscriptionsClientRedeemParams, undefined, SubscriptionsClientRedeemBody>;
+  "subscriptions.client.reverseRedemption": ApiEndpointRequest<SubscriptionsClientReverseRedemptionParams, undefined, SubscriptionsClientReverseRedemptionBody>;
+  "certificates.list": ApiEndpointRequest<undefined, CertificatesListQuery, undefined>;
+  "certificates.client.list": ApiEndpointRequest<CertificatesClientListParams, CertificatesClientListQuery, undefined>;
+  "certificates.get": ApiEndpointRequest<CertificatesGetParams, undefined, undefined>;
+  "certificates.redemptions": ApiEndpointRequest<CertificatesRedemptionsParams, undefined, undefined>;
+  "certificates.redeem": ApiEndpointRequest<CertificatesRedeemParams, undefined, CertificatesRedeemBody>;
+  "certificates.reverseRedemption": ApiEndpointRequest<CertificatesReverseRedemptionParams, undefined, CertificatesReverseRedemptionBody>;
+  "corporateClients.list": ApiEndpointRequest<undefined, CorporateClientsListQuery, undefined>;
+  "corporateClients.create": ApiEndpointRequest<undefined, undefined, CorporateClientsCreateBody>;
+  "corporateClients.get": ApiEndpointRequest<CorporateClientsGetParams, undefined, undefined>;
+  "corporateClients.update": ApiEndpointRequest<CorporateClientsUpdateParams, undefined, CorporateClientsUpdateBody>;
+  "corporateClients.archive": ApiEndpointRequest<CorporateClientsArchiveParams, undefined, CorporateClientsArchiveBody>;
+  "corporateClients.restore": ApiEndpointRequest<CorporateClientsRestoreParams, undefined, undefined>;
+  "corporateClients.ledger": ApiEndpointRequest<CorporateClientsLedgerParams, CorporateClientsLedgerQuery, undefined>;
+  "corporateClients.ledgerExport": ApiEndpointRequest<CorporateClientsLedgerExportParams, CorporateClientsLedgerExportQuery, undefined>;
+  "corporateClients.deposit": ApiEndpointRequest<CorporateClientsDepositParams, undefined, CorporateClientsDepositBody>;
+  "corporateClients.depositCancel": ApiEndpointRequest<CorporateClientsDepositCancelParams, undefined, CorporateClientsDepositCancelBody>;
+  "corporateClients.spending": ApiEndpointRequest<CorporateClientsSpendingParams, undefined, CorporateClientsSpendingBody>;
+  "corporateClients.spendingReverse": ApiEndpointRequest<CorporateClientsSpendingReverseParams, undefined, CorporateClientsSpendingReverseBody>;
+  "prepayments.dashboard": ApiEndpointRequest<undefined, PrepaymentsDashboardQuery, undefined>;
   "clientBases.list": ApiEndpointRequest<undefined, ClientBasesListQuery, undefined>;
   "clientBases.create": ApiEndpointRequest<undefined, undefined, ClientBasesCreateBody>;
   "clientBases.clients": ApiEndpointRequest<ClientBasesClientsParams, ClientBasesClientsQuery, undefined>;
