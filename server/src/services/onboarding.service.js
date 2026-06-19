@@ -140,8 +140,9 @@ function getAvailableRoles(actor) {
 
 function serializeDate(value) {
   if (!value) return null;
-  if (value instanceof Date) return value.toISOString();
-  return new Date(value).toISOString();
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
 }
 
 function normalizeId(value) {
@@ -255,7 +256,13 @@ function getDefaultPracticeStep(task) {
   };
 }
 
+function isPracticeDisabled(task) {
+  return task.practice === false || task.practice?.enabled === false;
+}
+
 function normalizePracticeSteps(task) {
+  if (isPracticeDisabled(task)) return [];
+
   const steps = Array.isArray(task.practice?.steps)
     ? task.practice.steps.filter((step) => step?.key)
     : [];
@@ -318,6 +325,8 @@ function getGuidedContent(task) {
   const lesson = task.lesson || {};
   const practice = task.practice || {};
   const quiz = task.quiz || {};
+  const practiceDisabled = isPracticeDisabled(task);
+  const practiceSteps = practiceDisabled ? [] : normalizePracticeSteps(task);
 
   return {
     lesson: {
@@ -325,19 +334,23 @@ function getGuidedContent(task) {
         Array.isArray(lesson.blocks) && lesson.blocks.length > 0
           ? lesson.blocks
           : [{ text: task.description, type: 'paragraph' }],
+      format: lesson.format || null,
       screenshots: Array.isArray(lesson.screenshots) ? lesson.screenshots : [],
       summary: lesson.summary || task.description,
       title: lesson.title || task.title,
+      updatedAt: serializeDate(lesson.updatedAt || task.updatedAt),
     },
     practice: {
       autoTrainingMode:
-        practice.autoTrainingMode ?? Boolean(task.trainingMode?.recommended),
+        practiceDisabled
+          ? false
+          : practice.autoTrainingMode ?? Boolean(task.trainingMode?.recommended),
       route: practice.route || task.route,
-      steps: normalizePracticeSteps(task),
-      targetSelectors: Array.isArray(practice.targetSelectors)
+      steps: practiceSteps,
+      targetSelectors: !practiceDisabled && Array.isArray(practice.targetSelectors)
         ? practice.targetSelectors
         : [],
-      testData: practice.testData || null,
+      testData: practiceDisabled ? null : practice.testData || null,
     },
     quiz: {
       passingScorePercent:
@@ -368,7 +381,7 @@ function getGuidanceSummary(task) {
 
   return {
     hasLesson: true,
-    hasPractice: true,
+    hasPractice: content.practice.steps.length > 0,
     hasQuiz: true,
     practiceStepCount: content.practice.steps.length,
     quizQuestionCount: content.quiz.questions.length,
@@ -378,6 +391,16 @@ function getGuidanceSummary(task) {
 
 function getProgressMetadata(progress) {
   return cloneJsonObject(getPlainProgress(progress)?.metadata);
+}
+
+function isAfterDate(left, right) {
+  if (!left || !right) return false;
+  const leftDate = new Date(left);
+  const rightDate = new Date(right);
+  if (Number.isNaN(leftDate.getTime()) || Number.isNaN(rightDate.getTime())) {
+    return false;
+  }
+  return leftDate.getTime() > rightDate.getTime();
 }
 
 function hasGuidedMetadata(metadata = {}) {
@@ -400,6 +423,10 @@ function getTaskRequirementState(task, progress) {
   const legacyCompleted =
     plainProgress?.status === 'completed' && !hasGuidedMetadata(metadata);
   const completedAt = serializeDate(plainProgress?.completedAt);
+  const lessonUpdatedAt = content.lesson.updatedAt;
+  const lessonContentReviewedAt = serializeDate(metadata.lesson?.contentReviewedAt);
+  const lessonFreshnessReferenceAt = lessonContentReviewedAt || completedAt;
+  const isCompleted = plainProgress?.status === 'completed';
   const completedStepKeys = getCompletedPracticeStepKeys(task, metadata);
   const practiceCompleted =
     legacyCompleted ||
@@ -417,7 +444,12 @@ function getTaskRequirementState(task, progress) {
       plainProgress?.status === 'in_progress',
     lesson: {
       isRead: legacyCompleted || Boolean(metadata.lesson?.readAt),
+      isUpdatedAfterCompletion:
+        isCompleted && isAfterDate(lessonUpdatedAt, lessonFreshnessReferenceAt),
       readAt: legacyCompleted ? completedAt : serializeDate(metadata.lesson?.readAt),
+      reviewedAt: lessonContentReviewedAt,
+      reviewedVersionAt: serializeDate(metadata.lesson?.contentReviewedVersionAt),
+      updatedAt: lessonUpdatedAt,
     },
     practice: {
       activeStepKey: metadata.practice?.activeStepKey || null,
@@ -495,7 +527,11 @@ function buildCompletedMetadata(task) {
   );
 
   return {
-    lesson: { readAt: now },
+    lesson: {
+      contentReviewedAt: now,
+      contentReviewedVersionAt: content.lesson.updatedAt,
+      readAt: now,
+    },
     practice: {
       activeStepKey: null,
       completedAt: now,
@@ -1119,6 +1155,10 @@ async function startPractice(actor, taskKey, body = {}) {
   const context = await getTaskProgressContext(actor, taskKey, body.role);
   const now = new Date().toISOString();
   const content = getGuidedContent(context.taskMatch.task);
+
+  if (content.practice.steps.length === 0) {
+    throw appError('Практический режим для этой инструкции отключен', 404);
+  }
 
   if (content.practice.autoTrainingMode) {
     await setTrainingMode(actor, {

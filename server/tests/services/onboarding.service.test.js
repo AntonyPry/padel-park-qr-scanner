@@ -4,6 +4,7 @@ const db = require('../../models');
 const {
   buildOnboardingResponse,
   cleanupTrainingData,
+  completeTask,
   completePracticeStep,
   getAvailableRoles,
   getTaskDetail,
@@ -51,6 +52,14 @@ const trainingModelNames = [
 const originalTrainingModels = new Map(
   trainingModelNames.map((name) => [name, db[name]]),
 );
+
+function findResponseTask(response, taskKey) {
+  for (const mission of response.path.missions) {
+    const task = mission.tasks.find((item) => item.key === taskKey);
+    if (task) return task;
+  }
+  return null;
+}
 
 after(() => {
   db.OnboardingEvent = originalEventModel;
@@ -121,6 +130,49 @@ test('onboarding response decorates progress and calculates next task', () => {
   assert.equal(response.path.missions[0].tasks[0].progress.isCompleted, true);
   assert.equal(response.path.missions[0].tasks[0].badge, 'Монитор входов');
   assert.equal(response.path.missions[0].tasks[1].progress.isNext, true);
+});
+
+test('completed onboarding task shows when instruction was updated afterwards', () => {
+  const taskKey = 'admin.client.create';
+  const outdated = buildOnboardingResponse(
+    { id: 1, role: 'admin' },
+    'admin',
+    [
+      {
+        completedAt: new Date('2026-06-01T10:00:00.000Z'),
+        metadata: {},
+        status: 'completed',
+        taskKey,
+      },
+    ],
+  );
+  const outdatedTask = findResponseTask(outdated, taskKey);
+
+  assert.equal(Boolean(outdatedTask.progress.lesson.updatedAt), true);
+  assert.equal(outdatedTask.progress.lesson.isUpdatedAfterCompletion, true);
+
+  const acknowledged = buildOnboardingResponse(
+    { id: 1, role: 'admin' },
+    'admin',
+    [
+      {
+        completedAt: new Date('2026-06-01T10:00:00.000Z'),
+        metadata: {
+          lesson: {
+            contentReviewedAt: '2026-06-09T10:00:00.000Z',
+          },
+        },
+        status: 'completed',
+        taskKey,
+      },
+    ],
+  );
+  const acknowledgedTask = findResponseTask(acknowledged, taskKey);
+
+  assert.equal(
+    acknowledgedTask.progress.lesson.isUpdatedAfterCompletion,
+    false,
+  );
 });
 
 test('training mode persists account role and can be disabled', async () => {
@@ -217,7 +269,8 @@ test('guided task requires lesson, practice and quiz before completion', async (
   };
 
   const actor = { id: 21, role: 'admin' };
-  const initial = await getTaskDetail(actor, 'admin.client.create');
+  const taskKey = 'admin.booking.mark-paid';
+  const initial = await getTaskDetail(actor, taskKey);
 
   assert.equal(initial.task.progress.status, 'not_started');
   assert.equal(
@@ -225,13 +278,13 @@ test('guided task requires lesson, practice and quiz before completion', async (
     false,
   );
 
-  const afterLesson = await markLessonRead(actor, 'admin.client.create');
+  const afterLesson = await markLessonRead(actor, taskKey);
   assert.equal(afterLesson.task.progress.status, 'in_progress');
   assert.equal(afterLesson.task.progress.lesson.isRead, true);
 
-  const afterPracticeStart = await startPractice(actor, 'admin.client.create');
+  const afterPracticeStart = await startPractice(actor, taskKey);
   assert.equal(afterPracticeStart.task.progress.practice.isStarted, true);
-  assert.equal(afterPracticeStart.task.practice.steps.length, 6);
+  assert.equal(afterPracticeStart.task.practice.steps.length, 1);
   assert.equal(trainingMode.isEnabled, true);
   assert.equal(trainingMode.role, 'admin');
 
@@ -239,36 +292,105 @@ test('guided task requires lesson, practice and quiz before completion', async (
   for (const step of afterPracticeStart.task.practice.steps) {
     afterPracticeStep = await completePracticeStep(
       actor,
-      'admin.client.create',
+      taskKey,
       step.key,
     );
   }
   assert.equal(afterPracticeStep.task.progress.practice.isCompleted, true);
   assert.equal(afterPracticeStep.task.progress.status, 'in_progress');
 
-  const failedQuiz = await submitQuizAttempt(actor, 'admin.client.create', {
+  const failedQuiz = await submitQuizAttempt(actor, taskKey, {
     answers: {
-      'client-required-fields': 'name-only',
-      'client-training-mode': 'training-isolated',
+      'crm-source-of-truth': 'external-note',
     },
   });
   assert.equal(failedQuiz.attempt.isPassed, false);
   assert.equal(failedQuiz.detail.task.progress.status, 'in_progress');
   assert.equal(Boolean(failedQuiz.attempt.results[0].hint), true);
 
-  const passedQuiz = await submitQuizAttempt(actor, 'admin.client.create', {
+  const passedQuiz = await submitQuizAttempt(actor, taskKey, {
     answers: {
-      'client-required-fields': 'name-phone-source-note',
-      'client-training-mode': 'training-isolated',
+      'crm-source-of-truth': 'crm-action',
     },
   });
   assert.equal(passedQuiz.attempt.isPassed, true);
   assert.equal(passedQuiz.detail.task.progress.quiz.isPassed, true);
   assert.equal(passedQuiz.detail.task.progress.status, 'completed');
   assert.equal(
-    progressRows.get('admin.client.create').status,
+    progressRows.get(taskKey).status,
     'completed',
   );
+});
+
+test('pilot card-format tasks do not expose guided practice in detail response', async () => {
+  db.OnboardingProgress = {
+    async findOne() {
+      return null;
+    },
+  };
+
+  const actor = { id: 22, role: 'admin' };
+  const taskKeys = [
+    'admin.client.create',
+    'admin.booking.create-phone',
+    'admin.subscription.redemption-review',
+  ];
+
+  for (const taskKey of taskKeys) {
+    const detail = await getTaskDetail(actor, taskKey);
+
+    assert.equal(detail.task.guidance.hasPractice, false);
+    assert.equal(detail.task.guidance.practiceStepCount, 0);
+    assert.equal(detail.task.practice.autoTrainingMode, false);
+    assert.deepEqual(detail.task.practice.steps, []);
+    assert.deepEqual(detail.task.practice.targetSelectors, []);
+    assert.equal(detail.task.practice.testData, null);
+    assert.equal(detail.task.progress.practice.totalSteps, 0);
+  }
+
+  await assert.rejects(
+    () => startPractice(actor, 'admin.client.create'),
+    /Практический режим для этой инструкции отключен/,
+  );
+});
+
+test('re-completing an updated instruction acknowledges the current content version', async () => {
+  const completedAt = new Date('2026-06-01T10:00:00.000Z');
+  const row = {
+    accountId: 22,
+    completedAt,
+    metadata: {},
+    role: 'admin',
+    status: 'completed',
+    taskKey: 'admin.client.create',
+    async update(payload) {
+      Object.assign(row, payload);
+      return row;
+    },
+  };
+
+  db.OnboardingProgress = {
+    async create() {
+      throw new Error('existing progress should be updated');
+    },
+    async findAll() {
+      return [row];
+    },
+    async findOne({ where }) {
+      return where.taskKey === row.taskKey ? row : null;
+    },
+  };
+
+  const result = await completeTask(
+    { id: 22, role: 'admin' },
+    'admin.client.create',
+  );
+  const task = findResponseTask(result, 'admin.client.create');
+
+  assert.equal(row.completedAt, completedAt);
+  assert.equal(Boolean(row.metadata.lesson.contentReviewedAt), true);
+  assert.equal(Boolean(row.metadata.lesson.contentReviewedVersionAt), true);
+  assert.equal(task.progress.lesson.isUpdatedAfterCompletion, false);
 });
 
 test('owner can inspect training data summary by role', async () => {
@@ -714,24 +836,20 @@ test('prepayments route checkpoints require active task context', () => {
   );
 });
 
-test('admin client create quest only matches the guided training payload', () => {
+test('pilot client create card task does not match ordinary client creation', () => {
   assert.deepEqual(
     listMatchingTasks('admin', 'client.created', {
-      name: 'Иван Иванович Тестов',
-      note: '[training] создано в задании администратора',
-      phoneNormalized: '9000000999',
-      source: 'Онбординг',
-    }).map((task) => task.key),
-    ['admin.client.create'],
+      name: 'Любой новый клиент',
+      phoneNormalized: '9000000000',
+      source: 'Ресепшн',
+    }),
+    [],
   );
   assert.deepEqual(
     listMatchingTasks('admin', 'client.created', {
-      name: 'Иван Иванович Тестов',
-      note: '[training] создано в задании администратора',
-      phoneNormalized: '9000000999',
-      source: 'Ресепшн (Админ)',
-    }),
-    [],
+      taskKey: 'admin.client.create',
+    }).map((task) => task.key),
+    ['admin.client.create'],
   );
 });
 

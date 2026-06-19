@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft,
@@ -9,6 +9,7 @@ import {
   Circle,
   Database,
   GraduationCap,
+  ImageOff,
   ListChecks,
   RefreshCw,
   RotateCcw,
@@ -67,6 +68,15 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
 
 function getTaskStatus(task: OnboardingTask) {
+  if (task.progress.isCompleted && task.progress.lesson.isUpdatedAfterCompletion) {
+    return {
+      className:
+        'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300',
+      icon: Sparkles,
+      label: 'Обновлено',
+    };
+  }
+
   if (task.progress.isCompleted) {
     return {
       className:
@@ -357,6 +367,8 @@ function TaskCard({
   const status = getTaskStatus(task);
   const StatusIcon = status.icon;
   const completedAt = formatCompletedAt(task.progress.completedAt);
+  const lessonUpdatedAt = formatCompletedAt(task.progress.lesson.updatedAt);
+  const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
 
   return (
     <article
@@ -408,6 +420,12 @@ function TaskCard({
               {task.progress.isCompleted ? 'инструкция пройдена' : 'карточки инструкции'}
             </span>
             {completedAt && <span>Завершено: {completedAt}</span>}
+            {isUpdatedAfterCompletion && lessonUpdatedAt && (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                Обновлено: {lessonUpdatedAt}
+              </span>
+            )}
           </div>
         </div>
 
@@ -683,17 +701,131 @@ function OnboardingListView({
   );
 }
 
-function getInstructionCardStorageKey(role: AccountRole, taskKey: string) {
-  return `padel-park:onboarding-card:${role}:${taskKey}`;
+function getInstructionCardStorageKey(
+  role: AccountRole,
+  taskKey: string,
+  lessonUpdatedAt?: string | null,
+) {
+  return `padel-park:onboarding-card:${role}:${taskKey}:${lessonUpdatedAt || 'draft'}`;
 }
 
-function getCardScreenshot(
+function getCardScreenshots(
   task: OnboardingGuidedTask,
   block: OnboardingLessonBlock,
 ) {
-  if (!Number.isInteger(block.screenshotIndex)) return undefined;
+  const indices = Array.isArray(block.screenshotIndices)
+    ? block.screenshotIndices
+    : Number.isInteger(block.screenshotIndex)
+      ? [Number(block.screenshotIndex)]
+      : [];
 
-  return task.lesson.screenshots[Number(block.screenshotIndex)];
+  return indices
+    .map((index) => task.lesson.screenshots[index])
+    .filter(Boolean);
+}
+
+function ScreenshotCallouts({
+  embedded = false,
+  callouts,
+}: {
+  embedded?: boolean;
+  callouts?: OnboardingGuidedTask['lesson']['screenshots'][number]['callouts'];
+}) {
+  if (embedded) return null;
+  if (!Array.isArray(callouts) || callouts.length === 0) return null;
+
+  return (
+    <span className="pointer-events-none absolute inset-0 [container-type:inline-size]">
+      {callouts.map((callout, index) => (
+        <span
+          key={`frame-${callout.label || index}-${callout.x}-${callout.y}`}
+          className="absolute rounded-[2px] border border-primary/90 bg-primary/[0.04]"
+          style={{
+            borderWidth: 'clamp(1px, 0.12cqw, 2px)',
+            height: `${callout.height || 8}%`,
+            left: `${callout.x}%`,
+            top: `${callout.y}%`,
+            width: `${callout.width || 8}%`,
+          }}
+        />
+      ))}
+      {callouts.map((callout, index) => (
+        <span
+          key={`marker-${callout.label || index}-${callout.x}-${callout.y}`}
+          className="absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-primary font-semibold leading-none text-primary-foreground shadow-sm ring-1 ring-background [container-type:inline-size]"
+          style={{
+            aspectRatio: '1 / 1',
+            height: 'auto',
+            left: `${callout.labelX ?? callout.x}%`,
+            maxWidth: '14px',
+            minWidth: '8px',
+            top: `${callout.labelY ?? callout.y}%`,
+            width: `clamp(8px, ${callout.markerSize || 1.8}%, 14px)`,
+          }}
+        >
+          <span
+            className="leading-none"
+            style={{
+              fontSize: '62cqw',
+            }}
+          >
+            {callout.label || index + 1}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ScreenshotCaption({
+  asFigureCaption = false,
+  screenshot,
+}: {
+  asFigureCaption?: boolean;
+  screenshot: OnboardingGuidedTask['lesson']['screenshots'][number];
+}) {
+  const legendItems = (screenshot.callouts || []).filter((callout) =>
+    callout.text,
+  );
+
+  if (!screenshot.caption && legendItems.length === 0) return null;
+
+  const CaptionTag = asFigureCaption ? 'figcaption' : 'div';
+
+  return (
+    <CaptionTag className="border-t bg-background px-3 py-2 text-xs text-muted-foreground">
+      {screenshot.caption && <p>{screenshot.caption}</p>}
+      {legendItems.length > 0 && (
+        <ol className="mt-2 grid gap-1">
+          {legendItems.map((callout, index) => (
+            <li
+              key={`${callout.label || index}-${callout.text}`}
+              className="grid grid-cols-[auto_minmax(0,1fr)] gap-2 leading-4"
+            >
+              <span className="font-semibold text-primary">
+                {callout.label || index + 1}
+              </span>
+              <span>{callout.text}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </CaptionTag>
+  );
+}
+
+function MissingScreenshotNotice({ text }: { text: string }) {
+  return (
+    <div className="mt-5 rounded-md border border-dashed border-amber-300 bg-amber-50/80 p-3 text-sm text-amber-900 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200">
+      <div className="flex gap-2">
+        <ImageOff className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <p className="font-medium">missing screenshot</p>
+          <p className="mt-1 leading-5">{text}</p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function InstructionScreenshot({
@@ -704,31 +836,43 @@ function InstructionScreenshot({
   title: string;
 }) {
   const alt = screenshot.alt || screenshot.caption || title;
+  const [open, setOpen] = useState(false);
+  const closeZoom = () => setOpen(false);
 
   return (
-    <Dialog>
-      <figure className="flex min-h-[260px] flex-col overflow-hidden rounded-md border bg-muted/20">
+    <Dialog open={open} onOpenChange={setOpen}>
+      <figure
+        className={cn(
+          'flex flex-col overflow-hidden rounded-md border bg-muted/20',
+          screenshot.kind === 'crop' ? 'min-h-[170px]' : 'min-h-[260px]',
+        )}
+      >
         <DialogTrigger asChild>
           <button
             type="button"
             className="group relative flex flex-1 cursor-zoom-in items-center justify-center p-3 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             aria-label="Открыть скриншот крупнее"
           >
-            <img
-              src={screenshot.src}
-              alt={alt}
-              className="max-h-[520px] w-full object-contain"
-            />
+            <span className="relative block w-full">
+              <img
+                src={screenshot.src}
+                alt={alt}
+                className={cn(
+                  'w-full object-contain',
+                  screenshot.kind === 'crop' ? 'max-h-[300px]' : 'max-h-[520px]',
+                )}
+              />
+              <ScreenshotCallouts
+                callouts={screenshot.callouts}
+                embedded={screenshot.calloutsEmbedded}
+              />
+            </span>
             <span className="pointer-events-none absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
               <ZoomIn className="h-4 w-4" />
             </span>
           </button>
         </DialogTrigger>
-        {screenshot.caption && (
-          <figcaption className="border-t bg-background px-3 py-2 text-xs text-muted-foreground">
-            {screenshot.caption}
-          </figcaption>
-        )}
+        <ScreenshotCaption asFigureCaption screenshot={screenshot} />
       </figure>
 
       <DialogContent
@@ -751,20 +895,54 @@ function InstructionScreenshot({
             <X className="h-4 w-4" />
           </Button>
         </DialogClose>
-        <div className="max-h-[calc(100dvh-5rem)] overflow-auto bg-black p-2 sm:flex sm:items-center sm:justify-center sm:p-4">
-          <img
-            src={screenshot.src}
-            alt={alt}
-            className="h-auto w-[920px] max-w-none object-contain sm:max-h-[calc(100dvh-7rem)] sm:w-auto sm:max-w-full"
-          />
+        <div
+          className="max-h-[calc(100dvh-5rem)] overflow-auto bg-black p-2 sm:flex sm:items-center sm:justify-center sm:p-4"
+          onClick={closeZoom}
+          onPointerDownCapture={closeZoom}
+        >
+          <span
+            className="relative inline-block"
+            onClick={closeZoom}
+            onPointerDownCapture={closeZoom}
+          >
+            <img
+              src={screenshot.src}
+              alt={alt}
+              className="h-auto w-[920px] max-w-none object-contain sm:max-h-[calc(100dvh-7rem)] sm:w-auto sm:max-w-full"
+              onClick={closeZoom}
+              onPointerDownCapture={closeZoom}
+            />
+            <ScreenshotCallouts
+              callouts={screenshot.callouts}
+              embedded={screenshot.calloutsEmbedded}
+            />
+          </span>
         </div>
-        {screenshot.caption && (
-          <p className="border-t bg-background px-4 py-3 text-sm text-muted-foreground">
-            {screenshot.caption}
-          </p>
-        )}
+        <ScreenshotCaption screenshot={screenshot} />
       </DialogContent>
     </Dialog>
+  );
+}
+
+function InstructionScreenshots({
+  screenshots,
+  title,
+}: {
+  screenshots: OnboardingGuidedTask['lesson']['screenshots'];
+  title: string;
+}) {
+  if (screenshots.length === 0) return null;
+
+  return (
+    <div className="grid min-w-0 gap-3">
+      {screenshots.map((item) => (
+        <InstructionScreenshot
+          key={`${item.src}-${item.caption || item.alt || title}`}
+          screenshot={item}
+          title={title}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -783,7 +961,11 @@ function InstructionCardReader({
     task.lesson.blocks.length > 0
       ? task.lesson.blocks
       : [{ text: task.description, type: 'paragraph' }];
-  const storageKey = getInstructionCardStorageKey(role, task.key);
+  const storageKey = getInstructionCardStorageKey(
+    role,
+    task.key,
+    task.lesson.updatedAt || task.progress.lesson.updatedAt,
+  );
   const [cardIndex, setCardIndex] = useState(() => {
     if (typeof window === 'undefined') return 0;
 
@@ -792,12 +974,14 @@ function InstructionCardReader({
   });
   const safeIndex = Math.max(0, Math.min(cardIndex, blocks.length - 1));
   const block = blocks[safeIndex];
-  const screenshot = getCardScreenshot(task, block);
+  const screenshots = getCardScreenshots(task, block);
+  const hasScreenshots = screenshots.length > 0;
   const title =
     block.title ||
     (block.type === 'heading' ? block.text : `Карточка ${safeIndex + 1}`);
   const showText = block.type !== 'heading' || Boolean(block.title);
   const isFinalCard = safeIndex === blocks.length - 1;
+  const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
   const progressPercent = Math.round(((safeIndex + 1) / blocks.length) * 100);
 
   const saveCardIndex = (nextIndex: number) => {
@@ -851,7 +1035,7 @@ function InstructionCardReader({
         <div
           className={cn(
             'grid gap-5 p-5',
-            screenshot
+            hasScreenshots
               ? 'min-h-[440px] lg:grid-cols-[minmax(0,0.9fr)_minmax(360px,1.1fr)]'
               : 'min-h-[320px]',
           )}
@@ -859,7 +1043,7 @@ function InstructionCardReader({
           <div
             className={cn(
               'flex min-w-0 flex-col justify-center',
-              !screenshot && 'mx-auto w-full max-w-3xl',
+              !hasScreenshots && 'mx-auto w-full max-w-3xl',
             )}
           >
             <Badge variant="outline" className="w-fit">
@@ -881,10 +1065,13 @@ function InstructionCardReader({
                 ))}
               </ul>
             )}
+            {block.missingScreenshot && !hasScreenshots && (
+              <MissingScreenshotNotice text={block.missingScreenshot} />
+            )}
           </div>
 
-          {screenshot && (
-            <InstructionScreenshot screenshot={screenshot} title={title} />
+          {hasScreenshots && (
+            <InstructionScreenshots screenshots={screenshots} title={title} />
           )}
         </div>
       </article>
@@ -907,10 +1094,11 @@ function InstructionCardReader({
           ))}
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:justify-end">
+        <div className="grid grid-cols-1 gap-2 sm:flex sm:justify-end">
           <Button
             type="button"
             variant="outline"
+            className="w-full justify-center whitespace-normal text-center sm:w-auto"
             onClick={() => saveCardIndex(safeIndex - 1)}
             disabled={safeIndex === 0}
           >
@@ -918,15 +1106,21 @@ function InstructionCardReader({
           </Button>
           <Button
             type="button"
+            className="w-full justify-center whitespace-normal text-center sm:w-auto"
             onClick={handleNext}
-            disabled={isPending || (task.progress.isCompleted && isFinalCard)}
+            disabled={
+              isPending ||
+              (task.progress.isCompleted && !isUpdatedAfterCompletion && isFinalCard)
+            }
           >
             {isPending ? (
               <RefreshCw className="h-4 w-4 animate-spin" />
             ) : (
               <CheckCircle2 className="h-4 w-4" />
             )}
-            {task.progress.isCompleted && isFinalCard
+            {task.progress.isCompleted && isUpdatedAfterCompletion && isFinalCard
+              ? 'Отметить обновление'
+              : task.progress.isCompleted && isFinalCard
               ? 'Инструкция завершена'
               : isFinalCard
                 ? 'Завершить инструкцию'
@@ -951,6 +1145,8 @@ function TaskDetailView({
   const roleTitle = getAccountRoleLabel(detail.selectedRole);
   const status = getTaskStatus(task);
   const StatusIcon = status.icon;
+  const lessonUpdatedAt = formatCompletedAt(task.progress.lesson.updatedAt);
+  const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-5 px-4 py-6 sm:px-6 lg:px-8">
@@ -978,6 +1174,21 @@ function TaskDetailView({
         <p className="mt-2 max-w-3xl text-sm text-muted-foreground">
           {task.description}
         </p>
+        {isUpdatedAfterCompletion && (
+          <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="flex gap-2">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <div className="font-medium">Инструкция обновлена после вашего прохождения</div>
+                <p className="mt-1 text-amber-800/90 dark:text-amber-200/80">
+                  Прочитайте карточки еще раз и на последней карточке нажмите
+                  “Отметить обновление”, чтобы убрать пометку.
+                  {lessonUpdatedAt ? ` Обновлено: ${lessonUpdatedAt}.` : ''}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <InstructionCardReader
@@ -1014,7 +1225,18 @@ export default function OnboardingPage() {
     enabled: Boolean(account?.role && taskKey),
     queryFn: () => getOnboardingTaskDetail(taskKey!, roleForRequest),
     queryKey: queryKeys.onboarding.task(taskKey || 'none', roleForQueryKey),
+    refetchOnMount: 'always',
+    refetchOnReconnect: 'always',
+    refetchOnWindowFocus: 'always',
   });
+
+  useEffect(() => {
+    if (!account?.role || !taskKey) return;
+
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.onboarding.task(taskKey, roleForQueryKey),
+    });
+  }, [account?.role, queryClient, roleForQueryKey, taskKey]);
 
   const completeInstructionMutation = useMutation({
     mutationFn: (detail: OnboardingTaskDetail) =>
@@ -1030,7 +1252,11 @@ export default function OnboardingPage() {
       queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
       clearStoredActiveOnboardingQuest();
-      toast.success('Инструкция завершена');
+      toast.success(
+        detail.task.progress.lesson.isUpdatedAfterCompletion
+          ? 'Обновление инструкции отмечено'
+          : 'Инструкция завершена',
+      );
     },
   });
 

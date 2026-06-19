@@ -51,10 +51,17 @@ lesson: {
 
 For instruction cards:
 
+- release-quality lessons with screenshots use `section-first-cards`;
+- the first screenshot-backed card is always a concrete `Открой ...` command with one real screenshot of the starting CRM section, card or working screen;
 - add `screenshotIndex` only when the screenshot directly illustrates the card text;
 - `screenshotIndex` points to `lesson.screenshots[index]`;
+- form/fill/result cards should have screenshots when the screenshot helps the user recognize the state;
 - do not reuse a screenshot just to fill space;
-- leave conceptual, summary or decision cards text-only.
+- leave click-only, conceptual, summary or decision cards text-only;
+- do not use arrows, frames, numbers, CSS callouts, generated illustrations or crop fragments in release screenshots.
+- synthetic demo CRM names and phones are allowed only when they are clearly local demo data, not real client data;
+- do not use noisy QA labels such as `QA DND ...`, `[training]`, random IDs or mandatory test names in visible release screenshots;
+- trainer-facing screenshots must not expose phones, external IDs, call history or client-base management fields.
 
 ## Refresh workflow
 
@@ -75,14 +82,16 @@ When a feature changes a screen used in onboarding:
 - screenshot paths start with `/onboarding/`;
 - referenced files exist under `client/public/onboarding`;
 - card `screenshotIndex` values point to existing screenshots;
-- every `step` card, and every card with `screenshotIndex`, has a real CRM screenshot;
+- every card with `screenshotIndex` has a real CRM screenshot;
+- every screenshot-backed lesson starts with a starting screen screenshot;
 - text-only cards do not reserve image space in the UI.
 
 Current release baseline:
 
-- `71/71` onboarding tasks have instruction-card lessons;
-- `34` owner/manager knowledge guides are text-first deep guides with `10-14` cards per section;
-- each owner/manager knowledge guide has one real CRM screenshot on the screen-map card;
-- `108/108` screenshot-backed instruction cards resolve to screenshots;
-- `373` final, conceptual or knowledge cards are intentionally text-only;
+- `109/109` onboarding tasks have instruction-card lessons;
+- `34` owner/manager knowledge guides are text-first deep guides with starting screen screenshots;
+- `94` lessons with screenshots use `section-first-cards`;
+- `15` lessons are text-only until a dedicated screenshot refresh adds real CRM assets;
+- `135/135` screenshot-backed instruction cards resolve to screenshots;
+- `670` action, review, final, conceptual or knowledge cards are intentionally text-only;
 - QA screenshots belong in `outputs/qa/...` and must not be wired into the catalog.

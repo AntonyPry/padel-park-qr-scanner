@@ -19,8 +19,12 @@ export interface OnboardingTaskProgress {
   isCompleted: boolean;
   isNext: boolean;
   lesson: {
+    isUpdatedAfterCompletion: boolean;
     isRead: boolean;
     readAt: string | null;
+    reviewedAt: string | null;
+    reviewedVersionAt: string | null;
+    updatedAt: string | null;
   };
   practice: {
     activeStepKey: string | null;
@@ -69,23 +73,43 @@ export interface OnboardingTask {
 
 export interface OnboardingLessonBlock {
   items?: string[];
+  missingScreenshot?: string;
   screenshotIndex?: number;
+  screenshotIndices?: number[];
+  screenshotRequired?: boolean;
   text: string;
   title?: string;
   type: string;
 }
 
+export interface OnboardingScreenshotCallout {
+  height?: number;
+  label?: string;
+  labelX?: number;
+  labelY?: number;
+  markerSize?: number;
+  text?: string;
+  width?: number;
+  x: number;
+  y: number;
+}
+
 export interface OnboardingLessonScreenshot {
   alt?: string;
+  callouts?: OnboardingScreenshotCallout[];
+  calloutsEmbedded?: boolean;
   caption?: string;
+  kind?: 'overview' | 'crop';
   src: string;
 }
 
 export interface OnboardingLesson {
   blocks: OnboardingLessonBlock[];
+  format?: 'section-first-cards' | string;
   screenshots: OnboardingLessonScreenshot[];
   summary: string;
   title: string;
+  updatedAt: string | null;
 }
 
 export interface OnboardingPracticeStep {

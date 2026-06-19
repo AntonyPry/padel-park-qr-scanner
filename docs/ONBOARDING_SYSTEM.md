@@ -11,6 +11,7 @@ The onboarding system teaches CRM users by role and scenario. Instructions live 
 - API: `/api/onboarding`
 - Release guardrail: every user-facing feature must include `Onboarding impact`
 - Release workflow: `docs/ONBOARDING_RELEASE_WORKFLOW.md`
+- Instruction format spec: `docs/ONBOARDING_INSTRUCTION_FORMAT.md`
 - Screenshot workflow: `docs/ONBOARDING_SCREENSHOTS.md`
 - Audit command: `server npm run onboarding:audit`
 
@@ -85,7 +86,11 @@ The task detail page uses a simple card-reader flow:
 - only one card is visible at a time;
 - navigation is `Назад` / `Далее`;
 - screenshots are shown inside the card and must be real CRM screenshots for release-quality tasks;
-- knowledge guides show a real CRM screenshot on the screen-map card and stay text-only when a card explains calculations, data lineage or management logic rather than a visible UI state;
+- release-quality lessons with screenshots use `section-first-cards`: the first card is a concrete `Открой ...` command with one real screenshot of the starting CRM screen, then the action/review cards explain what to click, what to fill and how to verify;
+- action cards can stay text-only when the section screenshot already orients the user and an additional screenshot would only repeat the same screen;
+- form/fill/result cards should show one real CRM screenshot when the screenshot directly illustrates the form state or final verification state;
+- knowledge guides also start with a concrete instruction to open the section and stay text-only when a card explains calculations, data lineage or management logic rather than a visible UI state;
+- every lesson has `updatedAt`; completed tasks whose lesson changed after the user's `completedAt` are shown as `Обновлено` until the user opens the lesson and marks the updated version read;
 - the last card completes the instruction;
 - there is no `Попробовать`, no quest bar and no mini-test in the current UI.
 
@@ -93,16 +98,18 @@ Practice targets through `data-onboarding-target` may remain in code for future 
 
 Instruction screenshots live under `client/public/onboarding/<role>/<task-slug>/`.
 Shared owner/manager section-map screenshots live under `client/public/onboarding/knowledge/<section-slug>/overview.png`.
-For release-quality instructions, only cards with an explicit `screenshotIndex` show a CRM screenshot. If a card is conceptual or summarizes a decision, leave it text-only instead of reusing a nearby screenshot that does not describe the text.
+For release-quality instructions, only cards with an explicit `screenshotIndex` show a CRM screenshot. The first screenshot-backed card must tell the user which screen to open before reading the rest of the lesson. If a later card is conceptual or summarizes a decision, leave it text-only instead of reusing a nearby screenshot that does not describe the text.
 
 Current release-quality coverage:
 
-- `71/71` catalog tasks have instruction-card lessons;
+- `109/109` catalog tasks have instruction-card lessons;
 - `34` owner/manager knowledge guides cover CRM sections, metrics and role-specific interpretation;
-- owner/manager knowledge guides use `10-14` cards per section for first-time-user process depth;
-- `108/108` screenshot-backed instruction cards resolve to real CRM screenshots;
-- `34` owner/manager knowledge screen-map cards use shared real CRM screenshots;
-- `373` final, conceptual or knowledge cards are intentionally text-only;
+- owner/manager knowledge guides use `11-15` cards per section for first-time-user process depth, including the starting screen card;
+- `94` lessons with screenshots use `section-first-cards`;
+- `15` lessons are text-only until a dedicated screenshot refresh adds real CRM assets;
+- `135/135` screenshot-backed instruction cards resolve to real CRM screenshots;
+- `34` owner/manager knowledge guides start with shared real CRM section screenshots;
+- `670` action, review, final, conceptual or knowledge cards are intentionally text-only;
 - screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
 - shared knowledge screenshots live in `client/public/onboarding/knowledge/<section-slug>/`;
 - role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
@@ -147,7 +154,7 @@ Owners can inspect and clean training data from `/api/onboarding/training-data`.
 
 Owners can inspect completion metrics from `/api/onboarding/metrics`. The endpoint aggregates active accounts, role-path starts, completed task slots, role percentages and per-task completion counts. The onboarding page shows these metrics next to training-data controls so the owner can see which roles are actually moving through the learning paths.
 
-`server npm run onboarding:audit` validates catalog shape, route allowlist, checkpoint event usage, screenshot files and whether catalog routes are registered in the client router. In the current baseline every checkpoint event from the catalog must be referenced either by backend product code or by client route-event code; required instruction screenshots must exist under `client/public/onboarding`. Warnings mean a release missed onboarding wiring or content assets. Use `server npm run onboarding:audit:strict` before release so warnings fail the release gate.
+`server npm run onboarding:audit` validates catalog shape, route allowlist, checkpoint event usage, screenshot files, lesson `updatedAt` dates and whether catalog routes are registered in the client router. In the current baseline every checkpoint event from the catalog must be referenced either by backend product code or by client route-event code; required instruction screenshots must exist under `client/public/onboarding`. Warnings mean a release missed onboarding wiring, content assets or instruction freshness metadata. Use `server npm run onboarding:audit:strict` before release so warnings fail the release gate.
 
 ## Client-side review checkpoints
 

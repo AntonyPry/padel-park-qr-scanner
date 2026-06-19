@@ -4,6 +4,7 @@ const { ACCOUNT_ROLE_VALUES } = require('../../src/constants/account-roles');
 const {
   findOnboardingTask,
   getOnboardingPath,
+  listOnboardingPaths,
   validateOnboardingCatalog,
 } = require('../../src/onboarding/catalog');
 
@@ -22,6 +23,75 @@ function getTaskVisibleText(task) {
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function getTaskScreenshotText(task) {
+  return (task.lesson?.screenshots || [])
+    .flatMap((screenshot) => [
+      screenshot.src,
+      screenshot.alt,
+      screenshot.caption,
+      ...(screenshot.callouts || []).map((callout) => callout.text),
+    ])
+    .filter(Boolean)
+    .join('\n');
+}
+
+function assertFirstOpenScreenBlock(task) {
+  const firstBlock = task.lesson.blocks[0];
+  const visibleText = [
+    firstBlock.title,
+    firstBlock.text,
+    ...(firstBlock.items || []),
+  ]
+    .filter(Boolean)
+    .join('\n')
+    .toLowerCase();
+
+  assert.equal(firstBlock.type, 'overview', `${task.key} first block type`);
+  assert.equal(
+    firstBlock.title.startsWith('Открой'),
+    true,
+    `${task.key} first block should tell which screen to open`,
+  );
+  assert.equal(
+    firstBlock.text,
+    'Перед началом инструкции открой этот экран в CRM. На скриншоте показано, как он должен выглядеть.',
+    `${task.key} first block text`,
+  );
+  assert.equal(
+    /\bобщий\s+ориентир\b/.test(visibleText) ||
+      visibleText.includes(['какой экран', 'должен быть открыт'].join(' ')),
+    false,
+    `${task.key} first block should not use service wording`,
+  );
+  assert.equal(firstBlock.screenshotIndex, 0);
+  assert.equal(Array.isArray(firstBlock.screenshotIndices), false);
+}
+
+function calloutsPartiallyOverlap(first, second) {
+  const firstRight = first.x + (first.width || 8);
+  const firstBottom = first.y + (first.height || 8);
+  const secondRight = second.x + (second.width || 8);
+  const secondBottom = second.y + (second.height || 8);
+  const overlaps =
+    Math.max(first.x, second.x) < Math.min(firstRight, secondRight) &&
+    Math.max(first.y, second.y) < Math.min(firstBottom, secondBottom);
+
+  if (!overlaps) return false;
+
+  const firstContainsSecond =
+    first.x <= second.x &&
+    first.y <= second.y &&
+    firstRight >= secondRight &&
+    firstBottom >= secondBottom;
+  const secondContainsFirst =
+    second.x <= first.x &&
+    second.y <= first.y &&
+    secondRight >= firstRight &&
+    secondBottom >= firstBottom;
+
+  return !firstContainsSecond && !secondContainsFirst;
 }
 
 test('onboarding catalog has a valid path for every account role', () => {
@@ -45,6 +115,217 @@ test('onboarding task keys are role-prefixed and discoverable', () => {
   assert.equal(match.task.badge, 'Телефонная бронь');
   assert.equal(match.path.role, 'admin');
   assert.equal(match.mission.key, 'admin.bookings');
+});
+
+test('pilot action instructions use section-first action steps format', () => {
+  const pilotTasks = [
+    {
+      key: 'admin.client.create',
+      missingScreenshotCount: 0,
+      role: 'admin',
+      screenshotCount: 3,
+      expectedRoute: '/admin/clients',
+    },
+    {
+      key: 'admin.booking.create-phone',
+      missingScreenshotCount: 0,
+      role: 'admin',
+      screenshotCount: 3,
+      expectedRoute: '/admin/bookings',
+    },
+    {
+      key: 'admin.subscription.redemption-review',
+      missingScreenshotCount: 0,
+      role: 'admin',
+      screenshotCount: 3,
+      expectedRoute: '/admin/clients',
+    },
+  ];
+  const forbiddenPilotSnippets = [
+    'Иван Иванович Тестов',
+    '+79000000999',
+    '[training]',
+    'Placeholder',
+    'placeholder.svg',
+    'result-placeholder',
+    'open-client-placeholder',
+    'redeem-placeholder',
+    'history-placeholder',
+  ];
+
+  for (const { expectedRoute, key, missingScreenshotCount, role, screenshotCount } of pilotTasks) {
+    const { task } = findOnboardingTask(role, key);
+    const blocks = task.lesson.blocks;
+    const screenshotText = getTaskScreenshotText(task);
+    const visibleText = getTaskVisibleText(task);
+    const screenshotBackedBlocks = blocks.filter((block) =>
+      Array.isArray(block.screenshotIndices) ||
+      Number.isInteger(block.screenshotIndex),
+    );
+    const missingScreenshotBlocks = blocks.filter((block) =>
+      block.missingScreenshot,
+    );
+
+    assert.equal(task.kind, 'action');
+    assert.equal(task.route, expectedRoute);
+    assert.equal(task.practice?.enabled, false);
+    assert.equal(task.lesson.format, 'section-first-cards');
+    assert.equal(blocks.length, 4);
+    assert.equal(task.lesson.screenshots.length, screenshotCount);
+    assert.equal(missingScreenshotBlocks.length, missingScreenshotCount);
+    assert.equal(
+      blocks.every((block) => !block.missingScreenshot),
+      true,
+    );
+    assert.equal(
+      new Set(task.lesson.screenshots.map((screenshot) => screenshot.src)).size,
+      task.lesson.screenshots.length,
+    );
+    assertFirstOpenScreenBlock(task);
+    assert.equal(blocks[1].title.startsWith('Что нажать:'), true);
+    assert.equal(blocks[2].title.startsWith('Что заполнить:'), true);
+    assert.equal(blocks[3].title.startsWith('Как проверить результат:'), true);
+    assert.equal(blocks[2].items.some((item) => /Сохран|Создать бронь|спис/i.test(item)), true);
+    assert.equal(blocks.slice(1).every((block) => block.type === 'step'), true);
+    assert.equal(blocks[1].screenshotRequired, false);
+    assert.equal(Number.isInteger(blocks[1].screenshotIndex), false);
+    assert.equal(blocks[2].screenshotIndex, 1);
+    assert.equal(blocks[3].screenshotIndex, 2);
+    assert.equal(
+      blocks.every((block) => !Array.isArray(block.screenshotIndices)),
+      true,
+    );
+    assert.equal(
+      task.lesson.screenshots.every((screenshot) => screenshot.src.endsWith('.png')),
+      true,
+    );
+    assert.equal(
+      task.lesson.screenshots.some((screenshot) => screenshot.kind === 'overview'),
+      true,
+    );
+    assert.equal(
+      task.lesson.screenshots.some((screenshot) => screenshot.kind === 'crop'),
+      false,
+    );
+    assert.equal(
+      task.lesson.screenshots.every(
+        (screenshot) =>
+          !Array.isArray(screenshot.callouts) && screenshot.calloutsEmbedded !== true,
+      ),
+      true,
+      `${key} pilot screenshots should use clean overview screenshots instead of callouts`,
+    );
+    assert.equal(
+      screenshotBackedBlocks.every((block) => {
+        const indices = Array.isArray(block.screenshotIndices)
+          ? block.screenshotIndices
+          : [block.screenshotIndex];
+        return indices.every((index) => {
+          const screenshot = task.lesson.screenshots[index];
+          return screenshot?.src?.endsWith('.png') && screenshot.caption;
+        });
+      }),
+      true,
+    );
+    assert.equal(screenshotText.includes('Попробовать'), false);
+    assert.equal(screenshotText.includes('quest'), false);
+
+    for (const snippet of forbiddenPilotSnippets) {
+      assert.equal(
+        visibleText.includes(snippet) || screenshotText.includes(snippet),
+        false,
+        `${key} should not contain pilot-format forbidden snippet: ${snippet}`,
+      );
+    }
+  }
+});
+
+test('non-owner action lessons use screenshot-backed section-first steps', () => {
+  const taskTargets = [
+    ['admin', 'admin.booking.training-plan-link'],
+    ['admin', 'admin.prepayments.dashboard-review'],
+    ['admin', 'admin.certificate.redemption-review'],
+    ['accountant', 'accountant.prepayments.dashboard-review'],
+    ['accountant', 'accountant.corporate.deposit-review'],
+    ['accountant', 'accountant.corporate.export-review'],
+    ['trainer', 'trainer.methodology.review-base'],
+    ['trainer', 'trainer.client.skill-map-review'],
+    ['trainer', 'trainer.training-note.structured-record'],
+    ['trainer', 'trainer.recommendation.personal-review'],
+    ['trainer', 'trainer.recommendation.group-review'],
+    ['trainer', 'trainer.training-plan.lifecycle'],
+  ];
+  const forbiddenSnippets = [
+    'экран показывает',
+    'как работает CRM',
+    'QA DND',
+    '[training]',
+    'увеличенное использовано',
+  ];
+
+  for (const [role, key] of taskTargets) {
+    const { task } = findOnboardingTask(role, key);
+    const blocks = task.lesson.blocks;
+    const visibleText = getTaskVisibleText(task).toLowerCase();
+    const screenshotText = getTaskScreenshotText(task).toLowerCase();
+
+    assert.equal(task.lesson.format, 'section-first-cards', key);
+    assert.equal(task.lesson.screenshots.length >= 1, true, key);
+    assert.equal(task.lesson.screenshots[0].src.startsWith('/onboarding/'), true, key);
+    assertFirstOpenScreenBlock(task);
+    assert.equal(
+      blocks.slice(1).some((block) => block.title?.startsWith('Что нажать:')),
+      true,
+      `${key} should explain what to open or click`,
+    );
+    assert.equal(
+      blocks.slice(1).some((block) => /Что (заполнить|сверить|можно менять)/.test(block.title || '')),
+      true,
+      `${key} should explain what to fill or verify`,
+    );
+    assert.equal(
+      blocks.slice(1).some((block) => block.title?.startsWith('Как проверить')),
+      true,
+      `${key} should explain how to verify result`,
+    );
+
+    for (const snippet of forbiddenSnippets) {
+      const normalizedSnippet = snippet.toLowerCase();
+      assert.equal(
+        visibleText.includes(normalizedSnippet) ||
+          screenshotText.includes(normalizedSnippet),
+        false,
+        `${key} should not contain outdated wording: ${snippet}`,
+      );
+    }
+  }
+});
+
+test('screenshot-backed lessons start with a concrete open-screen card', () => {
+  for (const pathConfig of listOnboardingPaths()) {
+    for (const mission of pathConfig.missions) {
+      for (const task of mission.tasks) {
+        const screenshots = task.lesson?.screenshots || [];
+        if (screenshots.length === 0) continue;
+
+        assert.equal(
+          task.lesson.format,
+          'section-first-cards',
+          `${task.key} should use section-first instruction format`,
+        );
+        assertFirstOpenScreenBlock(task);
+        assert.equal(
+          task.lesson.screenshots.every(
+            (screenshot) =>
+              !Array.isArray(screenshot.callouts) &&
+              screenshot.calloutsEmbedded !== true,
+          ),
+          true,
+          `${task.key} should not expose screenshot callout metadata`,
+        );
+      }
+    }
+  }
 });
 
 test('manager and owner have knowledge guides for every CRM section', () => {
@@ -137,25 +418,15 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     for (const task of knowledgeTasks) {
       assert.equal(task.kind, 'review');
       assert.equal(task.trainingMode.recommended, false);
-      if (
-        [
-          '/admin/certificates',
-          '/admin/corporate-clients',
-          '/admin/methodology',
-          '/admin/methodology-analytics',
-          '/admin/prepayments',
-        ].includes(task.route)
-      ) {
-        assert.equal(task.lesson.screenshots.length, 0);
-      } else {
-        assert.equal(task.lesson.screenshots.length, 1);
-        assert.equal(
-          task.lesson.screenshots[0].src,
-          `/onboarding/knowledge/${task.key.split('.').at(-1)}/overview.png`,
-        );
-      }
+      assert.equal(task.lesson.screenshots.length, 1);
       assert.equal(
-        task.lesson.blocks.every((block) => block.type === 'paragraph'),
+        task.lesson.screenshots[0].src,
+        `/onboarding/knowledge/${task.key.split('.').at(-1)}/overview.png`,
+      );
+      assert.equal(task.lesson.format, 'section-first-cards');
+      assertFirstOpenScreenBlock(task);
+      assert.equal(
+        task.lesson.blocks.slice(1).every((block) => block.type === 'paragraph'),
         true,
       );
       assert.equal(
@@ -163,7 +434,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
           .length,
         task.lesson.screenshots.length > 0 ? 1 : 0,
       );
-      assert.equal(task.lesson.blocks.length >= 10, true);
+      assert.equal(task.lesson.blocks.length >= 11, true);
       assert.equal(
         task.lesson.blocks.at(-1).title,
         'Как пользоваться разделом в CRM',
@@ -229,7 +500,7 @@ test('training methodology onboarding scenarios are wired by role', () => {
   });
   assert.equal(
     trainerPlan.task.lesson.blocks.some((block) =>
-      block.text.includes('После завершения CRM создает или обновляет тренировочные записи'),
+      block.text.includes('фактические упражнения попали в тренировочные записи участников'),
     ),
     true,
   );

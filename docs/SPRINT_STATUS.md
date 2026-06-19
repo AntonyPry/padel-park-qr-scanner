@@ -1,7 +1,7 @@
 # Статус спринтов CRM
 
 Дата фиксации: 2026-05-28.
-Последнее обновление: 2026-06-06.
+Последнее обновление: 2026-06-19.
 
 Этот файл - единый источник правды по спринтам. Перед началом нового спринта сначала обновляем этот документ: что уже сделано, что частично, что осталось, какие критерии приемки.
 
@@ -1985,6 +1985,160 @@
 - accountant понимает связь корпоративного пополнения с ручной финансовой операцией и выгрузкой детализации;
 - новые обзорные задания закрываются только безопасными событиями просмотра с активным `taskKey`;
 - учебные корпоративные балансы можно найти и очистить через onboarding training data.
+
+## Sprint 44 - Section-first instruction format
+
+Цель: закрепить и масштабировать новый формат onboarding-инструкций после приемки пилота.
+
+Общий статус: `done`.
+
+ТЗ:
+
+- первый этап урока всегда показывает реальный скриншот раздела CRM: карточка с командой `Открой ...`;
+- дальше идут карточки самого действия или проверки: что нажать, что заполнить, как проверить результат;
+- click-only карточки могут быть текстовыми, если первый скриншот раздела уже дает контекст;
+- карточки формы, модалки или результата получают один общий screenshot, если он прямо помогает понять состояние;
+- запрещены стрелки, рамки, номера, crop-фрагменты, CSS-callouts и сгенерированные картинки;
+- если реального screenshot asset еще нет, урок остается текстовым до отдельного screenshot refresh.
+
+Сделано:
+
+- добавлен документ `docs/ONBOARDING_INSTRUCTION_FORMAT.md`;
+- `docs/ONBOARDING_SYSTEM.md`, `docs/ONBOARDING_RELEASE_WORKFLOW.md` и `docs/ONBOARDING_SCREENSHOTS.md` обновлены под новый формат;
+- каталог автоматически переводит все screenshot-backed lessons в формат `section-first-cards`;
+- `82` урока со скриншотами начинаются с карточки с командой `Открой ...`;
+- `27` уроков без screenshot assets оставлены текстовыми до отдельного refresh;
+- action-пилоты `admin.client.create`, `admin.booking.create-phone`, `admin.subscription.redemption-review` закреплены как эталон структуры;
+- release audit учитывает section-first формат и продолжает блокировать draft screenshot markers;
+- тесты проверяют, что screenshot-backed lessons не expose callout metadata и стартуют с команды открытия начального экрана.
+
+Результат:
+
+- `109/109` onboarding tasks имеют lesson;
+- `82` lessons используют `section-first-cards`;
+- `123/123` screenshot-backed cards закрыты реальными PNG;
+- `683` карточки намеренно text-only;
+- owner role override и trainer-safe ограничения сохраняются.
+
+Критерии приемки:
+
+- сотрудник сначала видит раздел, затем читает действие без визуального шума;
+- скриншот на карточке соответствует тексту карточки;
+- action-сценарии не требуют тестовых ФИО/телефонов как обязательных данных;
+- `/admin/onboarding/:taskKey` работает на desktop и `390px` без overflow и console errors/warnings;
+- `server npm run onboarding:audit:strict` проходит без warnings.
+
+## Sprint 45 - Freshness markers for updated lessons
+
+Цель: показать пользователю, какие инструкции изменились после того, как он их уже проходил.
+
+Общий статус: `done`.
+
+ТЗ:
+
+- у каждого onboarding lesson есть дата версии `updatedAt`;
+- если `lesson.updatedAt` позже, чем дата прохождения пользователем, задача остается засчитанной, но получает видимую пометку `Обновлено`;
+- на детальной странице пользователь видит пояснение, что инструкция изменилась после прохождения;
+- последняя кнопка в обновленной уже пройденной инструкции снова активна и позволяет отметить текущую версию прочитанной;
+- повторная отметка не сбрасывает прогресс и не требует проходить практический режим;
+- strict audit должен падать, если у lesson нет валидного `updatedAt`.
+
+Сделано:
+
+- каталог проставляет `updatedAt` для всех lesson текущего baseline;
+- backend считает `progress.lesson.isUpdatedAfterCompletion`;
+- `completeTask` сохраняет `metadata.lesson.contentReviewedAt` и `contentReviewedVersionAt`;
+- frontend показывает amber-состояние `Обновлено` в списке и на detail page;
+- localStorage позиции карточки учитывает версию урока, поэтому обновленный урок открывается с начала;
+- audit проверяет наличие валидного `updatedAt`.
+
+Критерии приемки:
+
+- уже завершенная инструкция с более новым `lesson.updatedAt` подсвечивается как `Обновлено`;
+- после повторной отметки обновления пометка исчезает;
+- дата обновления видна пользователю;
+- новый механизм работает для owner role override и для обычной роли;
+- `server npm run onboarding:audit:strict` проходит без warnings.
+
+## Sprint 46 - Screenshot-backed action lessons for non-owner roles
+
+Цель: перевести рабочие text-only инструкции admin/accountant/trainer в новый section-first формат с реальным скриншотом раздела и прикладными шагами.
+
+Общий статус: `done`.
+
+ТЗ:
+
+- перевести минимум:
+  - `admin.booking.training-plan-link`;
+  - `admin.prepayments.dashboard-review`;
+  - `admin.certificate.redemption-review`;
+  - `accountant.prepayments.dashboard-review`;
+  - `accountant.corporate.deposit-review`;
+  - `accountant.corporate.export-review`;
+  - `trainer.methodology.review-base`;
+  - `trainer.client.skill-map-review`;
+  - `trainer.training-note.structured-record`;
+  - `trainer.recommendation.personal-review`;
+  - `trainer.recommendation.group-review`;
+  - `trainer.training-plan.lifecycle`;
+- карточка 1: реальный CRM screenshot раздела;
+- дальше: что нажать, что заполнить или сверить, как проверить результат;
+- убрать wording вида `экран показывает` / `как работает CRM` из action-сценариев admin/accountant/trainer;
+- исправить подпись `увеличенное использовано`;
+- закрепить стандарт по demo-данным на screenshots.
+
+Сделано:
+
+- все 12 задач переведены в `section-first-cards`;
+- для admin/accountant/trainer action-сценариев текст переписан в прикладной формат;
+- использованы существующие реальные section screenshots:
+  - `/onboarding/knowledge/bookings/overview.png`;
+  - `/onboarding/knowledge/prepayments/overview.png`;
+  - `/onboarding/knowledge/certificates/overview.png`;
+  - `/onboarding/knowledge/corporate-clients/overview.png`;
+  - `/onboarding/knowledge/methodology/overview.png`;
+  - `/onboarding/trainer/trainer/overview.png`;
+- стандарт по demo-телефонам закреплен в onboarding docs: synthetic demo CRM data можно, noisy QA labels и реальные персональные данные нельзя; trainer screenshots должны оставаться без телефонов;
+- подпись в `admin.subscription.redemption-review` заменена на `обновленное поле «Использовано»`;
+- release baseline обновлен: `94` section-first lessons, `15` text-only lessons, `135/135` screenshot-backed cards, `670` text-only cards.
+
+Критерии приемки:
+
+- каждый из 12 task keys открывается в `/admin/onboarding/:taskKey` с первой карточкой `Открой ...`;
+- в action-тексте есть конкретные шаги: открыть/нажать, заполнить или сверить, проверить результат;
+- trainer-facing инструкции не требуют телефонов и не раскрывают лишние персональные данные;
+- `server npm run onboarding:audit:strict` проходит без warnings;
+- browser QA desktop и `390px` проходит по обновленным задачам без overflow и console errors/warnings.
+
+## Sprint 47 - Open-screen first card and content polish
+
+Цель: убрать служебную первую карточку нового onboarding-формата и сделать начало урока понятной инструкцией.
+
+Общий статус: `done`.
+
+ТЗ:
+
+- первая карточка screenshot-backed урока должна быть командой `Открой ...`, а не абстрактным названием;
+- убрать старые служебные формулировки первой карточки и captions knowledge-скриншотов;
+- сохранить owner/manager knowledge-гайды как knowledge, но с человеческим стартовым экраном;
+- уточнить action-проверки результата и явные действия сохранения/отмены/экспорта;
+- не менять screenshots, routes, checkpoint events, practice mode или permissions.
+
+Сделано:
+
+- `makeSectionOverviewBlock` теперь строит первую карточку по route/task key: `Открой раздел «Клиенты»`, `Открой карточку клиента`, `Открой карточку корпоративного клиента`, `Открой план тренировки` и т.д.;
+- knowledge screenshot captions заменены на текст вида `Так выглядит раздел «...». Открой его перед чтением инструкции.`;
+- обновлены tests/docs под новый open-screen формат;
+- `trainer.recommendation.personal-review`, `admin.booking.mark-paid`, `admin.booking.cancel`, `manager.motivation.update`, `accountant.finance.manual-record`, `accountant.catalog.update-category`, `trainer.training-note.create`, `trainer.training-note.structured-record` получили более конкретные сохранения и проверки результата;
+- повторяющийся trainer knowledge-блок про запись и алгоритм обновления навыков объединен, telephony/finances knowledge-тексты стали короче без потери смысла;
+- release baseline после polish: `94` section-first lessons, `15` text-only lessons, `135/135` screenshot-backed cards, `670` text-only cards.
+
+Критерии приемки:
+
+- все `94` screenshot-backed lessons начинаются с `Открой ...`;
+- в UI/docs/catalog нет старых служебных фраз первой карточки;
+- action-сценарии сохраняют структуру: что нажать, что заполнить или сверить, как проверить результат;
+- browser QA desktop и `390px` проходит по пилотным и representative lessons без overflow и console errors/warnings.
 
 ## Backlog - SaaS-фундамент
 

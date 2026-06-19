@@ -29,8 +29,10 @@ After a feature lands or is ready for review:
 4. Update task `skills`, `badge`, training-mode recommendation and route.
 5. Update owner/manager knowledge guides when the feature changes a section, metric, formula, data source, permission rule or management interpretation.
 6. Update instruction cards and real CRM screenshots when the feature changes a taught screen.
-7. If the feature creates data, add training markers or explicitly document why it is not training-safe yet.
-8. Run the full release gate:
+7. Keep the approved card format from `docs/ONBOARDING_INSTRUCTION_FORMAT.md`: first card is the section screenshot, action cards explain what to click/fill/check, and screenshots are attached only when they directly illustrate a form or result state.
+8. Update lesson `updatedAt` when text, screenshots, routes, rules, metrics or role visibility change, so users who already completed the lesson see `Обновлено`.
+9. If the feature creates data, add training markers or explicitly document why it is not training-safe yet.
+10. Run the full release gate:
 
 ```bash
 cd server
@@ -45,9 +47,9 @@ npm run build
 UI_SMOKE_BASE_URL=http://127.0.0.1:5174 UI_SMOKE_API_URL=http://127.0.0.1:3005/api npm run smoke:ui
 ```
 
-9. Run browser QA for changed instruction cards on desktop and narrow viewport.
-10. Verify console/network output has no actionable error or warning.
-11. Update `docs/SPRINT_STATUS.md` if the work closes or changes a planned onboarding sprint.
+11. Run browser QA for changed instruction cards on desktop and narrow viewport.
+12. Verify console/network output has no actionable error or warning.
+13. Update `docs/SPRINT_STATUS.md` if the work closes or changes a planned onboarding sprint.
 
 For the onboarding worktree, use the dedicated local ports:
 
@@ -58,7 +60,8 @@ For the onboarding worktree, use the dedicated local ports:
 
 Instruction screenshots are stored under `client/public/onboarding/<role>/<task-slug>/`.
 Shared owner/manager knowledge screenshots are stored under `client/public/onboarding/knowledge/<section-slug>/overview.png`.
-Attach screenshots only to instruction cards where the image directly illustrates the text. Leave summary or conceptual cards text-only instead of reusing a nearby screenshot.
+Release-quality lessons with screenshots use `section-first-cards`: the first card is a concrete `Открой ...` command with one real CRM screenshot of the starting section, card or working screen. Attach later screenshots only to cards where the image directly illustrates a form, modal, changed state or final result. Leave click-only, summary or conceptual cards text-only instead of reusing a nearby screenshot.
+Synthetic local demo CRM names and phones are acceptable in admin/accountant/owner/manager screenshots when they are not real client data and do not look like noisy QA artifacts. Trainer-facing screenshots must stay phone-free and must not expose external IDs, call history or client-base management fields.
 See `docs/ONBOARDING_SCREENSHOTS.md` for the full convention.
 
 ## Knowledge guide depth
@@ -182,7 +185,10 @@ The current Guided Onboarding card-reader baseline is release-ready when:
 
 - every catalog task has a `lesson`;
 - owner and manager knowledge guides cover every CRM section they can use;
-- every release-quality `step` card has a real CRM screenshot;
+- every screenshot-backed lesson starts with a real section screenshot;
+- form/result cards have real screenshots when they directly illustrate the taught state;
+- click-only, conceptual and formula cards are intentionally text-only;
+- every lesson has `updatedAt`, and completed lessons updated afterwards are visibly marked until acknowledged again;
 - `server npm run onboarding:audit:strict` reports screenshot coverage with no warnings;
 - all backend and frontend release gate commands pass;
 - browser QA verifies card navigation, image loading and no return of `Попробовать`, `Практика` or `Мини-тест`.
