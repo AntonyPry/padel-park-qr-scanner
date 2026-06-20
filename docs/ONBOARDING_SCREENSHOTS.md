@@ -88,10 +88,10 @@ When a feature changes a screen used in onboarding:
 
 Current release baseline:
 
-- `109/109` onboarding tasks have instruction-card lessons;
-- `34` owner/manager knowledge guides are text-first deep guides with starting screen screenshots;
-- `94` lessons with screenshots use `section-first-cards`;
+- `113/113` onboarding tasks have instruction-card lessons;
+- `46` owner/manager knowledge guides are text-first deep guides with starting screen screenshots;
+- `98` lessons with screenshots use `section-first-cards`;
 - `15` lessons are text-only until a dedicated screenshot refresh adds real CRM assets;
-- `135/135` screenshot-backed instruction cards resolve to screenshots;
-- `670` action, review, final, conceptual or knowledge cards are intentionally text-only;
+- `139/139` screenshot-backed instruction cards resolve to screenshots;
+- `698` action, review, final, conceptual or knowledge cards are intentionally text-only;
 - QA screenshots belong in `outputs/qa/...` and must not be wired into the catalog.

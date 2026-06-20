@@ -340,6 +340,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     '/admin/clients',
     '/admin/corporate-clients',
     '/admin/finances',
+    '/admin/manager-control',
     '/admin/methodology',
     '/admin/methodology-analytics',
     '/admin/motivation',
@@ -409,7 +410,7 @@ test('manager and owner have knowledge guides for every CRM section', () => {
       .filter((mission) => mission.key.startsWith(`${role}.knowledge-`))
       .flatMap((mission) => mission.tasks);
 
-    assert.equal(knowledgeTasks.length, 22);
+    assert.equal(knowledgeTasks.length, expectedKnowledgeRoutes.length);
     assert.deepEqual(
       knowledgeTasks.map((task) => task.route).sort(),
       expectedKnowledgeRoutes,
@@ -558,6 +559,75 @@ test('prepayments onboarding scenarios are wired by role', () => {
   );
   assert.equal(accountantPrepayments.task.route, '/admin/prepayments');
   assert.equal(accountantPrepayments.task.checkpoint.event, 'prepayments.viewed');
+});
+
+test('manager control onboarding is wired for owner and manager daily review', () => {
+  const managerTask = findOnboardingTask(
+    'manager',
+    'manager.manager-control.daily-review',
+  );
+  assert.equal(managerTask.task.route, '/admin/manager-control');
+  assert.equal(managerTask.task.kind, 'review');
+  assert.equal(managerTask.task.checkpoint.event, 'manager_control.viewed');
+  assert.deepEqual(managerTask.task.checkpoint.conditions, {
+    taskKey: 'manager.manager-control.daily-review',
+  });
+  assert.equal(managerTask.task.trainingMode.recommended, false);
+  assert.equal(
+    managerTask.task.lesson.blocks.some((block) =>
+      block.text.includes('pending sales без клиента'),
+    ),
+    true,
+  );
+
+  const ownerTask = findOnboardingTask(
+    'owner',
+    'owner.manager-control.daily-review',
+  );
+  assert.equal(ownerTask.task.route, '/admin/manager-control');
+  assert.equal(ownerTask.task.kind, 'review');
+  assert.equal(ownerTask.task.checkpoint.event, 'manager_control.viewed');
+  assert.deepEqual(ownerTask.task.checkpoint.conditions, {
+    taskKey: 'owner.manager-control.daily-review',
+  });
+
+  const managerKnowledge = findOnboardingTask(
+    'manager',
+    'manager.knowledge.manager-control',
+  );
+  assert.equal(managerKnowledge.task.route, '/admin/manager-control');
+  assert.equal(managerKnowledge.task.lesson.format, 'section-first-cards');
+  assertFirstOpenScreenBlock(managerKnowledge.task);
+});
+
+test('prepayments training safety keeps unsafe financial flows review-first', () => {
+  const unsafeUntilTrainingMarkersExist = [
+    ['owner', 'owner.prepayments.dashboard-review'],
+    ['owner', 'owner.subscriptions.lifecycle-review'],
+    ['owner', 'owner.certificates.lifecycle-review'],
+    ['manager', 'manager.prepayments.pending-sales'],
+    ['manager', 'manager.prepayments.dashboard-review'],
+    ['admin', 'admin.prepayments.dashboard-review'],
+    ['admin', 'admin.subscription.redemption-review'],
+    ['admin', 'admin.certificate.redemption-review'],
+    ['accountant', 'accountant.prepayments.dashboard-review'],
+    ['accountant', 'accountant.corporate.deposit-review'],
+    ['accountant', 'accountant.corporate.export-review'],
+  ];
+
+  for (const [role, taskKey] of unsafeUntilTrainingMarkersExist) {
+    const { task } = findOnboardingTask(role, taskKey);
+    assert.equal(
+      task.trainingMode?.recommended,
+      false,
+      `${taskKey} should not recommend training mode`,
+    );
+    assert.notEqual(
+      task.checkpoint?.event,
+      'booking.created',
+      `${taskKey} should not use unrelated action checkpoint`,
+    );
+  }
 });
 
 test('prepayments role wording does not describe hidden dashboard sections', () => {

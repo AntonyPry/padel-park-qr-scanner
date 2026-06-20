@@ -273,6 +273,28 @@ test('accepts safe onboarding client checkpoint events', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('accepts manager control route-view onboarding event', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.onboarding.eventBody },
+    {
+      body: {
+        entityId: '/admin/manager-control',
+        entityType: 'route',
+        eventKey: 'manager_control.viewed',
+        payload: {
+          route: '/admin/manager-control',
+          taskKey: 'manager.manager-control.daily-review',
+        },
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
 test('rejects action onboarding events from client payloads', () => {
   const { nextCalled, res } = runValidation(
     { body: apiSchemas.onboarding.eventBody },

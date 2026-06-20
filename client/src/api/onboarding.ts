@@ -286,6 +286,7 @@ export interface OnboardingClientEventPayload {
     | 'clients.viewed'
     | 'corporate_clients.viewed'
     | 'finance.report_viewed'
+    | 'manager_control.viewed'
     | 'methodology.analytics_viewed'
     | 'methodology.viewed'
     | 'prepayments.viewed'

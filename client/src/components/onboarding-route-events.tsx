@@ -61,6 +61,12 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
     eventKey: 'finance.report_viewed',
     payload: { route: '/admin/finances' },
   },
+  '/admin/manager-control': {
+    entityId: '/admin/manager-control',
+    entityType: 'route',
+    eventKey: 'manager_control.viewed',
+    payload: { route: '/admin/manager-control' },
+  },
   '/admin/methodology': {
     entityId: '/admin/methodology',
     entityType: 'route',

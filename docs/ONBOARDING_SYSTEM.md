@@ -102,14 +102,14 @@ For release-quality instructions, only cards with an explicit `screenshotIndex` 
 
 Current release-quality coverage:
 
-- `109/109` catalog tasks have instruction-card lessons;
-- `34` owner/manager knowledge guides cover CRM sections, metrics and role-specific interpretation;
+- `113/113` catalog tasks have instruction-card lessons;
+- `46` owner/manager knowledge guides cover CRM sections, metrics and role-specific interpretation;
 - owner/manager knowledge guides use `11-15` cards per section for first-time-user process depth, including the starting screen card;
-- `94` lessons with screenshots use `section-first-cards`;
+- `98` lessons with screenshots use `section-first-cards`;
 - `15` lessons are text-only until a dedicated screenshot refresh adds real CRM assets;
-- `135/135` screenshot-backed instruction cards resolve to real CRM screenshots;
-- `34` owner/manager knowledge guides start with shared real CRM section screenshots;
-- `670` action, review, final, conceptual or knowledge cards are intentionally text-only;
+- `139/139` screenshot-backed instruction cards resolve to real CRM screenshots;
+- `46` owner/manager knowledge guides start with shared real CRM section screenshots;
+- `698` action, review, final, conceptual or knowledge cards are intentionally text-only;
 - screenshots live in `client/public/onboarding/<role>/<task-slug>/`;
 - shared knowledge screenshots live in `client/public/onboarding/knowledge/<section-slug>/`;
 - role coverage includes `owner`, `manager`, `admin`, `accountant`, `viewer` and `trainer`;
@@ -160,7 +160,7 @@ Owners can inspect completion metrics from `/api/onboarding/metrics`. The endpoi
 
 Review-only tasks can be completed by opening the relevant CRM screen. The browser records a small allowlisted event through `POST /api/onboarding/events`; action events like booking creation are intentionally blocked from this endpoint and must still come from backend product services.
 
-Current route-view events cover audit, bookings schedule review, call-task report review, catalog, clients, certificates, corporate clients, finances, methodology, methodology analytics, onboarding training-data review, prepayments, references, trainer cabinet, utilization and visits analytics.
+Current route-view events cover audit, bookings schedule review, call-task report review, catalog, clients, certificates, corporate clients, finances, manager control, methodology, methodology analytics, onboarding training-data review, prepayments, references, trainer cabinet, utilization and visits analytics.
 
 When several onboarding tasks share the same route, the route-view payload should include the active `taskKey`; catalog checkpoints for those tasks must use `conditions.taskKey` so one screen open does not progress sibling tasks.
 
@@ -198,6 +198,7 @@ Integrated product and route-review events:
 - `corporate_clients.viewed` (client-side route review event)
 - `finance.record_created`
 - `finance.report_viewed` (client-side route review event)
+- `manager_control.viewed` (client-side route review event)
 - `methodology.analytics_viewed` (client-side route review event)
 - `methodology.viewed` (client-side route review event)
 - `motivation.rule_updated`

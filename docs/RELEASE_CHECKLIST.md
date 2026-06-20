@@ -18,6 +18,8 @@
 - For training methodology releases, verify onboarding covers methodology base, client skill map, structured training notes, skill-map update algorithm, personal recommendations, group recommendations, planned and completed training plans, booking links and senior trainer analytics.
 - For prepayments releases, verify onboarding covers Evotor sale settings, pending sale binding, subscriptions, subscription redemption, certificates, certificate redemption, corporate deposits, corporate spendings, corporate export and the unified prepayments screen.
 - For prepayments training safety, verify corporate clients and ledger entries are training-cleanup safe, linked corporate finance records stay training-marked, and subscriptions/certificates/pending sales are either training-safe or kept out of action training tasks.
+- For Manager Control releases, verify owner/manager onboarding covers `/admin/manager-control`, the daily control queue, filters, pending sales, overdue/missed calls, problem bookings, expiring subscriptions, expiring certificates and low corporate balances.
+- For booking cleanup releases, verify onboarding covers schedule quick actions, payment/conflict/active-prepayment warnings, group participants and the client-card link from a booking.
 - Verify trainer-facing instructions and screens do not expose phones, external IDs, CRM sales notes, call history or full client-base management context.
 - Create and verify a database backup before switching traffic.
 
@@ -28,6 +30,8 @@
 - Run UI smoke against the deployed frontend and API.
 - Save smoke screenshots and `report.json` from `outputs/qa/<date>/ui-smoke`.
 - Verify login, client creation, duplicate restore, bases, call tasks, payroll, motivation, catalog, references and access monitor.
+- Verify Manager Control Dashboard `/admin/manager-control` for owner/manager: daily queue loads, filters apply, links open the source screens and route-view onboarding checkpoint is recorded only with active task context.
+- Verify booking cleanup in `/admin/bookings`: quick status/payment/cancel/edit actions, payment/conflict/active-prepayment warnings, group participants and client-card link.
 - Verify methodology, methodology analytics, trainer cabinet, client skill map, training recommendations, training plan lifecycle and training booking plan link.
 - Verify prepayments dashboard, catalog sale settings, pending sale binding, client subscriptions, certificate search/redemption and corporate client ledger/export.
 - Verify onboarding opens for the changed roles and owner role override can view the affected role path.

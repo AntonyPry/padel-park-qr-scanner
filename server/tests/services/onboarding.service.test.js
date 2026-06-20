@@ -836,6 +836,29 @@ test('prepayments route checkpoints require active task context', () => {
   );
 });
 
+test('manager control route checkpoint requires active task context', () => {
+  assert.deepEqual(
+    listMatchingTasks('manager', 'manager_control.viewed', {
+      route: '/admin/manager-control',
+    }).map((task) => task.key),
+    [],
+  );
+  assert.deepEqual(
+    listMatchingTasks('manager', 'manager_control.viewed', {
+      route: '/admin/manager-control',
+      taskKey: 'manager.manager-control.daily-review',
+    }).map((task) => task.key),
+    ['manager.manager-control.daily-review'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('owner', 'manager_control.viewed', {
+      route: '/admin/manager-control',
+      taskKey: 'owner.manager-control.daily-review',
+    }).map((task) => task.key),
+    ['owner.manager-control.daily-review'],
+  );
+});
+
 test('pilot client create card task does not match ordinary client creation', () => {
   assert.deepEqual(
     listMatchingTasks('admin', 'client.created', {

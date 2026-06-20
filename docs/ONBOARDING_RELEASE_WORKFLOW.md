@@ -141,6 +141,25 @@ Training safety gate for this epic:
 
 If prepayment screens are only present in the feature branch, text-only onboarding cards are acceptable in the instructions branch. Capture real screenshots for `/admin/prepayments`, `/admin/certificates`, `/admin/corporate-clients`, changed `/admin/catalog` tabs and changed client subscription cards after merging feature + instructions.
 
+## Manager control releases
+
+When a feature changes the daily manager control queue, update onboarding for:
+
+- owner/manager review tasks for `/admin/manager-control`;
+- the owner/manager knowledge guide for how the queue groups pending sales, calls, problem bookings, expiring subscriptions, expiring certificates and low corporate balances;
+- the route-view checkpoint `manager_control.viewed`;
+- real CRM screenshots under `client/public/onboarding/knowledge/manager-control/overview.png`.
+
+Manager-control route checkpoints must include active `taskKey` conditions. Opening `/admin/manager-control` should not progress both owner and manager tasks or any future sibling review tasks without the active onboarding context.
+
+Training safety gate for this screen:
+
+- pending sales, subscriptions, certificates and redemptions stay review-first unless feature code has training markers, report exclusions and cleanup;
+- corporate balances and ledger entries must stay training-cleanup safe;
+- manager-control screenshots may use local synthetic demo data, but must not show noisy QA labels, random test names or real client data.
+
+If `/admin/manager-control` exists only in the feature branch, strict audit in the isolated instructions branch can warn that the catalog route is missing from the client router. Treat that as an expected merged-branch gate item, then rerun strict audit after feature + instructions are merged.
+
 When a feature changes an instructed screen:
 
 1. Open the changed screen locally with the matching demo role account.

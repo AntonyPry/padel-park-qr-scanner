@@ -1,7 +1,7 @@
 # Статус спринтов CRM
 
 Дата фиксации: 2026-05-28.
-Последнее обновление: 2026-06-19.
+Последнее обновление: 2026-06-20.
 
 Этот файл - единый источник правды по спринтам. Перед началом нового спринта сначала обновляем этот документ: что уже сделано, что частично, что осталось, какие критерии приемки.
 
@@ -1956,7 +1956,7 @@
 
 Цель: обновить обучение перед релизом эпика предоплат, абонементов, сертификатов и корпоративных балансов.
 
-Общий статус: `partial`.
+Общий статус: `done`.
 
 Уже реализовано:
 
@@ -1973,9 +1973,13 @@
 
 Осталось закрыть:
 
-- после объединения с feature-веткой сделать real screenshot pass для `/admin/prepayments`, `/admin/certificates` и `/admin/corporate-clients`;
-- в feature-коде добавить реальные backend checkpoint events для действий: настройка продажи, привязка ожидающей продажи, списание абонемента, списание сертификата, корпоративное пополнение, корпоративное списание и экспорт;
-- в feature-коде проверить учебные маркеры для ожидающих продаж, клиентских абонементов, сертификатов и истории списаний либо оставить эти действия вне action-тренировки до безопасной реализации;
+- критичных хвостов onboarding-ветки нет.
+
+Перенесено в merged-branch gate:
+
+- после объединения с feature-веткой сделать финальный browser QA по `/admin/prepayments`, `/admin/certificates`, `/admin/corporate-clients`, измененным вкладкам каталога и карточке клиента;
+- в feature-коде добавить или подтвердить реальные backend checkpoint events для действий: настройка продажи, привязка ожидающей продажи, списание абонемента, списание сертификата, корпоративное пополнение, корпоративное списание и экспорт;
+- в feature-коде подтвердить учебные маркеры для ожидающих продаж, клиентских абонементов, сертификатов и истории списаний либо оставить эти действия вне action-тренировки до безопасной реализации;
 - прогнать strict onboarding audit и полный release gate на объединенной ветке feature + instructions.
 
 Критерии приемки:
@@ -2139,6 +2143,38 @@
 - в UI/docs/catalog нет старых служебных фраз первой карточки;
 - action-сценарии сохраняют структуру: что нажать, что заполнить или сверить, как проверить результат;
 - browser QA desktop и `390px` проходит по пилотным и representative lessons без overflow и console errors/warnings.
+
+## Sprint 48 - Feature freeze onboarding sync
+
+Цель: синхронизировать onboarding/docs перед feature freeze после последних feature-изменений по Manager Control Dashboard, booking cleanup и Prepayments Sprint 43.
+
+Общий статус: `partial`.
+
+Сделано:
+
+- добавлены review-задачи для owner/manager по ежедневной очереди `/admin/manager-control`;
+- добавлен безопасный route-view checkpoint `manager_control.viewed` с обязательным `taskKey`, чтобы открытие общего экрана не продвигало соседние задания;
+- owner/manager получили knowledge-раздел `Контроль менеджера` с объяснением очереди дня, фильтров, проблемных броней, pending sales, абонементов, сертификатов и корпоративных балансов;
+- обновлены admin booking-инструкции под quick actions из расписания, предупреждения оплаты/конфликта/активных предоплат, участников групповой брони и ссылку на карточку клиента;
+- обновлены shared screenshots:
+  - `/onboarding/knowledge/manager-control/overview.png`;
+  - `/onboarding/knowledge/bookings/overview.png`;
+  - `/onboarding/admin/booking-review-schedule/schedule.png`;
+  - `/onboarding/admin/booking-review-schedule/day-bookings.png`;
+- Prepayments Sprint 43 закрыт на стороне onboarding-каталога, а оставшиеся action-checkpoint/training-marker вопросы явно перенесены в merged-branch gate.
+
+Осталось закрыть:
+
+- после merge feature + instructions strict audit должен увидеть реальный клиентский route `/admin/manager-control`, потому в изолированной instructions-ветке ожидаем warning `Catalog routes missing from client router: /admin/manager-control`;
+- прогнать полный DB-backed browser QA по merged-ветке для `/admin/manager-control`, `/admin/bookings`, `/admin/prepayments`, `/admin/certificates`, `/admin/corporate-clients`.
+
+Критерии приемки:
+
+- owner и manager видят ежедневную очередь контроля и понимают, какие строки открыть из CRM;
+- booking cleanup-инструкции описывают быстрые действия, предупреждения, групповые брони и ссылку на клиента;
+- предоплаты остаются training-safe: unsafe action-сценарии не рекомендуют training mode, пока feature-код не подтвердит marker/cleanup;
+- screenshot-backed baseline обновлен без fake/generated assets и без noisy QA labels;
+- release gate на merged-ветке проходит без onboarding warnings.
 
 ## Backlog - SaaS-фундамент
 
