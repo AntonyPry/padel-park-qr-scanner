@@ -235,6 +235,14 @@ const CERTIFICATE_TYPE_LABELS: Record<string, string> = {
   service: 'Услуга',
 };
 
+const PENDING_SALES_SECTION_LABELS: Partial<Record<DashboardStatus, string>> = {
+  all: 'Все продажи из очереди',
+  canceled: 'Отмененные продажи',
+  ignored: 'Игнорированные продажи',
+  linked: 'Привязанные продажи',
+  pending: 'Ожидают привязки',
+};
+
 function formatMoney(value?: number | string | null) {
   return new Intl.NumberFormat('ru-RU', {
     currency: 'RUB',
@@ -400,8 +408,8 @@ export default function PrepaymentsPage() {
     return [
       {
         icon: Link2,
-        label: 'Очередь продаж',
-        sublabel: `${formatMoney(dashboard.summary.pendingSales.amount)} ожидают привязки`,
+        label: 'Ожидают привязки',
+        sublabel: `${formatMoney(dashboard.summary.pendingSales.amount)} без клиента`,
         value: String(dashboard.summary.pendingSales.count),
       },
       {
@@ -445,6 +453,8 @@ export default function PrepaymentsPage() {
 
   const hasFilters =
     query || typeFilter !== 'all' || statusFilter !== 'all' || expiryFilter !== 'all';
+  const pendingSalesSectionTitle =
+    PENDING_SALES_SECTION_LABELS[statusFilter] || 'Продажи из очереди';
 
   return (
     <div className="flex flex-col gap-5 p-4 md:p-6">
@@ -588,7 +598,7 @@ export default function PrepaymentsPage() {
               <SectionHeader
                 badge={dashboard.sections.pendingSales.total}
                 icon={Link2}
-                title="Очередь привязки продаж"
+                title={pendingSalesSectionTitle}
               />
             </CardHeader>
             <CardContent className="space-y-3">

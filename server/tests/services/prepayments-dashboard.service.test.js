@@ -190,3 +190,60 @@ test('dashboard aggregates visible modules and filters expiring subscriptions', 
   assert.equal(dashboard.sections.subscriptions.items[0].flags.expiringSoon, true);
   assert.equal(dashboard.sections.pendingSales.total, 0);
 });
+
+test('dashboard keeps pending sales summary separate from all-status sales section', async () => {
+  pendingSaleService.listPendingSales = async () => [
+    {
+      amount: 5200,
+      category: 'Абонементы',
+      client: null,
+      evotorId: 'receipt-1',
+      id: 10,
+      itemName: 'Абонемент 4 тренировки',
+      saleIntent: 'subscription',
+      status: 'pending',
+    },
+    {
+      amount: 5000,
+      category: 'Сертификаты',
+      client: { id: 20, name: 'Анна Петрова', phone: '+70000000001' },
+      evotorId: 'receipt-2',
+      id: 11,
+      itemName: 'Сертификат 5000',
+      saleIntent: 'certificate',
+      status: 'linked',
+    },
+  ];
+  db.ClientSubscription = {
+    async findAll() {
+      return [];
+    },
+  };
+  db.Certificate = {
+    async findAll() {
+      return [];
+    },
+  };
+  corporateClientsService.listCorporateClients = async () => [];
+
+  const dashboard = await prepaymentsDashboardService.getDashboard(
+    {
+      status: 'all',
+      type: 'pending_sales',
+    },
+    { role: 'manager' },
+  );
+
+  assert.equal(dashboard.summary.pendingSales.count, 1);
+  assert.equal(dashboard.sections.pendingSales.total, 2);
+  assert.equal(
+    dashboard.sections.pendingSales.items[0].actionHref,
+    '/admin/catalog?tab=pending',
+  );
+  assert.equal(
+    dashboard.sections.pendingSales.items.some((item) =>
+      item.actionHref.includes('pendingSaleId'),
+    ),
+    false,
+  );
+});

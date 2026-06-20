@@ -335,7 +335,22 @@ async function listCertificates(query = {}) {
 
 async function listClientCertificates(clientId, query = {}) {
   await assertClientExists(clientId);
-  return listCertificates({ ...query, clientId });
+  const status = normalizeStatus(query.status || 'all', 'all');
+  const rows = await db.Certificate.findAll({
+    where: buildListWhere({ ...query, clientId }),
+    include: buildCertificateInclude({
+      withRedemptions: query.withRedemptions === true || query.withRedemptions === 'true',
+    }),
+    order: [
+      ['createdAt', 'DESC'],
+      ['id', 'DESC'],
+    ],
+    subQuery: false,
+  });
+
+  const items = rows.map((row) => serializeCertificate(row));
+  if (status === 'all') return items;
+  return items.filter((item) => item.status === status);
 }
 
 async function getCertificate(id) {

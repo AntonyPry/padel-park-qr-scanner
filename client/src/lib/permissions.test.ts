@@ -11,6 +11,7 @@ import {
   canManagePrepaymentSettings,
   canManageSubscriptionTypes,
   canManageTelephony,
+  canViewManagerControlDashboard,
   canRedeemCertificates,
   canRedeemClientSubscriptions,
   canViewCertificates,
@@ -54,6 +55,16 @@ describe('permissions', () => {
     expect(canAccessPath('manager', '/admin/finances')).toBe(true);
     expect(canManageFinance('manager')).toBe(false);
     expect(canManageFinance('accountant')).toBe(true);
+  });
+
+  it('keeps manager control dashboard limited to owner and manager', () => {
+    expect(canAccessPath('owner', '/admin/manager-control')).toBe(true);
+    expect(canAccessPath('manager', '/admin/manager-control')).toBe(true);
+    expect(canViewManagerControlDashboard('manager')).toBe(true);
+    expect(canAccessPath('accountant', '/admin/manager-control')).toBe(false);
+    expect(canAccessPath('viewer', '/admin/manager-control')).toBe(false);
+    expect(canAccessPath('trainer', '/admin/manager-control')).toBe(false);
+    expect(canAccessPath('admin', '/admin/manager-control')).toBe(false);
   });
 
   it('keeps prepayment sale settings separate from catalog management', () => {

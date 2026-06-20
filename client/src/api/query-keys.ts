@@ -28,6 +28,8 @@ export const queryKeys = {
   },
   clients: {
     all: ['clients'] as const,
+    detail: (clientId: number | null) =>
+      [...queryKeys.clients.all, 'detail', clientId] as const,
     list: (params: Record<string, unknown>) =>
       [...queryKeys.clients.all, 'list', params] as const,
     trainingRecommendation: (

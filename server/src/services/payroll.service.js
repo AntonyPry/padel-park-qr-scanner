@@ -197,21 +197,25 @@ async function recordChange({
   toDate,
   beforeData,
   afterData,
+  transaction,
 }) {
   try {
-    await db.FinanceChangeLog.create({
-      action,
-      entityType,
-      entityId: entityId === undefined || entityId === null ? null : String(entityId),
-      accountId: account?.id || null,
-      role: account?.role || null,
-      reason: reason || null,
-      date: date || null,
-      fromDate: fromDate || null,
-      toDate: toDate || null,
-      beforeData: beforeData || null,
-      afterData: afterData || null,
-    });
+    await db.FinanceChangeLog.create(
+      {
+        action,
+        entityType,
+        entityId: entityId === undefined || entityId === null ? null : String(entityId),
+        accountId: account?.id || null,
+        role: account?.role || null,
+        reason: reason || null,
+        date: date || null,
+        fromDate: fromDate || null,
+        toDate: toDate || null,
+        beforeData: beforeData || null,
+        afterData: afterData || null,
+      },
+      transaction ? { transaction } : undefined,
+    );
   } catch (error) {
     console.error('Ошибка записи финансовой истории:', error);
   }

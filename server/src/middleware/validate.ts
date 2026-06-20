@@ -38,11 +38,13 @@ function validateTarget(
     return true;
   }
 
+  const details = formatDetails(result.error.issues);
+
   res.status(400).json({
-    error: 'Некорректные данные запроса',
+    error: details.length === 1 ? details[0].message : 'Некорректные данные запроса',
     status: 400,
     code: 'VALIDATION_ERROR',
-    details: formatDetails(result.error.issues),
+    details,
   });
   return false;
 }

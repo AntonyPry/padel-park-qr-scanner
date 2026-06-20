@@ -249,6 +249,14 @@ export function getTelephonyCalls(params: TelephonyCallsQuery) {
   );
 }
 
+export function getTelephonyCall(id: number) {
+  return apiRequest<TelephonyCall>(
+    `/api/telephony/calls/${id}`,
+    {},
+    'Не удалось получить звонок',
+  );
+}
+
 export function getTelephonyStats() {
   return apiRequest<TelephonyStats>(
     '/api/telephony/stats',

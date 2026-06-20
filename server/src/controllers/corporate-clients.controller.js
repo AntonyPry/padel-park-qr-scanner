@@ -93,7 +93,7 @@ class CorporateClientsController {
   async listLedger(req, res) {
     try {
       res.json(
-        await corporateClientsService.listLedgerEntries(
+        await corporateClientsService.getLedgerDetails(
           req.params.id,
           req.query,
           req.account,

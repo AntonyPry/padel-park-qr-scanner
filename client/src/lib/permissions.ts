@@ -2,6 +2,7 @@ import type { AccountRole } from '@/lib/roles';
 
 export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin': ['owner', 'manager', 'admin'],
+  '/admin/manager-control': ['owner', 'manager'],
   '/admin/audit': ['owner', 'manager'],
   '/admin/onboarding': ['owner', 'manager', 'admin', 'accountant', 'viewer', 'trainer'],
   '/admin/bookings': ['owner', 'manager', 'admin', 'viewer'],
@@ -122,6 +123,10 @@ export function canManagePrepaymentSettings(role: AccountRole | null | undefined
 
 export function canViewPrepaymentsDashboard(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'admin', 'accountant']);
+}
+
+export function canViewManagerControlDashboard(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canViewClientSubscriptions(role: AccountRole | null | undefined) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   CheckCircle2,
@@ -61,6 +61,7 @@ import {
   checkBeelineSubscription,
   completeTelephonyCall,
   createTelephonyCallClient,
+  getTelephonyCall,
   getTelephonyCalls,
   getTelephonyConfig,
   getTelephonyRawEvents,
@@ -305,8 +306,14 @@ export default function TelephonyPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
+  const initialStatus = searchParams.get('status') || 'active';
   const [page, setPage] = useState(1);
-  const [status, setStatus] = useState('active');
+  const [status, setStatus] = useState(
+    ['active', 'all', 'ignored', 'in_progress', 'missed', 'new', 'processed']
+      .includes(initialStatus)
+      ? initialStatus
+      : 'active',
+  );
   const [callStatus, setCallStatus] = useState('all');
   const [recordingStatus, setRecordingStatus] = useState('all');
   const [direction, setDirection] = useState('all');
@@ -314,6 +321,7 @@ export default function TelephonyPage() {
   const [searchInput, setSearchInput] = useState(initialQuery);
   const [reportRange, setReportRange] = useState(getDefaultReportRange);
   const [selectedCall, setSelectedCall] = useState<TelephonyCall | null>(null);
+  const openedCallIdRef = useRef<number | null>(null);
   const [form, setForm] = useState<CompletionForm>(EMPTY_FORM);
   const [clientDialogCall, setClientDialogCall] = useState<TelephonyCall | null>(null);
   const [clientSearch, setClientSearch] = useState('');
@@ -388,6 +396,30 @@ export default function TelephonyPage() {
     configQuery.data?.apiTokenConfigured && configQuery.data?.apiBaseUrl,
   );
   const beelineXsiReady = Boolean(beelineApiReady && configQuery.data?.callbackUrl);
+
+  useEffect(() => {
+    const requestedCallId = Number(searchParams.get('callId') || 0);
+    if (!requestedCallId || selectedCall?.id === requestedCallId || !canWork) return;
+    if (openedCallIdRef.current === requestedCallId) return;
+
+    let cancelled = false;
+    openedCallIdRef.current = requestedCallId;
+    getTelephonyCall(requestedCallId)
+      .then((call) => {
+        if (cancelled) return;
+        setSelectedCall(call);
+        setForm(getDefaultForm(call));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          toast.error(getApiErrorMessage(error, 'Не удалось открыть звонок'));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [canWork, searchParams, selectedCall?.id]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {

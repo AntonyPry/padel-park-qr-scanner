@@ -13,6 +13,9 @@ import { queryClient } from './lib/query-client';
 import { TrainingModeProvider } from './lib/training-mode';
 
 const AdminPage = lazy(() => import('./pages/Admin'));
+const ManagerControlDashboardPage = lazy(
+  () => import('./pages/ManagerControlDashboardPage'),
+);
 const OnboardingPage = lazy(() => import('./pages/OnboardingPage'));
 const BookingsPage = lazy(() => import('./pages/BookingsPage'));
 const StaffPage = lazy(() => import('./pages/StaffPage'));
@@ -61,6 +64,14 @@ function App() {
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin']}>
                           <AdminPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/manager-control"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/manager-control']}>
+                          <ManagerControlDashboardPage />
                         </RequireRoles>
                       }
                     />

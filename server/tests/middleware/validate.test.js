@@ -145,6 +145,66 @@ test('accepts catalog P&L groups used by the catalog page', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('requires corporate deposit category in create mode', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.corporateClients.depositBody },
+    {
+      body: {
+        amount: 15000,
+        date: '2026-06-20',
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 400);
+  assert.equal(res.body.error, 'Выберите категорию дохода');
+  assert.equal(
+    res.body.details.some(
+      (detail) =>
+        detail.path === 'category' &&
+        detail.message === 'Выберите категорию дохода',
+    ),
+    true,
+  );
+});
+
+test('accepts corporate deposit create mode with category', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.corporateClients.depositBody },
+    {
+      body: {
+        amount: 15000,
+        category: 'Корпоративные пополнения',
+        date: '2026-06-20',
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('accepts corporate deposit link mode without category', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.corporateClients.depositBody },
+    {
+      body: {
+        financeId: 88,
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
 test('accepts booking payload used by the phone booking page', () => {
   const { nextCalled, res } = runValidation(
     { body: apiSchemas.bookings.body },
