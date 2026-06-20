@@ -10,6 +10,9 @@ const originalModels = {
   CorporateLedgerEntry: db.CorporateLedgerEntry,
   Finance: db.Finance,
   FinanceChangeLog: db.FinanceChangeLog,
+  OnboardingEvent: db.OnboardingEvent,
+  OnboardingProgress: db.OnboardingProgress,
+  OnboardingTrainingMode: db.OnboardingTrainingMode,
   PayrollPeriod: db.PayrollPeriod,
   sequelize: db.sequelize,
 };
@@ -76,10 +79,12 @@ test('createDeposit links existing manual income and creates ledger entry once',
   const client = makeClient();
   const finance = makeFinance();
   const createdLedgerRows = [];
+  const financeChangeLogs = [];
+  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
 
   db.sequelize = {
     async transaction(callback) {
-      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+      return callback(transaction);
     },
   };
   db.PayrollPeriod = {
@@ -88,7 +93,9 @@ test('createDeposit links existing manual income and creates ledger entry once',
     },
   };
   db.FinanceChangeLog = {
-    async create() {},
+    async create(payload, options) {
+      financeChangeLogs.push({ options, payload });
+    },
   };
   db.CorporateClient = {
     async findByPk(id, options = {}) {
@@ -169,17 +176,85 @@ test('createDeposit links existing manual income and creates ledger entry once',
   assert.equal(createdLedgerRows[0].type, 'deposit');
   assert.equal(result.corporateClient.balance, 15000);
   assert.equal(result.ledgerEntry.finance.id, finance.id);
+  assert.equal(financeChangeLogs.length, 1);
+  assert.equal(financeChangeLogs[0].payload.action, 'corporate_deposit.link');
+  assert.equal(financeChangeLogs[0].options.transaction, transaction);
 });
 
-test('createDeposit creates manual Finance income for new deposit', async () => {
+test('createDeposit rejects create mode without income category', async () => {
+  const client = makeClient();
+  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
+  let categoryLookupCalled = false;
+  let financeCreateCalled = false;
+
+  db.sequelize = {
+    async transaction(callback) {
+      return callback(transaction);
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return null;
+    },
+  };
+  db.CorporateClient = {
+    async findByPk(id) {
+      assert.equal(Number(id), client.id);
+      return client;
+    },
+  };
+  db.Category = {
+    async findOne() {
+      categoryLookupCalled = true;
+      return null;
+    },
+  };
+  db.Finance = {
+    async create() {
+      financeCreateCalled = true;
+      return null;
+    },
+  };
+
+  await assert.rejects(
+    () =>
+      corporateClientsService.createDeposit(
+        client.id,
+        {
+          amount: 12000,
+          date: '2026-06-06',
+        },
+        { id: 1, role: 'owner' },
+      ),
+    (error) => {
+      assert.equal(error.message, 'Выберите категорию дохода');
+      assert.equal(error.statusCode, 400);
+      return true;
+    },
+  );
+  assert.equal(categoryLookupCalled, false);
+  assert.equal(financeCreateCalled, false);
+});
+
+test('createDeposit creates manual Finance income and records history in active transaction', async () => {
   const client = makeClient();
   const finance = makeFinance({ id: 88, amount: 22000, comment: 'Аванс' });
   const createdFinanceRows = [];
   const createdLedgerRows = [];
+  const financeChangeLogs = [];
+  const onboardingEvents = [];
+  const account = { id: 1, role: 'owner' };
+  const transaction = { LOCK: { UPDATE: 'UPDATE' } };
+  let transactionCommitted = false;
+  let transactionOpen = false;
 
   db.sequelize = {
     async transaction(callback) {
-      return callback({ LOCK: { UPDATE: 'UPDATE' } });
+      transactionOpen = true;
+      const value = await callback(transaction);
+      transactionOpen = false;
+      transactionCommitted = true;
+      return value;
     },
   };
   db.PayrollPeriod = {
@@ -188,7 +263,41 @@ test('createDeposit creates manual Finance income for new deposit', async () => 
     },
   };
   db.FinanceChangeLog = {
-    async create() {},
+    async create(payload, options) {
+      financeChangeLogs.push({ options, payload });
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return null;
+    },
+  };
+  db.OnboardingProgress = {
+    async create() {
+      assert.equal(transactionOpen, false);
+      assert.equal(transactionCommitted, true);
+    },
+    async findOne() {
+      assert.equal(transactionOpen, false);
+      assert.equal(transactionCommitted, true);
+      return null;
+    },
+  };
+  db.OnboardingEvent = {
+    async create(payload, options) {
+      onboardingEvents.push({
+        options,
+        payload,
+        transactionCommitted,
+        transactionOpen,
+      });
+      return {
+        ...payload,
+        toJSON() {
+          return { ...this };
+        },
+      };
+    },
   };
   db.Category = {
     async findOne({ where }) {
@@ -271,7 +380,7 @@ test('createDeposit creates manual Finance income for new deposit', async () => 
       comment: 'Аванс',
       date: '2026-06-06',
     },
-    null,
+    account,
   );
 
   assert.equal(createdFinanceRows.length, 1);
@@ -280,6 +389,18 @@ test('createDeposit creates manual Finance income for new deposit', async () => 
   assert.equal(createdLedgerRows[0].financeId, finance.id);
   assert.equal(createdLedgerRows[0].financeCreatedByLedger, true);
   assert.equal(result.corporateClient.balance, 22000);
+  assert.deepEqual(
+    financeChangeLogs.map((log) => log.payload.action),
+    ['corporate_deposit.finance_created', 'corporate_deposit.create'],
+  );
+  assert.equal(financeChangeLogs.length, 2);
+  assert.ok(financeChangeLogs.every((log) => log.options.transaction === transaction));
+  assert.equal(onboardingEvents.length, 1);
+  assert.equal(onboardingEvents[0].payload.eventKey, 'finance.record_created');
+  assert.equal(onboardingEvents[0].payload.entityId, String(finance.id));
+  assert.equal(onboardingEvents[0].transactionOpen, false);
+  assert.equal(onboardingEvents[0].transactionCommitted, true);
+  assert.equal(onboardingEvents[0].options, undefined);
 });
 
 test('cancelDeposit cancels ledger and deletes corporate-created Finance income', async () => {
@@ -576,6 +697,101 @@ test('reverseSpending cancels spending and restores corporate balance', async ()
   assert.equal(result.ledgerEntry.status, 'canceled');
 });
 
+test('getLedgerDetails filters by service and participant with actual running balance', async () => {
+  const client = makeClient({ name: 'ООО Фильтр' });
+  const ledgerRows = [
+    {
+      amount: 10000,
+      corporateClientId: client.id,
+      date: '2026-06-01',
+      id: 1,
+      status: 'active',
+      type: 'deposit',
+      toJSON() {
+        return { ...this };
+      },
+    },
+    {
+      amount: 3000,
+      category: 'Групповая тренировка',
+      corporateClientId: client.id,
+      date: '2026-06-02',
+      id: 2,
+      metadata: {
+        participantName: 'Иван',
+        service: 'Групповая тренировка',
+      },
+      status: 'active',
+      type: 'spending',
+      toJSON() {
+        return { ...this };
+      },
+    },
+    {
+      amount: 2000,
+      category: 'Персональная тренировка',
+      corporateClientId: client.id,
+      date: '2026-06-03',
+      id: 3,
+      metadata: {
+        participantName: 'Петр',
+        service: 'Персональная тренировка',
+      },
+      status: 'active',
+      type: 'spending',
+      toJSON() {
+        return { ...this };
+      },
+    },
+  ];
+
+  db.CorporateClient = {
+    async findByPk(id, options = {}) {
+      assert.equal(Number(id), client.id);
+      if (options.include?.some((item) => item.as === 'ledgerEntries')) {
+        return {
+          ...client,
+          ledgerEntries: ledgerRows,
+          toJSON() {
+            return { ...this };
+          },
+        };
+      }
+      return client;
+    },
+  };
+  db.CorporateLedgerEntry = {
+    async findAll({ where, order }) {
+      const rows = ledgerRows.filter((row) => {
+        if (!matchesWhereValue(row.corporateClientId, where.corporateClientId)) {
+          return false;
+        }
+        if (where.status && row.status !== where.status) return false;
+        if (where.type && row.type !== where.type) return false;
+        return true;
+      });
+      if (order?.[0]?.[1] === 'DESC') return [...rows].reverse();
+      return rows;
+    },
+  };
+
+  const report = await corporateClientsService.getLedgerDetails(
+    client.id,
+    {
+      participant: 'иван',
+      service: 'групповая',
+      status: 'active',
+    },
+    null,
+  );
+
+  assert.equal(report.entries.length, 1);
+  assert.equal(report.entries[0].id, 2);
+  assert.equal(report.entries[0].runningBalance, 7000);
+  assert.equal(report.summary.spendingsTotal, 3000);
+  assert.equal(report.summary.periodDelta, -3000);
+});
+
 test('exportLedgerDetails returns xlsx with corporate details and running balance', async () => {
   const client = makeClient({ name: 'ООО Экспорт' });
   const ledgerRows = [
@@ -650,10 +866,13 @@ test('exportLedgerDetails returns xlsx with corporate details and running balanc
   assert.equal(file.filename, 'corporate-10-2026-06-01-2026-06-30.xlsx');
   assert.ok(Buffer.isBuffer(file.buffer));
   const workbook = xlsx.read(file.buffer, { type: 'buffer' });
+  const summaryRows = xlsx.utils.sheet_to_json(workbook.Sheets['Итоги']);
   const rows = xlsx.utils.sheet_to_json(workbook.Sheets['Детализация']);
+  assert.equal(summaryRows.some((row) => row.Показатель === 'Сверка баланса'), true);
   assert.equal(rows.length, 2);
   assert.equal(rows[1]['Услуга'], 'Групповая тренировка');
-  assert.equal(rows[1]['Участник/клиент'], 'Иван');
+  assert.equal(rows[1]['Участник'], 'Иван');
   assert.equal(rows[1]['Сумма'], -3000);
   assert.equal(rows[1]['Остаток'], 7000);
+  assert.equal(Object.hasOwn(rows[1], 'ID операции'), false);
 });

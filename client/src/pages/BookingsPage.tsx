@@ -11,9 +11,10 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { type ColumnDef } from '@tanstack/react-table';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useForm, useWatch } from 'react-hook-form';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
 import {
+  AlertTriangle,
   Banknote,
   BarChart3,
   CheckCircle2,
@@ -22,7 +23,9 @@ import {
   ClipboardList,
   Columns3,
   Dumbbell,
+  ExternalLink,
   Eye,
+  History,
   ListFilter,
   Pencil,
   Phone,
@@ -72,6 +75,7 @@ import {
   updateBookingStatus,
   type Booking,
   type BookingAnalytics,
+  type BookingChangeLog,
   type BookingCourtType,
   type BookingDurationMinutes,
   type BookingExceptionPayload,
@@ -88,6 +92,7 @@ import {
   type BookingStatus,
   type BookingSettingsPayload,
   type BookingType,
+  type CourtBlock,
   type CourtBlockPayload,
 } from '@/api/bookings';
 import { listClients, type ClientListItem } from '@/api/clients';
@@ -136,6 +141,8 @@ import {
   canManageBookingResources,
   canManageBookings,
   canManageTrainingNotes,
+  canViewCertificates,
+  canViewClientSubscriptions,
 } from '@/lib/permissions';
 import { formatClientPhone, getPhoneDigits } from '@/lib/phone';
 import { cn } from '@/lib/utils';
@@ -171,6 +178,13 @@ const PAYMENT_METHOD_LABELS: Record<BookingPaymentMethod, string> = {
   cashless: 'Безнал',
   mixed: 'Смешанная',
   unknown: 'Не указано',
+};
+const HISTORY_ACTION_LABELS: Record<BookingChangeLog['action'], string> = {
+  canceled: 'Отмена',
+  created: 'Создание',
+  rescheduled: 'Перенос',
+  status_changed: 'Статус',
+  updated: 'Изменение',
 };
 
 const SOURCE_LABELS: Record<BookingSource, string> = {
@@ -294,11 +308,32 @@ interface LookupClient {
   id: number;
   name: string;
   phone: string;
+  prepaymentSummary?: ClientPrepaymentSummary;
   status: 'active' | 'archived';
 }
 
 interface LookupResponse {
   client: LookupClient | null;
+}
+
+interface ClientPrepaymentWarning {
+  id: string;
+  level: 'danger' | 'muted' | 'warning';
+  text: string;
+  type: string;
+}
+
+interface ClientPrepaymentSummary {
+  activeCertificatesCount: number;
+  activeSubscriptionsCount: number;
+  certificateWarnings: ClientPrepaymentWarning[];
+  hasActiveCertificate: boolean;
+  hasActiveSubscription: boolean;
+  subscriptionWarnings: ClientPrepaymentWarning[];
+}
+
+interface BookingClientDetails {
+  prepaymentSummary?: ClientPrepaymentSummary;
 }
 
 interface GroupParticipantDraft {
@@ -331,6 +366,21 @@ type BookingPaymentFilter = BookingPaymentStatus | 'needs_payment' | 'all';
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<boolean | void> | boolean | void;
 };
+type BookingNoticeLevel = 'danger' | 'info' | 'warning';
+
+interface BookingOperationNotice {
+  actionHref?: string;
+  actionLabel?: string;
+  description?: string;
+  id: string;
+  level: BookingNoticeLevel;
+  title: string;
+}
+
+interface BookingHistoryRow {
+  details: string[];
+  item: BookingChangeLog;
+}
 
 interface SettingsDraft {
   cancellationDeadlineHours: string;
@@ -730,6 +780,251 @@ function isBookingNeedsPayment(booking: Booking) {
   );
 }
 
+function getDateTime(value?: string | null) {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+function safeFormatTime(value?: string | null) {
+  return getDateTime(value) === null ? '-' : formatTime(value as string);
+}
+
+function formatBookingTimeWindow(booking: Booking) {
+  const startsAt = safeFormatTime(booking.startsAt);
+  const endsAt = safeFormatTime(booking.endsAt);
+  if (startsAt === '-' && endsAt === '-') return 'Время не сохранено';
+  return `${startsAt}-${endsAt}`;
+}
+
+function formatBookingPaymentSummary(booking: Booking) {
+  const paymentStatus = booking.paymentStatus
+    ? PAYMENT_STATUS_LABELS[booking.paymentStatus] || booking.paymentStatus
+    : 'Оплата не сохранена';
+  return `${paymentStatus} · ${formatCurrency(
+    booking.paidAmount,
+  )} из ${formatCurrency(booking.price)}`;
+}
+
+function formatBookingLocation(booking: Booking) {
+  if (!booking.court && !booking.courtId) return 'Ресурс не сохранен';
+  return booking.court?.name || `Ресурс #${booking.courtId}`;
+}
+
+function getBookingParticipantNames(booking: Booking) {
+  const participantNames = (booking.participants || [])
+    .map((participant) => participant.client?.name)
+    .filter((name): name is string => Boolean(name));
+  const names = [booking.clientName, ...participantNames];
+  return Array.from(new Set(names)).filter(Boolean);
+}
+
+function getBookingParticipantCount(booking: Booking) {
+  if (booking.bookingType !== 'group_training') return 1;
+  return Math.max(1, getBookingParticipantNames(booking).length);
+}
+
+function getBookingClientHref(clientId?: number | null) {
+  return clientId ? `/admin/clients?clientId=${clientId}` : '';
+}
+
+function formatBookingClientSummary(booking: Booking) {
+  return [booking.clientName || 'Клиент не сохранен', booking.clientPhone]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function formatHistoryReason(reason?: string | null) {
+  return String(reason || '').trim();
+}
+
+function getBookingHistoryDetails(
+  item: BookingChangeLog,
+  previousSnapshot?: Booking | null,
+) {
+  const current = item.snapshot;
+  const details: string[] = [];
+  const reason = formatHistoryReason(item.reason);
+
+  if (!current) {
+    if (reason) details.push(`Причина: ${reason}`);
+    return details;
+  }
+
+  if (!previousSnapshot) {
+    details.push(
+      `${formatBookingLocation(current)} · ${formatBookingTimeWindow(current)}`,
+      `Клиент: ${formatBookingClientSummary(current)}`,
+      `Оплата: ${formatBookingPaymentSummary(current)}`,
+    );
+  } else {
+    const previousStart = getDateTime(previousSnapshot.startsAt);
+    const previousEnd = getDateTime(previousSnapshot.endsAt);
+    const currentStart = getDateTime(current.startsAt);
+    const currentEnd = getDateTime(current.endsAt);
+    const timeChanged =
+      previousStart !== currentStart ||
+      previousEnd !== currentEnd ||
+      previousSnapshot.courtId !== current.courtId;
+    if (timeChanged) {
+      details.push(
+        `Время/ресурс: ${formatBookingLocation(previousSnapshot)} ${formatBookingTimeWindow(previousSnapshot)} -> ${formatBookingLocation(current)} ${formatBookingTimeWindow(current)}`,
+      );
+    }
+
+    if (
+      previousSnapshot.clientName !== current.clientName ||
+      previousSnapshot.clientPhone !== current.clientPhone
+    ) {
+      details.push(
+        `Клиент: ${formatBookingClientSummary(previousSnapshot)} -> ${formatBookingClientSummary(current)}`,
+      );
+    }
+
+    if (previousSnapshot.bookingType !== current.bookingType) {
+      details.push(
+        `Тип: ${BOOKING_TYPE_LABELS[previousSnapshot.bookingType]} -> ${BOOKING_TYPE_LABELS[current.bookingType]}`,
+      );
+    }
+
+    if (previousSnapshot.status !== current.status) {
+      details.push(
+        `Статус: ${STATUS_LABELS[previousSnapshot.status]} -> ${STATUS_LABELS[current.status]}`,
+      );
+    }
+
+    const paymentChanged =
+      previousSnapshot.paymentStatus !== current.paymentStatus ||
+      previousSnapshot.paymentMethod !== current.paymentMethod ||
+      Number(previousSnapshot.paidAmount || 0) !== Number(current.paidAmount || 0) ||
+      Number(previousSnapshot.price || 0) !== Number(current.price || 0);
+    if (paymentChanged) {
+      details.push(
+        `Оплата: ${formatBookingPaymentSummary(previousSnapshot)} -> ${formatBookingPaymentSummary(current)}`,
+      );
+    }
+
+    if (previousSnapshot.responsibleStaffId !== current.responsibleStaffId) {
+      details.push(
+        `Ответственный: ${formatResponsibleStaff(previousSnapshot.responsibleStaff)} -> ${formatResponsibleStaff(current.responsibleStaff)}`,
+      );
+    }
+
+    const beforeParticipants = getBookingParticipantNames(previousSnapshot).join(', ');
+    const afterParticipants = getBookingParticipantNames(current).join(', ');
+    if (
+      current.bookingType === 'group_training' &&
+      beforeParticipants !== afterParticipants
+    ) {
+      details.push(`Участники: ${beforeParticipants || '-'} -> ${afterParticipants || '-'}`);
+    }
+
+    if (previousSnapshot.comment !== current.comment) {
+      details.push('Комментарий администратора изменен');
+    }
+  }
+
+  if (current.status === 'canceled' && current.cancellationReason) {
+    details.push(`Отмена: ${current.cancellationReason}`);
+  } else if (reason) {
+    details.push(`Причина: ${reason}`);
+  }
+
+  return details.slice(0, 6);
+}
+
+function buildBookingHistoryRows(items: BookingChangeLog[] = []): BookingHistoryRow[] {
+  return items.map((item, index) => ({
+    details: getBookingHistoryDetails(item, items[index + 1]?.snapshot),
+    item,
+  }));
+}
+
+function rangesOverlap(
+  leftStart: Date,
+  leftEnd: Date,
+  rightStart: Date,
+  rightEnd: Date,
+) {
+  return leftStart < rightEnd && leftEnd > rightStart;
+}
+
+function buildBookingConflictNotice({
+  blocks,
+  bookings,
+  courtId,
+  date,
+  durationMinutes,
+  editingBookingId,
+  selectedDate,
+  startTime,
+}: {
+  blocks: CourtBlock[];
+  bookings: Booking[];
+  courtId?: number | null;
+  date?: string;
+  durationMinutes?: number | null;
+  editingBookingId?: number | null;
+  selectedDate: string;
+  startTime?: string;
+}): BookingOperationNotice | null {
+  if (!courtId || !date || !startTime || !durationMinutes) return null;
+  if (date !== selectedDate) {
+    return {
+      description: 'Откройте выбранную дату в расписании, чтобы увидеть соседние брони до сохранения.',
+      id: 'date-not-loaded',
+      level: 'info',
+      title: 'Конфликт времени будет проверен сервером при сохранении',
+    };
+  }
+
+  const startsAt = new Date(buildStartsAtIso(date, startTime));
+  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60000);
+  if (Number.isNaN(startsAt.getTime()) || Number.isNaN(endsAt.getTime())) return null;
+
+  const conflictingBooking = bookings.find((booking) => {
+    if (booking.status === 'canceled') return false;
+    if (booking.id === editingBookingId) return false;
+    if (Number(booking.courtId) !== Number(courtId)) return false;
+    return rangesOverlap(
+      startsAt,
+      endsAt,
+      new Date(booking.startsAt),
+      new Date(booking.endsAt),
+    );
+  });
+
+  if (conflictingBooking) {
+    return {
+      description: `${formatBookingTimeWindow(conflictingBooking)} · ${conflictingBooking.clientName}`,
+      id: `booking-conflict-${conflictingBooking.id}`,
+      level: 'danger',
+      title: `Конфликт: ${formatBookingLocation(conflictingBooking)} уже занят`,
+    };
+  }
+
+  const conflictingBlock = blocks.find((block) => {
+    if (Number(block.courtId) !== Number(courtId)) return false;
+    return rangesOverlap(
+      startsAt,
+      endsAt,
+      new Date(block.startsAt),
+      new Date(block.endsAt),
+    );
+  });
+
+  if (conflictingBlock) {
+    return {
+      description: `${formatTime(conflictingBlock.startsAt)}-${formatTime(conflictingBlock.endsAt)} · ${conflictingBlock.reason}`,
+      id: `block-conflict-${conflictingBlock.id}`,
+      level: 'danger',
+      title: 'Конфликт: на это время стоит блокировка',
+    };
+  }
+
+  return null;
+}
+
 function getBookingSearchText(booking: Booking) {
   return [
     booking.clientName,
@@ -809,11 +1104,15 @@ export default function BookingsPage() {
   const canEditBookings = canManageBookings(account?.role);
   const canEditBookingResources = canManageBookingResources(account?.role);
   const canCloseTrainingPlans = canManageTrainingNotes(account?.role);
+  const canViewBookingCertificates = canViewCertificates(account?.role);
+  const canViewBookingSubscriptions = canViewClientSubscriptions(account?.role);
   const [searchParams, setSearchParams] = useSearchParams();
   const priceManuallyEditedRef = useRef(false);
   const priceQuoteBaselineRef = useRef('');
   const lastAutoPriceRef = useRef('');
+  const openedBookingIdRef = useRef<number | null>(null);
   const dateFromUrl = searchParams.get('date');
+  const requestedBookingId = Number(searchParams.get('bookingId') || 0);
   const [selectedDate, setSelectedDate] = useState(
     isDateOnly(dateFromUrl) ? dateFromUrl! : format(new Date(), 'yyyy-MM-dd'),
   );
@@ -1058,6 +1357,14 @@ export default function BookingsPage() {
     control: bookingForm.control,
     name: 'paymentMethod',
   });
+  const priceValue = useWatch({
+    control: bookingForm.control,
+    name: 'price',
+  });
+  const paidAmountValue = useWatch({
+    control: bookingForm.control,
+    name: 'paidAmount',
+  });
   const userIdValue = useWatch({
     control: bookingForm.control,
     name: 'userId',
@@ -1117,6 +1424,117 @@ export default function BookingsPage() {
   const primaryGroupClientId = userIdValue ? Number(userIdValue) : null;
   const primaryGroupClientName =
     lookupClient?.name || clientNameValue.trim() || editingBooking?.clientName || '';
+  const selectedClientIdForPrepayments = userIdValue ? Number(userIdValue) : null;
+  const shouldLoadBookingPrepayments =
+    formOpen &&
+    Boolean(selectedClientIdForPrepayments) &&
+    (canViewBookingCertificates || canViewBookingSubscriptions);
+  const bookingClientDetailsQuery = useQuery({
+    enabled: shouldLoadBookingPrepayments,
+    queryFn: () =>
+      apiRequest<BookingClientDetails>(
+        `/api/clients/${selectedClientIdForPrepayments}`,
+        {},
+        'Не удалось загрузить предоплаты клиента',
+      ),
+    queryKey: queryKeys.clients.detail(selectedClientIdForPrepayments),
+  });
+  const bookingPrepaymentSummary =
+    bookingClientDetailsQuery.data?.prepaymentSummary ||
+    lookupClient?.prepaymentSummary ||
+    null;
+  const selectedBookingClientHref = getBookingClientHref(
+    selectedClientIdForPrepayments || editingBooking?.userId,
+  );
+  const bookingHistoryRows = useMemo(
+    () => buildBookingHistoryRows(historyQuery.data || []),
+    [historyQuery.data],
+  );
+  const bookingOperationNotices = useMemo(() => {
+    const notices: BookingOperationNotice[] = [];
+    const conflictNotice = buildBookingConflictNotice({
+      blocks: schedule?.blocks || [],
+      bookings,
+      courtId: courtIdValue ? Number(courtIdValue) : null,
+      date: dateValue,
+      durationMinutes: durationValue ? Number(durationValue) : null,
+      editingBookingId: editingBooking?.id || null,
+      selectedDate,
+      startTime: startTimeValue,
+    });
+    if (conflictNotice) notices.push(conflictNotice);
+
+    const price = Number(priceValue || 0);
+    const paidAmount = Number(paidAmountValue || 0);
+    const activePaymentStatus =
+      statusValue !== 'canceled' &&
+      paymentStatusValue !== 'paid' &&
+      paymentStatusValue !== 'refunded';
+    if (activePaymentStatus && price > paidAmount) {
+      notices.push({
+        description: `${formatCurrency(Math.max(0, price - paidAmount))} осталось из ${formatCurrency(price)}`,
+        id: 'payment-missing',
+        level: 'warning',
+        title: 'Бронь не закрыта по оплате',
+      });
+    }
+
+    const hasActiveSubscription =
+      canViewBookingSubscriptions && bookingPrepaymentSummary?.hasActiveSubscription;
+    const hasActiveCertificate =
+      canViewBookingCertificates && bookingPrepaymentSummary?.hasActiveCertificate;
+    if (hasActiveSubscription || hasActiveCertificate) {
+      const labels = [
+        hasActiveSubscription &&
+          `${bookingPrepaymentSummary?.activeSubscriptionsCount || 0} абонем.`,
+        hasActiveCertificate &&
+          `${bookingPrepaymentSummary?.activeCertificatesCount || 0} серт.`,
+      ].filter(Boolean);
+      notices.push({
+        actionHref: selectedBookingClientHref,
+        actionLabel: 'Открыть клиента',
+        description: `${labels.join(' · ')} Проверьте, нужно ли списать занятие или сертификат.`,
+        id: 'active-prepayment',
+        level: 'info',
+        title: 'У клиента есть активная предоплата',
+      });
+    }
+
+    if (bookingTypeValue === 'group_training') {
+      const total = 1 + groupParticipants.length;
+      notices.push({
+        description: [
+          primaryGroupClientName || 'Основной клиент',
+          ...groupParticipants.map((participant) => participant.client.name),
+        ].join(', '),
+        id: 'group-participants',
+        level: total > 1 ? 'info' : 'warning',
+        title: `Групповая тренировка: ${total} участн.`,
+      });
+    }
+
+    return notices;
+  }, [
+    bookingPrepaymentSummary,
+    bookingTypeValue,
+    bookings,
+    canViewBookingCertificates,
+    canViewBookingSubscriptions,
+    courtIdValue,
+    dateValue,
+    durationValue,
+    editingBooking?.id,
+    groupParticipants,
+    paidAmountValue,
+    paymentStatusValue,
+    priceValue,
+    primaryGroupClientName,
+    schedule?.blocks,
+    selectedBookingClientHref,
+    selectedDate,
+    startTimeValue,
+    statusValue,
+  ]);
 
   const invalidateSchedule = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.bookings.all });
@@ -1454,6 +1872,16 @@ export default function BookingsPage() {
     setFormOpen(true);
   }, [bookingForm, resetAutoPricing]);
 
+  useEffect(() => {
+    if (!requestedBookingId || editingBooking?.id === requestedBookingId) return;
+    if (openedBookingIdRef.current === requestedBookingId) return;
+    const booking = bookings.find((item) => item.id === requestedBookingId);
+    if (booking) {
+      openedBookingIdRef.current = requestedBookingId;
+      openEdit(booking);
+    }
+  }, [bookings, editingBooking?.id, openEdit, requestedBookingId]);
+
   const addGroupParticipant = useCallback((client: ClientListItem) => {
     if (primaryGroupClientId && client.id === primaryGroupClientId) return;
     setGroupParticipants((current) => {
@@ -1729,7 +2157,7 @@ export default function BookingsPage() {
   }, [dayStartMinutes, selectedDate, slots.length, stepMinutes, updateMutation]);
 
   const handleBookingDragStart = (
-    event: ReactPointerEvent<HTMLButtonElement>,
+    event: ReactPointerEvent<HTMLElement>,
     booking: Booking,
   ) => {
     if (
@@ -1742,7 +2170,6 @@ export default function BookingsPage() {
       return;
     }
 
-    event.preventDefault();
     const pointerStart = { x: event.clientX, y: event.clientY };
     let moved = false;
 
@@ -1765,28 +2192,27 @@ export default function BookingsPage() {
     };
 
     const handlePointerMove = (pointerEvent: PointerEvent) => {
-      pointerEvent.preventDefault();
       const distance = Math.hypot(
         pointerEvent.clientX - pointerStart.x,
         pointerEvent.clientY - pointerStart.y,
       );
       if (distance < 6) return;
+      pointerEvent.preventDefault();
       moved = true;
       setDraggingBookingId(booking.id);
       setDragTarget(getTarget(pointerEvent.clientX, pointerEvent.clientY));
     };
 
     const handlePointerUp = async (pointerEvent: PointerEvent) => {
-      pointerEvent.preventDefault();
       window.removeEventListener('pointermove', handlePointerMove);
       window.removeEventListener('pointerup', handlePointerUp);
       const target = getTarget(pointerEvent.clientX, pointerEvent.clientY);
       setDraggingBookingId(null);
       setDragTarget(null);
       if (!moved || !target) {
-        openEdit(booking);
         return;
       }
+      pointerEvent.preventDefault();
       await moveBooking(booking, target.courtId, target.slotIndex);
     };
 
@@ -2213,6 +2639,13 @@ export default function BookingsPage() {
                 {formatResponsibleStaff(row.original.responsibleStaff)}
               </div>
             )}
+            {row.original.bookingType === 'group_training' && (
+              <div className="text-xs text-muted-foreground">
+                {getBookingParticipantCount(row.original)} участн.:{' '}
+                {getBookingParticipantNames(row.original).slice(0, 3).join(', ')}
+                {getBookingParticipantCount(row.original) > 3 ? '...' : ''}
+              </div>
+            )}
           </div>
         ),
       },
@@ -2626,12 +3059,18 @@ export default function BookingsPage() {
                         (getMinutesFromDayStart(booking.startsAt, dayStartMinutes) / stepMinutes) * SLOT_HEIGHT,
                       );
                       const height = getBookingCardHeight(booking.durationMinutes, stepMinutes);
+                      const canQuickEdit = canEditBookings && booking.status !== 'canceled';
+                      const needsPayment = isBookingNeedsPayment(booking);
+                      const participantCount = getBookingParticipantCount(booking);
+                      const participantNames = getBookingParticipantNames(booking);
                       return (
-                        <button
+                        <div
                           key={booking.id}
                           data-booking-card="true"
+                          role="button"
+                          tabIndex={0}
                           className={cn(
-                            'absolute left-1 right-1 z-20 overflow-hidden rounded-md border p-2 text-left text-xs shadow-sm transition-transform hover:scale-[1.01]',
+                            'absolute left-1 right-1 z-20 overflow-hidden rounded-md border p-2 text-left text-xs shadow-sm transition-transform hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                             canEditBookings && booking.status !== 'canceled' && 'cursor-grab active:cursor-grabbing',
                             draggingBookingId === booking.id && 'opacity-45',
                             getStatusClass(booking.status),
@@ -2645,15 +3084,105 @@ export default function BookingsPage() {
                             booking.responsibleStaff
                               ? `Ответственный: ${formatResponsibleStaff(booking.responsibleStaff)}`
                               : null,
+                            booking.bookingType === 'group_training'
+                              ? `Участники: ${participantNames.join(', ')}`
+                              : null,
+                            needsPayment
+                              ? `К оплате: ${formatCurrency(Math.max(0, booking.price - booking.paidAmount))}`
+                              : null,
                           ].filter(Boolean).join('\n')}
                           onClick={() => openEdit(booking)}
+                          onKeyDown={(event) => {
+                            if (event.key !== 'Enter' && event.key !== ' ') return;
+                            event.preventDefault();
+                            openEdit(booking);
+                          }}
                           onPointerDown={(event) => handleBookingDragStart(event, booking)}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="font-semibold">
                               {formatTime(booking.startsAt)}-{formatTime(booking.endsAt)}
                             </span>
-                            <span>{booking.bookingSeriesId ? 'Постоянка' : STATUS_LABELS[booking.status]}</span>
+                            {canQuickEdit && height >= 64 ? (
+                              <div
+                                className="flex shrink-0 gap-0.5"
+                                onPointerDown={(event) => event.stopPropagation()}
+                              >
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
+                                  title="Открыть бронь"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    openEdit(booking);
+                                  }}
+                                >
+                                  <Pencil className="size-3" />
+                                </Button>
+                                {booking.status === 'new' && (
+                                  <Button
+                                    type="button"
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
+                                    title="Подтвердить бронь"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void quickStatus(booking, 'confirmed');
+                                    }}
+                                  >
+                                    <CheckCircle2 className="size-3" />
+                                  </Button>
+                                )}
+                                {booking.status !== 'arrived' && (
+                                  <Button
+                                    type="button"
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
+                                    title="Клиент пришел"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      void quickStatus(booking, 'arrived');
+                                    }}
+                                  >
+                                    <UserCheck className="size-3" />
+                                  </Button>
+                                )}
+                                {needsPayment && (
+                                  <Button
+                                    type="button"
+                                    size="icon-xs"
+                                    variant="ghost"
+                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
+                                    title="Отметить оплату"
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      openPaymentDialog(booking);
+                                    }}
+                                  >
+                                    <Banknote className="size-3" />
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  size="icon-xs"
+                                  variant="ghost"
+                                  className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
+                                  title="Отменить бронь"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    void quickStatus(booking, 'canceled');
+                                  }}
+                                >
+                                  <XCircle className="size-3" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span>{booking.bookingSeriesId ? 'Постоянка' : STATUS_LABELS[booking.status]}</span>
+                            )}
                           </div>
                           <div className="mt-1 flex flex-wrap gap-1">
                             {booking.isFirstBooking && (
@@ -2669,11 +3198,31 @@ export default function BookingsPage() {
                                 {getTrainingPlanStatusLabel(booking.trainingPlan)}
                               </span>
                             )}
+                            {booking.bookingSeriesId && (
+                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
+                                Постоянка
+                              </span>
+                            )}
+                            {booking.bookingType === 'group_training' && (
+                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
+                                {participantCount} участн.
+                              </span>
+                            )}
+                            {needsPayment && (
+                              <span className="max-w-full truncate rounded-sm bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold">
+                                К оплате
+                              </span>
+                            )}
                           </div>
                           <div className="mt-1 truncate font-medium">{booking.clientName}</div>
                           <div className="truncate opacity-80">
                             {PAYMENT_STATUS_LABELS[booking.paymentStatus]} · {formatCurrency(booking.price)}
                           </div>
+                          {height > 104 && booking.bookingType === 'group_training' && (
+                            <div className="mt-1 truncate opacity-75">
+                              {participantNames.join(', ')}
+                            </div>
+                          )}
                           {height > 96 && booking.responsibleStaff && (
                             <div className="mt-1 truncate opacity-75">
                               {formatResponsibleStaff(booking.responsibleStaff)}
@@ -2682,7 +3231,7 @@ export default function BookingsPage() {
                           {height > 86 && booking.comment && (
                             <div className="mt-1 truncate opacity-70">{booking.comment}</div>
                           )}
-                        </button>
+                        </div>
                       );
                     })}
                   </div>
@@ -2870,9 +3419,21 @@ export default function BookingsPage() {
               </div>
             </div>
 
+            <BookingOperationNotices notices={bookingOperationNotices} />
+
             <div className="grid gap-4 md:grid-cols-[1fr_1fr]">
               <div className="space-y-2">
-                <Label>Телефон клиента</Label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <Label>Телефон клиента</Label>
+                  {selectedBookingClientHref && (
+                    <Button asChild type="button" variant="outline" size="xs">
+                      <Link to={selectedBookingClientHref}>
+                        <ExternalLink className="size-3" />
+                        Карточка клиента
+                      </Link>
+                    </Button>
+                  )}
+                </div>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
@@ -2892,6 +3453,20 @@ export default function BookingsPage() {
                   client={lookupClient}
                   errorMessage={lookupError}
                   state={lookupState}
+                />
+                <BookingPrepaymentHint
+                  canViewCertificates={canViewBookingCertificates}
+                  canViewSubscriptions={canViewBookingSubscriptions}
+                  errorMessage={
+                    bookingClientDetailsQuery.isError
+                      ? getApiErrorMessage(
+                          bookingClientDetailsQuery.error,
+                          'Не удалось загрузить предоплаты клиента',
+                        )
+                      : ''
+                  }
+                  loading={bookingClientDetailsQuery.isLoading}
+                  summary={bookingPrepaymentSummary}
                 />
               </div>
               <div className="space-y-2">
@@ -2965,27 +3540,43 @@ export default function BookingsPage() {
                     {1 + groupParticipants.length}
                   </Badge>
                 </div>
-                <div className="flex flex-wrap gap-2">
-                  <Badge>
-                    {primaryGroupClientName || 'Основной клиент'}
-                  </Badge>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="rounded-md border bg-background p-2 text-sm">
+                    <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground">
+                      Основной
+                    </div>
+                    <div className="truncate font-medium">
+                      {primaryGroupClientName || 'Основной клиент'}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {phoneValue || 'Телефон не указан'}
+                    </div>
+                  </div>
                   {groupParticipants.map((participant) => (
-                    <span
+                    <div
                       key={participant.clientId}
-                      className="inline-flex items-center gap-1 rounded-md border bg-background px-2 py-1 text-sm"
+                      className="flex min-w-0 items-start justify-between gap-2 rounded-md border bg-background p-2 text-sm"
                     >
-                      {participant.client.name}
+                      <div className="min-w-0">
+                        <div className="mb-1 text-[11px] font-medium uppercase text-muted-foreground">
+                          Участник
+                        </div>
+                        <div className="truncate font-medium">{participant.client.name}</div>
+                        <div className="truncate text-xs text-muted-foreground">
+                          {participant.client.phone || 'Телефон не указан'}
+                        </div>
+                      </div>
                       {canEditBookings && (
                         <button
                           type="button"
-                          className="text-muted-foreground hover:text-foreground"
+                          className="mt-0.5 text-muted-foreground hover:text-foreground"
                           onClick={() => removeGroupParticipant(participant.clientId)}
                           title="Убрать участника"
                         >
                           <XCircle className="size-3.5" />
                         </button>
                       )}
-                    </span>
+                    </div>
                   ))}
                 </div>
                 {canEditBookings && (
@@ -3240,7 +3831,10 @@ export default function BookingsPage() {
                   </div>
                 )}
 	                <div className="space-y-2 text-sm">
-	                  <div className="font-medium">История изменений</div>
+	                  <div className="flex items-center gap-2 font-medium">
+                      <History className="size-4 text-muted-foreground" />
+                      История изменений
+                    </div>
 	                  {historyQuery.isLoading && (
 	                    <div className="text-muted-foreground">Загрузка истории...</div>
 	                  )}
@@ -3251,20 +3845,10 @@ export default function BookingsPage() {
 	                      onRetry={() => void historyQuery.refetch()}
 	                    />
 	                  )}
-	                  {!historyQuery.isError && (historyQuery.data || []).slice(0, 5).map((item) => (
-	                    <div key={item.id} className="flex flex-wrap gap-x-2 text-muted-foreground">
-	                      <span>{formatDateTime(item.createdAt)}</span>
-	                      <span>{item.actor?.name || item.actor?.email || 'Система'}</span>
-                      <span>{item.action}</span>
-                      {item.fromStatus && item.toStatus && (
-                        <span>
-                          {item.fromStatus} → {item.toStatus}
-                        </span>
-	                      )}
-	                      {item.reason && <span>· {item.reason}</span>}
-	                    </div>
+	                  {!historyQuery.isError && bookingHistoryRows.slice(0, 8).map((row) => (
+                      <BookingHistoryItem key={row.item.id} row={row} />
 	                  ))}
-	                  {!historyQuery.isLoading && !historyQuery.isError && !historyQuery.data?.length && (
+	                  {!historyQuery.isLoading && !historyQuery.isError && !bookingHistoryRows.length && (
 	                    <div className="text-muted-foreground">Истории пока нет.</div>
 	                  )}
 	                </div>
@@ -4890,6 +5474,77 @@ export default function BookingsPage() {
   );
 }
 
+function getNoticeClass(level: BookingNoticeLevel) {
+  if (level === 'danger') {
+    return 'border-destructive/40 bg-destructive/10 text-destructive';
+  }
+  if (level === 'warning') {
+    return 'border-amber-300/50 bg-amber-50 text-amber-900 dark:border-amber-500/40 dark:bg-amber-950/30 dark:text-amber-200';
+  }
+  return 'border-sky-300/50 bg-sky-50 text-sky-900 dark:border-sky-500/40 dark:bg-sky-950/30 dark:text-sky-200';
+}
+
+function BookingOperationNotices({ notices }: { notices: BookingOperationNotice[] }) {
+  if (!notices.length) return null;
+
+  return (
+    <div className="grid gap-2 md:grid-cols-2">
+      {notices.map((notice) => (
+        <div
+          key={notice.id}
+          className={cn('rounded-md border p-3 text-sm', getNoticeClass(notice.level))}
+        >
+          <div className="flex min-w-0 items-start gap-2">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="break-words font-medium">{notice.title}</div>
+              {notice.description && (
+                <div className="mt-1 break-words text-xs opacity-85">
+                  {notice.description}
+                </div>
+              )}
+            </div>
+            {notice.actionHref && notice.actionLabel && (
+              <Button asChild type="button" variant="outline" size="xs" className="shrink-0 bg-background/70">
+                <Link to={notice.actionHref}>
+                  <ExternalLink className="size-3" />
+                  {notice.actionLabel}
+                </Link>
+              </Button>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BookingHistoryItem({ row }: { row: BookingHistoryRow }) {
+  const { item } = row;
+  const actor = item.actor?.name || item.actor?.email || 'Система';
+
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant={item.action === 'canceled' ? 'destructive' : 'outline'}>
+          {HISTORY_ACTION_LABELS[item.action] || item.action}
+        </Badge>
+        <span className="text-xs text-muted-foreground">{formatDateTime(item.createdAt)}</span>
+        <span className="text-xs text-muted-foreground">{actor}</span>
+      </div>
+      {row.details.length > 0 && (
+        <div className="mt-2 space-y-1">
+          {row.details.map((detail) => (
+            <div key={detail} className="break-words text-xs text-muted-foreground">
+              {detail}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FormError({ message }: { message?: string }) {
   if (!message) return null;
   return <div className="text-xs text-destructive">{message}</div>;
@@ -4968,4 +5623,67 @@ function ClientLookupHint({
     );
   }
   return null;
+}
+
+function BookingPrepaymentHint({
+  canViewCertificates,
+  canViewSubscriptions,
+  errorMessage,
+  loading,
+  summary,
+}: {
+  canViewCertificates: boolean;
+  canViewSubscriptions: boolean;
+  errorMessage?: string;
+  loading: boolean;
+  summary: ClientPrepaymentSummary | null;
+}) {
+  if (!canViewCertificates && !canViewSubscriptions) return null;
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Search className="size-3 animate-pulse" />
+        Проверяем абонементы и сертификаты...
+      </div>
+    );
+  }
+  if (errorMessage) {
+    return <div className="text-xs text-destructive">{errorMessage}</div>;
+  }
+  if (!summary) return null;
+
+  const warnings = [
+    ...(summary.subscriptionWarnings || []),
+    ...(summary.certificateWarnings || []),
+  ].slice(0, 2);
+  const hasActive =
+    (canViewSubscriptions && summary.hasActiveSubscription) ||
+    (canViewCertificates && summary.hasActiveCertificate);
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-2 text-xs">
+      <div className="flex flex-wrap gap-1">
+        {canViewSubscriptions && (
+          <Badge variant={summary.hasActiveSubscription ? 'default' : 'outline'}>
+            Абонементы: {summary.activeSubscriptionsCount}
+          </Badge>
+        )}
+        {canViewCertificates && (
+          <Badge variant={summary.hasActiveCertificate ? 'default' : 'outline'}>
+            Сертификаты: {summary.activeCertificatesCount}
+          </Badge>
+        )}
+        {!hasActive && <Badge variant="secondary">Активных предоплат нет</Badge>}
+      </div>
+      {warnings.length > 0 && (
+        <div className="mt-2 space-y-1 text-amber-600">
+          {warnings.map((warning) => (
+            <div key={warning.id} className="break-words">
+              {warning.text}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

@@ -24,6 +24,7 @@ type AccessKey =
   | 'financeManage'
   | 'financeView'
   | 'financeExport'
+  | 'managerControlDashboardView'
   | 'motivationManage'
   | 'motivationView'
   | 'payrollApprove'
@@ -80,6 +81,7 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   financeManage: ['owner', 'accountant'],
   financeView: ['owner', 'manager', 'accountant', 'viewer'],
   financeExport: ['owner', 'manager', 'accountant'],
+  managerControlDashboardView: ['owner', 'manager'],
   motivationManage: ['owner', 'manager'],
   motivationView: ['owner', 'manager', 'admin', 'accountant'],
   payrollApprove: ['owner', 'manager'],

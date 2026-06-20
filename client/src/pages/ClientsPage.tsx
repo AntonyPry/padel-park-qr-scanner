@@ -13,6 +13,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
   Activity,
+  AlertTriangle,
   Archive,
   ArchiveRestore,
   CalendarClock,
@@ -20,9 +21,11 @@ import {
   Copy,
   Dumbbell,
   Eye,
+  Gift,
   GitMerge,
   History,
   MessageSquareText,
+  PackageCheck,
   Pencil,
   Phone,
   PhoneCall,
@@ -35,6 +38,7 @@ import {
   Trash2,
   UserRoundCheck,
   Users,
+  WalletCards,
   Repeat2,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
@@ -119,12 +123,15 @@ import {
   canManageCallTasks,
   canManageTrainingNotes,
   canMergeClients,
+  canRedeemCertificates,
   canRedeemClientSubscriptions,
+  canViewCertificates,
   canViewClientSubscriptions,
   canViewTrainingNotes,
 } from '@/lib/permissions';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
 
 type ClientStatus = 'active' | 'archived';
@@ -185,6 +192,9 @@ interface ClientVisit {
 
 type ClientSubscriptionStatus = 'active' | 'canceled' | 'expired' | 'used';
 type ClientSubscriptionRedemptionStatus = 'active' | 'reversed';
+type ClientCertificateType = 'money' | 'service';
+type ClientCertificateStatus = 'active' | 'canceled' | 'expired' | 'redeemed';
+type ClientCertificateRedemptionStatus = 'active' | 'reversed';
 
 interface ClientSubscriptionActor {
   email?: string | null;
@@ -230,6 +240,62 @@ interface ClientSubscription {
   redemptions?: ClientSubscriptionRedemption[];
 }
 
+interface ClientCertificateRedemption {
+  amount?: number | null;
+  certificateId: number;
+  clientId: number;
+  comment?: string | null;
+  createdAt?: string;
+  id: number;
+  quantity?: number | null;
+  redeemedAt: string;
+  redeemedBy?: ClientSubscriptionActor | null;
+  redemptionReason?: string | null;
+  reversalReason?: string | null;
+  reversedAt?: string | null;
+  reversedBy?: ClientSubscriptionActor | null;
+  serviceName?: string | null;
+  serviceType?: string | null;
+  status: ClientCertificateRedemptionStatus;
+}
+
+interface ClientCertificate {
+  amountRemaining?: number | null;
+  amountTotal?: number | null;
+  amountUsed: number;
+  certificateType: ClientCertificateType;
+  code: string;
+  createdAt: string;
+  expiresAt?: string | null;
+  id: number;
+  redemptions?: ClientCertificateRedemption[];
+  saleAmount: number;
+  serviceName?: string | null;
+  serviceType?: string | null;
+  startsAt: string;
+  status: ClientCertificateStatus;
+  title: string;
+  unitsRemaining?: number | null;
+  unitsTotal?: number | null;
+  unitsUsed: number;
+}
+
+interface ClientPrepaymentWarning {
+  id: string;
+  level: 'danger' | 'muted' | 'warning';
+  text: string;
+  type: string;
+}
+
+interface ClientPrepaymentSummary {
+  activeCertificatesCount: number;
+  activeSubscriptionsCount: number;
+  certificateWarnings: ClientPrepaymentWarning[];
+  hasActiveCertificate: boolean;
+  hasActiveSubscription: boolean;
+  subscriptionWarnings: ClientPrepaymentWarning[];
+}
+
 interface ClientsResponse {
   items: Client[];
   page: number;
@@ -245,9 +311,11 @@ interface ClientDetails {
   bookingStats: ClientBookingStats;
   bookings: ClientBooking[];
   client: Client;
+  clientCertificates?: ClientCertificate[];
   clientSubscriptions?: ClientSubscription[];
   duplicateCandidates: Client[];
   mergedInto?: Client | null;
+  prepaymentSummary?: ClientPrepaymentSummary;
   skillMap: ClientSkillMapItem[];
   telephonyCalls: ClientTelephonyCall[];
   timeline: ClientTimelineItem[];
@@ -344,6 +412,10 @@ type ClientTimelineType =
   | 'call_attempt'
   | 'call_task'
   | 'client_change'
+  | 'prepayment_link'
+  | 'prepayment_redemption'
+  | 'prepayment_reversal'
+  | 'prepayment_sale'
   | 'telephony_call'
   | 'training'
   | 'visit';
@@ -621,6 +693,10 @@ const TIMELINE_TYPE_LABELS: Record<ClientTimelineType, string> = {
   call_attempt: 'Попытка',
   call_task: 'Обзвон',
   client_change: 'Изменение',
+  prepayment_link: 'Привязка',
+  prepayment_redemption: 'Списание',
+  prepayment_reversal: 'Отмена',
+  prepayment_sale: 'Продажа',
   telephony_call: 'Звонок',
   training: 'Тренировка',
   visit: 'Визит',
@@ -723,6 +799,31 @@ const CLIENT_SUBSCRIPTION_REDEMPTION_STATUS_LABELS: Record<
   reversed: 'Отменено',
 };
 
+const CLIENT_CERTIFICATE_STATUS_LABELS: Record<ClientCertificateStatus, string> = {
+  active: 'Активен',
+  canceled: 'Отменен',
+  expired: 'Истек',
+  redeemed: 'Погашен',
+};
+
+const CLIENT_CERTIFICATE_TYPE_LABELS: Record<ClientCertificateType, string> = {
+  money: 'Денежный',
+  service: 'Услуга/пакет',
+};
+
+const CLIENT_CERTIFICATE_REDEMPTION_STATUS_LABELS: Record<
+  ClientCertificateRedemptionStatus,
+  string
+> = {
+  active: 'Списано',
+  reversed: 'Отменено',
+};
+
+const PREPAYMENT_KIND_LABELS: Record<string, string> = {
+  certificate: 'Сертификат',
+  subscription: 'Абонемент',
+};
+
 const SUBSCRIPTION_TRAINING_KIND_LABELS: Record<string, string> = {
   group: 'Групповой',
   personal: 'Персональный',
@@ -801,6 +902,61 @@ function formatSubscriptionRedemptionService(redemption: ClientSubscriptionRedem
     return SUBSCRIPTION_TRAINING_KIND_LABELS[redemption.trainingKind] || redemption.trainingKind;
   }
   return 'Тренировка';
+}
+
+function formatCertificateBalance(certificate: ClientCertificate) {
+  if (certificate.certificateType === 'money') {
+    return `${formatCurrency(certificate.amountRemaining)} из ${formatCurrency(
+      certificate.amountTotal,
+    )}`;
+  }
+  return `${certificate.unitsRemaining ?? 0} из ${certificate.unitsTotal ?? 0}`;
+}
+
+function formatCertificateRedemptionValue(
+  redemption: ClientCertificateRedemption,
+  certificate: ClientCertificate,
+) {
+  if (certificate.certificateType === 'money') {
+    return formatCurrency(redemption.amount);
+  }
+  return `${redemption.quantity || 0} услуг`;
+}
+
+function getDaysUntil(value?: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return Math.ceil((date.getTime() - Date.now()) / 86400000);
+}
+
+function getSubscriptionWarning(subscription: ClientSubscription) {
+  if (subscription.status === 'expired') return 'Истекший абонемент';
+  if (subscription.status === 'used') return 'Абонемент закончился';
+  if (subscription.status === 'canceled') return 'Абонемент отменен';
+  const daysLeft = getDaysUntil(subscription.expiresAt);
+  if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 14) {
+    return `Скоро истекает: ${daysLeft} дн.`;
+  }
+  if (
+    !subscription.isUnlimited &&
+    subscription.remainingSessions !== null &&
+    subscription.remainingSessions <= 1
+  ) {
+    return `Заканчивается: ${subscription.remainingSessions} занятий`;
+  }
+  return '';
+}
+
+function getCertificateWarning(certificate: ClientCertificate) {
+  if (certificate.status === 'expired') return 'Сертификат истек';
+  if (certificate.status === 'redeemed') return 'Сертификат погашен';
+  if (certificate.status === 'canceled') return 'Сертификат отменен';
+  const daysLeft = getDaysUntil(certificate.expiresAt);
+  if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 14) {
+    return `Скоро истекает: ${daysLeft} дн.`;
+  }
+  return '';
 }
 
 function formatDuration(seconds?: number | null) {
@@ -931,6 +1087,7 @@ function getTimelineIcon(type: ClientTimelineType) {
   if (type === 'training') return Dumbbell;
   if (type === 'telephony_call') return PhoneCall;
   if (type === 'call_task' || type === 'call_attempt') return MessageSquareText;
+  if (type.startsWith('prepayment_')) return Ticket;
   return History;
 }
 
@@ -959,6 +1116,8 @@ function getTimelineMeta(item: ClientTimelineItem) {
   const result = typeof meta.result === 'string' ? meta.result : '';
   const recordingStatus =
     typeof meta.recordingStatus === 'string' ? meta.recordingStatus : '';
+  const prepaymentKind =
+    typeof meta.prepaymentKind === 'string' ? meta.prepaymentKind : '';
 
   if (item.type === 'telephony_call') {
     if (direction) {
@@ -994,6 +1153,31 @@ function getTimelineMeta(item: ClientTimelineItem) {
       );
     }
 
+    return parts.join(' · ');
+  }
+
+  if (item.type.startsWith('prepayment_')) {
+    if (prepaymentKind) {
+      parts.push(PREPAYMENT_KIND_LABELS[prepaymentKind] || prepaymentKind);
+    }
+    if (status) {
+      const isRedemptionEvent =
+        item.type === 'prepayment_redemption' ||
+        item.type === 'prepayment_reversal';
+      parts.push(
+        isRedemptionEvent
+          ? CLIENT_SUBSCRIPTION_REDEMPTION_STATUS_LABELS[
+              status as ClientSubscriptionRedemptionStatus
+            ] || status
+          : CLIENT_SUBSCRIPTION_STATUS_LABELS[
+              status as ClientSubscriptionStatus
+            ] ||
+              CLIENT_CERTIFICATE_STATUS_LABELS[
+                status as ClientCertificateStatus
+              ] ||
+              status,
+      );
+    }
     return parts.join(' · ');
   }
 
@@ -1105,6 +1289,12 @@ function FieldError({ children }: { children?: ReactNode }) {
   return <div className="mt-1 text-xs text-destructive">{children}</div>;
 }
 
+function isPrepaymentWarning(
+  value: ClientPrepaymentWarning | null,
+): value is ClientPrepaymentWarning {
+  return Boolean(value);
+}
+
 function TooltipIconButton({
   children,
   label,
@@ -1133,6 +1323,8 @@ export default function ClientsPage() {
   const canEditTraining = canManageTrainingNotes(account?.role);
   const canViewSubscriptions = canViewClientSubscriptions(account?.role);
   const canRedeemSubscriptions = canRedeemClientSubscriptions(account?.role);
+  const canViewClientCertificates = canViewCertificates(account?.role);
+  const canRedeemClientCertificates = canRedeemCertificates(account?.role);
   const canViewClientTelephony = ['owner', 'manager', 'admin', 'viewer'].includes(
     account?.role || '',
   );
@@ -1222,6 +1414,23 @@ export default function ClientsPage() {
     } | null>(null);
   const [reverseReason, setReverseReason] = useState('');
   const [reverseSaving, setReverseSaving] = useState(false);
+  const [certificateRedemptionDialog, setCertificateRedemptionDialog] =
+    useState<ClientCertificate | null>(null);
+  const [certificateRedemptionForm, setCertificateRedemptionForm] = useState({
+    amount: '',
+    comment: '',
+    quantity: '1',
+    redeemedAt: getTodayDate(),
+  });
+  const [certificateRedemptionSaving, setCertificateRedemptionSaving] =
+    useState(false);
+  const [certificateReverseDialog, setCertificateReverseDialog] =
+    useState<{
+      certificate: ClientCertificate;
+      redemption: ClientCertificateRedemption;
+    } | null>(null);
+  const [certificateReverseReason, setCertificateReverseReason] = useState('');
+  const [certificateReverseSaving, setCertificateReverseSaving] = useState(false);
   const approvedExerciseFilters = useMemo(() => ({ status: 'approved' as const }), []);
   const exercisesQuery = useQuery({
     enabled: Boolean(
@@ -1240,8 +1449,50 @@ export default function ClientsPage() {
   const historicalClientSubscriptions = clientSubscriptions.filter(
     (subscription) => subscription.status !== 'active',
   );
+  const clientCertificates = details?.clientCertificates || [];
+  const activeClientCertificates = clientCertificates.filter(
+    (certificate) => certificate.status === 'active',
+  );
+  const historicalClientCertificates = clientCertificates.filter(
+    (certificate) => certificate.status !== 'active',
+  );
+  const prepaymentSummary = details?.prepaymentSummary;
+  const fallbackSubscriptionWarnings: ClientPrepaymentWarning[] =
+    clientSubscriptions
+      .map((subscription): ClientPrepaymentWarning | null => {
+        const text = getSubscriptionWarning(subscription);
+        return text
+          ? {
+              id: `subscription-${subscription.id}`,
+              level: subscription.status === 'active' ? 'warning' : 'danger',
+              text: `${subscription.typeName}: ${text}`,
+              type: subscription.status,
+            }
+          : null;
+      })
+      .filter(isPrepaymentWarning);
+  const fallbackCertificateWarnings: ClientPrepaymentWarning[] =
+    clientCertificates
+      .map((certificate): ClientPrepaymentWarning | null => {
+        const text = getCertificateWarning(certificate);
+        return text
+          ? {
+              id: `certificate-${certificate.id}`,
+              level: certificate.status === 'active' ? 'warning' : 'danger',
+              text: `${certificate.code}: ${text}`,
+              type: certificate.status,
+            }
+          : null;
+      })
+      .filter(isPrepaymentWarning);
+  const subscriptionWarnings =
+    prepaymentSummary?.subscriptionWarnings || fallbackSubscriptionWarnings;
+  const certificateWarnings =
+    prepaymentSummary?.certificateWarnings || fallbackCertificateWarnings;
   const canMutateSubscriptions =
     canRedeemSubscriptions && details?.client.status !== 'archived';
+  const canMutateCertificates =
+    canRedeemClientCertificates && details?.client.status !== 'archived';
   const [selectedMergeIds, setSelectedMergeIds] = useState<number[]>([]);
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
@@ -1800,8 +2051,17 @@ export default function ClientsPage() {
           upcomingCount: 0,
         },
         bookings: data.bookings || [],
+        clientCertificates: data.clientCertificates || [],
         clientSubscriptions: data.clientSubscriptions || [],
         duplicateCandidates: data.duplicateCandidates || [],
+        prepaymentSummary: data.prepaymentSummary || {
+          activeCertificatesCount: 0,
+          activeSubscriptionsCount: 0,
+          certificateWarnings: [],
+          hasActiveCertificate: false,
+          hasActiveSubscription: false,
+          subscriptionWarnings: [],
+        },
         telephonyCalls: data.telephonyCalls || [],
         timeline: data.timeline || [],
         skillMap: data.skillMap || [],
@@ -1824,6 +2084,8 @@ export default function ClientsPage() {
     setSelectedMergeIds([]);
     setRedemptionDialogSubscription(null);
     setReverseRedemptionDialog(null);
+    setCertificateRedemptionDialog(null);
+    setCertificateReverseDialog(null);
     if (searchParams.has('clientId')) {
       const nextSearchParams = new URLSearchParams(searchParams);
       nextSearchParams.delete('clientId');
@@ -1842,6 +2104,23 @@ export default function ClientsPage() {
         ),
       };
     });
+  };
+
+  const updateClientCertificateInDetails = (certificate: ClientCertificate) => {
+    setDetails((current) => {
+      if (!current) return current;
+      const items = current.clientCertificates || [];
+      return {
+        ...current,
+        clientCertificates: items.map((item) =>
+          item.id === certificate.id ? certificate : item,
+        ),
+      };
+    });
+  };
+
+  const refreshOpenDetails = () => {
+    if (details?.client.id) void loadDetails(details.client.id);
   };
 
   const openRedemptionDialog = (subscription: ClientSubscription) => {
@@ -1884,6 +2163,7 @@ export default function ClientsPage() {
       };
       updateClientSubscriptionInDetails(data.subscription);
       setRedemptionDialogSubscription(null);
+      refreshOpenDetails();
       toast.success('Тренировка списана');
     } finally {
       setRedemptionSaving(false);
@@ -1924,9 +2204,105 @@ export default function ClientsPage() {
       };
       updateClientSubscriptionInDetails(data.subscription);
       setReverseRedemptionDialog(null);
+      refreshOpenDetails();
       toast.success('Списание отменено');
     } finally {
       setReverseSaving(false);
+    }
+  };
+
+  const openCertificateRedemptionDialog = (certificate: ClientCertificate) => {
+    setCertificateRedemptionDialog(certificate);
+    setCertificateRedemptionForm({
+      amount: '',
+      comment: '',
+      quantity: '1',
+      redeemedAt: getTodayDate(),
+    });
+  };
+
+  const handleCertificateRedemptionSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!certificateRedemptionDialog) return;
+
+    setCertificateRedemptionSaving(true);
+    try {
+      const body =
+        certificateRedemptionDialog.certificateType === 'money'
+          ? {
+              amount: certificateRedemptionForm.amount,
+              comment: certificateRedemptionForm.comment.trim(),
+              redeemedAt: certificateRedemptionForm.redeemedAt,
+            }
+          : {
+              comment: certificateRedemptionForm.comment.trim(),
+              quantity: certificateRedemptionForm.quantity,
+              redeemedAt: certificateRedemptionForm.redeemedAt,
+            };
+      const res = await apiFetch(
+        `/api/certificates/${certificateRedemptionDialog.id}/redemptions`,
+        {
+          body: JSON.stringify(body),
+          method: 'POST',
+        },
+      );
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось списать сертификат'));
+        return;
+      }
+
+      const data = (await res.json()) as {
+        certificate: ClientCertificate;
+        redemption: ClientCertificateRedemption;
+      };
+      updateClientCertificateInDetails(data.certificate);
+      setCertificateRedemptionDialog(null);
+      refreshOpenDetails();
+      toast.success('Сертификат списан');
+    } finally {
+      setCertificateRedemptionSaving(false);
+    }
+  };
+
+  const openCertificateReverseDialog = (
+    certificate: ClientCertificate,
+    redemption: ClientCertificateRedemption,
+  ) => {
+    setCertificateReverseDialog({ certificate, redemption });
+    setCertificateReverseReason('');
+  };
+
+  const handleCertificateReverse = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!certificateReverseDialog) return;
+
+    setCertificateReverseSaving(true);
+    try {
+      const { certificate, redemption } = certificateReverseDialog;
+      const res = await apiFetch(
+        `/api/certificates/${certificate.id}/redemptions/${redemption.id}/reverse`,
+        {
+          body: JSON.stringify({ reason: certificateReverseReason.trim() }),
+          method: 'POST',
+        },
+      );
+
+      if (!res.ok) {
+        toast.error(await readError(res, 'Не удалось отменить списание сертификата'));
+        return;
+      }
+
+      const data = (await res.json()) as {
+        certificate: ClientCertificate;
+        redemption: ClientCertificateRedemption;
+      };
+      updateClientCertificateInDetails(data.certificate);
+      setCertificateReverseDialog(null);
+      refreshOpenDetails();
+      toast.success('Списание сертификата отменено');
+    } finally {
+      setCertificateReverseSaving(false);
     }
   };
 
@@ -2391,6 +2767,118 @@ export default function ClientsPage() {
                         openReverseRedemptionDialog(subscription, redemption)
                       }
                       disabled={reverseSaving}
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                    </TooltipIconButton>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderPrepaymentWarnings = (warnings: ClientPrepaymentWarning[]) => {
+    if (warnings.length === 0) return null;
+
+    return (
+      <div className="space-y-2">
+        {warnings.map((warning) => (
+          <div
+            key={warning.id}
+            className={cn(
+              'flex items-start gap-2 rounded-md border px-3 py-2 text-sm',
+              warning.level === 'danger'
+                ? 'border-destructive/40 bg-destructive/5 text-destructive'
+                : warning.level === 'warning'
+                  ? 'border-amber-300 bg-amber-50 text-amber-700'
+                  : 'bg-muted/40 text-muted-foreground',
+            )}
+          >
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+            <span className="min-w-0 break-words">{warning.text}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  const renderCertificateHistory = (certificate: ClientCertificate) => {
+    const redemptions = certificate.redemptions || [];
+
+    return (
+      <div className="mt-3 border-t pt-3">
+        <div className="mb-2 flex items-center gap-2 text-xs font-medium text-muted-foreground">
+          <History className="h-3.5 w-3.5" />
+          История списаний
+        </div>
+        {redemptions.length === 0 ? (
+          <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+            Списаний пока нет.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {redemptions.map((redemption) => (
+              <div
+                key={redemption.id}
+                className="rounded-md border bg-muted/20 p-2 text-xs"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1">
+                      <Badge
+                        variant={
+                          redemption.status === 'reversed'
+                            ? 'outline'
+                            : 'default'
+                        }
+                      >
+                        {
+                          CLIENT_CERTIFICATE_REDEMPTION_STATUS_LABELS[
+                            redemption.status
+                          ]
+                        }
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {formatDate(redemption.redeemedAt)}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {formatCertificateRedemptionValue(
+                          redemption,
+                          certificate,
+                        )}
+                      </span>
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      {formatSubscriptionActor(redemption.redeemedBy)}
+                    </div>
+                    {redemption.comment && (
+                      <div className="mt-1 break-words text-foreground">
+                        {redemption.comment}
+                      </div>
+                    )}
+                    {redemption.status === 'reversed' && (
+                      <div className="mt-1 text-muted-foreground">
+                        Отменено: {formatDateTime(redemption.reversedAt)} ·{' '}
+                        {formatSubscriptionActor(redemption.reversedBy)}
+                        {redemption.reversalReason
+                          ? ` · ${redemption.reversalReason}`
+                          : ''}
+                      </div>
+                    )}
+                  </div>
+                  {canMutateCertificates && redemption.status === 'active' && (
+                    <TooltipIconButton
+                      type="button"
+                      label="Отменить списание сертификата"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() =>
+                        openCertificateReverseDialog(certificate, redemption)
+                      }
+                      disabled={certificateReverseSaving}
                     >
                       <RotateCcw className="h-4 w-4" />
                     </TooltipIconButton>
@@ -3752,6 +4240,191 @@ export default function ClientsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={Boolean(certificateRedemptionDialog)}
+        onOpenChange={(open) => !open && setCertificateRedemptionDialog(null)}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Списать сертификат</DialogTitle>
+            <DialogDescription>
+              {certificateRedemptionDialog
+                ? `${certificateRedemptionDialog.code} · ${certificateRedemptionDialog.title}`
+                : 'Сертификат клиента'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCertificateRedemptionSubmit} className="space-y-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Дата
+                </label>
+                <Input
+                  type="date"
+                  value={certificateRedemptionForm.redeemedAt}
+                  onChange={(event) =>
+                    setCertificateRedemptionForm((prev) => ({
+                      ...prev,
+                      redeemedAt: event.target.value,
+                    }))
+                  }
+                  required
+                />
+              </div>
+              {certificateRedemptionDialog?.certificateType === 'money' ? (
+                <div>
+                  <label className="mb-1 block text-xs font-medium">
+                    Сумма
+                  </label>
+                  <Input
+                    inputMode="decimal"
+                    min="1"
+                    type="number"
+                    value={certificateRedemptionForm.amount}
+                    onChange={(event) =>
+                      setCertificateRedemptionForm((prev) => ({
+                        ...prev,
+                        amount: event.target.value,
+                      }))
+                    }
+                    placeholder={formatCurrency(
+                      certificateRedemptionDialog.amountRemaining,
+                    )}
+                    required
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="mb-1 block text-xs font-medium">
+                    Количество
+                  </label>
+                  <Input
+                    inputMode="numeric"
+                    min="1"
+                    step="1"
+                    type="number"
+                    value={certificateRedemptionForm.quantity}
+                    onChange={(event) =>
+                      setCertificateRedemptionForm((prev) => ({
+                        ...prev,
+                        quantity: event.target.value,
+                      }))
+                    }
+                    required
+                  />
+                </div>
+              )}
+            </div>
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Остаток</span>
+                <span className="font-medium">
+                  {certificateRedemptionDialog
+                    ? formatCertificateBalance(certificateRedemptionDialog)
+                    : '-'}
+                </span>
+              </div>
+              <div className="mt-1 flex justify-between gap-3">
+                <span className="text-muted-foreground">Действует до</span>
+                <span>{formatDate(certificateRedemptionDialog?.expiresAt)}</span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Комментарий
+              </label>
+              <textarea
+                value={certificateRedemptionForm.comment}
+                onChange={(event) =>
+                  setCertificateRedemptionForm((prev) => ({
+                    ...prev,
+                    comment: event.target.value,
+                  }))
+                }
+                className="min-h-[96px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Что оплатили сертификатом или какая услуга списана"
+              />
+            </div>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={
+                certificateRedemptionSaving ||
+                (certificateRedemptionDialog?.certificateType === 'money'
+                  ? Number(certificateRedemptionForm.amount) <= 0
+                  : Number(certificateRedemptionForm.quantity) <= 0)
+              }
+            >
+              {certificateRedemptionDialog?.certificateType === 'money' ? (
+                <WalletCards className="mr-2 h-4 w-4" />
+              ) : (
+                <PackageCheck className="mr-2 h-4 w-4" />
+              )}
+              {certificateRedemptionSaving ? 'Списание...' : 'Списать сертификат'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(certificateReverseDialog)}
+        onOpenChange={(open) => !open && setCertificateReverseDialog(null)}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Отменить списание сертификата</DialogTitle>
+            <DialogDescription>
+              {certificateReverseDialog
+                ? `${formatDate(certificateReverseDialog.redemption.redeemedAt)} · ${certificateReverseDialog.certificate.code}`
+                : 'Сертификат клиента'}
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleCertificateReverse} className="space-y-4">
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="flex justify-between gap-3">
+                <span className="text-muted-foreground">Списал</span>
+                <span className="min-w-0 break-words text-right">
+                  {formatSubscriptionActor(
+                    certificateReverseDialog?.redemption.redeemedBy,
+                  )}
+                </span>
+              </div>
+              <div className="mt-1 flex justify-between gap-3">
+                <span className="text-muted-foreground">Списание</span>
+                <span>
+                  {certificateReverseDialog
+                    ? formatCertificateRedemptionValue(
+                        certificateReverseDialog.redemption,
+                        certificateReverseDialog.certificate,
+                      )
+                    : '-'}
+                </span>
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Причина
+              </label>
+              <textarea
+                value={certificateReverseReason}
+                onChange={(event) => setCertificateReverseReason(event.target.value)}
+                className="min-h-[96px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Например: ошибочно выбрали сертификат"
+              />
+            </div>
+            <Button
+              type="submit"
+              className="w-full"
+              variant="outline"
+              disabled={certificateReverseSaving}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              {certificateReverseSaving ? 'Отмена...' : 'Отменить списание'}
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()}>
         <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
@@ -4031,6 +4704,7 @@ export default function ClientsPage() {
                         </Badge>
                       </div>
                       <div className="space-y-4 p-4">
+                        {renderPrepaymentWarnings(subscriptionWarnings)}
                         {clientSubscriptions.length === 0 ? (
                           <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
                             Абонементов по клиенту пока нет.
@@ -4069,6 +4743,11 @@ export default function ClientsPage() {
                                               {SUBSCRIPTION_TIME_SEGMENT_LABELS[
                                                 subscription.timeSegment
                                               ] || subscription.timeSegment}
+                                            </Badge>
+                                          )}
+                                          {getSubscriptionWarning(subscription) && (
+                                            <Badge variant="secondary">
+                                              {getSubscriptionWarning(subscription)}
                                             </Badge>
                                           )}
                                         </div>
@@ -4179,6 +4858,198 @@ export default function ClientsPage() {
                                             <TableCell colSpan={5}>
                                               {renderSubscriptionHistory(
                                                 subscription,
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                        </Fragment>
+                                      ),
+                                    )}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {canViewClientCertificates && (
+                    <div className="rounded-md border">
+                      <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="flex items-center gap-2 font-medium">
+                            <Gift className="h-4 w-4 text-muted-foreground" />
+                            Сертификаты
+                          </div>
+                          <div className="mt-1 text-sm text-muted-foreground">
+                            Остаток номинала или услуг, срок действия и списания.
+                          </div>
+                        </div>
+                        <Badge variant="outline">
+                          {activeClientCertificates.length} активных
+                        </Badge>
+                      </div>
+                      <div className="space-y-4 p-4">
+                        {renderPrepaymentWarnings(certificateWarnings)}
+                        {clientCertificates.length === 0 ? (
+                          <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                            Сертификатов по клиенту пока нет.
+                          </div>
+                        ) : (
+                          <>
+                            {activeClientCertificates.length > 0 && (
+                              <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+                                {activeClientCertificates.map((certificate) => (
+                                  <div
+                                    key={certificate.id}
+                                    className="rounded-md border p-3 text-sm"
+                                  >
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                      <div className="min-w-0">
+                                        <div className="break-words font-medium">
+                                          {certificate.code}
+                                        </div>
+                                        <div className="mt-0.5 break-words text-xs text-muted-foreground">
+                                          {certificate.title}
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-1">
+                                          <Badge variant="default">
+                                            {
+                                              CLIENT_CERTIFICATE_STATUS_LABELS[
+                                                certificate.status
+                                              ]
+                                            }
+                                          </Badge>
+                                          <Badge variant="outline">
+                                            {
+                                              CLIENT_CERTIFICATE_TYPE_LABELS[
+                                                certificate.certificateType
+                                              ]
+                                            }
+                                          </Badge>
+                                          {getCertificateWarning(certificate) && (
+                                            <Badge variant="secondary">
+                                              {getCertificateWarning(certificate)}
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="shrink-0 text-right">
+                                        <div className="text-lg font-semibold">
+                                          {formatCertificateBalance(certificate)}
+                                        </div>
+                                        <div className="text-xs text-muted-foreground">
+                                          остаток
+                                        </div>
+                                        {canMutateCertificates && (
+                                          <Button
+                                            type="button"
+                                            size="sm"
+                                            className="mt-2"
+                                            onClick={() =>
+                                              openCertificateRedemptionDialog(
+                                                certificate,
+                                              )
+                                            }
+                                          >
+                                            {certificate.certificateType === 'money' ? (
+                                              <WalletCards className="mr-2 h-4 w-4" />
+                                            ) : (
+                                              <PackageCheck className="mr-2 h-4 w-4" />
+                                            )}
+                                            Списать
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                                      <div>
+                                        Начало: {formatDate(certificate.startsAt)}
+                                      </div>
+                                      <div>
+                                        До: {formatDate(certificate.expiresAt)}
+                                      </div>
+                                      <div>
+                                        Использовано:{' '}
+                                        {certificate.certificateType === 'money'
+                                          ? formatCurrency(certificate.amountUsed)
+                                          : certificate.unitsUsed}
+                                      </div>
+                                      <div>
+                                        Продажа:{' '}
+                                        {formatCurrency(certificate.saleAmount)}
+                                      </div>
+                                    </div>
+                                    {certificate.certificateType === 'service' && (
+                                      <div className="mt-2 text-xs text-muted-foreground">
+                                        Услуга:{' '}
+                                        {certificate.serviceName ||
+                                          certificate.serviceType ||
+                                          'пакет'}
+                                      </div>
+                                    )}
+                                    {renderCertificateHistory(certificate)}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {historicalClientCertificates.length > 0 && (
+                              <div className="overflow-x-auto rounded-md border">
+                                <Table className="min-w-[720px] table-fixed">
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead>Код</TableHead>
+                                      <TableHead className="w-[130px]">
+                                        Статус
+                                      </TableHead>
+                                      <TableHead className="w-[170px]">
+                                        Остаток
+                                      </TableHead>
+                                      <TableHead className="w-[140px]">
+                                        Срок
+                                      </TableHead>
+                                      <TableHead className="w-[130px]">
+                                        Продажа
+                                      </TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {historicalClientCertificates.map(
+                                      (certificate) => (
+                                        <Fragment key={certificate.id}>
+                                          <TableRow>
+                                            <TableCell className="truncate font-medium">
+                                              {certificate.code}
+                                            </TableCell>
+                                            <TableCell>
+                                              <Badge variant="outline">
+                                                {
+                                                  CLIENT_CERTIFICATE_STATUS_LABELS[
+                                                    certificate.status
+                                                  ]
+                                                }
+                                              </Badge>
+                                            </TableCell>
+                                            <TableCell>
+                                              {formatCertificateBalance(
+                                                certificate,
+                                              )}
+                                            </TableCell>
+                                            <TableCell>
+                                              {formatDate(certificate.expiresAt)}
+                                            </TableCell>
+                                            <TableCell>
+                                              {formatCurrency(
+                                                certificate.saleAmount,
+                                              )}
+                                            </TableCell>
+                                          </TableRow>
+                                          <TableRow>
+                                            <TableCell colSpan={5}>
+                                              {renderCertificateHistory(
+                                                certificate,
                                               )}
                                             </TableCell>
                                           </TableRow>

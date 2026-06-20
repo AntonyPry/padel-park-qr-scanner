@@ -74,3 +74,85 @@ test('trainer client details response omits operational containers', () => {
   assert.deepEqual(response.skillMap, [{ skillId: 1 }]);
   assert.deepEqual(response.trainingNotes, [{ id: 5 }]);
 });
+
+test('client prepayment summary reports active balances and blocking statuses', () => {
+  const summary = __testing.buildClientPrepaymentSummary({
+    certificates: [
+      { code: 'CERT-1', id: 1, status: 'active' },
+      { code: 'CERT-2', id: 2, status: 'redeemed' },
+    ],
+    subscriptions: [
+      {
+        id: 10,
+        remainingSessions: 3,
+        sessionsTotal: 4,
+        status: 'active',
+        typeName: '4 групповые',
+      },
+      {
+        id: 11,
+        remainingSessions: 0,
+        sessionsTotal: 4,
+        status: 'used',
+        typeName: '4 персональные',
+      },
+    ],
+  });
+
+  assert.equal(summary.hasActiveSubscription, true);
+  assert.equal(summary.hasActiveCertificate, true);
+  assert.equal(summary.activeSubscriptionsCount, 1);
+  assert.equal(summary.activeCertificatesCount, 1);
+  assert.equal(summary.subscriptionWarnings.some((item) => item.type === 'used'), true);
+  assert.equal(summary.certificateWarnings.some((item) => item.type === 'redeemed'), true);
+});
+
+test('client prepayment timeline includes sale, link, redemption and reversal events', () => {
+  const items = __testing.listClientPrepaymentTimeline({
+    certificates: [
+      {
+        certificateType: 'money',
+        code: 'GIFT-1',
+        createdAt: '2026-06-05T12:00:00.000Z',
+        id: 30,
+        redemptions: [
+          {
+            amount: 1000,
+            id: 40,
+            redeemedAt: '2026-06-06T12:00:00.000Z',
+            reversedAt: '2026-06-06T13:00:00.000Z',
+            status: 'reversed',
+          },
+        ],
+        startsAt: '2026-06-05T10:00:00.000Z',
+        status: 'active',
+      },
+    ],
+    subscriptions: [
+      {
+        createdAt: '2026-06-05T11:00:00.000Z',
+        id: 20,
+        isUnlimited: false,
+        redemptions: [
+          {
+            id: 21,
+            quantity: 1,
+            redeemedAt: '2026-06-06T10:00:00.000Z',
+            status: 'active',
+          },
+        ],
+        remainingSessions: 3,
+        sessionsTotal: 4,
+        startsAt: '2026-06-05T09:00:00.000Z',
+        status: 'active',
+        typeName: '4 групповые',
+      },
+    ],
+  });
+  const types = items.map((item) => item.type);
+
+  assert.equal(types.includes('prepayment_sale'), true);
+  assert.equal(types.includes('prepayment_link'), true);
+  assert.equal(types.includes('prepayment_redemption'), true);
+  assert.equal(types.includes('prepayment_reversal'), true);
+});

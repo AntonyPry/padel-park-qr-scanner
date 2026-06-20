@@ -178,7 +178,7 @@ function getCorporateFlags(client, filters) {
 function enrichPendingSale(sale) {
   return {
     ...sale,
-    actionHref: `/admin/catalog?tab=pending&pendingSaleId=${sale.id}`,
+    actionHref: '/admin/catalog?tab=pending',
     flags: {
       needsAttention: sale.status === 'pending',
       problem: sale.status === 'pending',
@@ -189,7 +189,7 @@ function enrichPendingSale(sale) {
 function enrichSubscription(subscription, filters, now, expiringUntil) {
   return {
     ...subscription,
-    actionHref: `/admin/clients?clientId=${subscription.clientId}&clientTab=subscriptions&subscriptionId=${subscription.id}`,
+    actionHref: `/admin/clients?clientId=${subscription.clientId}`,
     flags: getSubscriptionFlags(subscription, now, expiringUntil),
   };
 }

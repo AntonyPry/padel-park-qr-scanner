@@ -8,8 +8,10 @@ const {
 const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const clientSkillMapService = require('./client-skill-map.service');
+const certificatesService = require('./certificates.service');
 const subscriptionsService = require('./subscriptions.service');
 const trainingNotesService = require('./training-notes.service');
+const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const CLIENT_ATTRIBUTES = [
   'id',
@@ -240,9 +242,182 @@ function canViewTrainingNotes(account) {
 }
 
 function canViewClientSubscriptions(account) {
-  return ['owner', 'manager', 'admin', 'accountant', 'viewer'].includes(
-    account?.role,
+  return ACCESS_MATRIX.clientSubscriptionsView.includes(account?.role);
+}
+
+function canViewCertificates(account) {
+  return ACCESS_MATRIX.certificatesView.includes(account?.role);
+}
+
+function toDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function daysUntil(value, now = new Date()) {
+  const date = toDate(value);
+  if (!date) return null;
+  return Math.ceil((date.getTime() - now.getTime()) / 86400000);
+}
+
+function formatShortDate(value) {
+  const date = toDate(value);
+  if (!date) return 'без даты';
+  return date.toLocaleDateString('ru-RU');
+}
+
+function buildSubscriptionWarning(subscription, now = new Date()) {
+  if (!subscription) return null;
+  if (subscription.status === 'expired') {
+    return {
+      id: `subscription-${subscription.id}-expired`,
+      level: 'danger',
+      text: `${subscription.typeName} истек ${formatShortDate(subscription.expiresAt)}`,
+      type: 'expired',
+    };
+  }
+  if (subscription.status === 'used') {
+    return {
+      id: `subscription-${subscription.id}-used`,
+      level: 'danger',
+      text: `${subscription.typeName} закончился`,
+      type: 'used',
+    };
+  }
+  if (subscription.status === 'canceled') {
+    return {
+      id: `subscription-${subscription.id}-canceled`,
+      level: 'muted',
+      text: `${subscription.typeName} отменен`,
+      type: 'canceled',
+    };
+  }
+
+  const daysLeft = daysUntil(subscription.expiresAt, now);
+  if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 14) {
+    return {
+      id: `subscription-${subscription.id}-expiring`,
+      level: 'warning',
+      text: `${subscription.typeName} истекает через ${daysLeft} дн.`,
+      type: 'expiring_soon',
+    };
+  }
+
+  if (
+    subscription.remainingSessions !== null &&
+    subscription.remainingSessions !== undefined &&
+    Number(subscription.remainingSessions) <= 1
+  ) {
+    return {
+      id: `subscription-${subscription.id}-low`,
+      level: 'warning',
+      text: `${subscription.typeName}: осталось ${subscription.remainingSessions} занятий`,
+      type: 'low_remaining',
+    };
+  }
+
+  return null;
+}
+
+function buildCertificateWarning(certificate, now = new Date()) {
+  if (!certificate) return null;
+  if (certificate.status === 'expired') {
+    return {
+      id: `certificate-${certificate.id}-expired`,
+      level: 'danger',
+      text: `Сертификат ${certificate.code} истек ${formatShortDate(certificate.expiresAt)}`,
+      type: 'expired',
+    };
+  }
+  if (certificate.status === 'redeemed') {
+    return {
+      id: `certificate-${certificate.id}-redeemed`,
+      level: 'muted',
+      text: `Сертификат ${certificate.code} погашен`,
+      type: 'redeemed',
+    };
+  }
+  if (certificate.status === 'canceled') {
+    return {
+      id: `certificate-${certificate.id}-canceled`,
+      level: 'muted',
+      text: `Сертификат ${certificate.code} отменен`,
+      type: 'canceled',
+    };
+  }
+
+  const daysLeft = daysUntil(certificate.expiresAt, now);
+  if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 14) {
+    return {
+      id: `certificate-${certificate.id}-expiring`,
+      level: 'warning',
+      text: `Сертификат ${certificate.code} истекает через ${daysLeft} дн.`,
+      type: 'expiring_soon',
+    };
+  }
+
+  return null;
+}
+
+function buildClientPrepaymentSummary({
+  certificates = [],
+  subscriptions = [],
+} = {}) {
+  const now = new Date();
+  const activeSubscriptions = subscriptions.filter(
+    (subscription) => subscription.status === 'active',
   );
+  const activeCertificates = certificates.filter(
+    (certificate) => certificate.status === 'active',
+  );
+  const subscriptionWarnings = subscriptions
+    .map((subscription) => buildSubscriptionWarning(subscription, now))
+    .filter(Boolean);
+  const certificateWarnings = certificates
+    .map((certificate) => buildCertificateWarning(certificate, now))
+    .filter(Boolean);
+
+  return {
+    activeCertificatesCount: activeCertificates.length,
+    activeSubscriptionsCount: activeSubscriptions.length,
+    certificateWarnings,
+    hasActiveCertificate: activeCertificates.length > 0,
+    hasActiveSubscription: activeSubscriptions.length > 0,
+    subscriptionWarnings,
+  };
+}
+
+function buildEmptyClientPrepaymentContext() {
+  return {
+    clientCertificates: [],
+    clientSubscriptions: [],
+    prepaymentSummary: buildClientPrepaymentSummary(),
+  };
+}
+
+async function getClientPrepaymentContext(clientId, account = null) {
+  const canSubscriptions = canViewClientSubscriptions(account);
+  const canCertificates = canViewCertificates(account);
+  const [clientSubscriptions, clientCertificates] = await Promise.all([
+    canSubscriptions
+      ? subscriptionsService.listClientSubscriptions(clientId)
+      : [],
+    canCertificates
+      ? certificatesService.listClientCertificates(clientId, {
+          withRedemptions: true,
+        })
+      : [],
+  ]);
+
+  return {
+    clientCertificates,
+    clientSubscriptions,
+    prepaymentSummary: buildClientPrepaymentSummary({
+      certificates: clientCertificates,
+      subscriptions: clientSubscriptions,
+    }),
+  };
 }
 
 function sanitizeClientForAccount(client, account) {
@@ -1081,18 +1256,24 @@ async function getClientDetails(id, account = null) {
       bookingSeries,
       bookingStats,
       telephonyCalls,
-      clientSubscriptions,
+      prepaymentContext,
     ] = includeOperationalHistory
       ? await Promise.all([
           listClientBookings(client.id, { limit: 50 }),
           listClientBookingSeries(client.id, { limit: 30 }),
           getClientBookingStats(client.id),
           listClientTelephonyCalls(client.id, account, { limit: 30 }),
-          canViewClientSubscriptions(account)
-            ? subscriptionsService.listClientSubscriptions(client.id)
-            : [],
+          getClientPrepaymentContext(client.id, account),
         ])
-      : [[], [], getEmptyBookingStats(), [], []];
+      : [
+          [],
+          [],
+          getEmptyBookingStats(),
+          [],
+          buildEmptyClientPrepaymentContext(),
+        ];
+    const { clientCertificates, clientSubscriptions, prepaymentSummary } =
+      prepaymentContext;
     const safeClient = sanitizeClientForAccount(mapClient(client), account);
     const safeMergedInto = sanitizeClientForAccount(
       mapClient(await db.User.findByPk(client.mergedIntoUserId)),
@@ -1116,8 +1297,10 @@ async function getClientDetails(id, account = null) {
         ? await listClientActiveCallTasks(client.id, account)
         : [],
       client: safeClient,
+      clientCertificates,
       clientSubscriptions,
       mergedInto: safeMergedInto,
+      prepaymentSummary,
       visits: [],
       duplicateCandidates: [],
       timeline: includeOperationalHistory
@@ -1125,6 +1308,8 @@ async function getClientDetails(id, account = null) {
             bookingSeries,
             bookings,
             account,
+            clientCertificates,
+            clientSubscriptions,
             trainingNotes,
             telephonyCalls,
             visits: [],
@@ -1148,7 +1333,7 @@ async function getClientDetails(id, account = null) {
     bookingStats,
     activeCallTasks,
     telephonyCalls,
-    clientSubscriptions,
+    prepaymentContext,
   ] = await Promise.all([
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
@@ -1162,10 +1347,12 @@ async function getClientDetails(id, account = null) {
     includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
     includeOperationalHistory ? listClientActiveCallTasks(client.id, account) : [],
     includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
-    includeOperationalHistory && canViewClientSubscriptions(account)
-      ? subscriptionsService.listClientSubscriptions(client.id)
-      : [],
+    includeOperationalHistory
+      ? getClientPrepaymentContext(client.id, account)
+      : buildEmptyClientPrepaymentContext(),
   ]);
+  const { clientCertificates, clientSubscriptions, prepaymentSummary } =
+    prepaymentContext;
   const safeClient = sanitizeClientForAccount(
     mapClient({ ...client.toJSON(), ...stats }),
     account,
@@ -1185,14 +1372,18 @@ async function getClientDetails(id, account = null) {
     bookingStats,
     bookings,
     client: safeClient,
+    clientCertificates,
     clientSubscriptions,
     duplicateCandidates: sanitizeClientsForAccount(duplicateCandidates, account),
+    prepaymentSummary,
     skillMap,
     timeline: includeOperationalHistory
       ? await listClientTimeline(client.id, {
           account,
           bookingSeries,
           bookings,
+          clientCertificates,
+          clientSubscriptions,
           trainingNotes,
           telephonyCalls,
           visits,
@@ -1584,9 +1775,190 @@ async function listClientAuditTimeline(clientId, account) {
   });
 }
 
+function formatSubscriptionTimelineValue(subscription) {
+  if (subscription.isUnlimited) return 'Безлимит';
+  return `${subscription.remainingSessions ?? 0} из ${subscription.sessionsTotal ?? 0} занятий`;
+}
+
+function formatCertificateTimelineValue(certificate) {
+  if (certificate.certificateType === 'money') {
+    return `${toNumber(certificate.amountRemaining).toLocaleString('ru-RU')} из ${toNumber(certificate.amountTotal).toLocaleString('ru-RU')} ₽`;
+  }
+  return `${certificate.unitsRemaining ?? 0} из ${certificate.unitsTotal ?? 0} услуг`;
+}
+
+function listClientPrepaymentTimeline({ certificates = [], subscriptions = [] } = {}) {
+  const subscriptionItems = subscriptions.flatMap((subscription) => {
+    const items = [
+      createTimelineItem({
+        actor: subscription.createdBy || null,
+        description: [
+          formatSubscriptionTimelineValue(subscription),
+          subscription.saleAmount
+            ? `Продажа: ${toNumber(subscription.saleAmount).toLocaleString('ru-RU')} ₽`
+            : '',
+        ].filter(Boolean).join('\n'),
+        id: `subscription-sale-${subscription.id}`,
+        meta: {
+          prepaymentKind: 'subscription',
+          status: subscription.status,
+          subscriptionId: subscription.id,
+        },
+        occurredAt: subscription.startsAt || subscription.createdAt,
+        title: `Продажа абонемента: ${subscription.typeName}`,
+        type: 'prepayment_sale',
+      }),
+      createTimelineItem({
+        actor: subscription.createdBy || null,
+        description: formatSubscriptionTimelineValue(subscription),
+        id: `subscription-link-${subscription.id}`,
+        meta: {
+          prepaymentKind: 'subscription',
+          status: subscription.status,
+          subscriptionId: subscription.id,
+        },
+        occurredAt: subscription.createdAt,
+        title: `Абонемент привязан: ${subscription.typeName}`,
+        type: 'prepayment_link',
+      }),
+    ];
+
+    (subscription.redemptions || []).forEach((redemption) => {
+      items.push(
+        createTimelineItem({
+          actor: redemption.redeemedBy || null,
+          description: [
+            `${redemption.quantity || 1} занятий`,
+            redemption.comment,
+          ].filter(Boolean).join('\n'),
+          id: `subscription-redemption-${redemption.id}`,
+          meta: {
+            prepaymentKind: 'subscription',
+            status: redemption.status,
+            subscriptionId: subscription.id,
+          },
+          occurredAt: redemption.redeemedAt,
+          title: `Списание абонемента: ${subscription.typeName}`,
+          type: 'prepayment_redemption',
+        }),
+      );
+      if (redemption.status === 'reversed' && redemption.reversedAt) {
+        items.push(
+          createTimelineItem({
+            actor: redemption.reversedBy || null,
+            description: redemption.reversalReason || '',
+            id: `subscription-redemption-reversal-${redemption.id}`,
+            meta: {
+              prepaymentKind: 'subscription',
+              status: 'reversed',
+              subscriptionId: subscription.id,
+            },
+            occurredAt: redemption.reversedAt,
+            title: `Отмена списания абонемента: ${subscription.typeName}`,
+            type: 'prepayment_reversal',
+          }),
+        );
+      }
+    });
+
+    return items;
+  });
+
+  const certificateItems = certificates.flatMap((certificate) => {
+    const items = [
+      createTimelineItem({
+        actor: certificate.createdBy || null,
+        description: [
+          formatCertificateTimelineValue(certificate),
+          certificate.saleAmount
+            ? `Продажа: ${toNumber(certificate.saleAmount).toLocaleString('ru-RU')} ₽`
+            : '',
+        ].filter(Boolean).join('\n'),
+        id: `certificate-sale-${certificate.id}`,
+        meta: {
+          certificateId: certificate.id,
+          prepaymentKind: 'certificate',
+          status: certificate.status,
+        },
+        occurredAt: certificate.startsAt || certificate.createdAt,
+        title: `Продажа сертификата: ${certificate.code}`,
+        type: 'prepayment_sale',
+      }),
+      createTimelineItem({
+        actor: certificate.createdBy || null,
+        description: [certificate.title, formatCertificateTimelineValue(certificate)]
+          .filter(Boolean)
+          .join('\n'),
+        id: `certificate-link-${certificate.id}`,
+        meta: {
+          certificateId: certificate.id,
+          prepaymentKind: 'certificate',
+          status: certificate.status,
+        },
+        occurredAt: certificate.createdAt,
+        title: `Сертификат привязан: ${certificate.code}`,
+        type: 'prepayment_link',
+      }),
+    ];
+
+    (certificate.redemptions || []).forEach((redemption) => {
+      items.push(
+        createTimelineItem({
+          actor: redemption.redeemedBy || null,
+          description: [
+            certificate.certificateType === 'money'
+              ? `${toNumber(redemption.amount).toLocaleString('ru-RU')} ₽`
+              : `${redemption.quantity || 1} услуг`,
+            redemption.comment,
+          ].filter(Boolean).join('\n'),
+          id: `certificate-redemption-${redemption.id}`,
+          meta: {
+            certificateId: certificate.id,
+            prepaymentKind: 'certificate',
+            status: redemption.status,
+          },
+          occurredAt: redemption.redeemedAt,
+          title: `Списание сертификата: ${certificate.code}`,
+          type: 'prepayment_redemption',
+        }),
+      );
+      if (redemption.status === 'reversed' && redemption.reversedAt) {
+        items.push(
+          createTimelineItem({
+            actor: redemption.reversedBy || null,
+            description: redemption.reversalReason || '',
+            id: `certificate-redemption-reversal-${redemption.id}`,
+            meta: {
+              certificateId: certificate.id,
+              prepaymentKind: 'certificate',
+              status: 'reversed',
+            },
+            occurredAt: redemption.reversedAt,
+            title: `Отмена списания сертификата: ${certificate.code}`,
+            type: 'prepayment_reversal',
+          }),
+        );
+      }
+    });
+
+    return items;
+  });
+
+  return [...subscriptionItems, ...certificateItems];
+}
+
 async function listClientTimeline(
   clientId,
-  { account, bookingSeries, bookings, visits, trainingNotes, telephonyCalls } = {},
+  {
+    account,
+    bookingSeries,
+    bookings,
+    clientCertificates,
+    clientSubscriptions,
+    visits,
+    trainingNotes,
+    telephonyCalls,
+  } = {},
 ) {
   const [callItems, auditItems] = await Promise.all([
     listClientCallTimeline(clientId, account),
@@ -1704,6 +2076,10 @@ async function listClientTimeline(
     ...seriesItems,
     ...trainingItems,
     ...telephonyItems,
+    ...listClientPrepaymentTimeline({
+      certificates: clientCertificates,
+      subscriptions: clientSubscriptions,
+    }),
     ...callItems,
     ...auditItems,
   ]
@@ -1718,13 +2094,23 @@ function formatVisitCategorySummary(visit) {
   return visit.category || '';
 }
 
-async function mapClientWithCurrentStats(client, account = null) {
+async function mapClientWithCurrentStats(client, account = null, options = {}) {
   if (!client) return null;
   const stats = await getClientStats(client.id);
-  return sanitizeClientForAccount(
+  const mappedClient = sanitizeClientForAccount(
     mapClient({ ...client.toJSON(), ...stats }),
     account,
   );
+  if (!options.includePrepaymentSummary) return mappedClient;
+
+  const { prepaymentSummary } = await getClientPrepaymentContext(
+    client.id,
+    account,
+  );
+  return {
+    ...mappedClient,
+    prepaymentSummary,
+  };
 }
 
 async function lookupByPhone(
@@ -1764,7 +2150,9 @@ async function lookupByPhone(
   });
 
   if (!client) return null;
-  return mapClientWithCurrentStats(client, account);
+  return mapClientWithCurrentStats(client, account, {
+    includePrepaymentSummary: true,
+  });
 }
 
 async function findExistingByIdentity(field, value, excludeClientId = null) {
@@ -2536,6 +2924,7 @@ async function removeArchivedClient(id) {
     bookingCount,
     bookingSeriesCount,
     clientSubscriptionsCount,
+    certificatesCount,
     mergedClientsCount,
   ] =
     await Promise.all([
@@ -2548,6 +2937,7 @@ async function removeArchivedClient(id) {
       db.ClientSubscription
         ? db.ClientSubscription.count({ where: { clientId: client.id } })
         : 0,
+      db.Certificate ? db.Certificate.count({ where: { clientId: client.id } }) : 0,
       db.User.count({ where: { mergedIntoUserId: client.id } }),
     ]);
 
@@ -2559,10 +2949,11 @@ async function removeArchivedClient(id) {
     bookingCount > 0 ||
     bookingSeriesCount > 0 ||
     clientSubscriptionsCount > 0 ||
+    certificatesCount > 0 ||
     mergedClientsCount > 0
   ) {
     throw appError(
-      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
+      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, сертификаты, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
       409,
     );
   }
@@ -2591,7 +2982,9 @@ module.exports = {
   updateClient,
   updateSavedView,
   __testing: {
+    buildClientPrepaymentSummary,
     buildTrainerClientDetailsResponse,
+    listClientPrepaymentTimeline,
     sanitizeClientForAccount,
   },
 };

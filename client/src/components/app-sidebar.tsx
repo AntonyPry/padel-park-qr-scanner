@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   ListChecks,
   ChartColumn,
+  ClipboardCheck,
   LineChart,
   LogOut,
   ListTree,
@@ -47,6 +48,11 @@ const items = [
     title: 'Монитор входов',
     url: '/admin',
     icon: LayoutDashboard,
+  },
+  {
+    title: 'Контроль менеджера',
+    url: '/admin/manager-control',
+    icon: ClipboardCheck,
   },
   {
     title: 'Обучение',

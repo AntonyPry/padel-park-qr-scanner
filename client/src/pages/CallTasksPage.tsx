@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
@@ -84,6 +84,25 @@ type CallTaskClientStatus =
   | 'booked'
   | 'refused';
 type ClientFilterStatus = CallTaskClientStatus | 'all' | 'overdue';
+
+const TASK_FILTER_STATUSES = new Set<TaskFilterStatus>([
+  'active',
+  'all',
+  'archived',
+  'backlog',
+  'done',
+  'in_progress',
+]);
+const CLIENT_FILTER_STATUSES = new Set<ClientFilterStatus>([
+  'all',
+  'booked',
+  'callback',
+  'doubting',
+  'new',
+  'no_answer',
+  'overdue',
+  'refused',
+]);
 
 interface CallTask {
   assignedTo?: {
@@ -369,19 +388,28 @@ function getTaskStatusActionCopy(task: CallTask, nextStatus: CallTaskStatus) {
 export default function CallTasksPage() {
   const { account } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const canManage = canManageCallTasks(account?.role);
+  const initialStatus = searchParams.get('status') as TaskFilterStatus | null;
+  const initialClientStatus = searchParams.get('clientStatus') as ClientFilterStatus | null;
   const [tasks, setTasks] = useState<CallTask[]>([]);
   const [report, setReport] = useState<CallTasksReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [tasksError, setTasksError] = useState('');
-  const [status, setStatus] = useState<TaskFilterStatus>('active');
+  const [status, setStatus] = useState<TaskFilterStatus>(
+    initialStatus && TASK_FILTER_STATUSES.has(initialStatus) ? initialStatus : 'active',
+  );
   const [selectedTask, setSelectedTask] = useState<CallTask | null>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [clients, setClients] = useState<CallTaskClient[]>([]);
   const [clientsLoading, setClientsLoading] = useState(false);
   const [clientsError, setClientsError] = useState('');
-  const [clientStatus, setClientStatus] = useState<ClientFilterStatus>('all');
+  const [clientStatus, setClientStatus] = useState<ClientFilterStatus>(
+    initialClientStatus && CLIENT_FILTER_STATUSES.has(initialClientStatus)
+      ? initialClientStatus
+      : 'all',
+  );
   const [clientQuery, setClientQuery] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
@@ -401,6 +429,7 @@ export default function CallTasksPage() {
   const reportRequestIdRef = useRef(0);
   const clientsRequestIdRef = useRef(0);
   const taskDetailsRequestIdRef = useRef(0);
+  const openedTaskIdRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<number | null>(selectedTaskId);
   const attemptFormControl = useForm<AttemptFormState>({
     defaultValues: EMPTY_ATTEMPT_FORM,
@@ -544,6 +573,17 @@ export default function CallTasksPage() {
       }
     }
   }, []);
+
+  useEffect(() => {
+    const requestedTaskId = Number(searchParams.get('taskId') || 0);
+    if (!requestedTaskId || selectedTaskId === requestedTaskId) return;
+    if (openedTaskIdRef.current === requestedTaskId) return;
+    const task = tasks.find((item) => item.id === requestedTaskId);
+    if (task) {
+      openedTaskIdRef.current = requestedTaskId;
+      void openTask(task);
+    }
+  }, [openTask, searchParams, selectedTaskId, tasks]);
 
   const refreshTaskDetails = useCallback(async (taskId: number) => {
     const requestId = taskDetailsRequestIdRef.current + 1;

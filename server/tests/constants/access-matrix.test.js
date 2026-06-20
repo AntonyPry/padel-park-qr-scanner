@@ -36,6 +36,14 @@ test('accountant can read payroll-related motivation data without managing motiv
   assert.equal(ACCESS_MATRIX.motivationManage.includes('accountant'), false);
 });
 
+test('manager control dashboard is only for owner and manager', () => {
+  assert.deepEqual(ACCESS_MATRIX.managerControlDashboardView, ['owner', 'manager']);
+  assert.equal(ACCESS_MATRIX.managerControlDashboardView.includes('accountant'), false);
+  assert.equal(ACCESS_MATRIX.managerControlDashboardView.includes('viewer'), false);
+  assert.equal(ACCESS_MATRIX.managerControlDashboardView.includes('trainer'), false);
+  assert.equal(ACCESS_MATRIX.managerControlDashboardView.includes('admin'), false);
+});
+
 test('corporate deposits follow finance manage permissions', () => {
   assert.deepEqual(ACCESS_MATRIX.corporateClientsView, [
     'owner',

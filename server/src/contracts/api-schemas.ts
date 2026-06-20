@@ -119,6 +119,14 @@ const prepaymentsDashboardExpiryValue = z.enum([
   'expired',
   'valid',
 ]);
+const managerControlDashboardQuery = z
+  .object({
+    date: optionalDateOnly,
+    expiringDays: z.union([id, z.literal('')]).optional(),
+    limit: z.union([id, z.literal('')]).optional(),
+    lowBalanceThreshold: optionalNonNegativeNumberValue,
+  })
+  .passthrough();
 const subscriptionServiceTypeValue = z.enum(['training']);
 const subscriptionTrainingKindValue = z.enum(['group', 'personal']);
 const subscriptionTimeSegmentValue = z.enum([
@@ -418,7 +426,37 @@ const corporateClientBody = z
   })
   .passthrough();
 
-const corporateDepositBody = z
+const corporateDepositCategory = z
+  .string({ error: 'Выберите категорию дохода' })
+  .trim()
+  .min(1, 'Выберите категорию дохода')
+  .max(160, 'Категория дохода слишком длинная');
+
+const corporateDepositCreateBody = z
+  .object({
+    amount: positiveNumberValue,
+    category: corporateDepositCategory,
+    comment: optionalString,
+    date: dateOnly,
+    financeId: z.union([z.literal(''), z.null()]).optional(),
+    metadata: optionalJsonObject,
+  })
+  .passthrough();
+
+const corporateDepositLinkBody = z
+  .object({
+    comment: optionalString,
+    financeId: id,
+    metadata: optionalJsonObject,
+  })
+  .passthrough();
+
+const corporateDepositBody = z.union([
+  corporateDepositLinkBody,
+  corporateDepositCreateBody,
+]);
+
+const corporateDepositValidationBody = z
   .object({
     amount: positiveNumberValue.optional(),
     category: optionalString,
@@ -427,7 +465,18 @@ const corporateDepositBody = z
     financeId: nullableId,
     metadata: optionalJsonObject,
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((value: { category?: unknown; financeId?: unknown }, ctx: any) => {
+    if (value.financeId) return;
+    const category = String(value.category || '').trim();
+    if (!category) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Выберите категорию дохода',
+        path: ['category'],
+      });
+    }
+  });
 
 const corporateSpendingBody = z
   .object({
@@ -1247,10 +1296,13 @@ const apiSchemas = {
   },
   corporateClients: {
     body: corporateClientBody,
-    depositBody: corporateDepositBody,
+    depositBody: corporateDepositValidationBody,
+    depositContractBody: corporateDepositBody,
     entryParams: z.object({ id, entryId: id }),
     ledgerQuery: dateRangeQuery
       .extend({
+        participant: optionalString,
+        service: optionalString,
         status: corporateLedgerStatusValue.optional(),
         type: corporateLedgerTypeValue.optional(),
       })
@@ -1279,6 +1331,9 @@ const apiSchemas = {
         type: prepaymentsDashboardTypeValue.optional(),
       })
       .passthrough(),
+  },
+  managerControlDashboard: {
+    query: managerControlDashboardQuery,
   },
   clients: {
     body: clientBody,

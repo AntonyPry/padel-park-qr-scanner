@@ -119,6 +119,7 @@ export const apiEndpoints = {
   "corporateClients.spending": { method: "POST", path: "/corporate-clients/{id}/spendings", responseType: "json" },
   "corporateClients.spendingReverse": { method: "POST", path: "/corporate-clients/{id}/spendings/{entryId}/reverse", responseType: "json" },
   "prepayments.dashboard": { method: "GET", path: "/prepayments/dashboard", responseType: "json" },
+  "managerControl.dashboard": { method: "GET", path: "/manager-control/dashboard", responseType: "json" },
   "clientBases.list": { method: "GET", path: "/client-bases", responseType: "json" },
   "clientBases.create": { method: "POST", path: "/client-bases", responseType: "json" },
   "clientBases.clients": { method: "GET", path: "/client-bases/{id}/clients", responseType: "json" },
@@ -941,6 +942,8 @@ export type CorporateClientsLedgerParams = {
 export type CorporateClientsLedgerQuery = {
   from?: string | "";
   to?: string | "";
+  participant?: string | "" | null;
+  service?: string | "" | null;
   status?: "active" | "canceled" | "all";
   type?: "deposit" | "spending" | "all";
   [key: string]: unknown;
@@ -951,6 +954,8 @@ export type CorporateClientsLedgerExportParams = {
 export type CorporateClientsLedgerExportQuery = {
   from?: string | "";
   to?: string | "";
+  participant?: string | "" | null;
+  service?: string | "" | null;
   status?: "active" | "canceled" | "all";
   type?: "deposit" | "spending" | "all";
   [key: string]: unknown;
@@ -959,11 +964,16 @@ export type CorporateClientsDepositParams = {
   id: number | string;
 };
 export type CorporateClientsDepositBody = {
-  amount?: number | string;
-  category?: string | "" | null;
   comment?: string | "" | null;
-  date?: string | "";
-  financeId?: number | string | "" | null;
+  financeId: number | string;
+  metadata?: Record<string, unknown> | null;
+  [key: string]: unknown;
+} | {
+  amount: number | string;
+  category: string;
+  comment?: string | "" | null;
+  date: string;
+  financeId?: "" | null;
   metadata?: Record<string, unknown> | null;
   [key: string]: unknown;
 };
@@ -1008,6 +1018,13 @@ export type PrepaymentsDashboardQuery = {
   query?: string | "" | null;
   status?: "all" | "pending" | "linked" | "ignored" | "active" | "expiring_soon" | "low_balance" | "expired" | "used" | "redeemed" | "canceled" | "archived";
   type?: "all" | "pending_sales" | "subscriptions" | "certificates" | "corporate_balances";
+  [key: string]: unknown;
+};
+export type ManagerControlDashboardQuery = {
+  date?: string | "";
+  expiringDays?: number | string | "";
+  limit?: number | string | "";
+  lowBalanceThreshold?: number | string | "" | null;
   [key: string]: unknown;
 };
 export type ClientBasesListQuery = {
@@ -1988,6 +2005,7 @@ export interface ApiEndpointRequestMap {
   "corporateClients.spending": ApiEndpointRequest<CorporateClientsSpendingParams, undefined, CorporateClientsSpendingBody>;
   "corporateClients.spendingReverse": ApiEndpointRequest<CorporateClientsSpendingReverseParams, undefined, CorporateClientsSpendingReverseBody>;
   "prepayments.dashboard": ApiEndpointRequest<undefined, PrepaymentsDashboardQuery, undefined>;
+  "managerControl.dashboard": ApiEndpointRequest<undefined, ManagerControlDashboardQuery, undefined>;
   "clientBases.list": ApiEndpointRequest<undefined, ClientBasesListQuery, undefined>;
   "clientBases.create": ApiEndpointRequest<undefined, undefined, ClientBasesCreateBody>;
   "clientBases.clients": ApiEndpointRequest<ClientBasesClientsParams, ClientBasesClientsQuery, undefined>;

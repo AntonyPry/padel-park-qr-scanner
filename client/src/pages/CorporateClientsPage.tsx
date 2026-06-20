@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
+  AlertTriangle,
   Archive,
   ArchiveRestore,
   Building2,
+  Calculator,
   Download,
+  FilterX,
   History,
   Landmark,
   Link2,
@@ -13,8 +16,10 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  ReceiptText,
   RotateCcw,
   Search,
+  ShieldCheck,
   Wallet,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +59,8 @@ type CorporateClientStatus = 'active' | 'archived';
 type LedgerEntryStatus = 'active' | 'canceled';
 type LedgerEntryType = 'deposit' | 'spending';
 type DepositMode = 'create' | 'link';
+type LedgerStatusFilter = LedgerEntryStatus | 'all';
+type LedgerTypeFilter = LedgerEntryType | 'all';
 
 interface CatalogCategory {
   id: number;
@@ -105,6 +112,49 @@ interface CorporateLedgerEntry {
   visitId?: number | null;
 }
 
+interface CorporateFinanceChecks {
+  checked: number;
+  createdFinanceIncome: number;
+  linkedFinanceIncome: number;
+  mismatch: number;
+  missingFinanceId: number;
+  missingFinanceRecord: number;
+}
+
+interface CorporateBalanceReconciliation {
+  activeDepositsCount: number;
+  activeEntriesCount: number;
+  activeSpendingsCount: number;
+  canceledEntriesCount: number;
+  currentBalance: number;
+  depositsTotal: number;
+  difference: number;
+  expectedBalance: number;
+  financeChecks: CorporateFinanceChecks;
+  isBalanced: boolean;
+  lowBalance: boolean;
+  lowBalanceThreshold: number;
+  spendingsTotal: number;
+}
+
+interface CorporateLedgerSummary {
+  activeEntriesCount: number;
+  canceledEntriesCount: number;
+  depositsTotal: number;
+  endingBalance?: number | null;
+  lowBalance: boolean;
+  lowBalanceThreshold: number;
+  openingBalance?: number | null;
+  periodDelta: number;
+  spendingsTotal: number;
+  totalEntriesCount: number;
+}
+
+interface CorporateLedgerReport {
+  entries: CorporateLedgerEntry[];
+  summary?: CorporateLedgerSummary;
+}
+
 interface CorporateClient {
   archivedAt?: string | null;
   archiveReason?: string | null;
@@ -114,9 +164,13 @@ interface CorporateClient {
   contactName?: string | null;
   contactPhone?: string | null;
   createdAt: string;
+  flags?: {
+    lowBalance?: boolean;
+  };
   id: number;
   ledgerEntries?: CorporateLedgerEntry[];
   name: string;
+  reconciliation?: CorporateBalanceReconciliation | null;
   status: CorporateClientStatus;
 }
 
@@ -163,9 +217,21 @@ const LEDGER_STATUS_LABELS: Record<LedgerEntryStatus, string> = {
   canceled: 'Отменено',
 };
 
+const LEDGER_STATUS_FILTER_LABELS: Record<LedgerStatusFilter, string> = {
+  active: 'Активные',
+  all: 'Все',
+  canceled: 'Отмененные',
+};
+
 const LEDGER_TYPE_LABELS: Record<LedgerEntryType, string> = {
   deposit: 'Пополнение',
   spending: 'Списание',
+};
+
+const LEDGER_TYPE_FILTER_LABELS: Record<LedgerTypeFilter, string> = {
+  all: 'Все операции',
+  deposit: 'Пополнения',
+  spending: 'Списания',
 };
 
 const emptyClientForm: ClientFormState = {
@@ -211,6 +277,60 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
   return new Intl.DateTimeFormat('ru-RU').format(date);
+}
+
+function getSignedAmount(entry: CorporateLedgerEntry) {
+  if (entry.signedAmount !== undefined && entry.signedAmount !== null) {
+    return Number(entry.signedAmount);
+  }
+  return entry.type === 'spending' ? -Number(entry.amount || 0) : Number(entry.amount || 0);
+}
+
+function summarizeVisibleLedgerEntries(
+  entries: CorporateLedgerEntry[],
+): CorporateLedgerSummary {
+  const activeEntries = entries.filter((entry) => entry.status === 'active');
+  const depositsTotal = activeEntries
+    .filter((entry) => entry.type === 'deposit')
+    .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const spendingsTotal = activeEntries
+    .filter((entry) => entry.type === 'spending')
+    .reduce((sum, entry) => sum + Number(entry.amount || 0), 0);
+  const chronological = activeEntries
+    .filter(
+      (entry) => entry.runningBalance !== null && entry.runningBalance !== undefined,
+    )
+    .sort((left, right) => {
+      const dateCompare = String(left.date).localeCompare(String(right.date));
+      if (dateCompare !== 0) return dateCompare;
+      return Number(left.id || 0) - Number(right.id || 0);
+    });
+  const openingBalance =
+    chronological.length > 0
+      ? Number(
+          (
+            Number(chronological[0].runningBalance || 0) -
+            getSignedAmount(chronological[0])
+          ).toFixed(2),
+        )
+      : null;
+  const endingBalance =
+    chronological.length > 0
+      ? Number(chronological[chronological.length - 1].runningBalance || 0)
+      : null;
+
+  return {
+    activeEntriesCount: activeEntries.length,
+    canceledEntriesCount: entries.filter((entry) => entry.status === 'canceled').length,
+    depositsTotal: Number(depositsTotal.toFixed(2)),
+    endingBalance,
+    lowBalance: false,
+    lowBalanceThreshold: 5000,
+    openingBalance,
+    periodDelta: Number((depositsTotal - spendingsTotal).toFixed(2)),
+    spendingsTotal: Number(spendingsTotal.toFixed(2)),
+    totalEntriesCount: entries.length,
+  };
 }
 
 async function readError(response: Response, fallback: string) {
@@ -267,6 +387,13 @@ export default function CorporateClientsPage() {
     useState<SpendingFormState>(emptySpendingForm);
   const [ledgerFrom, setLedgerFrom] = useState('');
   const [ledgerTo, setLedgerTo] = useState('');
+  const [ledgerParticipant, setLedgerParticipant] = useState('');
+  const [ledgerService, setLedgerService] = useState('');
+  const [ledgerStatus, setLedgerStatus] = useState<LedgerStatusFilter>('active');
+  const [ledgerType, setLedgerType] = useState<LedgerTypeFilter>('all');
+  const [ledgerSummary, setLedgerSummary] = useState<CorporateLedgerSummary | null>(
+    null,
+  );
   const [ledgerExporting, setLedgerExporting] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
@@ -275,6 +402,7 @@ export default function CorporateClientsPage() {
     () => categories.filter((category) => category.type === 'income'),
     [categories],
   );
+  const hasIncomeCategories = incomeCategories.length > 0;
 
   const loadCategories = useCallback(async () => {
     try {
@@ -340,9 +468,15 @@ export default function CorporateClientsPage() {
     const params = new URLSearchParams();
     if (ledgerFrom) params.set('from', ledgerFrom);
     if (ledgerTo) params.set('to', ledgerTo);
+    if (ledgerParticipant.trim()) {
+      params.set('participant', ledgerParticipant.trim());
+    }
+    if (ledgerService.trim()) params.set('service', ledgerService.trim());
+    if (ledgerStatus !== 'all') params.set('status', ledgerStatus);
+    if (ledgerType !== 'all') params.set('type', ledgerType);
     const query = params.toString();
     return query ? `?${query}` : '';
-  }, [ledgerFrom, ledgerTo]);
+  }, [ledgerFrom, ledgerParticipant, ledgerService, ledgerStatus, ledgerTo, ledgerType]);
 
   const loadClientDetail = useCallback(async (clientId: number) => {
     setDetailLoading(true);
@@ -359,8 +493,21 @@ export default function CorporateClientsPage() {
         `/api/corporate-clients/${clientId}/ledger${getLedgerQuery()}`,
       );
       if (ledgerResponse.ok) {
-        detail.ledgerEntries =
-          (await ledgerResponse.json()) as CorporateLedgerEntry[];
+        const ledgerPayload = (await ledgerResponse.json()) as
+          | CorporateLedgerEntry[]
+          | CorporateLedgerReport;
+        if (Array.isArray(ledgerPayload)) {
+          detail.ledgerEntries = ledgerPayload;
+          setLedgerSummary(summarizeVisibleLedgerEntries(ledgerPayload));
+        } else {
+          detail.ledgerEntries = ledgerPayload.entries || [];
+          setLedgerSummary(
+            ledgerPayload.summary ||
+              summarizeVisibleLedgerEntries(ledgerPayload.entries || []),
+          );
+        }
+      } else {
+        setLedgerSummary(null);
       }
       setSelectedClient(detail);
     } catch (error) {
@@ -701,7 +848,12 @@ export default function CorporateClientsPage() {
         header: 'Баланс',
         size: 140,
         cell: ({ row }) => (
-          <span className="font-semibold">{formatMoney(row.original.balance)}</span>
+          <div className="flex flex-col items-start gap-1">
+            <span className="font-semibold">{formatMoney(row.original.balance)}</span>
+            {row.original.flags?.lowBalance && (
+              <Badge variant="secondary">Низкий остаток</Badge>
+            )}
+          </div>
         ),
       },
       {
@@ -787,6 +939,16 @@ export default function CorporateClientsPage() {
         ),
       },
       {
+        accessorKey: 'comment',
+        header: 'Комментарий',
+        size: 220,
+        cell: ({ row }) => (
+          <div className="min-w-0 truncate text-sm">
+            {row.original.comment || row.original.cancelReason || '-'}
+          </div>
+        ),
+      },
+      {
         accessorKey: 'runningBalance',
         header: 'Остаток',
         size: 130,
@@ -847,6 +1009,24 @@ export default function CorporateClientsPage() {
     0,
   );
   const ledgerEntries = selectedClient?.ledgerEntries || [];
+  const visibleLedgerSummary =
+    ledgerSummary || summarizeVisibleLedgerEntries(ledgerEntries);
+  const reconciliation = selectedClient?.reconciliation || null;
+  const financeChecks = reconciliation?.financeChecks;
+  const hasFinanceWarnings = Boolean(
+    financeChecks &&
+      (financeChecks.missingFinanceId > 0 ||
+        financeChecks.missingFinanceRecord > 0 ||
+        financeChecks.mismatch > 0),
+  );
+  const hasActiveLedgerFilters = Boolean(
+    ledgerFrom ||
+      ledgerTo ||
+      ledgerParticipant.trim() ||
+      ledgerService.trim() ||
+      ledgerStatus !== 'active' ||
+      ledgerType !== 'all',
+  );
   const canSubmitDeposit =
     depositMode === 'link'
       ? Boolean(depositForm.financeId)
@@ -856,12 +1036,22 @@ export default function CorporateClientsPage() {
             depositForm.category &&
             depositForm.date,
         );
+  const createDepositBlockedByCategories =
+    depositMode === 'create' && !hasIncomeCategories;
   const canSubmitSpending = Boolean(
     spendingForm.amount &&
       Number(spendingForm.amount) > 0 &&
       spendingForm.date &&
       spendingForm.service.trim(),
   );
+  const resetLedgerFilters = () => {
+    setLedgerFrom('');
+    setLedgerTo('');
+    setLedgerParticipant('');
+    setLedgerService('');
+    setLedgerStatus('active');
+    setLedgerType('all');
+  };
 
   return (
     <div className="min-w-0 space-y-6 p-4 md:p-6">
@@ -1023,12 +1213,94 @@ export default function CorporateClientsPage() {
                       {STATUS_LABELS[selectedClient.status]}
                     </Badge>
                   </div>
-                  <div className="rounded-md border p-4">
-                    <div className="text-xs text-muted-foreground">Баланс</div>
+                  <div
+                    className={`rounded-md border p-4 ${
+                      reconciliation?.lowBalance
+                        ? 'border-amber-200 bg-amber-50 text-amber-950'
+                        : ''
+                    } ${
+                      reconciliation && !reconciliation.isBalanced
+                        ? 'border-destructive/40 bg-destructive/5'
+                        : ''
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="text-xs text-muted-foreground">Баланс</div>
+                      {reconciliation?.lowBalance && (
+                        <Badge variant="secondary">Низкий остаток</Badge>
+                      )}
+                    </div>
                     <div className="mt-1 text-2xl font-semibold">
                       {formatMoney(selectedClient.balance)}
                     </div>
+                    {reconciliation && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        Порог: {formatMoney(reconciliation.lowBalanceThreshold)}
+                      </div>
+                    )}
                   </div>
+                  {reconciliation && (
+                    <div className="space-y-3">
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                        <div className="rounded-md border p-3">
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Plus className="h-3.5 w-3.5" />
+                            Пополнения
+                          </div>
+                          <div className="mt-1 font-semibold">
+                            {formatMoney(reconciliation.depositsTotal)}
+                          </div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <MinusCircle className="h-3.5 w-3.5" />
+                            Списания
+                          </div>
+                          <div className="mt-1 font-semibold">
+                            {formatMoney(reconciliation.spendingsTotal)}
+                          </div>
+                        </div>
+                        <div className="rounded-md border p-3">
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Calculator className="h-3.5 w-3.5" />
+                            Сверка
+                          </div>
+                          <div className="mt-1 font-semibold">
+                            {formatMoney(reconciliation.expectedBalance)}
+                          </div>
+                        </div>
+                      </div>
+                      <div
+                        className={`rounded-md border p-3 text-sm ${
+                          reconciliation.isBalanced && !hasFinanceWarnings
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
+                            : 'border-amber-200 bg-amber-50 text-amber-950'
+                        }`}
+                      >
+                        <div className="flex items-start gap-2">
+                          {reconciliation.isBalanced && !hasFinanceWarnings ? (
+                            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                          ) : (
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <div className="font-medium">
+                              {reconciliation.isBalanced
+                                ? 'Баланс сходится'
+                                : `Расхождение ${formatMoney(
+                                    reconciliation.difference,
+                                  )}`}
+                            </div>
+                            <div className="mt-1 text-xs">
+                              Finance: создано {financeChecks?.createdFinanceIncome || 0},
+                              связано {financeChecks?.linkedFinanceIncome || 0},
+                              проблем {hasFinanceWarnings ? 'есть' : 'нет'}.
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
                     <div className="rounded-md border p-3">
                       <div className="text-xs text-muted-foreground">Телефон</div>
@@ -1093,6 +1365,23 @@ export default function CorporateClientsPage() {
                     )}
                   </div>
                 )}
+                {canManage && !hasIncomeCategories && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                    <div className="flex items-start gap-2">
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="font-medium">
+                          Нет активных доходных категорий
+                        </div>
+                        <div className="mt-1 text-xs">
+                          Создание нового дохода для пополнения недоступно. Можно
+                          связать существующий Finance ID или добавить категорию в
+                          каталоге.
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div className="flex flex-col gap-3">
@@ -1119,24 +1408,130 @@ export default function CorporateClientsPage() {
                           onChange={(event) => setLedgerTo(event.target.value)}
                         />
                       </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="corporate-ledger-service">Услуга</Label>
+                        <Input
+                          id="corporate-ledger-service"
+                          value={ledgerService}
+                          onChange={(event) => setLedgerService(event.target.value)}
+                          placeholder="Например, тренировка"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="corporate-ledger-participant">
+                          Участник
+                        </Label>
+                        <Input
+                          id="corporate-ledger-participant"
+                          value={ledgerParticipant}
+                          onChange={(event) =>
+                            setLedgerParticipant(event.target.value)
+                          }
+                          placeholder="Имя или клиент"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="corporate-ledger-status">Статус</Label>
+                        <Select
+                          value={ledgerStatus}
+                          onValueChange={(value) =>
+                            setLedgerStatus(value as LedgerStatusFilter)
+                          }
+                        >
+                          <SelectTrigger id="corporate-ledger-status">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(LEDGER_STATUS_FILTER_LABELS).map(
+                              ([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ),
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="corporate-ledger-type">Тип</Label>
+                        <Select
+                          value={ledgerType}
+                          onValueChange={(value) =>
+                            setLedgerType(value as LedgerTypeFilter)
+                          }
+                        >
+                          <SelectTrigger id="corporate-ledger-type">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {Object.entries(LEDGER_TYPE_FILTER_LABELS).map(
+                              ([value, label]) => (
+                                <SelectItem key={value} value={value}>
+                                  {label}
+                                </SelectItem>
+                              ),
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     </div>
-                    {canExport && (
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <div className="rounded-md border p-3">
+                        <div className="text-xs text-muted-foreground">
+                          Пополнения
+                        </div>
+                        <div className="mt-1 font-semibold">
+                          {formatMoney(visibleLedgerSummary.depositsTotal)}
+                        </div>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <div className="text-xs text-muted-foreground">Списания</div>
+                        <div className="mt-1 font-semibold">
+                          {formatMoney(visibleLedgerSummary.spendingsTotal)}
+                        </div>
+                      </div>
+                      <div className="rounded-md border p-3">
+                        <div className="text-xs text-muted-foreground">
+                          Итого
+                        </div>
+                        <div className="mt-1 font-semibold">
+                          {formatMoney(visibleLedgerSummary.periodDelta)}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {canExport && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void handleExportLedger()}
+                          disabled={ledgerExporting}
+                        >
+                          <Download className="mr-2 h-4 w-4" />
+                          {ledgerExporting ? 'Выгружаем...' : 'Excel'}
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
-                        onClick={() => void handleExportLedger()}
-                        disabled={ledgerExporting}
+                        onClick={resetLedgerFilters}
+                        disabled={!hasActiveLedgerFilters}
                       >
-                        <Download className="mr-2 h-4 w-4" />
-                        {ledgerExporting ? 'Выгружаем...' : 'Excel'}
+                        <FilterX className="mr-2 h-4 w-4" />
+                        Сбросить
                       </Button>
-                    )}
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <ReceiptText className="h-4 w-4" />
+                        {visibleLedgerSummary.activeEntriesCount} активных,{' '}
+                        {visibleLedgerSummary.canceledEntriesCount} отмененных
+                      </div>
+                    </div>
                   </div>
                   <DataTable
                     columns={ledgerColumns}
                     data={ledgerEntries}
                     emptyText="Операций пока нет."
-                    minWidthClassName="min-w-[980px]"
+                    minWidthClassName="min-w-[1160px]"
                     pageSize={6}
                   />
                 </div>
@@ -1331,6 +1726,7 @@ export default function CorporateClientsPage() {
                 <div className="space-y-2 sm:col-span-2">
                   <Label htmlFor="corporate-deposit-category">Категория</Label>
                   <Select
+                    disabled={!hasIncomeCategories}
                     value={depositForm.category}
                     onValueChange={(value) =>
                       setDepositForm((current) => ({
@@ -1350,6 +1746,12 @@ export default function CorporateClientsPage() {
                       ))}
                     </SelectContent>
                   </Select>
+                  {!hasIncomeCategories && (
+                    <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                      Доходных категорий нет. Создайте категорию дохода в каталоге
+                      или выберите источник "Связать доход #ID".
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1369,6 +1771,11 @@ export default function CorporateClientsPage() {
             </div>
           </div>
           <DialogFooter>
+            {createDepositBlockedByCategories && (
+              <Button asChild type="button" variant="outline">
+                <Link to="/admin/catalog?tab=categories">Категории</Link>
+              </Button>
+            )}
             <Button
               type="button"
               variant="outline"
@@ -1380,7 +1787,9 @@ export default function CorporateClientsPage() {
             <Button
               type="button"
               onClick={() => void handleCreateDeposit()}
-              disabled={depositSaving || !canSubmitDeposit}
+              disabled={
+                depositSaving || !canSubmitDeposit || createDepositBlockedByCategories
+              }
             >
               {depositSaving ? 'Сохраняем...' : 'Пополнить'}
             </Button>

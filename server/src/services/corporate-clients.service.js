@@ -7,6 +7,7 @@ const payrollService = require('./payroll.service');
 const CORPORATE_CLIENT_STATUSES = ['active', 'archived'];
 const CORPORATE_LEDGER_ENTRY_STATUSES = ['active', 'canceled'];
 const CORPORATE_LEDGER_ENTRY_TYPES = ['deposit', 'spending'];
+const DEFAULT_LOW_BALANCE_THRESHOLD = 5000;
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -59,6 +60,21 @@ function normalizeService(value) {
   if (!service) throw appError('Укажите услугу списания');
   if (service.length > 160) throw appError('Название услуги слишком длинное');
   return service;
+}
+
+function normalizeIncomeCategory(value) {
+  const category = normalizeOptionalText(value);
+  if (!category) throw appError('Выберите категорию дохода');
+  if (category.length > 160) throw appError('Категория дохода слишком длинная');
+  return category;
+}
+
+function normalizeOptionalFilterText(value, fieldName) {
+  const text = normalizeOptionalText(value);
+  if (text && text.length > 160) {
+    throw appError(`${fieldName} слишком длинный`);
+  }
+  return text;
 }
 
 function normalizeId(value, fieldName = 'ID') {
@@ -138,6 +154,85 @@ function calculateBalance(entries = []) {
   );
 }
 
+function isLowBalance(balance, status = 'active') {
+  return (
+    status === 'active' &&
+    balance >= 0 &&
+    balance <= DEFAULT_LOW_BALANCE_THRESHOLD
+  );
+}
+
+function buildBalanceReconciliation(entries = [], options = {}) {
+  const activeEntries = entries.filter((entry) => entry.status === 'active');
+  const activeDeposits = activeEntries.filter((entry) => entry.type === 'deposit');
+  const activeSpendings = activeEntries.filter((entry) => entry.type === 'spending');
+  const depositsTotal = Number(
+    activeDeposits
+      .reduce((sum, entry) => sum + toNumber(entry.amount), 0)
+      .toFixed(2),
+  );
+  const spendingsTotal = Number(
+    activeSpendings
+      .reduce((sum, entry) => sum + toNumber(entry.amount), 0)
+      .toFixed(2),
+  );
+  const expectedBalance = Number((depositsTotal - spendingsTotal).toFixed(2));
+  const currentBalance =
+    options.currentBalance === undefined
+      ? expectedBalance
+      : Number(toNumber(options.currentBalance).toFixed(2));
+  const difference = Number((currentBalance - expectedBalance).toFixed(2));
+  const financeChecks = activeDeposits.reduce(
+    (summary, entry) => {
+      if (!entry.financeId) {
+        summary.missingFinanceId += 1;
+        return summary;
+      }
+      if (entry.financeCreatedByLedger) {
+        summary.createdFinanceIncome += 1;
+      } else {
+        summary.linkedFinanceIncome += 1;
+      }
+      if (!entry.finance) {
+        summary.missingFinanceRecord += 1;
+        return summary;
+      }
+      summary.checked += 1;
+      const amountMatches =
+        Math.abs(toNumber(entry.finance.amount) - toNumber(entry.amount)) < 0.01;
+      const dateMatches = String(entry.finance.date || '') === String(entry.date || '');
+      if (entry.finance.type !== 'income' || !amountMatches || !dateMatches) {
+        summary.mismatch += 1;
+      }
+      return summary;
+    },
+    {
+      checked: 0,
+      createdFinanceIncome: 0,
+      linkedFinanceIncome: 0,
+      mismatch: 0,
+      missingFinanceId: 0,
+      missingFinanceRecord: 0,
+    },
+  );
+
+  return {
+    activeDepositsCount: activeDeposits.length,
+    activeEntriesCount: activeEntries.length,
+    activeSpendingsCount: activeSpendings.length,
+    canceledEntriesCount: entries.filter((entry) => entry.status === 'canceled').length,
+    currentBalance,
+    depositsTotal,
+    difference,
+    expectedBalance,
+    financeChecks,
+    isBalanced: Math.abs(difference) < 0.01,
+    lowBalance: isLowBalance(currentBalance, options.status),
+    lowBalanceThreshold: DEFAULT_LOW_BALANCE_THRESHOLD,
+    spendingsTotal,
+  };
+}
+
 function serializeLedgerEntry(entry) {
   if (!entry) return null;
   const raw = entry.toJSON ? entry.toJSON() : entry;
@@ -184,6 +279,16 @@ function serializeCorporateClient(client, options = {}) {
   const ledgerEntries = Array.isArray(raw.ledgerEntries)
     ? raw.ledgerEntries.map(serializeLedgerEntry).filter(Boolean)
     : options.ledgerEntries || [];
+  const balance =
+    options.balance === undefined ? calculateBalance(ledgerEntries) : options.balance;
+  const hasLedgerDetails =
+    Array.isArray(raw.ledgerEntries) || Boolean(options.includeReconciliation);
+  const reconciliation = hasLedgerDetails
+    ? buildBalanceReconciliation(ledgerEntries, {
+        currentBalance: balance,
+        status: raw.status,
+      })
+    : null;
 
   return {
     id: raw.id,
@@ -193,9 +298,12 @@ function serializeCorporateClient(client, options = {}) {
     contactEmail: raw.contactEmail || null,
     status: raw.status,
     comment: raw.comment || null,
-    balance:
-      options.balance === undefined ? calculateBalance(ledgerEntries) : options.balance,
+    balance,
+    flags: {
+      lowBalance: isLowBalance(balance, raw.status),
+    },
     ledgerEntries,
+    reconciliation,
     createdByAccountId: raw.createdByAccountId || null,
     createdBy: serializeAccount(raw.createdBy),
     archivedAt: raw.archivedAt || null,
@@ -603,7 +711,7 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
 async function createFinanceIncomeForDeposit(data, account, trainingMarker, transaction) {
   const amount = normalizeMoney(data.amount);
   const date = normalizeDateOnly(data.date);
-  const categoryName = normalizeName(data.category);
+  const categoryName = normalizeIncomeCategory(data.category);
   await payrollService.assertDateEditable(date, 'корпоративное пополнение');
 
   const category = await db.Category.findOne({
@@ -637,17 +745,7 @@ async function createFinanceIncomeForDeposit(data, account, trainingMarker, tran
     date,
     reason: data.comment,
     afterData: finance.toJSON ? finance.toJSON() : finance,
-  });
-
-  await onboardingService.recordEventSafe(account, 'finance.record_created', {
-    entityId: finance.id,
-    entityType: 'finance',
-    payload: {
-      amount: finance.amount,
-      category: finance.category,
-      date: finance.date,
-      type: finance.type,
-    },
+    transaction,
   });
 
   return finance;
@@ -709,13 +807,34 @@ async function createDeposit(corporateClientId, data = {}, account = null) {
       date: entry.date,
       reason: data.comment,
       afterData: entry.toJSON ? entry.toJSON() : entry,
+      transaction,
     });
 
     return {
       clientId: client.id,
       entryId: entry.id,
+      financeEvent: linked
+        ? null
+        : {
+            entityId: finance.id,
+            entityType: 'finance',
+            payload: {
+              amount: finance.amount,
+              category: finance.category,
+              date: finance.date,
+              type: finance.type,
+            },
+          },
     };
   });
+
+  if (result.financeEvent) {
+    await onboardingService.recordEventSafe(
+      account,
+      'finance.record_created',
+      result.financeEvent,
+    );
+  }
 
   const ledgerEntry = await db.CorporateLedgerEntry.findByPk(result.entryId, {
     include: buildLedgerInclude(),
@@ -774,6 +893,7 @@ async function createSpending(corporateClientId, data = {}, account = null) {
       date,
       reason: data.comment,
       afterData: entry.toJSON ? entry.toJSON() : entry,
+      transaction,
     });
 
     return {
@@ -792,31 +912,119 @@ async function createSpending(corporateClientId, data = {}, account = null) {
   };
 }
 
+function normalizeLedgerFilters(query = {}) {
+  const status = query.status ? String(query.status) : '';
+  const type = query.type ? String(query.type) : '';
+  if (status && status !== 'all' && !CORPORATE_LEDGER_ENTRY_STATUSES.includes(status)) {
+    throw appError('Некорректный статус операции баланса');
+  }
+  if (type && type !== 'all' && !CORPORATE_LEDGER_ENTRY_TYPES.includes(type)) {
+    throw appError('Некорректный тип операции баланса');
+  }
+  return {
+    from: query.from ? normalizeDateOnly(query.from, 'дату начала') : null,
+    participant: normalizeOptionalFilterText(query.participant, 'Фильтр участника'),
+    service: normalizeOptionalFilterText(query.service, 'Фильтр услуги'),
+    status: status || 'all',
+    to: query.to ? normalizeDateOnly(query.to, 'дату окончания') : null,
+    type: type || 'all',
+  };
+}
+
+function buildLedgerWhere(clientId, filters, options = {}) {
+  const where = {
+    corporateClientId: clientId,
+  };
+  const status = options.activeOnly ? 'active' : filters.status;
+  if (status && status !== 'all') where.status = status;
+  if (options.includeType !== false && filters.type !== 'all') {
+    where.type = filters.type;
+  }
+  if (filters.from || filters.to) {
+    where.date = {};
+    if (filters.from) where.date[Op.gte] = filters.from;
+    if (filters.to) where.date[Op.lte] = filters.to;
+  }
+  return where;
+}
+
+function matchesLedgerTextFilters(entry, filters) {
+  const service = [entry.service, entry.category]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  const participant = [entry.participantName, entry.clientName]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  if (filters.service && !service.includes(filters.service.toLowerCase())) {
+    return false;
+  }
+  if (
+    filters.participant &&
+    !participant.includes(filters.participant.toLowerCase())
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function buildLedgerSummary(entries, client, filters) {
+  const activeEntries = entries.filter((entry) => entry.status === 'active');
+  const depositsTotal = Number(
+    activeEntries
+      .filter((entry) => entry.type === 'deposit')
+      .reduce((sum, entry) => sum + toNumber(entry.amount), 0)
+      .toFixed(2),
+  );
+  const spendingsTotal = Number(
+    activeEntries
+      .filter((entry) => entry.type === 'spending')
+      .reduce((sum, entry) => sum + toNumber(entry.amount), 0)
+      .toFixed(2),
+  );
+  const periodDelta = Number((depositsTotal - spendingsTotal).toFixed(2));
+  const chronological = [...activeEntries]
+    .filter((entry) => entry.runningBalance !== null && entry.runningBalance !== undefined)
+    .sort((left, right) => {
+      const dateCompare = String(left.date).localeCompare(String(right.date));
+      if (dateCompare !== 0) return dateCompare;
+      return Number(left.id || 0) - Number(right.id || 0);
+    });
+  const openingBalance =
+    chronological.length > 0
+      ? Number(
+          (
+            toNumber(chronological[0].runningBalance) -
+            toSignedAmount(chronological[0])
+          ).toFixed(2),
+        )
+      : null;
+  const endingBalance =
+    chronological.length > 0
+      ? toNumber(chronological[chronological.length - 1].runningBalance)
+      : null;
+
+  return {
+    activeEntriesCount: activeEntries.length,
+    canceledEntriesCount: entries.filter((entry) => entry.status === 'canceled').length,
+    depositsTotal,
+    endingBalance,
+    filters,
+    lowBalance: isLowBalance(toNumber(client.balance), client.status),
+    lowBalanceThreshold: DEFAULT_LOW_BALANCE_THRESHOLD,
+    openingBalance,
+    periodDelta,
+    spendingsTotal,
+    totalEntriesCount: entries.length,
+  };
+}
+
 async function listLedgerEntries(corporateClientId, query = {}, account = null) {
   const client = await findCorporateClient(corporateClientId);
   await assertCorporateClientInScope(client, account);
-  const where = {
-    corporateClientId: client.id,
-  };
-  if (query.status && query.status !== 'all') {
-    const status = String(query.status);
-    if (!CORPORATE_LEDGER_ENTRY_STATUSES.includes(status)) {
-      throw appError('Некорректный статус операции баланса');
-    }
-    where.status = status;
-  }
-  if (query.type && query.type !== 'all') {
-    const type = String(query.type);
-    if (!CORPORATE_LEDGER_ENTRY_TYPES.includes(type)) {
-      throw appError('Некорректный тип операции баланса');
-    }
-    where.type = type;
-  }
-  if (query.from || query.to) {
-    where.date = {};
-    if (query.from) where.date[Op.gte] = normalizeDateOnly(query.from, 'дату начала');
-    if (query.to) where.date[Op.lte] = normalizeDateOnly(query.to, 'дату окончания');
-  }
+  const filters = normalizeLedgerFilters(query);
+  const where = buildLedgerWhere(client.id, filters);
 
   const rows = await db.CorporateLedgerEntry.findAll({
     where,
@@ -826,11 +1034,10 @@ async function listLedgerEntries(corporateClientId, query = {}, account = null) 
       ['id', 'DESC'],
     ],
   });
-  const balanceWhere = {
-    corporateClientId: client.id,
-    status: 'active',
-  };
-  if (where.date) balanceWhere.date = where.date;
+  const balanceWhere = buildLedgerWhere(client.id, filters, {
+    activeOnly: true,
+    includeType: false,
+  });
   const balanceRows = await db.CorporateLedgerEntry.findAll({
     where: balanceWhere,
     order: [
@@ -854,7 +1061,22 @@ async function listLedgerEntries(corporateClientId, query = {}, account = null) 
         ? runningBalances.get(raw.id)
         : null,
     });
-  });
+  }).filter((entry) => matchesLedgerTextFilters(entry, filters));
+}
+
+async function getLedgerDetails(corporateClientId, query = {}, account = null) {
+  const [client, entries] = await Promise.all([
+    getCorporateClient(corporateClientId, account),
+    listLedgerEntries(corporateClientId, query, account),
+  ]);
+  const filters = normalizeLedgerFilters(query);
+  return {
+    corporateClientId: client.id,
+    entries,
+    filters,
+    generatedAt: new Date().toISOString(),
+    summary: buildLedgerSummary(entries, client, filters),
+  };
 }
 
 async function cancelDeposit(corporateClientId, entryId, data = {}, account = null) {
@@ -907,6 +1129,7 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
           date: financeBefore.date,
           reason: data.reason,
           beforeData: financeBefore,
+          transaction,
         });
       }
     }
@@ -920,6 +1143,7 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
       reason: data.reason,
       beforeData,
       afterData: entry.toJSON ? entry.toJSON() : entry,
+      transaction,
     });
 
     return {
@@ -981,6 +1205,7 @@ async function reverseSpending(corporateClientId, entryId, data = {}, account = 
       reason: data.reason,
       beforeData,
       afterData: entry.toJSON ? entry.toJSON() : entry,
+      transaction,
     });
 
     return {
@@ -1000,11 +1225,29 @@ async function reverseSpending(corporateClientId, entryId, data = {}, account = 
 }
 
 function buildLedgerExport(rows, client, query = {}) {
+  const summary = buildLedgerSummary(rows, client, normalizeLedgerFilters(query));
+  const reconciliation = client.reconciliation || {
+    currentBalance: client.balance,
+    depositsTotal: client.balance,
+    difference: 0,
+    expectedBalance: client.balance,
+    isBalanced: true,
+    spendingsTotal: 0,
+  };
   const summaryRows = [
     { Показатель: 'Компания', Значение: client.name },
     { Показатель: 'Период', Значение: `${query.from || '...'} — ${query.to || '...'}` },
-    { Показатель: 'Операций', Значение: rows.length },
-    { Показатель: 'Текущий баланс', Значение: client.balance },
+    { Показатель: 'Фильтр услуги', Значение: query.service || 'Все услуги' },
+    { Показатель: 'Фильтр участника', Значение: query.participant || 'Все участники' },
+    { Показатель: 'Операций в детализации', Значение: rows.length },
+    { Показатель: 'Пополнения в детализации', Значение: summary.depositsTotal },
+    { Показатель: 'Списания в детализации', Значение: summary.spendingsTotal },
+    { Показатель: 'Итого по детализации', Значение: summary.periodDelta },
+    { Показатель: 'Текущий баланс', Значение: reconciliation.currentBalance },
+    { Показатель: 'Сверка баланса', Значение: reconciliation.isBalanced ? 'OK' : 'Расхождение' },
+    { Показатель: 'Пополнения всего', Значение: reconciliation.depositsTotal },
+    { Показатель: 'Списания всего', Значение: reconciliation.spendingsTotal },
+    { Показатель: 'Пополнения минус списания', Значение: reconciliation.expectedBalance },
   ];
   const detailRows = [...rows]
     .sort((left, right) => {
@@ -1014,18 +1257,11 @@ function buildLedgerExport(rows, client, query = {}) {
     })
     .map((entry) => ({
       Дата: entry.date,
-      Тип: LEDGER_TYPE_LABELS_FOR_EXPORT[entry.type] || entry.type,
-      Статус: entry.status === 'active' ? 'Активно' : 'Отменено',
       Услуга: entry.service || (entry.type === 'deposit' ? 'Пополнение' : ''),
-      'Участник/клиент': entry.participantName || entry.clientName || '',
+      Участник: entry.participantName || entry.clientName || '',
       Сумма: entry.signedAmount,
       Комментарий: entry.comment || '',
       Остаток: entry.runningBalance ?? '',
-      'ID операции': entry.id,
-      'Client ID': entry.clientId || '',
-      'Booking ID': entry.bookingId || '',
-      'Visit ID': entry.visitId || '',
-      'Training note ID': entry.trainingNoteId || '',
     }));
 
   const workbook = xlsx.utils.book_new();
@@ -1042,22 +1278,18 @@ function buildLedgerExport(rows, client, query = {}) {
   return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-const LEDGER_TYPE_LABELS_FOR_EXPORT = {
-  deposit: 'Пополнение',
-  spending: 'Списание',
-};
-
 async function exportLedgerDetails(corporateClientId, query = {}, account = null) {
   const client = await getCorporateClient(corporateClientId, account);
-  const rows = await listLedgerEntries(corporateClientId, query, account);
+  const exportQuery = { ...query, status: query.status || 'active' };
+  const rows = await listLedgerEntries(corporateClientId, exportQuery, account);
 
   await payrollService.recordChange({
     action: 'corporate_ledger.export',
     entityType: 'corporate_client',
     entityId: client.id,
     account,
-    fromDate: query.from || null,
-    toDate: query.to || null,
+    fromDate: exportQuery.from || null,
+    toDate: exportQuery.to || null,
     afterData: {
       entries: rows.length,
       name: client.name,
@@ -1068,15 +1300,15 @@ async function exportLedgerDetails(corporateClientId, query = {}, account = null
     entityType: 'corporate_ledger',
     payload: {
       corporateClientId: client.id,
-      fromDate: query.from || null,
+      fromDate: exportQuery.from || null,
       report: 'corporate_ledger',
-      toDate: query.to || null,
+      toDate: exportQuery.to || null,
     },
   });
 
   return {
-    buffer: buildLedgerExport(rows, client, query),
-    filename: `corporate-${client.id}-${query.from || 'start'}-${query.to || 'end'}.xlsx`,
+    buffer: buildLedgerExport(rows, client, exportQuery),
+    filename: `corporate-${client.id}-${exportQuery.from || 'start'}-${exportQuery.to || 'end'}.xlsx`,
   };
 }
 
@@ -1092,6 +1324,7 @@ module.exports = {
   createSpending,
   exportLedgerDetails,
   getCorporateClient,
+  getLedgerDetails,
   listCorporateClients,
   listLedgerEntries,
   reverseSpending,
