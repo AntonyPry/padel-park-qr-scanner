@@ -92,6 +92,14 @@ function App() {
                       }
                     />
                     <Route
+                      path="/admin/onboarding/:taskKey"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/onboarding']}>
+                          <OnboardingPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
                       path="/admin/bookings"
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/bookings']}>

@@ -24,6 +24,7 @@ import {
   Wallet,
   WalletCards,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import {
   Sidebar,
   SidebarContent,
@@ -43,130 +44,183 @@ import { ROUTE_ACCESS, hasRoleAccess } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import { getAccountRoleLabel } from '@/lib/roles';
 
-const items = [
+type NavItem = {
+  title: string;
+  url: string;
+  icon: LucideIcon;
+};
+
+type NavSection = {
+  title: string;
+  items: NavItem[];
+};
+
+const navigationSections: NavSection[] = [
   {
-    title: 'Монитор входов',
-    url: '/admin',
-    icon: LayoutDashboard,
+    title: 'Рабочий день',
+    items: [
+      {
+        title: 'Монитор входов',
+        url: '/admin',
+        icon: LayoutDashboard,
+      },
+      {
+        title: 'Клиенты',
+        url: '/admin/clients',
+        icon: ContactRound,
+      },
+      {
+        title: 'Бронирование',
+        url: '/admin/bookings',
+        icon: CalendarDays,
+      },
+      {
+        title: 'Тренерский кабинет',
+        url: '/admin/trainer',
+        icon: BicepsFlexed,
+      },
+      {
+        title: 'Обучение',
+        url: '/admin/onboarding',
+        icon: GraduationCap,
+      },
+    ],
   },
   {
-    title: 'Контроль менеджера',
-    url: '/admin/manager-control',
-    icon: ClipboardCheck,
+    title: 'CRM и коммуникации',
+    items: [
+      {
+        title: 'Базы клиентов',
+        url: '/admin/client-bases',
+        icon: Filter,
+      },
+      {
+        title: 'Задачи обзвона',
+        url: '/admin/call-tasks',
+        icon: PhoneCall,
+      },
+      {
+        title: 'Телефония',
+        url: '/admin/telephony',
+        icon: PhoneIncoming,
+      },
+    ],
   },
   {
-    title: 'Обучение',
-    url: '/admin/onboarding',
-    icon: GraduationCap,
+    title: 'Предоплаты и деньги',
+    items: [
+      {
+        title: 'Предоплаты',
+        url: '/admin/prepayments',
+        icon: WalletCards,
+      },
+      {
+        title: 'Сертификаты',
+        url: '/admin/certificates',
+        icon: Gift,
+      },
+      {
+        title: 'Корпоративные клиенты',
+        url: '/admin/corporate-clients',
+        icon: Building2,
+      },
+      {
+        title: 'Финансы (P&L)',
+        url: '/admin/finances',
+        icon: Wallet,
+      },
+      {
+        title: 'Мотивация',
+        url: '/admin/motivation',
+        icon: CircleDollarSign,
+      },
+    ],
   },
   {
-    title: 'Аналитика входов',
-    url: '/admin/visits-analytics',
-    icon: LineChart,
+    title: 'Методическая работа',
+    items: [
+      {
+        title: 'Методика',
+        url: '/admin/methodology',
+        icon: ListChecks,
+      },
+      {
+        title: 'Аналитика методики',
+        url: '/admin/methodology-analytics',
+        icon: ChartColumn,
+      },
+    ],
   },
   {
-    title: 'Клиенты',
-    url: '/admin/clients',
-    icon: ContactRound,
+    title: 'Аналитика и контроль',
+    items: [
+      {
+        title: 'Контроль менеджера',
+        url: '/admin/manager-control',
+        icon: ClipboardCheck,
+      },
+      {
+        title: 'Аналитика входов',
+        url: '/admin/visits-analytics',
+        icon: LineChart,
+      },
+      {
+        title: 'Утилизация кортов',
+        url: '/admin/utilization',
+        icon: Activity,
+      },
+      {
+        title: 'Журнал действий',
+        url: '/admin/audit',
+        icon: History,
+      },
+    ],
   },
   {
-    title: 'Бронирование',
-    url: '/admin/bookings',
-    icon: CalendarDays,
-  },
-  {
-    title: 'Тренерский кабинет',
-    url: '/admin/trainer',
-    icon: BicepsFlexed,
-  },
-  {
-    title: 'Методика',
-    url: '/admin/methodology',
-    icon: ListChecks,
-  },
-  {
-    title: 'Аналитика методики',
-    url: '/admin/methodology-analytics',
-    icon: ChartColumn,
-  },
-  {
-    title: 'Базы клиентов',
-    url: '/admin/client-bases',
-    icon: Filter,
-  },
-  {
-    title: 'Задачи обзвона',
-    url: '/admin/call-tasks',
-    icon: PhoneCall,
-  },
-  {
-    title: 'Предоплаты',
-    url: '/admin/prepayments',
-    icon: WalletCards,
-  },
-  {
-    title: 'Сертификаты',
-    url: '/admin/certificates',
-    icon: Gift,
-  },
-  {
-    title: 'Корпоративные клиенты',
-    url: '/admin/corporate-clients',
-    icon: Building2,
-  },
-  {
-    title: 'Телефония',
-    url: '/admin/telephony',
-    icon: PhoneIncoming,
-  },
-  {
-    title: 'Финансы (P&L)',
-    url: '/admin/finances',
-    icon: Wallet,
-  },
-  {
-    title: 'Персонал',
-    url: '/admin/staff',
-    icon: Users,
-  },
-  {
-    title: 'Пользователи',
-    url: '/admin/users',
-    icon: UserCog,
-  },
-  {
-    title: 'Журнал действий',
-    url: '/admin/audit',
-    icon: History,
-  },
-  {
-    title: 'Мотивация',
-    url: '/admin/motivation',
-    icon: CircleDollarSign,
-  },
-  {
-    title: 'Утилизация кортов',
-    url: '/admin/utilization',
-    icon: Activity,
-  },
-  {
-    title: 'Справочник товаров',
-    url: '/admin/catalog',
-    icon: Database,
-  },
-  {
-    title: 'Справочники CRM',
-    url: '/admin/references',
-    icon: ListTree,
+    title: 'Настройки',
+    items: [
+      {
+        title: 'Персонал',
+        url: '/admin/staff',
+        icon: Users,
+      },
+      {
+        title: 'Пользователи',
+        url: '/admin/users',
+        icon: UserCog,
+      },
+      {
+        title: 'Справочник товаров',
+        url: '/admin/catalog',
+        icon: Database,
+      },
+      {
+        title: 'Справочники CRM',
+        url: '/admin/references',
+        icon: ListTree,
+      },
+    ],
   },
 ];
+
+function isRouteActive(currentPath: string, itemUrl: string) {
+  return (
+    currentPath === itemUrl ||
+    (itemUrl !== '/admin' && currentPath.startsWith(`${itemUrl}/`))
+  );
+}
 
 export function AppSidebar() {
   const location = useLocation();
   const { account, logout } = useAuth();
-  const availableItems = items.filter((item) =>
-    hasRoleAccess(account?.role, ROUTE_ACCESS[item.url] || []),
-  );
+  const availableSections = navigationSections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) =>
+        hasRoleAccess(account?.role, ROUTE_ACCESS[item.url] || []),
+      ),
+    }))
+    .filter((section) => section.items.length > 0);
   const displayName = account?.Staff?.name || account?.email || 'Аккаунт';
   const secondaryLabel = account?.Staff?.name
     ? account.email
@@ -193,27 +247,32 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Администрирование</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {availableItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={location.pathname === item.url}
-                    tooltip={item.title}
-                  >
-                    <Link to={item.url}>
-                      <item.icon />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {availableSections.map((section) => (
+          <SidebarGroup
+            key={section.title}
+            className="py-1 group-data-[collapsible=icon]:py-0"
+          >
+            <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {section.items.map((item) => (
+                  <SidebarMenuItem key={item.url}>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={isRouteActive(location.pathname, item.url)}
+                      tooltip={item.title}
+                    >
+                      <Link to={item.url}>
+                        <item.icon />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarSeparator />
