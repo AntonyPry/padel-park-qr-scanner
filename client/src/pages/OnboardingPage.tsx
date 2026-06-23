@@ -291,7 +291,8 @@ function TrainingDataPanel({
             {loading ? 'Проверяем...' : `${summary?.totalRecords || 0} записей`}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            {roleTitle}: данные тренировки не участвуют в боевых отчетах.
+            Только владелец: {roleTitle}. Данные тренировки не участвуют в
+            боевых отчетах.
           </p>
         </div>
         <Button
@@ -299,6 +300,7 @@ function TrainingDataPanel({
           variant="destructive"
           onClick={onCleanup}
           disabled={loading || cleaning || !summary?.hasRecords}
+          title="Очистка учебных данных доступна только владельцу"
         >
           {cleaning ? (
             <RefreshCw className="h-4 w-4 animate-spin" />
@@ -350,7 +352,8 @@ function OnboardingMetricsPanel({
             {loading ? 'Считаем...' : `${metrics?.summary.percent || 0}% общего прогресса`}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Сводка владельца по прохождению ролевых путей активными аккаунтами.
+            Только владелец: сводка по прохождению ролевых путей активными
+            аккаунтами.
           </p>
         </div>
         <div className="flex flex-wrap gap-2 lg:justify-end">
@@ -705,7 +708,7 @@ export default function OnboardingPage() {
             {overview.ownerRoleOverrideEnabled && (
               <div className="w-full min-w-56 sm:w-64">
                 <div className="mb-1 text-xs font-medium text-muted-foreground">
-                  Роль прохождения
+                  Роль прохождения · только владелец
                 </div>
                 <Select
                   value={overview.selectedRole}
@@ -729,6 +732,11 @@ export default function OnboardingPage() {
               variant="outline"
               onClick={handleReset}
               disabled={resetMutation.isPending || summary.completedTasks === 0}
+              title={
+                summary.completedTasks === 0
+                  ? 'Нет завершенных заданий для сброса'
+                  : 'Сбросить прогресс текущей роли'
+              }
             >
               {resetMutation.isPending ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />

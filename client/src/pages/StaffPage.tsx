@@ -68,6 +68,14 @@ import {
 import { DataTable } from '@/components/data-table';
 import { ErrorState } from '@/components/error-state';
 import { MetricCard } from '@/components/dashboard-metric';
+import {
+  PermissionActionButton,
+  PermissionHint,
+} from '@/components/permission-feedback';
+import {
+  permissionMessages,
+  showPermissionDenied,
+} from '@/lib/permission-feedback';
 
 interface AdminStat {
   staffId?: number | null;
@@ -497,6 +505,13 @@ export default function StaffPage() {
     isDestructive = false,
   ) => {
     if (!payrollPeriod) return;
+    if (status === 'paid' && !canPay) {
+      showPermissionDenied(permissionMessages.payrollPay);
+      return;
+    }
+    if (status === 'approved' && !canApprove) return;
+    if ((status === 'reviewed' || status === 'draft') && !canReview) return;
+
     setPendingAction({
       confirmLabel,
       description,
@@ -1260,6 +1275,11 @@ export default function StaffPage() {
                 </div>
               </div>
             )}
+            {payrollPeriod?.status === 'approved' && !canPay && (
+              <PermissionHint className="mt-3">
+                {permissionMessages.payrollPay}
+              </PermissionHint>
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {!payrollPeriod && canReview && (
@@ -1319,8 +1339,10 @@ export default function StaffPage() {
                 Утвердить
               </Button>
             )}
-            {payrollPeriod?.status === 'approved' && canPay && (
-              <Button
+            {payrollPeriod?.status === 'approved' && (
+              <PermissionActionButton
+                allowed={canPay}
+                deniedMessage={permissionMessages.payrollPay}
                 onClick={() =>
                   requestPayrollTransition(
                     'paid',
@@ -1331,7 +1353,7 @@ export default function StaffPage() {
                 }
               >
                 Выплачено
-              </Button>
+              </PermissionActionButton>
             )}
           </div>
         </div>

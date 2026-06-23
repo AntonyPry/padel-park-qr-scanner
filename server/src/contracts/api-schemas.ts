@@ -55,6 +55,11 @@ const optionalNumberValue = z.union([numberValue, z.literal(''), z.null()]).opti
 const optionalNonNegativeNumberValue = z
   .union([nonNegativeNumberValue, z.literal(''), z.null()])
   .optional();
+const optionalClientNumericQueryValue = z.preprocess(
+  (value: unknown) =>
+    typeof value === 'string' && value.trim() === '' ? '' : value,
+  optionalNonNegativeNumberValue,
+);
 const boolValue = z.union([z.boolean(), z.literal('true'), z.literal('false'), z.literal('1'), z.literal('0')]);
 const optionalBoolValue = boolValue.optional();
 const statusFilter = z.enum(['active', 'archived', 'inactive', 'all']);
@@ -223,8 +228,8 @@ const clientFilters = z
   .object({
     duplicateOnly: optionalBoolValue,
     includeMerged: optionalBoolValue,
-    lastVisitDaysFrom: optionalNonNegativeNumberValue,
-    lastVisitDaysTo: optionalNonNegativeNumberValue,
+    lastVisitDaysFrom: optionalClientNumericQueryValue,
+    lastVisitDaysTo: optionalClientNumericQueryValue,
     lastVisitFrom: optionalDateOnly,
     lastVisitTo: optionalDateOnly,
     q: optionalString,
@@ -235,8 +240,8 @@ const clientFilters = z
     trainingLevel: z.enum(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']).optional(),
     visitCategory: optionalString,
     visitCategoryId: nullableId,
-    visitCountMax: optionalNonNegativeNumberValue,
-    visitCountMin: optionalNonNegativeNumberValue,
+    visitCountMax: optionalClientNumericQueryValue,
+    visitCountMin: optionalClientNumericQueryValue,
   })
   .passthrough();
 

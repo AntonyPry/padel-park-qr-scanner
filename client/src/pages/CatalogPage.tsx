@@ -47,6 +47,14 @@ import {
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
 import { DataTable } from '@/components/data-table';
+import {
+  PermissionActionButton,
+  PermissionHint,
+} from '@/components/permission-feedback';
+import {
+  permissionMessages,
+  showPermissionDenied,
+} from '@/lib/permission-feedback';
 import { Label } from '@/components/ui/label';
 import type { MotivationBonusRule } from '@/lib/motivation';
 import {
@@ -391,7 +399,9 @@ export default function CatalogPage() {
         apiFetch('/api/catalog/unmapped'),
         apiFetch(`/api/catalog/rules?status=${catalogStatus}`),
         apiFetch(`/api/catalog/categories?status=${catalogStatus}`),
-        apiFetch('/api/motivation/bonus-rules'),
+        canEditMotivation
+          ? apiFetch('/api/motivation/bonus-rules')
+          : Promise.resolve(null),
         apiFetch('/api/catalog/sale-settings'),
         canEditPendingSales
           ? apiFetch(`/api/catalog/pending-sales?${pendingQuery.toString()}`)
@@ -423,11 +433,13 @@ export default function CatalogPage() {
         errors.push(await readError(catRes, 'Не удалось загрузить категории'));
       }
 
-      if (bonusRulesRes.ok) {
+      if (bonusRulesRes?.ok) {
         setBonusRules((await bonusRulesRes.json()) as MotivationBonusRule[]);
-      } else {
+      } else if (bonusRulesRes) {
         setBonusRules([]);
         errors.push(await readError(bonusRulesRes, 'Не удалось загрузить мотивации категорий'));
+      } else {
+        setBonusRules([]);
       }
 
       if (saleSettingsRes.ok) {
@@ -476,7 +488,13 @@ export default function CatalogPage() {
     } finally {
       setCatalogLoading(false);
     }
-  }, [canEditPendingSales, canEditSubscriptionTypes, catalogStatus, pendingStatus]);
+  }, [
+    canEditMotivation,
+    canEditPendingSales,
+    canEditSubscriptionTypes,
+    catalogStatus,
+    pendingStatus,
+  ]);
 
   useEffect(() => {
     void fetchData();
@@ -656,6 +674,11 @@ export default function CatalogPage() {
   };
 
   const handleSaveRule = async (itemName: string) => {
+    if (!canEditCatalog) {
+      showPermissionDenied(permissionMessages.catalogManage);
+      return;
+    }
+
     const category = selections[itemName];
     if (!category) return;
 
@@ -1093,6 +1116,11 @@ export default function CatalogPage() {
   };
 
   const handleAddCategory = categoryForm.handleSubmit(async (values) => {
+    if (!canEditCatalog) {
+      showPermissionDenied(permissionMessages.catalogManage);
+      return;
+    }
+
     const selectedGroupDef = PNL_GROUPS.find((g) => g.value === values.group);
     const type = selectedGroupDef ? selectedGroupDef.type : 'expense';
 
@@ -1210,6 +1238,11 @@ export default function CatalogPage() {
     categoryId: number,
     newParentId: string,
   ) => {
+    if (!canEditCatalog) {
+      showPermissionDenied(permissionMessages.catalogManage);
+      return;
+    }
+
     try {
       const res = await apiFetch(`/api/catalog/categories/${categoryId}`, {
         method: 'PUT',
@@ -1235,6 +1268,11 @@ export default function CatalogPage() {
     categoryId: number,
     bonusRuleId: string,
   ) => {
+    if (!canEditMotivation) {
+      showPermissionDenied(permissionMessages.motivationManage);
+      return;
+    }
+
     const res = await apiFetch(`/api/motivation/categories/${categoryId}/rule`, {
       method: 'PUT',
       body: JSON.stringify({
@@ -1436,24 +1474,22 @@ export default function CatalogPage() {
       cell: ({ row }) => {
         const itemName = row.original;
         const canSaveRule = canEditCatalog && Boolean(selections[itemName]);
+        const missingCategory = !selections[itemName];
 
         return (
-          <Button
+          <PermissionActionButton
+            allowed={canEditCatalog}
             size="sm"
             variant={canSaveRule ? 'default' : 'outline'}
-            disabled={!canSaveRule}
+            disabled={missingCategory}
+            disabledReason="Сначала выберите категорию"
+            deniedMessage={permissionMessages.catalogManage}
             aria-label={`Сохранить правило для ${itemName}`}
-            title={
-              !canEditCatalog
-                ? 'Недостаточно прав для изменения справочника'
-                : !selections[itemName]
-                  ? 'Сначала выберите категорию'
-                  : 'Сохранить правило'
-            }
+            title={missingCategory ? 'Сначала выберите категорию' : 'Сохранить правило'}
             onClick={() => handleSaveRule(itemName)}
           >
             Сохранить
-          </Button>
+          </PermissionActionButton>
         );
       },
     },
@@ -1498,38 +1534,41 @@ export default function CatalogPage() {
 
         return catalogStatus === 'archived' ? (
           <div className="flex justify-end gap-1">
-            <Button
+            <PermissionActionButton
+              allowed={canEditCatalog}
               variant="ghost"
               size="icon"
               onClick={() => requestRestoreRule(rule)}
-              disabled={!canEditCatalog}
+              deniedMessage={permissionMessages.catalogManage}
               aria-label={`Восстановить правило для ${rule.itemName}`}
               title="Восстановить"
             >
               <ArchiveRestore className="h-4 w-4" />
-            </Button>
-            <Button
+            </PermissionActionButton>
+            <PermissionActionButton
+              allowed={canEditCatalog}
               variant="ghost"
               size="icon"
               onClick={() => requestPermanentDeleteRule(rule)}
-              disabled={!canEditCatalog}
+              deniedMessage={permissionMessages.catalogManage}
               aria-label={`Удалить навсегда правило для ${rule.itemName}`}
               title="Удалить навсегда"
             >
               <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
+            </PermissionActionButton>
           </div>
         ) : (
-          <Button
+          <PermissionActionButton
+            allowed={canEditCatalog}
             variant="ghost"
             size="icon"
             onClick={() => requestArchiveRule(rule)}
-            disabled={!canEditCatalog}
+            deniedMessage={permissionMessages.catalogManage}
             aria-label={`Архивировать правило для ${rule.itemName}`}
             title="В архив"
           >
             <Trash2 className="h-4 w-4 text-destructive" />
-          </Button>
+          </PermissionActionButton>
         );
       },
     },
@@ -1857,7 +1896,19 @@ export default function CatalogPage() {
             disabled={!canEditMotivation}
             onValueChange={(val) => handleUpdateMotivation(category.id, val)}
           >
-            <SelectTrigger className="w-full border-dashed bg-transparent">
+            <SelectTrigger
+              aria-label={
+                canEditMotivation
+                  ? undefined
+                  : `Мотивация: ${permissionMessages.motivationManage}`
+              }
+              className="w-full border-dashed bg-transparent"
+              title={
+                canEditMotivation
+                  ? undefined
+                  : permissionMessages.motivationManage
+              }
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1889,7 +1940,10 @@ export default function CatalogPage() {
             disabled={!canEditCatalog}
             onValueChange={(val) => handleUpdateParent(category.id, val)}
           >
-            <SelectTrigger className="w-full border-dashed bg-transparent">
+            <SelectTrigger
+              className="w-full border-dashed bg-transparent"
+              title={!canEditCatalog ? permissionMessages.catalogManage : undefined}
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -2134,6 +2188,11 @@ export default function CatalogPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {!canEditCatalog && (
+              <PermissionHint className="mb-4">
+                {permissionMessages.catalogManage}
+              </PermissionHint>
+            )}
             {(catalogLoading && unmapped.length === 0) || unmapped.length > 0 ? (
               <DataTable
                 columns={unmappedColumns}
@@ -2155,6 +2214,11 @@ export default function CatalogPage() {
             <CardTitle>Сохраненные правила</CardTitle>
           </CardHeader>
           <CardContent>
+            {!canEditCatalog && (
+              <PermissionHint className="mb-4">
+                {permissionMessages.catalogManage}
+              </PermissionHint>
+            )}
             <DataTable
               columns={ruleColumns}
               data={filteredRules}
@@ -2248,6 +2312,9 @@ export default function CatalogPage() {
             <CardTitle>Управление категориями P&L</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
+            {!canEditCatalog && (
+              <PermissionHint>{permissionMessages.catalogManage}</PermissionHint>
+            )}
             {canEditCatalog && catalogStatus === 'active' && (
               <form
                 onSubmit={handleAddCategory}

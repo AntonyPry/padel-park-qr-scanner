@@ -61,6 +61,62 @@ test('passes valid payloads and preserves query strings used by controllers', ()
   assert.equal(req.query.includeArchived, 'true');
 });
 
+test('accepts whitespace clients list numeric query values as empty', () => {
+  const req = {
+    body: {},
+    params: {},
+    query: {
+      lastVisitDaysFrom: '   ',
+      lastVisitDaysTo: '   ',
+      page: '1',
+      pageSize: '10',
+      segment: 'all',
+      status: 'active',
+      visitCountMax: '   ',
+      visitCountMin: '   ',
+    },
+  };
+  const { nextCalled, res } = runValidation(
+    { query: apiSchemas.clients.listQuery },
+    req,
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+  assert.equal(req.query.visitCountMax, '');
+  assert.equal(req.query.visitCountMin, '');
+  assert.equal(req.query.lastVisitDaysFrom, '');
+  assert.equal(req.query.lastVisitDaysTo, '');
+});
+
+test('accepts explicit zero clients list numeric query values', () => {
+  const req = {
+    body: {},
+    params: {},
+    query: {
+      lastVisitDaysFrom: '0',
+      lastVisitDaysTo: '0',
+      page: '1',
+      pageSize: '10',
+      segment: 'all',
+      status: 'active',
+      visitCountMax: '0',
+      visitCountMin: '0',
+    },
+  };
+  const { nextCalled, res } = runValidation(
+    { query: apiSchemas.clients.listQuery },
+    req,
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+  assert.equal(req.query.visitCountMax, '0');
+  assert.equal(req.query.visitCountMin, '0');
+  assert.equal(req.query.lastVisitDaysFrom, '0');
+  assert.equal(req.query.lastVisitDaysTo, '0');
+});
+
 test('rejects incomplete client create payload before controller logic', () => {
   const { nextCalled, res } = runValidation(
     { body: apiSchemas.clients.body },

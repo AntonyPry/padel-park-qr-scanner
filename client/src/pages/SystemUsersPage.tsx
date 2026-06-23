@@ -38,6 +38,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  PermissionActionButton,
+} from '@/components/permission-feedback';
+import {
+  permissionMessages,
+  showPermissionDenied,
+} from '@/lib/permission-feedback';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import {
   ACCOUNT_ROLES,
@@ -229,6 +236,11 @@ export default function SystemUsersPage() {
   };
 
   const openEdit = (target: SystemAccount) => {
+    if (!canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     setEditingAccount(target);
     accountForm.reset({
       email: target.email,
@@ -244,6 +256,18 @@ export default function SystemUsersPage() {
     values: AccountFormState,
     target: SystemAccount | null,
   ) => {
+    if (target && !canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+    if (
+      account?.role === 'manager' &&
+      !MANAGER_MANAGED_ROLES.includes(values.role)
+    ) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     const payload = {
       email: values.email.trim(),
       password: values.password || undefined,
@@ -310,6 +334,11 @@ export default function SystemUsersPage() {
   });
 
   const executeArchive = async (target: SystemAccount) => {
+    if (!canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     const response = await apiFetch(`/api/accounts/${target.id}`, {
       method: 'DELETE',
     });
@@ -327,6 +356,11 @@ export default function SystemUsersPage() {
   };
 
   const executeRestore = async (target: SystemAccount) => {
+    if (!canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     const response = await apiFetch(`/api/accounts/${target.id}/restore`, {
       method: 'POST',
     });
@@ -342,6 +376,11 @@ export default function SystemUsersPage() {
   };
 
   const executePermanentDelete = async (target: SystemAccount) => {
+    if (!canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     const response = await apiFetch(`/api/accounts/${target.id}/permanent`, {
       method: 'DELETE',
     });
@@ -354,6 +393,11 @@ export default function SystemUsersPage() {
   };
 
   const requestArchive = (target: SystemAccount) => {
+    if (!canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     const isArchived = target.status === 'archived';
     setPendingAction({
       confirmLabel: isArchived ? 'Восстановить' : 'В архив',
@@ -367,6 +411,11 @@ export default function SystemUsersPage() {
   };
 
   const requestPermanentDelete = (target: SystemAccount) => {
+    if (!canManageAccount(target)) {
+      showPermissionDenied(permissionMessages.systemUsersRestricted);
+      return;
+    }
+
     setPendingAction({
       confirmLabel: 'Удалить навсегда',
       description: `Пользователь ${target.email} будет удален без возможности восстановления. Сервер не даст удалить его, если есть связанные действия.`,
@@ -495,7 +544,15 @@ export default function SystemUsersPage() {
 
           if (!manageable) {
             return (
-              <span className="text-xs text-muted-foreground">Недоступно</span>
+              <PermissionActionButton
+                allowed={false}
+                deniedMessage={permissionMessages.systemUsersRestricted}
+                size="sm"
+                variant="ghost"
+                aria-label={`Почему нельзя управлять пользователем ${item.email}`}
+              >
+                Недоступно
+              </PermissionActionButton>
             );
           }
 
