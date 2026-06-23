@@ -20,6 +20,40 @@ const OPERATIONAL_DETAIL_KEYS = [
   'visits',
 ];
 
+test('client list SQL ignores blank numeric filters', () => {
+  const query = __testing.buildClientListSql(
+    {
+      lastVisitDaysFrom: null,
+      lastVisitDaysTo: undefined,
+      segment: 'all',
+      status: 'active',
+      visitCountMax: '   ',
+      visitCountMin: '',
+    },
+    { limit: 10, offset: 0 },
+  );
+
+  assert.equal(Object.hasOwn(query.replacements, 'visitCountMin'), false);
+  assert.equal(Object.hasOwn(query.replacements, 'visitCountMax'), false);
+  assert.equal(Object.hasOwn(query.replacements, 'lastVisitDaysFrom'), false);
+  assert.equal(Object.hasOwn(query.replacements, 'lastVisitDaysTo'), false);
+  assert.equal(query.sql.includes('visitCount <= :visitCountMax'), false);
+});
+
+test('client list SQL keeps explicit zero visit count max filter', () => {
+  const query = __testing.buildClientListSql(
+    {
+      segment: 'all',
+      status: 'active',
+      visitCountMax: '0',
+    },
+    { limit: 10, offset: 0 },
+  );
+
+  assert.equal(query.replacements.visitCountMax, 0);
+  assert.equal(query.sql.includes('visitCount <= :visitCountMax'), true);
+});
+
 function clientFixture(overrides = {}) {
   return {
     createdAt: '2026-06-02T10:00:00.000Z',

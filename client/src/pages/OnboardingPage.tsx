@@ -18,6 +18,7 @@ import {
   Timer,
   Trash2,
   Trophy,
+  UsersRound,
   X,
   ZoomIn,
 } from 'lucide-react';
@@ -269,7 +270,8 @@ function TrainingDataPanel({
             {loading ? 'Проверяем...' : `${summary?.totalRecords || 0} записей`}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            {roleTitle}: training-записи не участвуют в боевых отчетах.
+            Только владелец: {roleTitle}. Данные тренировки не участвуют в
+            боевых отчетах.
           </p>
         </div>
         <Button
@@ -277,6 +279,7 @@ function TrainingDataPanel({
           variant="destructive"
           onClick={onCleanup}
           disabled={loading || cleaning || !summary?.hasRecords}
+          title="Очистка учебных данных доступна только владельцу"
         >
           {cleaning ? (
             <RefreshCw className="h-4 w-4 animate-spin" />
@@ -327,10 +330,20 @@ function OnboardingMetricsPanel({
           <h2 className="mt-3 text-base font-semibold text-foreground">
             {loading ? 'Считаем...' : `${metrics?.summary.percent || 0}% общего прогресса`}
           </h2>
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            Только владелец: сводка по прохождению ролевых путей активными
+            аккаунтами.
+          </p>
         </div>
-        <Badge variant="secondary">
-          {metrics?.summary.completedTaskSlots || 0}/{metrics?.summary.totalTaskSlots || 0} заданий
-        </Badge>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <Badge variant="secondary">
+            <UsersRound className="h-3 w-3" />
+            {metrics?.summary.activeAccounts || 0} аккаунтов
+          </Badge>
+          <Badge variant="secondary">
+            {metrics?.summary.completedTaskSlots || 0}/{metrics?.summary.totalTaskSlots || 0} заданий
+          </Badge>
+        </div>
       </div>
 
       <div className="mt-5 grid gap-3 lg:grid-cols-2">
@@ -556,6 +569,11 @@ function OnboardingListView({
               variant="outline"
               onClick={handleReset}
               disabled={resetMutation.isPending || !hasProgress}
+              title={
+                !hasProgress
+                  ? 'Нет завершенных заданий для сброса'
+                  : 'Сбросить прогресс текущей роли'
+              }
             >
               {resetMutation.isPending ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />

@@ -66,6 +66,14 @@ import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import { canExportFinance, canManageFinance } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import { MetricCard } from '@/components/dashboard-metric';
+import {
+  PermissionActionButton,
+  PermissionHint,
+} from '@/components/permission-feedback';
+import {
+  permissionMessages,
+  showPermissionDenied,
+} from '@/lib/permission-feedback';
 
 const PIE_COLORS = [
   '#3b82f6',
@@ -274,6 +282,11 @@ export default function FinancePage() {
   }, [fetchFinances]); // Автоматически перезапрашиваем при смене дат
 
   const handleAddManual = manualForm.handleSubmit(async (values) => {
+    if (!canEditFinance) {
+      showPermissionDenied(permissionMessages.financeManage);
+      return;
+    }
+
     try {
       const res = await apiFetch('/api/finance', {
         method: 'POST',
@@ -589,12 +602,19 @@ export default function FinancePage() {
           )}
 
           <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>
-            {canEditFinance && (
+            {canEditFinance ? (
               <DialogTrigger asChild>
                 <Button>
                   <Plus className="w-4 h-4 mr-2" /> Добавить
                 </Button>
               </DialogTrigger>
+            ) : (
+              <PermissionActionButton
+                allowed={false}
+                deniedMessage={permissionMessages.financeManage}
+              >
+                <Plus className="w-4 h-4 mr-2" /> Добавить
+              </PermissionActionButton>
             )}
             <DialogContent>
               <DialogHeader>
@@ -730,6 +750,9 @@ export default function FinancePage() {
         <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
           {errorMessage}
         </div>
+      )}
+      {!canEditFinance && (
+        <PermissionHint>{permissionMessages.financeManage}</PermissionHint>
       )}
 
       {/* KPI карточки (берем прямо из summary) */}

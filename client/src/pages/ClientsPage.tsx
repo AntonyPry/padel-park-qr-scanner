@@ -115,6 +115,11 @@ import { listMethodologyExercises } from '@/api/methodology';
 import { queryKeys } from '@/api/query-keys';
 import { apiFetch } from '@/lib/api';
 import {
+  buildClientsListQueryString,
+  normalizeNumericFilterInput,
+  parseNonNegativeNumericFilter,
+} from '@/lib/client-query';
+import {
   getStoredActiveOnboardingQuest,
   ONBOARDING_QUEST_EVENT,
 } from '@/lib/onboarding-quest';
@@ -170,6 +175,7 @@ interface Client {
   status: ClientStatus;
   statusLabel: string;
   segment: string;
+  mergedIntoName?: string | null;
   mergedIntoUserId?: number | null;
   createdAt: string;
   updatedAt: string;
@@ -444,6 +450,7 @@ interface ClientSavedView {
 }
 
 interface ClientSavedViewFilters {
+  includeMerged?: boolean | string;
   lastVisitDaysFrom?: number;
   lastVisitDaysTo?: number;
   lastVisitFrom?: string;
@@ -1211,21 +1218,8 @@ function normalizeSavedFilterValue(value?: string | number) {
   return String(value);
 }
 
-function normalizeNumericFilterInput(value?: string | number) {
-  if (value === undefined || value === null || value === '') return '';
-  const numberValue = Number(value);
-  return Number.isFinite(numberValue) ? String(numberValue) : '';
-}
-
-function appendNumericFilter(
-  params: URLSearchParams,
-  key: string,
-  value: string,
-) {
-  const numberValue = Number(value);
-  if (Number.isFinite(numberValue) && numberValue >= 0) {
-    params.set(key, String(numberValue));
-  }
+function getSavedFilterBoolean(value: boolean | string | undefined) {
+  return value === true || value === 'true';
 }
 
 function getQueryEnum<T extends string>(
@@ -1259,8 +1253,30 @@ function getQueryText(params: URLSearchParams, key: string) {
   return params.get(key)?.trim() || '';
 }
 
+function getQueryBoolean(params: URLSearchParams, key: string) {
+  return params.get(key) === 'true';
+}
+
+function setNumericSavedFilter(
+  filters: ClientSavedViewFilters,
+  key: keyof Pick<
+    ClientSavedViewFilters,
+    | 'lastVisitDaysFrom'
+    | 'lastVisitDaysTo'
+    | 'visitCountMax'
+    | 'visitCountMin'
+  >,
+  value: string,
+) {
+  const numberValue = parseNonNegativeNumericFilter(value);
+  if (numberValue !== null) {
+    filters[key] = numberValue;
+  }
+}
+
 function getComparableSavedFilters(filters: ClientSavedViewFilters) {
   return {
+    includeMerged: getSavedFilterBoolean(filters.includeMerged),
     lastVisitDaysFrom: normalizeNumericFilterInput(filters.lastVisitDaysFrom),
     lastVisitDaysTo: normalizeNumericFilterInput(filters.lastVisitDaysTo),
     q: filters.q || '',
@@ -1358,6 +1374,9 @@ export default function ClientsPage() {
   );
   const [status, setStatus] = useState<'active' | 'archived' | 'all'>(() =>
     getQueryEnum(searchParams, 'status', ['active', 'archived', 'all'], 'active'),
+  );
+  const [includeMerged, setIncludeMerged] = useState(() =>
+    getQueryBoolean(searchParams, 'includeMerged'),
   );
   const [trainingLevel, setTrainingLevel] = useState<TrainingLevel | 'all'>(() =>
     getQueryEnum(
@@ -1551,24 +1570,23 @@ export default function ClientsPage() {
   }, []);
 
   const queryString = useMemo(() => {
-    const params = new URLSearchParams({
-      page: String(page),
-      pageSize: '10',
+    return buildClientsListQueryString({
+      includeMerged,
+      lastVisitDaysFrom,
+      lastVisitDaysTo,
+      page,
+      pageSize: 10,
+      q,
       segment,
+      sourceId,
       status,
+      trainingLevel,
+      visitCategoryId,
+      visitCountMax,
+      visitCountMin,
     });
-
-    if (q.trim()) params.set('q', q.trim());
-    if (sourceId !== 'all') params.set('sourceId', sourceId);
-    if (visitCategoryId !== 'all') params.set('visitCategoryId', visitCategoryId);
-    if (trainingLevel !== 'all') params.set('trainingLevel', trainingLevel);
-    appendNumericFilter(params, 'visitCountMin', visitCountMin);
-    appendNumericFilter(params, 'visitCountMax', visitCountMax);
-    appendNumericFilter(params, 'lastVisitDaysFrom', lastVisitDaysFrom);
-    appendNumericFilter(params, 'lastVisitDaysTo', lastVisitDaysTo);
-
-    return params.toString();
   }, [
+    includeMerged,
     lastVisitDaysFrom,
     lastVisitDaysTo,
     page,
@@ -1588,17 +1606,19 @@ export default function ClientsPage() {
       status,
     };
 
+    if (includeMerged) filters.includeMerged = true;
     if (q.trim()) filters.q = q.trim();
     if (sourceId !== 'all') filters.sourceId = Number(sourceId);
     if (visitCategoryId !== 'all') filters.visitCategoryId = Number(visitCategoryId);
     if (trainingLevel !== 'all') filters.trainingLevel = trainingLevel;
-    if (visitCountMin) filters.visitCountMin = Number(visitCountMin);
-    if (visitCountMax) filters.visitCountMax = Number(visitCountMax);
-    if (lastVisitDaysFrom) filters.lastVisitDaysFrom = Number(lastVisitDaysFrom);
-    if (lastVisitDaysTo) filters.lastVisitDaysTo = Number(lastVisitDaysTo);
+    setNumericSavedFilter(filters, 'visitCountMin', visitCountMin);
+    setNumericSavedFilter(filters, 'visitCountMax', visitCountMax);
+    setNumericSavedFilter(filters, 'lastVisitDaysFrom', lastVisitDaysFrom);
+    setNumericSavedFilter(filters, 'lastVisitDaysTo', lastVisitDaysTo);
 
     return filters;
   }, [
+    includeMerged,
     lastVisitDaysFrom,
     lastVisitDaysTo,
     q,
@@ -1628,6 +1648,7 @@ export default function ClientsPage() {
   const filterResetKey = useMemo(
     () =>
       JSON.stringify({
+        includeMerged,
         lastVisitDaysFrom,
         lastVisitDaysTo,
         q,
@@ -1640,6 +1661,7 @@ export default function ClientsPage() {
         visitCountMin,
       }),
     [
+      includeMerged,
       lastVisitDaysFrom,
       lastVisitDaysTo,
       q,
@@ -1802,6 +1824,10 @@ export default function ClientsPage() {
   }, [editingClient, form.phone, formOpen]);
 
   const isInitialLoading = loading && clients.length === 0;
+  const hasClientSearchQuery = Boolean(q.trim());
+  const canExpandClientSearch =
+    hasClientSearchQuery && (status !== 'all' || !includeMerged);
+  const isExpandedClientSearch = status === 'all' && includeMerged;
   const paginationItems = useMemo(
     () => getPaginationItems(page, totalPages),
     [page, totalPages],
@@ -1892,6 +1918,7 @@ export default function ClientsPage() {
     setSourceId(normalizeSavedFilterValue(filters.sourceId));
     setSegment((filters.segment || 'all') as ClientSegment);
     setStatus((filters.status || 'active') as 'active' | 'archived' | 'all');
+    setIncludeMerged(getSavedFilterBoolean(filters.includeMerged));
     setTrainingLevel((filters.trainingLevel || 'all') as TrainingLevel | 'all');
     setVisitCategoryId(normalizeSavedFilterValue(filters.visitCategoryId));
     setVisitCountMin(normalizeNumericFilterInput(filters.visitCountMin));
@@ -1914,6 +1941,7 @@ export default function ClientsPage() {
     setSourceId('all');
     setSegment('all');
     setStatus('active');
+    setIncludeMerged(false);
     setTrainingLevel('all');
     setVisitCategoryId('all');
     setVisitCountMin('');
@@ -1921,6 +1949,12 @@ export default function ClientsPage() {
     setLastVisitDaysFrom('');
     setLastVisitDaysTo('');
     setSelectedSavedViewId('none');
+    setPage(1);
+  };
+
+  const expandClientRecoverySearch = () => {
+    setStatus('all');
+    setIncludeMerged(true);
     setPage(1);
   };
 
@@ -2915,6 +2949,20 @@ export default function ClientsPage() {
               </Badge>
               {client.note && <Badge variant="outline">Есть заметка</Badge>}
             </div>
+            {client.mergedIntoUserId && (
+              <div
+                className="mt-1 flex min-w-0 items-center gap-1 text-xs text-sky-600 dark:text-sky-300"
+                title={`Объединен с ${
+                  client.mergedIntoName || `ID ${client.mergedIntoUserId}`
+                }`}
+              >
+                <GitMerge className="h-3.5 w-3.5 shrink-0" />
+                <span className="min-w-0 truncate">
+                  Объединен с{' '}
+                  {client.mergedIntoName || `ID ${client.mergedIntoUserId}`}
+                </span>
+              </div>
+            )}
           </div>
         );
       },
@@ -2985,6 +3033,16 @@ export default function ClientsPage() {
             >
               <Eye className="h-4 w-4" />
             </TooltipIconButton>
+            {client.mergedIntoUserId && (
+              <TooltipIconButton
+                label="Открыть основного клиента"
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => void loadDetails(client.mergedIntoUserId!)}
+              >
+                <GitMerge className="h-4 w-4" />
+              </TooltipIconButton>
+            )}
             {canEdit && !client.mergedIntoUserId && (
               <>
                 <TooltipIconButton
@@ -3385,6 +3443,27 @@ export default function ClientsPage() {
                 </Select>
               </div>
             </div>
+
+            {hasClientSearchQuery && (
+              <div className="mt-3 flex flex-col gap-2 rounded-md border bg-muted/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-muted-foreground">
+                  {isExpandedClientSearch
+                    ? 'Поиск включает активных, архивных и объединенных клиентов.'
+                    : 'Обычный поиск показывает активных клиентов без объединенных дублей.'}
+                </div>
+                {canExpandClientSearch && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    onClick={expandClientRecoverySearch}
+                  >
+                    <GitMerge className="mr-2 h-4 w-4" />
+                    Искать в архиве и объединенных
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="hidden overflow-x-auto rounded-md border bg-card lg:block">
@@ -3436,6 +3515,20 @@ export default function ClientsPage() {
                       </Badge>
                       <Badge variant="outline">{client.segment}</Badge>
                     </div>
+                    {client.mergedIntoUserId && (
+                      <div
+                        className="mt-1 flex min-w-0 items-center gap-1 text-xs text-sky-600 dark:text-sky-300"
+                        title={`Объединен с ${
+                          client.mergedIntoName || `ID ${client.mergedIntoUserId}`
+                        }`}
+                      >
+                        <GitMerge className="h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0 truncate">
+                          Объединен с{' '}
+                          {client.mergedIntoName || `ID ${client.mergedIntoUserId}`}
+                        </span>
+                      </div>
+                    )}
                   </div>
                   <div className="flex shrink-0 gap-1">
                     <Button
@@ -3447,6 +3540,17 @@ export default function ClientsPage() {
                     >
                       <Eye className="h-4 w-4" />
                     </Button>
+                    {client.mergedIntoUserId && (
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => void loadDetails(client.mergedIntoUserId!)}
+                        aria-label={`Открыть основного клиента ${client.name}`}
+                        title="Открыть основного"
+                      >
+                        <GitMerge className="h-4 w-4" />
+                      </Button>
+                    )}
                     {canEdit && !client.mergedIntoUserId && (
                       <>
                         <Button
@@ -4009,6 +4113,7 @@ export default function ClientsPage() {
                   }`
                 : ''}
               {trainingLevel !== 'all' ? `, уровень ${trainingLevel}` : ''}
+              {includeMerged ? ', включая объединенные дубли' : ''}
               {visitCountMin ? `, визитов от ${visitCountMin}` : ''}
               {visitCountMax ? `, визитов до ${visitCountMax}` : ''}
               {lastVisitDaysFrom ? `, не были от ${lastVisitDaysFrom} дн.` : ''}

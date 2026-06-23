@@ -41,6 +41,7 @@ const SEGMENT_VALUES = new Set([
 ]);
 const TRAINING_LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
 const CLIENT_VIEW_FILTER_KEYS = new Set([
+  'includeMerged',
   'lastVisitDaysFrom',
   'lastVisitDaysTo',
   'lastVisitFrom',
@@ -646,6 +647,11 @@ function normalizeClientViewFilters(filters = {}) {
       return;
     }
 
+    if (key === 'includeMerged') {
+      if (value === true || value === 'true') normalized[key] = 'true';
+      return;
+    }
+
     normalized[key] = String(value).trim();
   });
 
@@ -654,6 +660,16 @@ function normalizeClientViewFilters(filters = {}) {
     status: normalized.status || 'active',
     ...normalized,
   };
+}
+
+function parseNonNegativeNumberFilter(value) {
+  if (value === undefined || value === null) return null;
+
+  const normalized = String(value).trim();
+  if (!normalized) return null;
+
+  const numberValue = Number(normalized);
+  return Number.isFinite(numberValue) && numberValue >= 0 ? numberValue : null;
 }
 
 function parsePaging(query) {
@@ -777,27 +793,27 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
     replacements.lastVisitTo = `${query.lastVisitTo} 23:59:59`;
   }
 
-  const visitCountMin = Number(query.visitCountMin);
-  if (Number.isFinite(visitCountMin) && visitCountMin > 0) {
+  const visitCountMin = parseNonNegativeNumberFilter(query.visitCountMin);
+  if (visitCountMin !== null && visitCountMin > 0) {
     having.push('visitCount >= :visitCountMin');
     replacements.visitCountMin = visitCountMin;
   }
 
-  const visitCountMax = Number(query.visitCountMax);
-  if (Number.isFinite(visitCountMax) && visitCountMax >= 0) {
+  const visitCountMax = parseNonNegativeNumberFilter(query.visitCountMax);
+  if (visitCountMax !== null) {
     having.push('visitCount <= :visitCountMax');
     replacements.visitCountMax = visitCountMax;
   }
 
-  const lastVisitDaysFrom = Number(query.lastVisitDaysFrom);
-  if (Number.isFinite(lastVisitDaysFrom) && lastVisitDaysFrom > 0) {
+  const lastVisitDaysFrom = parseNonNegativeNumberFilter(query.lastVisitDaysFrom);
+  if (lastVisitDaysFrom !== null && lastVisitDaysFrom > 0) {
     having.push('lastVisitAt IS NOT NULL');
     having.push('lastVisitAt <= DATE_SUB(NOW(), INTERVAL :lastVisitDaysFrom DAY)');
     replacements.lastVisitDaysFrom = lastVisitDaysFrom;
   }
 
-  const lastVisitDaysTo = Number(query.lastVisitDaysTo);
-  if (Number.isFinite(lastVisitDaysTo) && lastVisitDaysTo > 0) {
+  const lastVisitDaysTo = parseNonNegativeNumberFilter(query.lastVisitDaysTo);
+  if (lastVisitDaysTo !== null && lastVisitDaysTo > 0) {
     having.push('lastVisitAt IS NOT NULL');
     having.push('lastVisitAt >= DATE_SUB(NOW(), INTERVAL :lastVisitDaysTo DAY)');
     replacements.lastVisitDaysTo = lastVisitDaysTo;
@@ -842,7 +858,13 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
         SELECT COUNT(*)
         FROM TrainingNotes tn_count
         WHERE tn_count.userId = u.id AND COALESCE(tn_count.isTraining, 0) = 0
-      ) AS trainingNotesCount
+      ) AS trainingNotesCount,
+      (
+        SELECT merged_user.name
+        FROM Users merged_user
+        WHERE merged_user.id = u.mergedIntoUserId
+        LIMIT 1
+      ) AS mergedIntoName
     FROM Users u
     LEFT JOIN Visits v ON v.userId = u.id AND COALESCE(v.isTraining, 0) = 0
     ${whereSql}
@@ -2982,6 +3004,7 @@ module.exports = {
   updateClient,
   updateSavedView,
   __testing: {
+    buildClientListSql,
     buildClientPrepaymentSummary,
     buildTrainerClientDetailsResponse,
     listClientPrepaymentTimeline,

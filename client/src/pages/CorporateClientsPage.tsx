@@ -47,6 +47,14 @@ import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
+import {
+  PermissionActionButton,
+  PermissionHint,
+} from '@/components/permission-feedback';
+import {
+  permissionMessages,
+  showPermissionDenied,
+} from '@/lib/permission-feedback';
 import { toast } from '@/components/ui/toast';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import {
@@ -533,18 +541,33 @@ export default function CorporateClientsPage() {
   }, [loadClientDetail, selectedClientId]);
 
   const openCreateClientDialog = () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     setClientDialogMode('create');
     setClientForm(emptyClientForm);
     setClientDialogOpen(true);
   };
 
   const openEditClientDialog = () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     setClientDialogMode('edit');
     setClientForm(clientToForm(selectedClient));
     setClientDialogOpen(true);
   };
 
   const handleSaveClient = async () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     if (!clientForm.name.trim()) return;
     setClientSaving(true);
     try {
@@ -581,6 +604,11 @@ export default function CorporateClientsPage() {
   };
 
   const openDepositDialog = () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     setDepositMode('create');
     setDepositForm({
       ...emptyDepositForm,
@@ -591,6 +619,11 @@ export default function CorporateClientsPage() {
   };
 
   const openSpendingDialog = () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     setSpendingForm({
       ...emptySpendingForm,
       date: today,
@@ -599,6 +632,11 @@ export default function CorporateClientsPage() {
   };
 
   const handleCreateDeposit = async () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     if (!selectedClient) return;
     setDepositSaving(true);
     try {
@@ -643,6 +681,11 @@ export default function CorporateClientsPage() {
   };
 
   const handleCreateSpending = async () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     if (!selectedClient) return;
     setSpendingSaving(true);
     try {
@@ -713,6 +756,11 @@ export default function CorporateClientsPage() {
   };
 
   const requestArchive = () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     if (!selectedClient) return;
     setPendingAction({
       confirmLabel: 'В архив',
@@ -740,6 +788,11 @@ export default function CorporateClientsPage() {
   };
 
   const requestRestore = () => {
+    if (!canManage) {
+      showPermissionDenied(permissionMessages.corporateDepositsManage);
+      return;
+    }
+
     if (!selectedClient) return;
     setPendingAction({
       confirmLabel: 'Восстановить',
@@ -766,6 +819,11 @@ export default function CorporateClientsPage() {
 
   const requestCancelDeposit = useCallback(
     (entry: CorporateLedgerEntry, corporateClientId: number) => {
+      if (!canManage) {
+        showPermissionDenied(permissionMessages.corporateDepositsManage);
+        return;
+      }
+
       setPendingAction({
         confirmLabel: 'Отменить',
         description: `${formatDate(entry.date)} · ${formatMoney(entry.amount)}`,
@@ -793,11 +851,16 @@ export default function CorporateClientsPage() {
         },
       });
     },
-    [loadClientDetail, loadClients],
+    [canManage, loadClientDetail, loadClients],
   );
 
   const requestReverseSpending = useCallback(
     (entry: CorporateLedgerEntry, corporateClientId: number) => {
+      if (!canManage) {
+        showPermissionDenied(permissionMessages.corporateDepositsManage);
+        return;
+      }
+
       setPendingAction({
         confirmLabel: 'Отменить',
         description: `${formatDate(entry.date)} · ${entry.service || 'Списание'} · ${formatMoney(entry.amount)}`,
@@ -825,7 +888,7 @@ export default function CorporateClientsPage() {
         },
       });
     },
-    [loadClientDetail, loadClients],
+    [canManage, loadClientDetail, loadClients],
   );
 
   const columns = useMemo<ColumnDef<CorporateClient>[]>(
@@ -1071,12 +1134,15 @@ export default function CorporateClientsPage() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Обновить
           </Button>
-          {canManage && (
-            <Button type="button" onClick={openCreateClientDialog}>
-              <Plus className="mr-2 h-4 w-4" />
-              Компания
-            </Button>
-          )}
+          <PermissionActionButton
+            type="button"
+            allowed={canManage}
+            deniedMessage={permissionMessages.corporateDepositsManage}
+            onClick={openCreateClientDialog}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Компания
+          </PermissionActionButton>
         </div>
       </div>
 
@@ -1322,49 +1388,66 @@ export default function CorporateClientsPage() {
                   )}
                 </div>
 
-                {canManage && (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <Button type="button" onClick={openDepositDialog}>
-                      <Plus className="mr-2 h-4 w-4" />
-                      Пополнить
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={openSpendingDialog}
-                    >
-                      <MinusCircle className="mr-2 h-4 w-4" />
-                      Списать
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={openEditClientDialog}
-                    >
-                      <Pencil className="mr-2 h-4 w-4" />
-                      Изменить
-                    </Button>
-                    {selectedClient.status === 'active' ? (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={requestArchive}
-                      >
-                        <Archive className="mr-2 h-4 w-4" />
-                        В архив
-                      </Button>
-                    ) : (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={requestRestore}
-                      >
-                        <ArchiveRestore className="mr-2 h-4 w-4" />
-                        Восстановить
-                      </Button>
-                    )}
-                  </div>
+                {!canManage && (
+                  <PermissionHint>
+                    {permissionMessages.corporateDepositsManage}
+                  </PermissionHint>
                 )}
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <PermissionActionButton
+                    type="button"
+                    allowed={canManage}
+                    deniedMessage={permissionMessages.corporateDepositsManage}
+                    onClick={openDepositDialog}
+                  >
+                    <Plus className="mr-2 h-4 w-4" />
+                    Пополнить
+                  </PermissionActionButton>
+                  <PermissionActionButton
+                    type="button"
+                    variant="outline"
+                    allowed={canManage}
+                    deniedMessage={permissionMessages.corporateDepositsManage}
+                    onClick={openSpendingDialog}
+                  >
+                    <MinusCircle className="mr-2 h-4 w-4" />
+                    Списать
+                  </PermissionActionButton>
+                  <PermissionActionButton
+                    type="button"
+                    variant="outline"
+                    allowed={canManage}
+                    deniedMessage={permissionMessages.corporateDepositsManage}
+                    onClick={openEditClientDialog}
+                  >
+                    <Pencil className="mr-2 h-4 w-4" />
+                    Изменить
+                  </PermissionActionButton>
+                  {selectedClient.status === 'active' ? (
+                    <PermissionActionButton
+                      type="button"
+                      variant="outline"
+                      allowed={canManage}
+                      deniedMessage={permissionMessages.corporateDepositsManage}
+                      onClick={requestArchive}
+                    >
+                      <Archive className="mr-2 h-4 w-4" />
+                      В архив
+                    </PermissionActionButton>
+                  ) : (
+                    <PermissionActionButton
+                      type="button"
+                      variant="outline"
+                      allowed={canManage}
+                      deniedMessage={permissionMessages.corporateDepositsManage}
+                      onClick={requestRestore}
+                    >
+                      <ArchiveRestore className="mr-2 h-4 w-4" />
+                      Восстановить
+                    </PermissionActionButton>
+                  )}
+                </div>
                 {canManage && !hasIncomeCategories && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                     <div className="flex items-start gap-2">
