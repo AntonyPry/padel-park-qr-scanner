@@ -1,17 +1,16 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  ArrowUpRight,
+  ArrowLeft,
   Award,
   BarChart3,
+  BookOpenCheck,
   CheckCircle2,
   Circle,
   Database,
-  FlaskConical,
   GraduationCap,
+  ImageOff,
   ListChecks,
-  Maximize2,
-  Power,
   RefreshCw,
   RotateCcw,
   ShieldCheck,
@@ -19,20 +18,25 @@ import {
   Timer,
   Trash2,
   Trophy,
-  UsersRound,
+  X,
+  ZoomIn,
 } from 'lucide-react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
   cleanupOnboardingTrainingData,
   completeOnboardingTask,
   getOnboardingMetrics,
   getOnboardingOverview,
+  getOnboardingTaskDetail,
   getOnboardingTrainingData,
   resetOnboardingProgress,
+  type OnboardingGuidedTask,
+  type OnboardingLessonBlock,
   type OnboardingMetrics,
   type OnboardingMission,
   type OnboardingOverview,
   type OnboardingTask,
+  type OnboardingTaskDetail,
   type OnboardingTrainingDataSummary,
 } from '@/api/onboarding';
 import { queryKeys } from '@/api/query-keys';
@@ -42,9 +46,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogDescription,
+  DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog';
 import {
   Select,
@@ -55,19 +62,37 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { getApiErrorMessage } from '@/lib/api';
+import { clearStoredActiveOnboardingQuest } from '@/lib/onboarding-quest';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
+import { useTheme } from '@/lib/theme-context';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
-import { useTheme } from '@/lib/theme-context';
-import { useTrainingMode } from '@/lib/useTrainingMode';
 
 function getTaskStatus(task: OnboardingTask) {
+  if (task.progress.isCompleted && task.progress.lesson.isUpdatedAfterCompletion) {
+    return {
+      className:
+        'border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300',
+      icon: Sparkles,
+      label: 'Обновлено',
+    };
+  }
+
   if (task.progress.isCompleted) {
     return {
       className:
         'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300',
       icon: CheckCircle2,
       label: 'Готово',
+    };
+  }
+
+  if (task.progress.status === 'in_progress') {
+    return {
+      className:
+        'border-sky-200 bg-sky-50 text-sky-800 dark:border-sky-900/70 dark:bg-sky-950/40 dark:text-sky-300',
+      icon: BookOpenCheck,
+      label: 'В процессе',
     };
   }
 
@@ -117,220 +142,8 @@ function getCompletedSkillCount(overview: OnboardingOverview | undefined) {
   return overview.summary.skills.filter((skill) => skill.percent === 100).length;
 }
 
-function getTaskLessonPath(task: OnboardingTask) {
-  return `/admin/onboarding/${encodeURIComponent(task.key)}`;
-}
-
-function findTaskLesson(overview: OnboardingOverview, taskKey: string) {
-  const normalizedTaskKey = decodeURIComponent(taskKey);
-
-  for (const mission of overview.path.missions) {
-    const task = mission.tasks.find((item) => item.key === normalizedTaskKey);
-    if (task) return { mission, task };
-  }
-
-  return null;
-}
-
-const LESSON_SCREENSHOTS: Record<string, string[]> = {
-  'accountant.catalog.update-category': [
-    '/onboarding/accountant/catalog/overview.png',
-    '/onboarding/accountant/catalog/details.png',
-  ],
-  'accountant.catalog.update-rule': [
-    '/onboarding/accountant/catalog/overview.png',
-    '/onboarding/accountant/catalog/details.png',
-  ],
-  'accountant.finance.export': [
-    '/onboarding/accountant/finances/overview.png',
-    '/onboarding/accountant/finances/details.png',
-  ],
-  'accountant.finance.manual-record': [
-    '/onboarding/accountant/finances/overview.png',
-    '/onboarding/accountant/finances/details.png',
-  ],
-  'accountant.finance.review': [
-    '/onboarding/accountant/finances/overview.png',
-    '/onboarding/accountant/finances/details.png',
-  ],
-  'accountant.payroll.review': [
-    '/onboarding/accountant/staff/overview.png',
-    '/onboarding/accountant/staff/details.png',
-  ],
-  'admin.access.create-visit': [
-    '/onboarding/admin/access-create-visit/monitor.png',
-    '/onboarding/admin/access-create-visit/manual-visit-context.png',
-  ],
-  'admin.booking.cancel': [
-    '/onboarding/admin/booking-cancel/schedule.png',
-    '/onboarding/admin/booking-cancel/day-bookings.png',
-  ],
-  'admin.booking.create-phone': [
-    '/onboarding/admin/booking-create-phone/schedule.png',
-    '/onboarding/admin/booking-create-phone/booking-form.png',
-    '/onboarding/admin/booking-create-phone/result-schedule.png',
-  ],
-  'admin.booking.mark-paid': [
-    '/onboarding/admin/booking-mark-paid/schedule.png',
-    '/onboarding/admin/booking-mark-paid/day-bookings.png',
-  ],
-  'admin.booking.move': [
-    '/onboarding/admin/booking-move/schedule-grid.png',
-    '/onboarding/admin/booking-move/day-bookings.png',
-  ],
-  'admin.booking.review-schedule': [
-    '/onboarding/admin/booking-review-schedule/schedule.png',
-    '/onboarding/admin/booking-review-schedule/day-bookings.png',
-  ],
-  'admin.call-task.log-attempt': [
-    '/onboarding/admin/call-task-log-attempt/tasks-list.png',
-    '/onboarding/admin/call-task-log-attempt/task-detail.png',
-  ],
-  'admin.client.create': [
-    '/onboarding/admin/client-create/client-list.png',
-    '/onboarding/admin/client-create/client-form.png',
-    '/onboarding/admin/client-create/result-list.png',
-  ],
-  'manager.call-task.create': [
-    '/onboarding/manager/call-tasks/overview.png',
-    '/onboarding/manager/call-tasks/details.png',
-  ],
-  'manager.call-task.read-report': [
-    '/onboarding/manager/call-tasks/overview.png',
-    '/onboarding/manager/call-tasks/details.png',
-  ],
-  'manager.client-base.create': [
-    '/onboarding/manager/client-bases/overview.png',
-    '/onboarding/manager/client-bases/details.png',
-  ],
-  'manager.motivation.update': [
-    '/onboarding/manager/motivation/overview.png',
-    '/onboarding/manager/motivation/details.png',
-  ],
-  'manager.references.review': [
-    '/onboarding/manager/references/overview.png',
-    '/onboarding/manager/references/details.png',
-  ],
-  'manager.shift.approve': [
-    '/onboarding/manager/staff/overview.png',
-    '/onboarding/manager/staff/details.png',
-  ],
-  'manager.utilization.review': [
-    '/onboarding/manager/utilization/overview.png',
-    '/onboarding/manager/utilization/details.png',
-  ],
-  'manager.visits-analytics.review': [
-    '/onboarding/manager/visits-analytics/overview.png',
-    '/onboarding/manager/visits-analytics/details.png',
-  ],
-  'owner.account.create': [
-    '/onboarding/owner/users/overview.png',
-    '/onboarding/owner/users/details.png',
-  ],
-  'owner.audit.review': [
-    '/onboarding/owner/audit/overview.png',
-    '/onboarding/owner/audit/details.png',
-  ],
-  'owner.finance.review': [
-    '/onboarding/owner/finances/overview.png',
-    '/onboarding/owner/finances/details.png',
-  ],
-  'owner.motivation.review': [
-    '/onboarding/owner/motivation/overview.png',
-    '/onboarding/owner/motivation/details.png',
-  ],
-  'owner.onboarding.review-training-data': [
-    '/onboarding/owner/onboarding/overview.png',
-    '/onboarding/owner/onboarding/details.png',
-  ],
-  'owner.operations.review-visits': [
-    '/onboarding/owner/visits-analytics/overview.png',
-    '/onboarding/owner/visits-analytics/details.png',
-  ],
-  'owner.utilization.review': [
-    '/onboarding/owner/utilization/overview.png',
-    '/onboarding/owner/utilization/details.png',
-  ],
-  'trainer.client.open-card': [
-    '/onboarding/trainer/trainer/overview.png',
-    '/onboarding/trainer/trainer/details.png',
-  ],
-  'trainer.training-level.update': [
-    '/onboarding/trainer/trainer/overview.png',
-    '/onboarding/trainer/trainer/details.png',
-  ],
-  'trainer.training-note.create': [
-    '/onboarding/trainer/trainer/overview.png',
-    '/onboarding/trainer/trainer/details.png',
-  ],
-  'trainer.training-note.update': [
-    '/onboarding/trainer/trainer/overview.png',
-    '/onboarding/trainer/trainer/details.png',
-  ],
-  'viewer.bookings.review': [
-    '/onboarding/viewer/bookings/overview.png',
-    '/onboarding/viewer/bookings/details.png',
-  ],
-  'viewer.finance.review': [
-    '/onboarding/viewer/finances/overview.png',
-    '/onboarding/viewer/finances/details.png',
-  ],
-  'viewer.utilization.review': [
-    '/onboarding/viewer/utilization/overview.png',
-    '/onboarding/viewer/utilization/details.png',
-  ],
-  'viewer.visits-analytics.review': [
-    '/onboarding/viewer/visits-analytics/overview.png',
-    '/onboarding/viewer/visits-analytics/details.png',
-  ],
-};
-
-function getThemedScreenshotSrc(src: string, resolvedTheme: 'light' | 'dark') {
-  if (resolvedTheme === 'light') {
-    return src.replace(/^\/onboarding\//, '/onboarding-light/');
-  }
-
-  return src;
-}
-
-function getLessonSteps(task: OnboardingTask, screenshotsCount: number) {
-  const steps = [
-    {
-      title: 'Поймите результат',
-      text: `${task.description} После этого этапа должно быть понятно, какой рабочий результат нужно получить в CRM.`,
-    },
-    {
-      title: 'Откройте рабочий раздел',
-      text: `Нажмите «Открыть раздел» или перейдите по маршруту ${task.route}. Работайте именно в этом разделе, чтобы прогресс и контекст совпадали с уроком.`,
-    },
-    {
-      title: 'Сверьтесь со скриншотами',
-      text:
-        screenshotsCount > 0
-          ? 'Сначала посмотрите общий вид раздела, затем откройте увеличенный скриншот кликом и найдите нужную область интерфейса.'
-          : 'Для этого урока пока нет отдельного скриншота, поэтому ориентируйтесь на описание и рабочий раздел.',
-    },
-    {
-      title: task.kind === 'review' ? 'Проверьте данные' : 'Выполните действие',
-      text:
-        task.kind === 'review'
-          ? 'Для обзорного урока достаточно открыть раздел, просмотреть ключевые данные и убедиться, что вы понимаете, где они находятся.'
-          : 'Для практического урока выполните действие в CRM. Если доступен режим тренировки, используйте учебные данные, чтобы не затронуть боевую базу.',
-    },
-    {
-      title: 'Завершите урок',
-      text:
-        task.kind === 'review'
-          ? 'Обзорные уроки могут закрываться автоматически после открытия нужного раздела. Если этого не произошло, завершите урок вручную.'
-          : 'Если CRM не зачла действие автоматически, вернитесь в урок и нажмите «Завершить».',
-    },
-  ];
-
-  return steps;
-}
-
 function formatTaskKind(kind: OnboardingTask['kind']) {
-  return kind === 'review' ? 'Разбор' : 'Практика';
+  return kind === 'review' ? 'Разбор' : 'Действие';
 }
 
 function formatCompletedAt(value: string | null) {
@@ -340,6 +153,38 @@ function formatCompletedAt(value: string | null) {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function roleQuery(role?: AccountRole | null) {
+  return role ? `?role=${encodeURIComponent(role)}` : '';
+}
+
+function taskDetailUrl(taskKey: string, role?: AccountRole | null) {
+  return `/admin/onboarding/${encodeURIComponent(taskKey)}${roleQuery(role)}`;
+}
+
+const TASK_KEY_ROLE_PREFIXES: AccountRole[] = [
+  'owner',
+  'manager',
+  'admin',
+  'accountant',
+  'trainer',
+  'viewer',
+];
+
+function inferRoleFromTaskKey(taskKey?: string) {
+  const prefix = taskKey?.split('.')[0];
+
+  if (TASK_KEY_ROLE_PREFIXES.includes(prefix as AccountRole)) {
+    return prefix as AccountRole;
+  }
+
+  return null;
+}
+
+function getThemedScreenshotSrc(src: string, resolvedTheme: 'light' | 'dark') {
+  if (resolvedTheme !== 'light') return src;
+  return src.replace(/^\/onboarding\//, '/onboarding-light/');
 }
 
 function ProgressBar({ percent }: { percent: number }) {
@@ -353,106 +198,33 @@ function ProgressBar({ percent }: { percent: number }) {
   );
 }
 
-function NextTaskPanel({
-  completingTaskKey,
-  completionBadge,
-  nextTask,
-  onComplete,
+function RoleSelect({
+  overview,
+  onChange,
 }: {
-  completingTaskKey: string | null;
-  completionBadge: string;
-  nextTask: OnboardingTask | null;
-  onComplete: (task: OnboardingTask) => void;
+  overview: OnboardingOverview;
+  onChange: (role: string) => void;
 }) {
-  const navigate = useNavigate();
-
-  if (!nextTask) {
-    return (
-      <section className="rounded-md border bg-background p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div className="min-w-0">
-            <Badge
-              variant="outline"
-              className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
-            >
-              <Award className="h-3 w-3" />
-              Путь завершен
-            </Badge>
-            <h2 className="mt-3 text-lg font-semibold text-foreground">
-              {completionBadge}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Все задания роли закрыты, обучение можно использовать как чеклист
-              контроля качества.
-            </p>
-          </div>
-          <Trophy className="h-10 w-10 text-primary" />
-        </div>
-      </section>
-    );
-  }
+  if (!overview.ownerRoleOverrideEnabled) return null;
 
   return (
-    <section
-      className="cursor-pointer rounded-md border bg-background p-5 transition-colors hover:bg-muted/20"
-      onClick={() => navigate(getTaskLessonPath(nextTask))}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          navigate(getTaskLessonPath(nextTask));
-        }
-      }}
-      role="link"
-      tabIndex={0}
-    >
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">
-            <ListChecks className="h-3 w-3" />
-            Следующее задание
-          </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
-            {nextTask.title}
-          </h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            {nextTask.description}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            {nextTask.skills.map((skill) => (
-              <Badge key={skill} variant="secondary">
-                {skill}
-              </Badge>
-            ))}
-            <Badge variant="outline">
-              <Award className="h-3 w-3" />
-              {nextTask.badge}
-            </Badge>
-          </div>
-        </div>
-
-        <div
-          className="flex shrink-0 flex-wrap gap-2 lg:justify-end"
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          <Button
-            type="button"
-            size="sm"
-            disabled={
-              nextTask.progress.isCompleted || completingTaskKey === nextTask.key
-            }
-            onClick={() => onComplete(nextTask)}
-          >
-            {completingTaskKey === nextTask.key ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            Завершить
-          </Button>
-        </div>
+    <div className="w-full min-w-56 sm:w-64">
+      <div className="mb-1 text-xs font-medium text-muted-foreground">
+        Роль прохождения
       </div>
-    </section>
+      <Select value={overview.selectedRole} onValueChange={onChange}>
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {overview.availableRoles.map((role) => (
+            <SelectItem key={role.value} value={role.value}>
+              {role.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
   );
 }
 
@@ -460,30 +232,30 @@ function SkillProgressPanel({ overview }: { overview: OnboardingOverview }) {
   const completedSkills = getCompletedSkillCount(overview);
 
   return (
-    <section className="rounded-2xl border bg-background p-5">
-      <div className="flex flex-col gap-4">
+    <section className="rounded-md border bg-background p-5">
+      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
         <div className="min-w-0">
           <Badge variant="outline">
             <Sparkles className="h-3 w-3" />
-            Навыки пути
+            Навыки
           </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
+          <h2 className="mt-3 text-base font-semibold text-foreground">
             {completedSkills}/{overview.summary.skills.length} закрыто
           </h2>
         </div>
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="flex flex-wrap gap-2 md:justify-end">
           {overview.summary.skills.map((skill) => (
             <Badge
               key={skill.name}
               variant="outline"
               className={cn(
-                'h-auto w-full justify-between gap-2 whitespace-normal rounded-xl px-3 py-2 text-left leading-4',
+                'h-auto py-1',
                 skill.percent === 100 &&
                   'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300',
               )}
             >
-              <span className="min-w-0 flex-1 truncate">{skill.name}</span>
-              <span className="shrink-0 text-[10px] text-muted-foreground">
+              {skill.name}
+              <span className="text-[10px] text-muted-foreground">
                 {skill.completedTasks}/{skill.totalTasks}
               </span>
             </Badge>
@@ -518,12 +290,11 @@ function TrainingDataPanel({
             <Database className="h-3 w-3" />
             Учебные данные
           </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
+          <h2 className="mt-3 text-base font-semibold text-foreground">
             {loading ? 'Проверяем...' : `${summary?.totalRecords || 0} записей`}
           </h2>
           <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Только владелец: {roleTitle}. Данные тренировки не участвуют в
-            боевых отчетах.
+            {roleTitle}: training-записи не участвуют в боевых отчетах.
           </p>
         </div>
         <Button
@@ -531,7 +302,6 @@ function TrainingDataPanel({
           variant="destructive"
           onClick={onCleanup}
           disabled={loading || cleaning || !summary?.hasRecords}
-          title="Очистка учебных данных доступна только владельцу"
         >
           {cleaning ? (
             <RefreshCw className="h-4 w-4 animate-spin" />
@@ -577,51 +347,29 @@ function OnboardingMetricsPanel({
         <div className="min-w-0">
           <Badge variant="outline">
             <BarChart3 className="h-3 w-3" />
-            Метрики обучения
+            Метрики
           </Badge>
-          <h2 className="mt-3 text-lg font-semibold text-foreground">
+          <h2 className="mt-3 text-base font-semibold text-foreground">
             {loading ? 'Считаем...' : `${metrics?.summary.percent || 0}% общего прогресса`}
           </h2>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Только владелец: сводка по прохождению ролевых путей активными
-            аккаунтами.
-          </p>
         </div>
-        <div className="flex flex-wrap gap-2 lg:justify-end">
-          <Badge variant="secondary">
-            <UsersRound className="h-3 w-3" />
-            {metrics?.summary.activeAccounts || 0} аккаунтов
-          </Badge>
-          <Badge variant="secondary">
-            {metrics?.summary.completedTaskSlots || 0}/{metrics?.summary.totalTaskSlots || 0} заданий
-          </Badge>
-        </div>
+        <Badge variant="secondary">
+          {metrics?.summary.completedTaskSlots || 0}/{metrics?.summary.totalTaskSlots || 0} заданий
+        </Badge>
       </div>
 
       <div className="mt-5 grid gap-3 lg:grid-cols-2">
         {roles.map((role) => (
           <div key={role.role} className="rounded-md border bg-muted/20 p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{role.label}</Badge>
-                  <Badge variant="secondary">
-                    {role.startedAccounts}/{role.totalAccounts} начали
-                  </Badge>
-                </div>
-                <div className="mt-2 text-sm text-muted-foreground">
-                  {role.completedTaskSlots}/{role.totalTaskSlots} заданий, завершили путь: {role.completedAccounts}
+                <Badge variant="outline">{role.label}</Badge>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  {role.startedAccounts}/{role.totalAccounts} начали
                 </div>
               </div>
-              <div className="text-left sm:text-right">
-                <div className="text-xl font-semibold text-foreground">
-                  {role.percent}%
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {role.lastCompletedAt
-                    ? `Обновлено ${formatCompletedAt(role.lastCompletedAt)}`
-                    : 'Без прогресса'}
-                </div>
+              <div className="text-right text-lg font-semibold text-foreground">
+                {role.percent}%
               </div>
             </div>
             <div className="mt-3">
@@ -634,35 +382,25 @@ function OnboardingMetricsPanel({
   );
 }
 
-function TaskRow({
-  completingTaskKey,
-  onComplete,
+function TaskCard({
+  selectedRole,
   task,
 }: {
-  completingTaskKey: string | null;
-  onComplete: (task: OnboardingTask) => void;
+  selectedRole: AccountRole;
   task: OnboardingTask;
 }) {
-  const navigate = useNavigate();
   const status = getTaskStatus(task);
   const StatusIcon = status.icon;
   const completedAt = formatCompletedAt(task.progress.completedAt);
+  const lessonUpdatedAt = formatCompletedAt(task.progress.lesson.updatedAt);
+  const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
 
   return (
-    <div
+    <article
       className={cn(
-        'cursor-pointer rounded-md border bg-background p-4 transition-colors hover:bg-muted/20',
+        'rounded-md border bg-background p-4 transition-colors',
         task.progress.isNext && !task.progress.isCompleted && 'border-primary/40',
       )}
-      onClick={() => navigate(getTaskLessonPath(task))}
-      onKeyDown={(event) => {
-        if (event.key === 'Enter' || event.key === ' ') {
-          event.preventDefault();
-          navigate(getTaskLessonPath(task));
-        }
-      }}
-      role="link"
-      tabIndex={0}
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
@@ -672,14 +410,6 @@ function TaskRow({
               {status.label}
             </Badge>
             <Badge variant="outline">{formatTaskKind(task.kind)}</Badge>
-            {task.trainingMode?.recommended && (
-              <Badge
-                variant="outline"
-                className="border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-900/70 dark:bg-amber-950/40 dark:text-amber-300"
-              >
-                Тренировка
-              </Badge>
-            )}
           </div>
 
           <h3 className="mt-3 text-base font-semibold text-foreground">
@@ -706,262 +436,72 @@ function TaskRow({
               <Timer className="h-3.5 w-3.5" />
               {task.estimatedMinutes} мин
             </span>
+            <span className="inline-flex items-center gap-1">
+              <Trophy className="h-3.5 w-3.5" />
+              {task.rewardXp} XP
+            </span>
+            <span className="inline-flex items-center gap-1">
+              <BookOpenCheck className="h-3.5 w-3.5" />
+              {task.progress.isCompleted ? 'урок пройден' : 'поэтапный урок'}
+            </span>
             {completedAt && <span>Завершено: {completedAt}</span>}
+            {isUpdatedAfterCompletion && lessonUpdatedAt && (
+              <span className="inline-flex items-center gap-1 font-medium text-amber-700 dark:text-amber-300">
+                <Sparkles className="h-3.5 w-3.5" />
+                Обновлено: {lessonUpdatedAt}
+              </span>
+            )}
           </div>
         </div>
 
-        <div
-          className="flex shrink-0 flex-wrap gap-2 lg:justify-end"
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => event.stopPropagation()}
-        >
-          <Button
-            type="button"
-            size="sm"
-            disabled={
-              task.progress.isCompleted || completingTaskKey === task.key
-            }
-            onClick={() => onComplete(task)}
-          >
-            {completingTaskKey === task.key ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            Завершить
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function LessonDetail({
-  completingTaskKey,
-  mission,
-  onComplete,
-  task,
-}: {
-  completingTaskKey: string | null;
-  mission: OnboardingMission;
-  onComplete: (task: OnboardingTask) => void;
-  task: OnboardingTask;
-}) {
-  const { resolvedTheme } = useTheme();
-  const status = getTaskStatus(task);
-  const StatusIcon = status.icon;
-  const completedAt = formatCompletedAt(task.progress.completedAt);
-  const screenshots = LESSON_SCREENSHOTS[task.key] || [];
-  const steps = getLessonSteps(task, screenshots.length);
-  const [selectedScreenshot, setSelectedScreenshot] = useState<{
-    alt: string;
-    src: string;
-  } | null>(null);
-
-  return (
-    <div className="flex w-full flex-col gap-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Button asChild variant="outline" size="sm">
-          <Link to="/admin/onboarding">Назад к обучению</Link>
-        </Button>
-        <div className="flex flex-wrap justify-end gap-2">
-          <Button asChild variant="outline" size="sm">
-            <Link to={task.route}>
-              <ArrowUpRight className="h-4 w-4" />
-              Открыть раздел
+        <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
+          <Button asChild size="sm">
+            <Link to={taskDetailUrl(task.key, selectedRole)}>
+              <BookOpenCheck className="h-4 w-4" />
+              Открыть урок
             </Link>
           </Button>
-          <Button
-            type="button"
-            size="sm"
-            disabled={task.progress.isCompleted || completingTaskKey === task.key}
-            onClick={() => onComplete(task)}
-          >
-            {completingTaskKey === task.key ? (
-              <RefreshCw className="h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="h-4 w-4" />
-            )}
-            Завершить
-          </Button>
         </div>
       </div>
-
-      <section className="rounded-2xl border bg-background p-5 shadow-sm shadow-foreground/5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className={status.className}>
-                <StatusIcon className="h-3 w-3" />
-                {status.label}
-              </Badge>
-              <Badge variant="outline">{formatTaskKind(task.kind)}</Badge>
-              <Badge variant="secondary">{mission.title}</Badge>
-              {completedAt && (
-                <Badge variant="outline">Завершено {completedAt}</Badge>
-              )}
-            </div>
-            <h1 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
-              {task.title}
-            </h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-              {task.description}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2 lg:justify-end">
-            {task.skills.map((skill) => (
-              <Badge key={skill} variant="secondary">
-                {skill}
-              </Badge>
-            ))}
-            <Badge variant="outline">
-              <Timer className="h-3 w-3" />
-              {task.estimatedMinutes} мин
-            </Badge>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
-        <div className="rounded-2xl border bg-background p-5">
-          <Badge variant="outline">Порядок прохождения</Badge>
-          <div className="mt-4 space-y-3">
-            {steps.map((step, index) => (
-              <div key={step.title} className="rounded-xl border bg-muted/20 p-4">
-                <div className="flex items-center gap-2 text-sm font-medium">
-                  <span className="flex size-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
-                    {index + 1}
-                  </span>
-                  {step.title}
-                </div>
-                <p className="mt-2 text-sm leading-6 text-muted-foreground">
-                  {step.text}
-                </p>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="rounded-2xl border bg-background p-5">
-          <Badge variant="outline">Скриншоты</Badge>
-          {screenshots.length > 0 ? (
-            <div className="mt-4 grid gap-3">
-              {screenshots.map((src, index) => {
-                const alt = `${task.title}: скриншот ${index + 1}`;
-                const themedSrc = getThemedScreenshotSrc(src, resolvedTheme);
-
-                return (
-                  <figure
-                    key={src}
-                    className="overflow-hidden rounded-xl border bg-muted/20"
-                  >
-                    <button
-                      type="button"
-                      className="group relative block w-full overflow-hidden text-left"
-                      onClick={() => setSelectedScreenshot({ alt, src })}
-                    >
-                      <img
-                        alt={alt}
-                        className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.01]"
-                        src={themedSrc}
-                      />
-                      <span className="absolute right-3 top-3 flex size-9 items-center justify-center rounded-full border bg-background/85 text-foreground opacity-0 shadow-sm backdrop-blur transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100">
-                        <Maximize2 className="h-4 w-4" />
-                        <span className="sr-only">Увеличить скриншот</span>
-                      </span>
-                    </button>
-                  </figure>
-                );
-              })}
-            </div>
-          ) : (
-            <div className="mt-4 rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
-              Для этого урока пока нет привязанного скриншота.
-            </div>
-          )}
-        </div>
-      </section>
-
-      <Dialog
-        open={Boolean(selectedScreenshot)}
-        onOpenChange={(open) => {
-          if (!open) setSelectedScreenshot(null);
-        }}
-      >
-        <DialogContent className="max-w-[min(1280px,calc(100vw-2rem))] gap-3 p-2 sm:max-w-[min(1280px,calc(100vw-2rem))]">
-          <DialogTitle className="sr-only">
-            {selectedScreenshot?.alt || 'Скриншот урока'}
-          </DialogTitle>
-          <DialogDescription className="sr-only">
-            Увеличенное изображение рабочего экрана CRM из текущего урока.
-          </DialogDescription>
-          {selectedScreenshot && (
-            <div className="max-h-[calc(100dvh-5rem)] overflow-auto rounded-lg">
-              <img
-                alt={selectedScreenshot.alt}
-                className="w-full min-w-[720px] max-w-none rounded-lg object-contain md:min-w-0"
-                src={getThemedScreenshotSrc(selectedScreenshot.src, resolvedTheme)}
-              />
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-    </div>
+    </article>
   );
 }
 
-export default function OnboardingPage() {
-  const { taskKey } = useParams();
+function OnboardingListView({
+  onRoleChange,
+  overview,
+}: {
+  onRoleChange: (role: string) => void;
+  overview: OnboardingOverview;
+}) {
   const { account } = useAuth();
-  const trainingMode = useTrainingMode();
   const queryClient = useQueryClient();
-  const [selectedRoleOverride, setSelectedRoleOverride] =
-    useState<AccountRole | null>(null);
   const [confirmTrainingCleanup, setConfirmTrainingCleanup] = useState(false);
-
-  const roleForRequest =
-    account?.role === 'owner'
-      ? selectedRoleOverride || account.role
-      : undefined;
-  const roleForQueryKey =
-    account?.role === 'owner'
-      ? selectedRoleOverride || account.role
-      : account?.role;
-
-  const onboardingQuery = useQuery({
-    enabled: Boolean(account?.role),
-    queryFn: () => getOnboardingOverview(roleForRequest),
-    queryKey: queryKeys.onboarding.detail(roleForQueryKey),
-  });
+  const activeRole = overview.selectedRole;
+  const roleTitle = getAccountRoleLabel(activeRole);
+  const nextTask = useMemo(() => getNextTask(overview), [overview]);
+  const completedMissions = useMemo(
+    () =>
+      overview.path.missions.filter((mission) => {
+        const stats = getMissionStats(mission);
+        return stats.total > 0 && stats.completed === stats.total;
+      }).length,
+    [overview],
+  );
+  const hasProgress = overview.path.missions.some((mission) =>
+    mission.tasks.some((task) => task.progress.status !== 'not_started'),
+  );
 
   const trainingDataQuery = useQuery({
-    enabled: account?.role === 'owner' && Boolean(roleForQueryKey),
-    queryFn: () => getOnboardingTrainingData(roleForQueryKey as AccountRole),
-    queryKey: queryKeys.onboarding.trainingData(roleForQueryKey),
+    enabled: account?.role === 'owner',
+    queryFn: () => getOnboardingTrainingData(activeRole),
+    queryKey: queryKeys.onboarding.trainingData(activeRole),
   });
-
   const metricsQuery = useQuery({
     enabled: account?.role === 'owner',
     queryFn: getOnboardingMetrics,
     queryKey: queryKeys.onboarding.metrics(),
   });
-
-  const overview = onboardingQuery.data;
-  const activeRole = overview?.selectedRole || roleForQueryKey;
-
-  const completeMutation = useMutation({
-    mutationFn: (task: OnboardingTask) =>
-      completeOnboardingTask(task.key, activeRole),
-    onSuccess: (data: OnboardingOverview) => {
-      queryClient.setQueryData(
-        queryKeys.onboarding.detail(data.selectedRole),
-        data,
-      );
-      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
-      toast.success('Задание завершено');
-    },
-  });
-
   const resetMutation = useMutation({
     mutationFn: () => resetOnboardingProgress(activeRole),
     onSuccess: (data: OnboardingOverview) => {
@@ -970,10 +510,11 @@ export default function OnboardingPage() {
         data,
       );
       queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.all });
+      clearStoredActiveOnboardingQuest();
       toast.success('Прогресс сброшен');
     },
   });
-
   const cleanupTrainingDataMutation = useMutation({
     mutationFn: () => cleanupOnboardingTrainingData(activeRole),
     onSuccess: (data) => {
@@ -986,51 +527,11 @@ export default function OnboardingPage() {
     },
   });
 
-  const completedMissions = useMemo(() => {
-    if (!overview) return 0;
-    return overview.path.missions.filter((mission) => {
-      const stats = getMissionStats(mission);
-      return stats.total > 0 && stats.completed === stats.total;
-    }).length;
-  }, [overview]);
-
-  const nextTask = useMemo(() => getNextTask(overview), [overview]);
-
-  const handleRoleChange = (role: string) => {
-    setSelectedRoleOverride(role as AccountRole);
-  };
-
-  const handleComplete = async (task: OnboardingTask) => {
-    try {
-      await completeMutation.mutateAsync(task);
-    } catch (error) {
-      toast.error(
-        getApiErrorMessage(error, 'Не удалось обновить прогресс обучения'),
-      );
-    }
-  };
-
   const handleReset = async () => {
     try {
       await resetMutation.mutateAsync();
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Не удалось сбросить прогресс'));
-    }
-  };
-
-  const handleTrainingModeToggle = async () => {
-    try {
-      if (trainingMode.state.isEnabled) {
-        await trainingMode.disable();
-        toast.success('Режим тренировки выключен');
-      } else {
-        await trainingMode.enable(activeRole);
-        toast.success('Режим тренировки включен');
-      }
-    } catch (error) {
-      toast.error(
-        getApiErrorMessage(error, 'Не удалось изменить режим тренировки'),
-      );
     }
   };
 
@@ -1043,68 +544,8 @@ export default function OnboardingPage() {
     }
   };
 
-  if (onboardingQuery.isError) {
-    return (
-      <div className="flex w-full flex-col gap-5">
-        <ErrorState
-          message={getApiErrorMessage(
-            onboardingQuery.error,
-            'Не удалось загрузить обучение',
-          )}
-          onRetry={() => onboardingQuery.refetch()}
-        />
-      </div>
-    );
-  }
-
-  if (onboardingQuery.isLoading || !overview) {
-    return (
-      <div className="flex w-full flex-col gap-5">
-        <div className="h-32 animate-pulse rounded-md border bg-muted/40" />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
-          <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
-        </div>
-      </div>
-    );
-  }
-
-  const summary = overview.summary;
-  const roleTitle = getAccountRoleLabel(overview.selectedRole);
-  const completingTaskKey = completeMutation.isPending
-    ? completeMutation.variables?.key || null
-    : null;
-  const lesson = taskKey ? findTaskLesson(overview, taskKey) : null;
-
-  if (taskKey) {
-    if (!lesson) {
-      return (
-        <div className="flex w-full flex-col gap-4">
-          <ErrorState
-            message="Такого урока нет в текущем пути роли."
-            title="Урок не найден"
-          />
-          <div>
-            <Button asChild variant="outline">
-              <Link to="/admin/onboarding">Вернуться к обучению</Link>
-            </Button>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <LessonDetail
-        completingTaskKey={completingTaskKey}
-        mission={lesson.mission}
-        onComplete={handleComplete}
-        task={lesson.task}
-      />
-    );
-  }
-
   return (
-    <div className="flex w-full flex-col gap-5">
+    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
       <section className="rounded-md border bg-background p-5">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">
@@ -1114,17 +555,11 @@ export default function OnboardingPage() {
                 {roleTitle}
               </Badge>
               <Badge variant="outline">{overview.path.levelLabel}</Badge>
-              {summary.percent === 100 && (
+              {overview.ownerRoleOverrideEnabled && (
                 <Badge
                   variant="outline"
                   className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300"
                 >
-                  <Award className="h-3 w-3" />
-                  {overview.path.completionBadge}
-                </Badge>
-              )}
-              {overview.ownerRoleOverrideEnabled && (
-                <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300">
                   <ShieldCheck className="h-3 w-3" />
                   Режим владельца
                 </Badge>
@@ -1140,38 +575,12 @@ export default function OnboardingPage() {
           </div>
 
           <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-            {overview.ownerRoleOverrideEnabled && (
-              <div className="w-full min-w-56 sm:w-64">
-                <div className="mb-1 text-xs font-medium text-muted-foreground">
-                  Роль прохождения · только владелец
-                </div>
-                <Select
-                  value={overview.selectedRole}
-                  onValueChange={handleRoleChange}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {overview.availableRoles.map((role) => (
-                      <SelectItem key={role.value} value={role.value}>
-                        {role.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+            <RoleSelect overview={overview} onChange={onRoleChange} />
             <Button
               type="button"
               variant="outline"
               onClick={handleReset}
-              disabled={resetMutation.isPending || summary.completedTasks === 0}
-              title={
-                summary.completedTasks === 0
-                  ? 'Нет завершенных заданий для сброса'
-                  : 'Сбросить прогресс текущей роли'
-              }
+              disabled={resetMutation.isPending || !hasProgress}
             >
               {resetMutation.isPending ? (
                 <RefreshCw className="h-4 w-4 animate-spin" />
@@ -1180,31 +589,18 @@ export default function OnboardingPage() {
               )}
               Сбросить
             </Button>
-            <Button
-              type="button"
-              variant={trainingMode.state.isEnabled ? 'destructive' : 'secondary'}
-              onClick={handleTrainingModeToggle}
-              disabled={trainingMode.loading}
-            >
-              {trainingMode.state.isEnabled ? (
-                <Power className="h-4 w-4" />
-              ) : (
-                <FlaskConical className="h-4 w-4" />
-              )}
-              {trainingMode.state.isEnabled ? 'Выключить тренировку' : 'Тренировка'}
-            </Button>
           </div>
         </div>
 
         <div className="mt-6 grid gap-4 md:grid-cols-4">
           <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-xs text-muted-foreground">Прогресс</div>
-            <div className="mt-1 text-2xl font-semibold">{summary.percent}%</div>
+            <div className="mt-1 text-2xl font-semibold">{overview.summary.percent}%</div>
           </div>
           <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-xs text-muted-foreground">Задания</div>
             <div className="mt-1 text-2xl font-semibold">
-              {summary.completedTasks}/{summary.totalTasks}
+              {overview.summary.completedTasks}/{overview.summary.totalTasks}
             </div>
           </div>
           <div className="rounded-md border bg-muted/20 p-4">
@@ -1216,35 +612,42 @@ export default function OnboardingPage() {
           <div className="rounded-md border bg-muted/20 p-4">
             <div className="text-xs text-muted-foreground">Опыт</div>
             <div className="mt-1 text-2xl font-semibold">
-              {summary.earnedXp}/{summary.totalXp}
+              {overview.summary.earnedXp}/{overview.summary.totalXp}
             </div>
           </div>
         </div>
 
         <div className="mt-5">
-          <ProgressBar percent={summary.percent} />
+          <ProgressBar percent={overview.summary.percent} />
         </div>
-
-        {overview.path.outcomes.length > 0 && (
-          <div className="mt-5 flex flex-wrap gap-2">
-            {overview.path.outcomes.map((outcome) => (
-              <Badge key={outcome} variant="outline">
-                {outcome}
-              </Badge>
-            ))}
-          </div>
-        )}
       </section>
 
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-        <NextTaskPanel
-          completingTaskKey={completingTaskKey}
-          completionBadge={overview.path.completionBadge}
-          nextTask={nextTask}
-          onComplete={handleComplete}
-        />
-        <SkillProgressPanel overview={overview} />
-      </div>
+      {nextTask && (
+        <section className="rounded-md border bg-background p-5">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">
+                <ListChecks className="h-3 w-3" />
+                Следующее задание
+              </Badge>
+              <h2 className="mt-3 text-lg font-semibold text-foreground">
+                {nextTask.title}
+              </h2>
+              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+                {nextTask.description}
+              </p>
+            </div>
+            <Button asChild>
+              <Link to={taskDetailUrl(nextTask.key, activeRole)}>
+                <BookOpenCheck className="h-4 w-4" />
+                Начать урок
+              </Link>
+            </Button>
+          </div>
+        </section>
+      )}
+
+      <SkillProgressPanel overview={overview} />
 
       {overview.ownerRoleOverrideEnabled && (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
@@ -1292,10 +695,9 @@ export default function OnboardingPage() {
 
               <div className="grid gap-3 p-5">
                 {mission.tasks.map((task) => (
-                  <TaskRow
+                  <TaskCard
                     key={task.key}
-                    completingTaskKey={completingTaskKey}
-                    onComplete={handleComplete}
+                    selectedRole={activeRole}
                     task={task}
                   />
                 ))}
@@ -1321,5 +723,631 @@ export default function OnboardingPage() {
         onConfirm={handleCleanupTrainingData}
       />
     </div>
+  );
+}
+
+function getInstructionCardStorageKey(
+  role: AccountRole,
+  taskKey: string,
+  lessonUpdatedAt?: string | null,
+) {
+  return `padel-park:onboarding-card:${role}:${taskKey}:${lessonUpdatedAt || 'draft'}`;
+}
+
+function getCardScreenshots(
+  task: OnboardingGuidedTask,
+  block: OnboardingLessonBlock,
+) {
+  const indices = Array.isArray(block.screenshotIndices)
+    ? block.screenshotIndices
+    : Number.isInteger(block.screenshotIndex)
+      ? [Number(block.screenshotIndex)]
+      : [];
+
+  return indices
+    .map((index) => task.lesson.screenshots[index])
+    .filter(Boolean);
+}
+
+function ScreenshotCallouts({
+  embedded = false,
+  callouts,
+}: {
+  embedded?: boolean;
+  callouts?: OnboardingGuidedTask['lesson']['screenshots'][number]['callouts'];
+}) {
+  if (embedded) return null;
+  if (!Array.isArray(callouts) || callouts.length === 0) return null;
+
+  return (
+    <span className="pointer-events-none absolute inset-0 [container-type:inline-size]">
+      {callouts.map((callout, index) => (
+        <span
+          key={`frame-${callout.label || index}-${callout.x}-${callout.y}`}
+          className="absolute rounded-[2px] border border-primary/90 bg-primary/[0.04]"
+          style={{
+            borderWidth: 'clamp(1px, 0.12cqw, 2px)',
+            height: `${callout.height || 8}%`,
+            left: `${callout.x}%`,
+            top: `${callout.y}%`,
+            width: `${callout.width || 8}%`,
+          }}
+        />
+      ))}
+      {callouts.map((callout, index) => (
+        <span
+          key={`marker-${callout.label || index}-${callout.x}-${callout.y}`}
+          className="absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-primary font-semibold leading-none text-primary-foreground shadow-sm ring-1 ring-background [container-type:inline-size]"
+          style={{
+            aspectRatio: '1 / 1',
+            height: 'auto',
+            left: `${callout.labelX ?? callout.x}%`,
+            maxWidth: '14px',
+            minWidth: '8px',
+            top: `${callout.labelY ?? callout.y}%`,
+            width: `clamp(8px, ${callout.markerSize || 1.8}%, 14px)`,
+          }}
+        >
+          <span
+            className="leading-none"
+            style={{
+              fontSize: '62cqw',
+            }}
+          >
+            {callout.label || index + 1}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ScreenshotCaption({
+  asFigureCaption = false,
+  screenshot,
+}: {
+  asFigureCaption?: boolean;
+  screenshot: OnboardingGuidedTask['lesson']['screenshots'][number];
+}) {
+  const legendItems = (screenshot.callouts || []).filter((callout) =>
+    callout.text,
+  );
+
+  if (!screenshot.caption && legendItems.length === 0) return null;
+
+  const CaptionTag = asFigureCaption ? 'figcaption' : 'div';
+
+  return (
+    <CaptionTag className="border-t bg-background px-3 py-2 text-xs text-muted-foreground">
+      {screenshot.caption && <p>{screenshot.caption}</p>}
+      {legendItems.length > 0 && (
+        <ol className="mt-2 grid gap-1">
+          {legendItems.map((callout, index) => (
+            <li
+              key={`${callout.label || index}-${callout.text}`}
+              className="grid grid-cols-[auto_minmax(0,1fr)] gap-2 leading-4"
+            >
+              <span className="font-semibold text-primary">
+                {callout.label || index + 1}
+              </span>
+              <span>{callout.text}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </CaptionTag>
+  );
+}
+
+function MissingScreenshotNotice({ text }: { text: string }) {
+  return (
+    <div className="mt-5 rounded-md border border-dashed border-amber-300 bg-amber-50/80 p-3 text-sm text-amber-900 dark:border-amber-800/70 dark:bg-amber-950/30 dark:text-amber-200">
+      <div className="flex gap-2">
+        <ImageOff className="mt-0.5 h-4 w-4 shrink-0" />
+        <div>
+          <p className="font-medium">missing screenshot</p>
+          <p className="mt-1 leading-5">{text}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function InstructionScreenshot({
+  screenshot,
+  title,
+}: {
+  screenshot: OnboardingGuidedTask['lesson']['screenshots'][number];
+  title: string;
+}) {
+  const alt = screenshot.alt || screenshot.caption || title;
+  const [open, setOpen] = useState(false);
+  const { resolvedTheme } = useTheme();
+  const screenshotSrc = getThemedScreenshotSrc(screenshot.src, resolvedTheme);
+  const closeZoom = () => setOpen(false);
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <figure
+        className={cn(
+          'flex flex-col overflow-hidden rounded-md border bg-muted/20',
+          screenshot.kind === 'crop' ? 'min-h-[170px]' : 'min-h-[260px]',
+        )}
+      >
+        <DialogTrigger asChild>
+          <button
+            type="button"
+            className="group relative flex flex-1 cursor-zoom-in items-center justify-center p-3 text-left outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="Открыть скриншот крупнее"
+          >
+            <span className="relative block w-full">
+              <img
+                src={screenshotSrc}
+                alt={alt}
+                className={cn(
+                  'w-full object-contain',
+                  screenshot.kind === 'crop' ? 'max-h-[300px]' : 'max-h-[520px]',
+                )}
+              />
+              <ScreenshotCallouts
+                callouts={screenshot.callouts}
+                embedded={screenshot.calloutsEmbedded}
+              />
+            </span>
+            <span className="pointer-events-none absolute right-3 top-3 inline-flex h-9 w-9 items-center justify-center rounded-full border bg-background/90 text-foreground opacity-0 shadow-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              <ZoomIn className="h-4 w-4" />
+            </span>
+          </button>
+        </DialogTrigger>
+        <ScreenshotCaption asFigureCaption screenshot={screenshot} />
+      </figure>
+
+      <DialogContent
+        className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden rounded-md p-0 sm:max-w-[min(1280px,calc(100vw-2rem))]"
+        overlayClassName="bg-black/70 supports-backdrop-filter:backdrop-blur-sm"
+        showCloseButton={false}
+      >
+        <DialogHeader className="sr-only">
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{screenshot.caption || alt}</DialogDescription>
+        </DialogHeader>
+        <DialogClose asChild>
+          <Button
+            type="button"
+            variant="secondary"
+            size="icon-sm"
+            className="absolute right-3 top-3 z-10 bg-background/90 shadow-sm"
+            aria-label="Закрыть скриншот"
+          >
+            <X className="h-4 w-4" />
+          </Button>
+        </DialogClose>
+        <div
+          className="max-h-[calc(100dvh-5rem)] overflow-auto bg-black p-2 sm:flex sm:items-center sm:justify-center sm:p-4"
+          onClick={closeZoom}
+          onPointerDownCapture={closeZoom}
+        >
+          <span
+            className="relative inline-block"
+            onClick={closeZoom}
+            onPointerDownCapture={closeZoom}
+          >
+            <img
+              src={screenshotSrc}
+              alt={alt}
+              className="h-auto w-[920px] max-w-none object-contain sm:max-h-[calc(100dvh-7rem)] sm:w-auto sm:max-w-full"
+              onClick={closeZoom}
+              onPointerDownCapture={closeZoom}
+            />
+            <ScreenshotCallouts
+              callouts={screenshot.callouts}
+              embedded={screenshot.calloutsEmbedded}
+            />
+          </span>
+        </div>
+        <ScreenshotCaption screenshot={screenshot} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function InstructionScreenshots({
+  screenshots,
+  title,
+}: {
+  screenshots: OnboardingGuidedTask['lesson']['screenshots'];
+  title: string;
+}) {
+  if (screenshots.length === 0) return null;
+
+  return (
+    <div className="grid min-w-0 gap-3">
+      {screenshots.map((item) => (
+        <InstructionScreenshot
+          key={`${item.src}-${item.caption || item.alt || title}`}
+          screenshot={item}
+          title={title}
+        />
+      ))}
+    </div>
+  );
+}
+
+function InstructionCardReader({
+  isPending,
+  onComplete,
+  role,
+  task,
+}: {
+  isPending: boolean;
+  onComplete: () => void;
+  role: AccountRole;
+  task: OnboardingGuidedTask;
+}) {
+  const blocks =
+    task.lesson.blocks.length > 0
+      ? task.lesson.blocks
+      : [{ text: task.description, type: 'paragraph' }];
+  const storageKey = getInstructionCardStorageKey(
+    role,
+    task.key,
+    task.lesson.updatedAt || task.progress.lesson.updatedAt,
+  );
+  const [cardIndex, setCardIndex] = useState(() => {
+    if (typeof window === 'undefined') return 0;
+
+    const saved = Number(window.localStorage.getItem(storageKey));
+    return Number.isFinite(saved) ? saved : 0;
+  });
+  const safeIndex = Math.max(0, Math.min(cardIndex, blocks.length - 1));
+  const block = blocks[safeIndex];
+  const screenshots = getCardScreenshots(task, block);
+  const hasScreenshots = screenshots.length > 0;
+  const title =
+    block.title ||
+    (block.type === 'heading' ? block.text : `Этап ${safeIndex + 1}`);
+  const showText = block.type !== 'heading' || Boolean(block.title);
+  const isFinalCard = safeIndex === blocks.length - 1;
+  const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
+  const progressPercent = Math.round(((safeIndex + 1) / blocks.length) * 100);
+
+  const saveCardIndex = (nextIndex: number) => {
+    const boundedIndex = Math.max(0, Math.min(nextIndex, blocks.length - 1));
+    setCardIndex(boundedIndex);
+
+    if (typeof window !== 'undefined') {
+      window.localStorage.setItem(storageKey, String(boundedIndex));
+    }
+  };
+
+  const handleNext = () => {
+    if (isFinalCard) {
+      onComplete();
+      return;
+    }
+
+    saveCardIndex(safeIndex + 1);
+  };
+
+  return (
+    <section className="grid gap-4">
+      <article
+        key={`${task.key}-${safeIndex}`}
+        className="overflow-hidden rounded-md border bg-background motion-safe:animate-in motion-safe:fade-in-0 motion-safe:slide-in-from-right-3"
+      >
+        <div
+          className={cn(
+            'grid gap-5 p-5 sm:p-6',
+            hasScreenshots
+              ? 'min-h-[min(680px,calc(100dvh-14rem))] lg:grid-cols-[minmax(0,0.85fr)_minmax(360px,1.15fr)]'
+              : 'min-h-[min(520px,calc(100dvh-14rem))]',
+          )}
+        >
+          <div
+            className={cn(
+              'flex min-w-0 flex-col justify-center',
+              !hasScreenshots && 'mx-auto w-full max-w-3xl',
+            )}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="w-fit">
+                Этап {safeIndex + 1}/{blocks.length}
+              </Badge>
+            </div>
+            <h2 className="mt-4 text-2xl font-semibold leading-tight text-foreground">
+              {title}
+            </h2>
+            {showText && (
+              <p className="mt-4 text-sm leading-6 text-muted-foreground sm:text-base">
+                {block.text}
+              </p>
+            )}
+            {Array.isArray(block.items) && block.items.length > 0 && (
+              <ul className="mt-5 grid gap-2 text-sm text-muted-foreground">
+                {block.items.map((item) => (
+                  <li key={item} className="flex gap-2">
+                    <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                    <span>{item}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {block.missingScreenshot && !hasScreenshots && (
+              <MissingScreenshotNotice text={block.missingScreenshot} />
+            )}
+          </div>
+
+          {hasScreenshots && (
+            <InstructionScreenshots screenshots={screenshots} title={title} />
+          )}
+        </div>
+      </article>
+
+      <div className="grid grid-cols-[minmax(4.5rem,auto)_minmax(0,1fr)_minmax(5.75rem,auto)] items-center gap-2 sm:gap-3">
+        <Button
+          type="button"
+          variant="outline"
+          className="min-w-0 justify-center px-3 text-center"
+          onClick={() => saveCardIndex(safeIndex - 1)}
+          disabled={safeIndex === 0}
+        >
+          Назад
+        </Button>
+
+        <div className="min-w-0">
+          <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground sm:text-xs">
+            <span className="truncate">Прогресс урока</span>
+            <span className="shrink-0">{progressPercent}%</span>
+          </div>
+          <ProgressBar percent={progressPercent} />
+          <div className="mt-2 flex justify-center gap-1">
+            {blocks.map((item, index) => (
+              <button
+                key={`${item.type}-${index}`}
+                type="button"
+                className={cn(
+                  'h-2.5 w-2.5 rounded-full border transition-colors',
+                  index === safeIndex
+                    ? 'border-primary bg-primary'
+                    : 'border-border bg-muted hover:bg-muted-foreground/20',
+                )}
+                aria-label={`Открыть этап ${index + 1}`}
+                onClick={() => saveCardIndex(index)}
+              />
+            ))}
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          className="min-w-0 justify-center whitespace-normal px-3 text-center"
+          onClick={handleNext}
+          disabled={
+            isPending ||
+            (task.progress.isCompleted && !isUpdatedAfterCompletion && isFinalCard)
+          }
+        >
+          {isPending ? (
+            <RefreshCw className="h-4 w-4 animate-spin" />
+          ) : (
+            <CheckCircle2 className="h-4 w-4" />
+          )}
+          {task.progress.isCompleted && isUpdatedAfterCompletion && isFinalCard
+            ? 'Отметить обновление'
+            : task.progress.isCompleted && isFinalCard
+            ? 'Урок завершен'
+            : isFinalCard
+              ? 'Завершить урок'
+              : 'Далее'}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function TaskDetailView({
+  detail,
+  loadingCompletion,
+  onComplete,
+}: {
+  detail: OnboardingTaskDetail;
+  loadingCompletion: boolean;
+  onComplete: () => void;
+}) {
+  const task = detail.task;
+  const roleTitle = getAccountRoleLabel(detail.selectedRole);
+  const status = getTaskStatus(task);
+  const StatusIcon = status.icon;
+  const lessonUpdatedAt = formatCompletedAt(task.progress.lesson.updatedAt);
+  const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
+
+  return (
+    <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
+      <div className="flex flex-col gap-3 rounded-md border bg-background/80 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+        <div className="min-w-0">
+          <Button asChild variant="ghost" size="sm" className="-ml-2">
+            <Link to={`/admin/onboarding${roleQuery(detail.selectedRole)}`}>
+              <ArrowLeft className="h-4 w-4" />
+              К заданиям
+            </Link>
+          </Button>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className={status.className}>
+              <StatusIcon className="h-3 w-3" />
+              {status.label}
+            </Badge>
+            <Badge variant="outline">{roleTitle}</Badge>
+            <Badge variant="outline">{detail.mission.title}</Badge>
+          </div>
+        </div>
+        <div className="min-w-0 sm:text-right">
+          <div className="text-xs text-muted-foreground">Урок</div>
+          <h1 className="mt-1 truncate text-sm font-semibold text-foreground sm:text-base">
+            {task.title}
+          </h1>
+        </div>
+      </div>
+
+      <div className="min-w-0">
+        {isUpdatedAfterCompletion && (
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/70 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="flex gap-2">
+              <Sparkles className="mt-0.5 h-4 w-4 shrink-0" />
+              <div>
+                <div className="font-medium">Урок обновлен после вашего прохождения</div>
+                <p className="mt-1 text-amber-800/90 dark:text-amber-200/80">
+                  Пройдите этапы еще раз и на последнем этапе нажмите
+                  “Отметить обновление”, чтобы убрать пометку.
+                  {lessonUpdatedAt ? ` Обновлено: ${lessonUpdatedAt}.` : ''}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      <InstructionCardReader
+        isPending={loadingCompletion}
+        onComplete={onComplete}
+        role={detail.selectedRole}
+        task={task}
+      />
+    </div>
+  );
+}
+
+export default function OnboardingPage() {
+  const { taskKey } = useParams<{ taskKey?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const { account } = useAuth();
+  const queryClient = useQueryClient();
+  const roleFromQuery = searchParams.get('role') as AccountRole | null;
+  const roleFromTaskKey = inferRoleFromTaskKey(taskKey);
+  const roleForRequest =
+    account?.role === 'owner'
+      ? roleFromQuery || roleFromTaskKey || account.role
+      : undefined;
+  const roleForQueryKey =
+    account?.role === 'owner'
+      ? roleFromQuery || roleFromTaskKey || account.role
+      : account?.role;
+
+  const overviewQuery = useQuery({
+    enabled: Boolean(account?.role) && !taskKey,
+    queryFn: () => getOnboardingOverview(roleForRequest),
+    queryKey: queryKeys.onboarding.detail(roleForQueryKey),
+  });
+  const detailQuery = useQuery({
+    enabled: Boolean(account?.role && taskKey),
+    queryFn: () => getOnboardingTaskDetail(taskKey!, roleForRequest),
+    queryKey: queryKeys.onboarding.task(taskKey || 'none', roleForQueryKey),
+    refetchOnMount: 'always',
+    refetchOnReconnect: 'always',
+    refetchOnWindowFocus: 'always',
+  });
+
+  useEffect(() => {
+    if (!account?.role || !taskKey) return;
+
+    void queryClient.invalidateQueries({
+      queryKey: queryKeys.onboarding.task(taskKey, roleForQueryKey),
+    });
+  }, [account?.role, queryClient, roleForQueryKey, taskKey]);
+
+  const completeInstructionMutation = useMutation({
+    mutationFn: (detail: OnboardingTaskDetail) =>
+      completeOnboardingTask(detail.task.key, detail.selectedRole),
+    onSuccess: (data, detail) => {
+      queryClient.setQueryData(
+        queryKeys.onboarding.detail(data.selectedRole),
+        data,
+      );
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.onboarding.task(detail.task.key, detail.selectedRole),
+      });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.all });
+      queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.metrics() });
+      clearStoredActiveOnboardingQuest();
+      toast.success(
+        detail.task.progress.lesson.isUpdatedAfterCompletion
+          ? 'Обновление урока отмечено'
+          : 'Урок завершен',
+      );
+    },
+  });
+
+  const handleRoleChange = (role: string) => {
+    setSearchParams({ role });
+  };
+
+  if (taskKey) {
+    if (detailQuery.isError) {
+      return (
+        <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+          <ErrorState
+            message={getApiErrorMessage(
+              detailQuery.error,
+              'Не удалось загрузить задание',
+            )}
+            onRetry={() => detailQuery.refetch()}
+          />
+        </div>
+      );
+    }
+
+    if (detailQuery.isLoading || !detailQuery.data) {
+      return (
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+          <div className="h-28 animate-pulse rounded-md border bg-muted/40" />
+          <div className="h-72 animate-pulse rounded-md border bg-muted/40" />
+          <div className="h-56 animate-pulse rounded-md border bg-muted/40" />
+        </div>
+      );
+    }
+
+    const detail = detailQuery.data;
+
+    return (
+      <TaskDetailView
+        detail={detail}
+        loadingCompletion={completeInstructionMutation.isPending}
+        onComplete={() => {
+          void completeInstructionMutation.mutateAsync(detail).catch((error) => {
+            toast.error(getApiErrorMessage(error, 'Не удалось завершить урок'));
+          });
+        }}
+      />
+    );
+  }
+
+  if (overviewQuery.isError) {
+    return (
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <ErrorState
+          message={getApiErrorMessage(
+            overviewQuery.error,
+            'Не удалось загрузить обучение',
+          )}
+          onRetry={() => overviewQuery.refetch()}
+        />
+      </div>
+    );
+  }
+
+  if (overviewQuery.isLoading || !overviewQuery.data) {
+    return (
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <div className="h-32 animate-pulse rounded-md border bg-muted/40" />
+        <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
+        <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
+      </div>
+    );
+  }
+
+  return (
+    <OnboardingListView
+      overview={overviewQuery.data}
+      onRoleChange={handleRoleChange}
+    />
   );
 }
