@@ -50,12 +50,10 @@ import {
 import {
   Plus,
   Calendar as CalendarIcon,
-  RefreshCw,
   Lightbulb,
   TrendingUp,
   TrendingDown,
   Target,
-  Clock,
 } from 'lucide-react';
 import { format, startOfMonth, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
@@ -75,6 +73,37 @@ interface WeekdayStat {
 }
 
 type CourtFilter = 'all' | '2x2' | '1x1';
+
+function UtilizationMetric({
+  label,
+  tone = 'default',
+  value,
+}: {
+  label: string;
+  tone?: 'default' | 'danger' | 'primary' | 'success';
+  value: string;
+}) {
+  return (
+    <div
+      className={cn(
+        'min-w-0 rounded-lg bg-background/70 px-3 py-2',
+        tone === 'primary' && 'bg-primary text-primary-foreground',
+      )}
+    >
+      <div
+        className={cn(
+          'truncate text-xs text-muted-foreground',
+          tone === 'danger' && 'text-destructive',
+          tone === 'success' && 'text-emerald-600',
+          tone === 'primary' && 'text-primary-foreground/75',
+        )}
+      >
+        {label}
+      </div>
+      <div className="mt-1 truncate text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
 
 const optionalHoursSchema = z
   .string()
@@ -141,7 +170,6 @@ export default function UtilizationPage() {
     () => utilizationQuery.data || [],
     [utilizationQuery.data],
   );
-  const loading = utilizationQuery.isLoading || utilizationQuery.isFetching;
   const errorText = utilizationQuery.isError
     ? getApiErrorMessage(utilizationQuery.error, 'Не удалось загрузить утилизацию кортов')
     : '';
@@ -311,18 +339,32 @@ export default function UtilizationPage() {
   };
 
   return (
-    <div className="p-6 md:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Утилизация кортов
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Анализ загрузки площадок и сессий
-          </p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
+        {stats && (
+          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
+            <UtilizationMetric
+              label="Ср. загрузка"
+              tone="primary"
+              value={`${Math.round(stats.avgUtil)}%`}
+            />
+            <UtilizationMetric label="Корты 2x2" value={`${Math.round(stats.avg2)}%`} />
+            <UtilizationMetric label="Корт 1x1" value={`${Math.round(stats.avg1)}%`} />
+            <UtilizationMetric label="Всего часов" value={`${stats.totalHours} ч`} />
+            <UtilizationMetric
+              label="Лучший день"
+              tone="success"
+              value={`${Math.round(stats.getDayUtil(stats.bestDay))}%`}
+            />
+            <UtilizationMetric
+              label="Худший день"
+              tone="danger"
+              value={`${Math.round(stats.getDayUtil(stats.worstDay))}%`}
+            />
+          </div>
+        )}
 
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+        <div className="flex w-full flex-wrap items-center gap-3 xl:w-auto xl:justify-end">
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -359,14 +401,6 @@ export default function UtilizationPage() {
               />
             </PopoverContent>
           </Popover>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => void utilizationQuery.refetch()}
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
           <Dialog open={isOpen} onOpenChange={setIsOpen}>
             {canEditUtilization && (
               <DialogTrigger asChild>
@@ -540,98 +574,6 @@ export default function UtilizationPage() {
 
       {stats && (
         <>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-4">
-            <Card className="bg-primary text-primary-foreground">
-              <CardContent className="pt-6">
-                <div className="text-[10px] opacity-80 font-medium uppercase truncate">
-                  Ср. загрузка
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {Math.round(stats.avgUtil)}%
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase truncate">
-                  Корты 2×2
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {Math.round(stats.avg2)}%
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase truncate">
-                  Корт 1×1
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {Math.round(stats.avg1)}%
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase truncate">
-                  Всего часов
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {stats.totalHours} ч
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Карточки сессий */}
-            <Card className="bg-muted/50">
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase flex items-center gap-1 truncate">
-                  <Clock className="w-3 h-3" /> Ср. время 2x2
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {stats.avgSession2} ч
-                </div>
-              </CardContent>
-            </Card>
-            <Card className="bg-muted/50">
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase flex items-center gap-1 truncate">
-                  <Clock className="w-3 h-3" /> Ср. время 1x1
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {stats.avgSession1} ч
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase text-green-500 truncate">
-                  Лучший день
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {Math.round(stats.getDayUtil(stats.bestDay))}%
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-1">
-                  {stats.bestDay.date}
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="text-[10px] text-muted-foreground font-medium uppercase text-destructive truncate">
-                  Худший день
-                </div>
-                <div className="text-xl font-bold mt-1">
-                  {Math.round(stats.getDayUtil(stats.worstDay))}%
-                </div>
-                <div className="text-[10px] text-muted-foreground mt-1">
-                  {stats.worstDay.date}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-6">
               <Card>
@@ -701,14 +643,20 @@ export default function UtilizationPage() {
                       />
                       <Legend />
                       <Bar
+                        animationDuration={700}
+                        animationEasing="ease-out"
                         dataKey="Загрузка %"
                         fill="#3b82f6"
+                        isAnimationActive
                         radius={[4, 4, 0, 0]}
                         opacity={0.7}
                       />
                       <Line
+                        animationDuration={850}
+                        animationEasing="ease-out"
                         type="monotone"
                         dataKey="MA7"
+                        isAnimationActive
                         stroke="#ef4444"
                         strokeWidth={3}
                         dot={false}

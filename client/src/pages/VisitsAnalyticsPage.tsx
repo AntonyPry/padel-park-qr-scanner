@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   getVisitsAnalytics,
@@ -6,6 +6,7 @@ import {
 } from '@/api/visits-analytics';
 import { queryKeys } from '@/api/query-keys';
 import { ErrorState } from '@/components/error-state';
+import { ChartLoadingState } from '@/components/chart-loading-state';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Table,
@@ -31,41 +32,139 @@ import {
   Calendar as CalendarIcon,
   Download,
 } from 'lucide-react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, subDays } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
-
-// Палитра для кольца Источников
-const COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#6366f1',
-  '#ef4444',
-  '#14b8a6',
-  '#ec4899',
-  '#8b5cf6',
-  '#64748b',
-];
-
-// Палитра для кольца Целей визита
-const CATEGORY_COLORS = [
-  '#8b5cf6',
-  '#ec4899',
-  '#f43f5e',
-  '#f97316',
-  '#eab308',
-  '#84cc16',
-  '#10b981',
-  '#06b6d4',
-  '#3b82f6',
-];
+import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
+const SOURCE_CHART_COLORS = [
+  'hsl(221 83% 53%)',
+  'hsl(160 84% 39%)',
+  'hsl(43 96% 56%)',
+  'hsl(262 83% 58%)',
+  'hsl(0 84% 60%)',
+  'hsl(173 80% 40%)',
+  'hsl(340 82% 52%)',
+  'hsl(199 89% 48%)',
+];
+const CATEGORY_CHART_COLORS = [
+  'hsl(262 83% 58%)',
+  'hsl(340 82% 52%)',
+  'hsl(0 84% 60%)',
+  'hsl(24 95% 53%)',
+  'hsl(43 96% 56%)',
+  'hsl(160 84% 39%)',
+  'hsl(199 89% 48%)',
+  'hsl(221 83% 53%)',
+];
+
+function CompactStat({
+  icon,
+  label,
+  value,
+}: {
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+}) {
+  return (
+    <div className="min-w-0 rounded-lg bg-background/70 px-3 py-2">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="mt-1 truncate text-lg font-semibold">
+        <AnimatedMetricValue value={value} />
+      </div>
+    </div>
+  );
+}
+
+function DonutChartCard({
+  colors,
+  emptyText,
+  items,
+  title,
+}: {
+  colors: string[];
+  emptyText: string;
+  items: ChartDatum[];
+  title: string;
+}) {
+  const total = items.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const visibleItems = items.slice(0, 8);
+  const segments = visibleItems.map((item, index) => {
+    const value = Number(item.value || 0);
+
+    return {
+      index,
+      item,
+      value,
+    };
+  });
+
+  return (
+    <Card className="col-span-1 flex flex-col">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold">{title}</CardTitle>
+      </CardHeader>
+      <CardContent className="grid flex-1 gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+        {items.length === 0 || total <= 0 ? (
+          <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground md:col-span-2">
+            {emptyText}
+          </div>
+        ) : (
+          <>
+            <div className="relative h-[240px] min-w-0">
+              <AnimatedDonut
+                ariaLabel={title}
+                innerRadius={62}
+                items={segments.map(({ index, item, value }) => ({
+                  color: colors[index % colors.length],
+                  id: item.name,
+                  title: `${item.name}: ${value} визитов`,
+                  value,
+                }))}
+                showTrack={false}
+              />
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="text-2xl font-semibold">
+                    <AnimatedMetricValue value={total} />
+                  </div>
+                  <div className="text-xs text-muted-foreground">визитов</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-col justify-center gap-2">
+              {visibleItems.map((item, index) => {
+                const value = Number(item.value || 0);
+                const percent = total > 0 ? Math.round((value / total) * 100) : 0;
+
+                return (
+                  <div key={item.name} className="flex min-w-0 items-center gap-2 text-sm">
+                    <span
+                      className="h-2.5 w-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: colors[index % colors.length] }}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                      {item.name}
+                    </span>
+                    <span className="shrink-0 font-medium">{percent}%</span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function VisitsAnalyticsPage() {
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
@@ -150,18 +249,37 @@ export default function VisitsAnalyticsPage() {
   };
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-[1600px] mx-auto">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Аналитика посещений
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Откуда приходят гости и в какое время
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-3 w-full sm:w-auto">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
+        {data && (
+          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <CompactStat
+              icon={<Key className="h-3.5 w-3.5 text-primary" />}
+              label="Всего визитов"
+              value={data.totalVisits}
+            />
+            <CompactStat
+              icon={<Users className="h-3.5 w-3.5 text-sky-500" />}
+              label="Уникальных гостей"
+              value={data.uniqueGuests}
+            />
+            <CompactStat
+              icon={<TrendingUp className="h-3.5 w-3.5 text-emerald-500" />}
+              label="Возвращаемость"
+              value={`${
+                data.uniqueGuests > 0
+                  ? Math.round((data.totalVisits / data.uniqueGuests - 1) * 100)
+                  : 0
+              }%`}
+            />
+            <CompactStat
+              icon={<Target className="h-3.5 w-3.5 text-amber-500" />}
+              label="Топ источник"
+              value={aggregatedSources.length > 0 ? aggregatedSources[0].name : '-'}
+            />
+          </div>
+        )}
+        <div className="flex w-full flex-wrap gap-3 xl:w-auto xl:justify-end">
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -217,163 +335,23 @@ export default function VisitsAnalyticsPage() {
           title="Аналитика не загрузилась"
         />
       ) : !data || loading ? (
-        <div className="flex justify-center py-12 text-muted-foreground animate-pulse">
-          Загрузка аналитики...
-        </div>
+        <ChartLoadingState title="Загрузка аналитики посещений" />
       ) : (
         <>
-          {/* КАРТОЧКИ */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Всего визитов
-                </CardTitle>
-                <Key className="h-4 w-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">{data.totalVisits}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Уникальных гостей
-                </CardTitle>
-                <Users className="h-4 w-4 text-blue-500" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">{data.uniqueGuests}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Индекс возвращаемости
-                </CardTitle>
-                <TrendingUp className="h-4 w-4 text-green-500" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold">
-                  {data.uniqueGuests > 0
-                    ? Math.round(
-                        (data.totalVisits / data.uniqueGuests - 1) * 100,
-                      )
-                    : 0}
-                  %
-                </div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2 flex flex-row items-center justify-between">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Топ источник
-                </CardTitle>
-                <Target className="h-4 w-4 text-orange-500" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-xl font-bold truncate">
-                  {aggregatedSources.length > 0
-                    ? aggregatedSources[0].name
-                    : '-'}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            <DonutChartCard
+              colors={SOURCE_CHART_COLORS}
+              emptyText="Нет данных"
+              items={aggregatedSources}
+              title="Откуда о нас узнают"
+            />
 
-          {/* ГРАФИКИ И ТОП (3 КОЛОНКИ НА БОЛЬШИХ ЭКРАНАХ) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {/* ИСТОЧНИКИ */}
-            <Card className="col-span-1 flex flex-col">
-              <CardHeader>
-                <CardTitle className="text-lg text-center">
-                  Откуда о нас узнают
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex-1 min-h-[280px]">
-                {aggregatedSources.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-muted-foreground">
-                    Нет данных
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={280} minWidth={240}>
-                    <PieChart>
-                      <Pie
-                        data={aggregatedSources}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={65}
-                        outerRadius={95}
-                        paddingAngle={2}
-                        dataKey="value"
-                      >
-                        {aggregatedSources.map((_entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={COLORS[index % COLORS.length]}
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value, name) => [`${value} визитов`, name]}
-                        contentStyle={{
-                          borderRadius: '8px',
-                          border: 'none',
-                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* ЦЕЛИ ВИЗИТОВ */}
-            <Card className="col-span-1 flex flex-col">
-              <CardHeader>
-                <CardTitle className="text-lg text-center">
-                  Цели визитов (Категории)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex-1 min-h-[280px]">
-                {!data?.categories || data.categories.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-muted-foreground">
-                    Нет данных
-                  </div>
-                ) : (
-                  <ResponsiveContainer width="100%" height={280} minWidth={240}>
-                    <PieChart>
-                      <Pie
-                        data={data.categories}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={65}
-                        outerRadius={95}
-                        paddingAngle={2}
-                        dataKey="value"
-                      >
-                        {data.categories.map((_entry, index) => (
-                          <Cell
-                            key={`cell-${index}`}
-                            fill={
-                              CATEGORY_COLORS[index % CATEGORY_COLORS.length]
-                            }
-                          />
-                        ))}
-                      </Pie>
-                      <Tooltip
-                        formatter={(value, name) => [`${value} визитов`, name]}
-                        contentStyle={{
-                          borderRadius: '8px',
-                          border: 'none',
-                          boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)',
-                        }}
-                      />
-                    </PieChart>
-                  </ResponsiveContainer>
-                )}
-              </CardContent>
-            </Card>
+            <DonutChartCard
+              colors={CATEGORY_CHART_COLORS}
+              emptyText="Нет данных"
+              items={data.categories || []}
+              title="Цели визитов"
+            />
 
             {/* ТОП ГОСТЕЙ */}
             <Card className="col-span-1 md:col-span-2 xl:col-span-1 overflow-hidden flex flex-col">
@@ -404,7 +382,7 @@ export default function VisitsAnalyticsPage() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-bold text-primary">
-                          {guest.visits}
+                          <AnimatedMetricValue value={guest.visits} />
                         </TableCell>
                       </TableRow>
                     ))}
@@ -452,7 +430,11 @@ export default function VisitsAnalyticsPage() {
                     {DAYS.map((dayName, dayIndex) => {
                       const dbDayIndex = dayIndex + 1; // 1 = Пн, 7 = Вс
                       return (
-                        <div key={dayName} className="flex items-center">
+                        <div
+                          key={dayName}
+                          className="crm-cascade-row flex items-center"
+                          style={{ animationDelay: `${dayIndex * 45}ms` }}
+                        >
                           <div className="w-12 shrink-0 text-xs font-medium text-muted-foreground">
                             {dayName}
                           </div>

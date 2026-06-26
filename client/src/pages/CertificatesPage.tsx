@@ -5,13 +5,13 @@ import {
   BadgeCheck,
   Gift,
   PackageCheck,
-  RefreshCw,
   RotateCcw,
   Search,
   WalletCards,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ModuleSwitch } from '@/components/module-switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -40,6 +40,12 @@ import { useAuth } from '@/lib/useAuth';
 type CertificateType = 'money' | 'service';
 type CertificateStatus = 'active' | 'canceled' | 'expired' | 'redeemed';
 type RedemptionStatus = 'active' | 'reversed';
+
+const BILLING_SWITCH_ITEMS = [
+  { label: 'Предоплаты', to: '/admin/prepayments' },
+  { label: 'Сертификаты', to: '/admin/certificates' },
+  { label: 'Корпоративные', to: '/admin/corporate-clients' },
+];
 
 interface CertificateActor {
   email?: string | null;
@@ -424,20 +430,9 @@ export default function CertificatesPage() {
       : Number(redeemQuantity) > 0;
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Сертификаты</h1>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void loadCertificates()}
-          disabled={loading}
-        >
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Обновить
-        </Button>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center">
+        <ModuleSwitch items={BILLING_SWITCH_ITEMS} />
       </div>
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">

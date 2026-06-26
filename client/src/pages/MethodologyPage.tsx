@@ -10,7 +10,6 @@ import {
   CheckCircle2,
   Pencil,
   Plus,
-  RefreshCw,
   Save,
 } from 'lucide-react';
 import {
@@ -36,6 +35,7 @@ import {
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ModuleSwitch } from '@/components/module-switch';
 import {
   Dialog,
   DialogContent,
@@ -81,6 +81,11 @@ type Section = 'exercises' | 'skills';
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<void>;
 };
+
+const METHODOLOGY_SWITCH_ITEMS = [
+  { label: 'Методика', to: '/admin/methodology' },
+  { label: 'Аналитика', to: '/admin/methodology-analytics' },
+];
 
 const skillFormSchema = z.object({
   description: z.string().trim().optional(),
@@ -301,14 +306,6 @@ export default function MethodologyPage() {
     mutationFn: restoreMethodologyExercise,
     onSuccess: invalidateMethodology,
   });
-
-  const refreshCurrentSection = () => {
-    if (section === 'skills') {
-      void skillsQuery.refetch();
-      return;
-    }
-    void exercisesQuery.refetch();
-  };
 
   const openCreateSkill = () => {
     setEditingSkill(null);
@@ -774,28 +771,10 @@ export default function MethodologyPage() {
   ];
 
   return (
-    <div className="min-w-0 space-y-4 p-4 md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Методика тренировок
-          </h1>
-        </div>
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 lg:flex-row lg:items-center lg:justify-between">
+        <ModuleSwitch items={METHODOLOGY_SWITCH_ITEMS} />
         <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={refreshCurrentSection}
-            disabled={loadingExercises || loadingSkills}
-            aria-label="Обновить методику"
-            title="Обновить"
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${
-                loadingExercises || loadingSkills ? 'animate-spin' : ''
-              }`}
-            />
-          </Button>
           {section === 'skills' && canManage && (
             <Button onClick={openCreateSkill}>
               <Plus className="mr-2 h-4 w-4" />

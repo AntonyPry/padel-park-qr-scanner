@@ -35,7 +35,7 @@ function PaginationItem({ ...props }: React.ComponentProps<'li'>) {
 function PaginationButton({
   className,
   isActive,
-  size = 'icon-sm',
+  size = 'icon',
   ...props
 }: React.ComponentProps<typeof Button> & {
   isActive?: boolean;
@@ -47,7 +47,7 @@ function PaginationButton({
       data-active={isActive}
       variant={isActive ? 'outline' : 'ghost'}
       size={size}
-      className={className}
+      className={cn('rounded-md', className)}
       {...props}
     />
   );
@@ -60,12 +60,12 @@ function PaginationPrevious({
   return (
     <PaginationButton
       aria-label="Предыдущая страница"
-      className={cn('gap-1 px-2.5', className)}
-      size="sm"
+      className={cn('gap-1 px-2.5 sm:pl-2.5', className)}
+      size="default"
       {...props}
     >
       <ChevronLeftIcon />
-      <span className="hidden sm:block">Назад</span>
+      <span>Назад</span>
     </PaginationButton>
   );
 }
@@ -77,11 +77,11 @@ function PaginationNext({
   return (
     <PaginationButton
       aria-label="Следующая страница"
-      className={cn('gap-1 px-2.5', className)}
-      size="sm"
+      className={cn('gap-1 px-2.5 sm:pr-2.5', className)}
+      size="default"
       {...props}
     >
-      <span className="hidden sm:block">Далее</span>
+      <span>Далее</span>
       <ChevronRightIcon />
     </PaginationButton>
   );
@@ -95,7 +95,7 @@ function PaginationEllipsis({
     <span
       aria-hidden
       data-slot="pagination-ellipsis"
-      className={cn('flex size-7 items-center justify-center', className)}
+      className={cn('flex size-9 items-center justify-center', className)}
       {...props}
     >
       <MoreHorizontalIcon className="size-4" />

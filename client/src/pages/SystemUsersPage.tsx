@@ -6,8 +6,8 @@ import {
   ArchiveRestore,
   Pencil,
   Plus,
-  RefreshCw,
   Save,
+  Search,
   Trash2,
   UserCog,
 } from 'lucide-react';
@@ -16,7 +16,6 @@ import { z } from 'zod';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
@@ -143,6 +142,7 @@ export default function SystemUsersPage() {
   const [accountStatus, setAccountStatus] = useState<
     'active' | 'archived' | 'all'
   >('active');
+  const [accountSearch, setAccountSearch] = useState('');
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const accountForm = useForm<AccountFormState>({
@@ -178,9 +178,27 @@ export default function SystemUsersPage() {
     [editingAccount?.staffId, linkedStaffIds, staff],
   );
   const displayedAccounts = useMemo(() => {
-    if (accountStatus === 'all') return accounts;
-    return accounts.filter((item) => item.status === accountStatus);
-  }, [accountStatus, accounts]);
+    const filteredByStatus =
+      accountStatus === 'all'
+        ? accounts
+        : accounts.filter((item) => item.status === accountStatus);
+    const query = accountSearch.trim().toLowerCase();
+
+    if (!query) return filteredByStatus;
+
+    return filteredByStatus.filter((item) =>
+      [
+        item.email,
+        getAccountRoleLabel(item.role),
+        item.Staff?.name,
+        item.Staff?.position,
+        item.Staff?.role,
+        item.Staff?.phone,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(query)),
+    );
+  }, [accountSearch, accountStatus, accounts]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -604,68 +622,37 @@ export default function SystemUsersPage() {
     ];
 
   return (
-    <div className="min-w-0 p-4 md:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Пользователи системы
-          </h1>
-          <p className="text-muted-foreground mt-1 text-sm max-w-2xl">
-            Логины, роли и доступы в CRM. Сотрудники для смен и зарплаты
-            остаются в разделе персонала.
-          </p>
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-2 rounded-xl border bg-card/60 p-3 lg:grid-cols-[160px_minmax(220px,1fr)_auto] lg:items-center">
+        <Select
+          value={accountStatus}
+          onValueChange={(value) =>
+            setAccountStatus(value as 'active' | 'archived' | 'all')
+          }
+        >
+          <SelectTrigger>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="active">Активные</SelectItem>
+            <SelectItem value="archived">Архив</SelectItem>
+            <SelectItem value="all">Все</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="relative min-w-0">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            className="pl-9"
+            value={accountSearch}
+            onChange={(event) => setAccountSearch(event.target.value)}
+            placeholder="Поиск по email, сотруднику или роли"
+          />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Select
-            value={accountStatus}
-            onValueChange={(value) =>
-              setAccountStatus(value as 'active' | 'archived' | 'all')
-            }
-          >
-            <SelectTrigger className="w-[150px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Активные</SelectItem>
-              <SelectItem value="archived">Архив</SelectItem>
-              <SelectItem value="all">Все</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={fetchData}
-            disabled={loading}
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button onClick={openCreate}>
+        <div className="flex justify-end">
+          <Button onClick={openCreate} className="w-full lg:w-auto">
             <Plus className="h-4 w-4 mr-2" /> Пользователь
           </Button>
         </div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground">Всего</div>
-            <div className="text-2xl font-bold mt-1">{stats.total}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground">Активные</div>
-            <div className="text-2xl font-bold mt-1">{stats.active}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground">
-              Привязаны к персоналу
-            </div>
-            <div className="text-2xl font-bold mt-1">{stats.linked}</div>
-          </CardContent>
-        </Card>
       </div>
 
       <div className="border rounded-md bg-card overflow-x-auto">
@@ -678,7 +665,23 @@ export default function SystemUsersPage() {
           loadingText="Загрузка пользователей..."
           minWidthClassName="min-w-[760px] table-fixed"
           onRetry={() => void fetchData()}
+          pageSize={10}
         />
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-3">
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Всего</div>
+          <div className="mt-1 text-lg font-semibold">{stats.total}</div>
+        </div>
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Активные</div>
+          <div className="mt-1 text-lg font-semibold">{stats.active}</div>
+        </div>
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Привязаны к персоналу</div>
+          <div className="mt-1 text-lg font-semibold">{stats.linked}</div>
+        </div>
       </div>
 
       <Dialog open={isModalOpen} onOpenChange={setIsModalOpen}>

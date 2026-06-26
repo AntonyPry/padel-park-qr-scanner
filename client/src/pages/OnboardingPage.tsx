@@ -10,6 +10,7 @@ import {
   FlaskConical,
   GraduationCap,
   ListChecks,
+  Maximize2,
   Power,
   RefreshCw,
   RotateCcw,
@@ -20,7 +21,7 @@ import {
   Trophy,
   UsersRound,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   cleanupOnboardingTrainingData,
   completeOnboardingTask,
@@ -40,6 +41,12 @@ import { ErrorState } from '@/components/error-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -51,6 +58,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
+import { useTheme } from '@/lib/theme-context';
 import { useTrainingMode } from '@/lib/useTrainingMode';
 
 function getTaskStatus(task: OnboardingTask) {
@@ -109,6 +117,218 @@ function getCompletedSkillCount(overview: OnboardingOverview | undefined) {
   return overview.summary.skills.filter((skill) => skill.percent === 100).length;
 }
 
+function getTaskLessonPath(task: OnboardingTask) {
+  return `/admin/onboarding/${encodeURIComponent(task.key)}`;
+}
+
+function findTaskLesson(overview: OnboardingOverview, taskKey: string) {
+  const normalizedTaskKey = decodeURIComponent(taskKey);
+
+  for (const mission of overview.path.missions) {
+    const task = mission.tasks.find((item) => item.key === normalizedTaskKey);
+    if (task) return { mission, task };
+  }
+
+  return null;
+}
+
+const LESSON_SCREENSHOTS: Record<string, string[]> = {
+  'accountant.catalog.update-category': [
+    '/onboarding/accountant/catalog/overview.png',
+    '/onboarding/accountant/catalog/details.png',
+  ],
+  'accountant.catalog.update-rule': [
+    '/onboarding/accountant/catalog/overview.png',
+    '/onboarding/accountant/catalog/details.png',
+  ],
+  'accountant.finance.export': [
+    '/onboarding/accountant/finances/overview.png',
+    '/onboarding/accountant/finances/details.png',
+  ],
+  'accountant.finance.manual-record': [
+    '/onboarding/accountant/finances/overview.png',
+    '/onboarding/accountant/finances/details.png',
+  ],
+  'accountant.finance.review': [
+    '/onboarding/accountant/finances/overview.png',
+    '/onboarding/accountant/finances/details.png',
+  ],
+  'accountant.payroll.review': [
+    '/onboarding/accountant/staff/overview.png',
+    '/onboarding/accountant/staff/details.png',
+  ],
+  'admin.access.create-visit': [
+    '/onboarding/admin/access-create-visit/monitor.png',
+    '/onboarding/admin/access-create-visit/manual-visit-context.png',
+  ],
+  'admin.booking.cancel': [
+    '/onboarding/admin/booking-cancel/schedule.png',
+    '/onboarding/admin/booking-cancel/day-bookings.png',
+  ],
+  'admin.booking.create-phone': [
+    '/onboarding/admin/booking-create-phone/schedule.png',
+    '/onboarding/admin/booking-create-phone/booking-form.png',
+    '/onboarding/admin/booking-create-phone/result-schedule.png',
+  ],
+  'admin.booking.mark-paid': [
+    '/onboarding/admin/booking-mark-paid/schedule.png',
+    '/onboarding/admin/booking-mark-paid/day-bookings.png',
+  ],
+  'admin.booking.move': [
+    '/onboarding/admin/booking-move/schedule-grid.png',
+    '/onboarding/admin/booking-move/day-bookings.png',
+  ],
+  'admin.booking.review-schedule': [
+    '/onboarding/admin/booking-review-schedule/schedule.png',
+    '/onboarding/admin/booking-review-schedule/day-bookings.png',
+  ],
+  'admin.call-task.log-attempt': [
+    '/onboarding/admin/call-task-log-attempt/tasks-list.png',
+    '/onboarding/admin/call-task-log-attempt/task-detail.png',
+  ],
+  'admin.client.create': [
+    '/onboarding/admin/client-create/client-list.png',
+    '/onboarding/admin/client-create/client-form.png',
+    '/onboarding/admin/client-create/result-list.png',
+  ],
+  'manager.call-task.create': [
+    '/onboarding/manager/call-tasks/overview.png',
+    '/onboarding/manager/call-tasks/details.png',
+  ],
+  'manager.call-task.read-report': [
+    '/onboarding/manager/call-tasks/overview.png',
+    '/onboarding/manager/call-tasks/details.png',
+  ],
+  'manager.client-base.create': [
+    '/onboarding/manager/client-bases/overview.png',
+    '/onboarding/manager/client-bases/details.png',
+  ],
+  'manager.motivation.update': [
+    '/onboarding/manager/motivation/overview.png',
+    '/onboarding/manager/motivation/details.png',
+  ],
+  'manager.references.review': [
+    '/onboarding/manager/references/overview.png',
+    '/onboarding/manager/references/details.png',
+  ],
+  'manager.shift.approve': [
+    '/onboarding/manager/staff/overview.png',
+    '/onboarding/manager/staff/details.png',
+  ],
+  'manager.utilization.review': [
+    '/onboarding/manager/utilization/overview.png',
+    '/onboarding/manager/utilization/details.png',
+  ],
+  'manager.visits-analytics.review': [
+    '/onboarding/manager/visits-analytics/overview.png',
+    '/onboarding/manager/visits-analytics/details.png',
+  ],
+  'owner.account.create': [
+    '/onboarding/owner/users/overview.png',
+    '/onboarding/owner/users/details.png',
+  ],
+  'owner.audit.review': [
+    '/onboarding/owner/audit/overview.png',
+    '/onboarding/owner/audit/details.png',
+  ],
+  'owner.finance.review': [
+    '/onboarding/owner/finances/overview.png',
+    '/onboarding/owner/finances/details.png',
+  ],
+  'owner.motivation.review': [
+    '/onboarding/owner/motivation/overview.png',
+    '/onboarding/owner/motivation/details.png',
+  ],
+  'owner.onboarding.review-training-data': [
+    '/onboarding/owner/onboarding/overview.png',
+    '/onboarding/owner/onboarding/details.png',
+  ],
+  'owner.operations.review-visits': [
+    '/onboarding/owner/visits-analytics/overview.png',
+    '/onboarding/owner/visits-analytics/details.png',
+  ],
+  'owner.utilization.review': [
+    '/onboarding/owner/utilization/overview.png',
+    '/onboarding/owner/utilization/details.png',
+  ],
+  'trainer.client.open-card': [
+    '/onboarding/trainer/trainer/overview.png',
+    '/onboarding/trainer/trainer/details.png',
+  ],
+  'trainer.training-level.update': [
+    '/onboarding/trainer/trainer/overview.png',
+    '/onboarding/trainer/trainer/details.png',
+  ],
+  'trainer.training-note.create': [
+    '/onboarding/trainer/trainer/overview.png',
+    '/onboarding/trainer/trainer/details.png',
+  ],
+  'trainer.training-note.update': [
+    '/onboarding/trainer/trainer/overview.png',
+    '/onboarding/trainer/trainer/details.png',
+  ],
+  'viewer.bookings.review': [
+    '/onboarding/viewer/bookings/overview.png',
+    '/onboarding/viewer/bookings/details.png',
+  ],
+  'viewer.finance.review': [
+    '/onboarding/viewer/finances/overview.png',
+    '/onboarding/viewer/finances/details.png',
+  ],
+  'viewer.utilization.review': [
+    '/onboarding/viewer/utilization/overview.png',
+    '/onboarding/viewer/utilization/details.png',
+  ],
+  'viewer.visits-analytics.review': [
+    '/onboarding/viewer/visits-analytics/overview.png',
+    '/onboarding/viewer/visits-analytics/details.png',
+  ],
+};
+
+function getThemedScreenshotSrc(src: string, resolvedTheme: 'light' | 'dark') {
+  if (resolvedTheme === 'light') {
+    return src.replace(/^\/onboarding\//, '/onboarding-light/');
+  }
+
+  return src;
+}
+
+function getLessonSteps(task: OnboardingTask, screenshotsCount: number) {
+  const steps = [
+    {
+      title: 'Поймите результат',
+      text: `${task.description} После этого этапа должно быть понятно, какой рабочий результат нужно получить в CRM.`,
+    },
+    {
+      title: 'Откройте рабочий раздел',
+      text: `Нажмите «Открыть раздел» или перейдите по маршруту ${task.route}. Работайте именно в этом разделе, чтобы прогресс и контекст совпадали с уроком.`,
+    },
+    {
+      title: 'Сверьтесь со скриншотами',
+      text:
+        screenshotsCount > 0
+          ? 'Сначала посмотрите общий вид раздела, затем откройте увеличенный скриншот кликом и найдите нужную область интерфейса.'
+          : 'Для этого урока пока нет отдельного скриншота, поэтому ориентируйтесь на описание и рабочий раздел.',
+    },
+    {
+      title: task.kind === 'review' ? 'Проверьте данные' : 'Выполните действие',
+      text:
+        task.kind === 'review'
+          ? 'Для обзорного урока достаточно открыть раздел, просмотреть ключевые данные и убедиться, что вы понимаете, где они находятся.'
+          : 'Для практического урока выполните действие в CRM. Если доступен режим тренировки, используйте учебные данные, чтобы не затронуть боевую базу.',
+    },
+    {
+      title: 'Завершите урок',
+      text:
+        task.kind === 'review'
+          ? 'Обзорные уроки могут закрываться автоматически после открытия нужного раздела. Если этого не произошло, завершите урок вручную.'
+          : 'Если CRM не зачла действие автоматически, вернитесь в урок и нажмите «Завершить».',
+    },
+  ];
+
+  return steps;
+}
+
 function formatTaskKind(kind: OnboardingTask['kind']) {
   return kind === 'review' ? 'Разбор' : 'Практика';
 }
@@ -144,6 +364,8 @@ function NextTaskPanel({
   nextTask: OnboardingTask | null;
   onComplete: (task: OnboardingTask) => void;
 }) {
+  const navigate = useNavigate();
+
   if (!nextTask) {
     return (
       <section className="rounded-md border bg-background p-5">
@@ -171,7 +393,18 @@ function NextTaskPanel({
   }
 
   return (
-    <section className="rounded-md border bg-background p-5">
+    <section
+      className="cursor-pointer rounded-md border bg-background p-5 transition-colors hover:bg-muted/20"
+      onClick={() => navigate(getTaskLessonPath(nextTask))}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          navigate(getTaskLessonPath(nextTask));
+        }
+      }}
+      role="link"
+      tabIndex={0}
+    >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <Badge variant="outline" className="border-primary/25 bg-primary/10 text-primary">
@@ -197,13 +430,11 @@ function NextTaskPanel({
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link to={nextTask.route}>
-              <ArrowUpRight className="h-4 w-4" />
-              Открыть
-            </Link>
-          </Button>
+        <div
+          className="flex shrink-0 flex-wrap gap-2 lg:justify-end"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <Button
             type="button"
             size="sm"
@@ -229,8 +460,8 @@ function SkillProgressPanel({ overview }: { overview: OnboardingOverview }) {
   const completedSkills = getCompletedSkillCount(overview);
 
   return (
-    <section className="rounded-md border bg-background p-5">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+    <section className="rounded-2xl border bg-background p-5">
+      <div className="flex flex-col gap-4">
         <div className="min-w-0">
           <Badge variant="outline">
             <Sparkles className="h-3 w-3" />
@@ -240,19 +471,19 @@ function SkillProgressPanel({ overview }: { overview: OnboardingOverview }) {
             {completedSkills}/{overview.summary.skills.length} закрыто
           </h2>
         </div>
-        <div className="flex flex-wrap gap-2 md:justify-end">
+        <div className="grid gap-2 sm:grid-cols-2">
           {overview.summary.skills.map((skill) => (
             <Badge
               key={skill.name}
               variant="outline"
               className={cn(
-                'h-auto py-1',
+                'h-auto w-full justify-between gap-2 whitespace-normal rounded-xl px-3 py-2 text-left leading-4',
                 skill.percent === 100 &&
                   'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900/70 dark:bg-emerald-950/40 dark:text-emerald-300',
               )}
             >
-              {skill.name}
-              <span className="text-[10px] text-muted-foreground">
+              <span className="min-w-0 flex-1 truncate">{skill.name}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">
                 {skill.completedTasks}/{skill.totalTasks}
               </span>
             </Badge>
@@ -412,6 +643,7 @@ function TaskRow({
   onComplete: (task: OnboardingTask) => void;
   task: OnboardingTask;
 }) {
+  const navigate = useNavigate();
   const status = getTaskStatus(task);
   const StatusIcon = status.icon;
   const completedAt = formatCompletedAt(task.progress.completedAt);
@@ -419,9 +651,18 @@ function TaskRow({
   return (
     <div
       className={cn(
-        'rounded-md border bg-background p-4',
+        'cursor-pointer rounded-md border bg-background p-4 transition-colors hover:bg-muted/20',
         task.progress.isNext && !task.progress.isCompleted && 'border-primary/40',
       )}
+      onClick={() => navigate(getTaskLessonPath(task))}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          navigate(getTaskLessonPath(task));
+        }
+      }}
+      role="link"
+      tabIndex={0}
     >
       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0 flex-1">
@@ -465,24 +706,15 @@ function TaskRow({
               <Timer className="h-3.5 w-3.5" />
               {task.estimatedMinutes} мин
             </span>
-            <span className="inline-flex items-center gap-1">
-              <Trophy className="h-3.5 w-3.5" />
-              {task.rewardXp} XP
-            </span>
-            <span className="font-mono text-[11px]">
-              {task.checkpoint.event}
-            </span>
             {completedAt && <span>Завершено: {completedAt}</span>}
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-wrap gap-2 lg:justify-end">
-          <Button asChild variant="outline" size="sm">
-            <Link to={task.route}>
-              <ArrowUpRight className="h-4 w-4" />
-              Открыть
-            </Link>
-          </Button>
+        <div
+          className="flex shrink-0 flex-wrap gap-2 lg:justify-end"
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => event.stopPropagation()}
+        >
           <Button
             type="button"
             size="sm"
@@ -504,7 +736,182 @@ function TaskRow({
   );
 }
 
+function LessonDetail({
+  completingTaskKey,
+  mission,
+  onComplete,
+  task,
+}: {
+  completingTaskKey: string | null;
+  mission: OnboardingMission;
+  onComplete: (task: OnboardingTask) => void;
+  task: OnboardingTask;
+}) {
+  const { resolvedTheme } = useTheme();
+  const status = getTaskStatus(task);
+  const StatusIcon = status.icon;
+  const completedAt = formatCompletedAt(task.progress.completedAt);
+  const screenshots = LESSON_SCREENSHOTS[task.key] || [];
+  const steps = getLessonSteps(task, screenshots.length);
+  const [selectedScreenshot, setSelectedScreenshot] = useState<{
+    alt: string;
+    src: string;
+  } | null>(null);
+
+  return (
+    <div className="flex w-full flex-col gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button asChild variant="outline" size="sm">
+          <Link to="/admin/onboarding">Назад к обучению</Link>
+        </Button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link to={task.route}>
+              <ArrowUpRight className="h-4 w-4" />
+              Открыть раздел
+            </Link>
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={task.progress.isCompleted || completingTaskKey === task.key}
+            onClick={() => onComplete(task)}
+          >
+            {completingTaskKey === task.key ? (
+              <RefreshCw className="h-4 w-4 animate-spin" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4" />
+            )}
+            Завершить
+          </Button>
+        </div>
+      </div>
+
+      <section className="rounded-2xl border bg-background p-5 shadow-sm shadow-foreground/5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className={status.className}>
+                <StatusIcon className="h-3 w-3" />
+                {status.label}
+              </Badge>
+              <Badge variant="outline">{formatTaskKind(task.kind)}</Badge>
+              <Badge variant="secondary">{mission.title}</Badge>
+              {completedAt && (
+                <Badge variant="outline">Завершено {completedAt}</Badge>
+              )}
+            </div>
+            <h1 className="mt-4 text-2xl font-semibold tracking-tight text-foreground">
+              {task.title}
+            </h1>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+              {task.description}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 lg:justify-end">
+            {task.skills.map((skill) => (
+              <Badge key={skill} variant="secondary">
+                {skill}
+              </Badge>
+            ))}
+            <Badge variant="outline">
+              <Timer className="h-3 w-3" />
+              {task.estimatedMinutes} мин
+            </Badge>
+          </div>
+        </div>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+        <div className="rounded-2xl border bg-background p-5">
+          <Badge variant="outline">Порядок прохождения</Badge>
+          <div className="mt-4 space-y-3">
+            {steps.map((step, index) => (
+              <div key={step.title} className="rounded-xl border bg-muted/20 p-4">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <span className="flex size-6 items-center justify-center rounded-full bg-primary text-xs text-primary-foreground">
+                    {index + 1}
+                  </span>
+                  {step.title}
+                </div>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  {step.text}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border bg-background p-5">
+          <Badge variant="outline">Скриншоты</Badge>
+          {screenshots.length > 0 ? (
+            <div className="mt-4 grid gap-3">
+              {screenshots.map((src, index) => {
+                const alt = `${task.title}: скриншот ${index + 1}`;
+                const themedSrc = getThemedScreenshotSrc(src, resolvedTheme);
+
+                return (
+                  <figure
+                    key={src}
+                    className="overflow-hidden rounded-xl border bg-muted/20"
+                  >
+                    <button
+                      type="button"
+                      className="group relative block w-full overflow-hidden text-left"
+                      onClick={() => setSelectedScreenshot({ alt, src })}
+                    >
+                      <img
+                        alt={alt}
+                        className="w-full object-cover transition-transform duration-500 group-hover:scale-[1.01]"
+                        src={themedSrc}
+                      />
+                      <span className="absolute right-3 top-3 flex size-9 items-center justify-center rounded-full border bg-background/85 text-foreground opacity-0 shadow-sm backdrop-blur transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100">
+                        <Maximize2 className="h-4 w-4" />
+                        <span className="sr-only">Увеличить скриншот</span>
+                      </span>
+                    </button>
+                  </figure>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="mt-4 rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
+              Для этого урока пока нет привязанного скриншота.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <Dialog
+        open={Boolean(selectedScreenshot)}
+        onOpenChange={(open) => {
+          if (!open) setSelectedScreenshot(null);
+        }}
+      >
+        <DialogContent className="max-w-[min(1280px,calc(100vw-2rem))] gap-3 p-2 sm:max-w-[min(1280px,calc(100vw-2rem))]">
+          <DialogTitle className="sr-only">
+            {selectedScreenshot?.alt || 'Скриншот урока'}
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Увеличенное изображение рабочего экрана CRM из текущего урока.
+          </DialogDescription>
+          {selectedScreenshot && (
+            <div className="max-h-[calc(100dvh-5rem)] overflow-auto rounded-lg">
+              <img
+                alt={selectedScreenshot.alt}
+                className="w-full min-w-[720px] max-w-none rounded-lg object-contain md:min-w-0"
+                src={getThemedScreenshotSrc(selectedScreenshot.src, resolvedTheme)}
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 export default function OnboardingPage() {
+  const { taskKey } = useParams();
   const { account } = useAuth();
   const trainingMode = useTrainingMode();
   const queryClient = useQueryClient();
@@ -638,7 +1045,7 @@ export default function OnboardingPage() {
 
   if (onboardingQuery.isError) {
     return (
-      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+      <div className="flex w-full flex-col gap-5">
         <ErrorState
           message={getApiErrorMessage(
             onboardingQuery.error,
@@ -652,7 +1059,7 @@ export default function OnboardingPage() {
 
   if (onboardingQuery.isLoading || !overview) {
     return (
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+      <div className="flex w-full flex-col gap-5">
         <div className="h-32 animate-pulse rounded-md border bg-muted/40" />
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="h-48 animate-pulse rounded-md border bg-muted/40" />
@@ -667,9 +1074,37 @@ export default function OnboardingPage() {
   const completingTaskKey = completeMutation.isPending
     ? completeMutation.variables?.key || null
     : null;
+  const lesson = taskKey ? findTaskLesson(overview, taskKey) : null;
+
+  if (taskKey) {
+    if (!lesson) {
+      return (
+        <div className="flex w-full flex-col gap-4">
+          <ErrorState
+            message="Такого урока нет в текущем пути роли."
+            title="Урок не найден"
+          />
+          <div>
+            <Button asChild variant="outline">
+              <Link to="/admin/onboarding">Вернуться к обучению</Link>
+            </Button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <LessonDetail
+        completingTaskKey={completingTaskKey}
+        mission={lesson.mission}
+        onComplete={handleComplete}
+        task={lesson.task}
+      />
+    );
+  }
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+    <div className="flex w-full flex-col gap-5">
       <section className="rounded-md border bg-background p-5">
         <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
           <div className="min-w-0">

@@ -9,7 +9,6 @@ import {
   ArchiveRestore,
   Pencil,
   Plus,
-  RefreshCw,
   Save,
   Trash2,
 } from 'lucide-react';
@@ -362,36 +361,8 @@ export default function ReferencesPage() {
     ];
 
   return (
-    <div className="min-w-0 space-y-4 p-4 md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Справочники CRM</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Управление списками, из которых выбираются источники клиентов и цели
-            визитов.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => void refreshReferences()}
-            disabled={loading}
-            aria-label="Обновить справочник"
-            title="Обновить"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-          {canEditReferences && (
-            <Button onClick={openCreate}>
-              <Plus className="mr-2 h-4 w-4" />
-              {currentTab.createLabel}
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-3 rounded-md border bg-card p-3 lg:flex-row lg:items-center lg:justify-between">
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap gap-2">
           {REFERENCE_TABS.map((tab) => (
             <Button
@@ -403,27 +374,29 @@ export default function ReferencesPage() {
             </Button>
           ))}
         </div>
-        <Select
-          value={status}
-          onValueChange={(value) => setStatus(value as ReferenceStatus)}
-        >
-          <SelectTrigger className="w-full lg:w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="active">Активные</SelectItem>
-            <SelectItem value="archived">Архив</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <Select
+            value={status}
+            onValueChange={(value) => setStatus(value as ReferenceStatus)}
+          >
+            <SelectTrigger className="w-full sm:w-[180px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="active">Активные</SelectItem>
+              <SelectItem value="archived">Архив</SelectItem>
+            </SelectContent>
+          </Select>
+          {canEditReferences && (
+            <Button onClick={openCreate}>
+              <Plus className="mr-2 h-4 w-4" />
+              {currentTab.createLabel}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-md border bg-card">
-        <div className="flex flex-col gap-1 border-b px-4 py-3">
-          <div className="font-medium">{currentTab.title}</div>
-          <div className="text-sm text-muted-foreground">
-            {currentTab.description}
-          </div>
-        </div>
         <DataTable
           columns={referenceColumns}
           data={items}

@@ -1,20 +1,17 @@
 import {
   Activity,
   BicepsFlexed,
-  Building2,
   CalendarDays,
   CircleDollarSign,
   ContactRound,
   Database,
   Filter,
-  Gift,
   GraduationCap,
   History,
   LayoutDashboard,
-  ListChecks,
-  ChartColumn,
-  ClipboardCheck,
   LineChart,
+  ListChecks,
+  ClipboardCheck,
   LogOut,
   ListTree,
   PhoneCall,
@@ -25,6 +22,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import {
   Sidebar,
   SidebarContent,
@@ -37,17 +35,19 @@ import {
   SidebarHeader,
   SidebarFooter,
   SidebarSeparator,
-  SidebarTrigger,
 } from '@/components/ui/sidebar';
 import { Link, useLocation } from 'react-router-dom';
 import { ROUTE_ACCESS, hasRoleAccess } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import { getAccountRoleLabel } from '@/lib/roles';
+import { cn } from '@/lib/utils';
+import { ThemeToggle } from './theme-toggle';
 
 type NavItem = {
   title: string;
   url: string;
   icon: LucideIcon;
+  activeUrls?: string[];
 };
 
 type NavSection = {
@@ -113,16 +113,11 @@ const navigationSections: NavSection[] = [
         title: 'Предоплаты',
         url: '/admin/prepayments',
         icon: WalletCards,
-      },
-      {
-        title: 'Сертификаты',
-        url: '/admin/certificates',
-        icon: Gift,
-      },
-      {
-        title: 'Корпоративные клиенты',
-        url: '/admin/corporate-clients',
-        icon: Building2,
+        activeUrls: [
+          '/admin/prepayments',
+          '/admin/certificates',
+          '/admin/corporate-clients',
+        ],
       },
       {
         title: 'Финансы (P&L)',
@@ -143,11 +138,7 @@ const navigationSections: NavSection[] = [
         title: 'Методика',
         url: '/admin/methodology',
         icon: ListChecks,
-      },
-      {
-        title: 'Аналитика методики',
-        url: '/admin/methodology-analytics',
-        icon: ChartColumn,
+        activeUrls: ['/admin/methodology', '/admin/methodology-analytics'],
       },
     ],
   },
@@ -203,16 +194,26 @@ const navigationSections: NavSection[] = [
   },
 ];
 
-function isRouteActive(currentPath: string, itemUrl: string) {
-  return (
-    currentPath === itemUrl ||
-    (itemUrl !== '/admin' && currentPath.startsWith(`${itemUrl}/`))
+function isRouteActive(currentPath: string, item: NavItem) {
+  const urls = item.activeUrls || [item.url];
+
+  return urls.some(
+    (url) =>
+      currentPath === url || (url !== '/admin' && currentPath.startsWith(`${url}/`)),
   );
 }
 
 export function AppSidebar() {
   const location = useLocation();
   const { account, logout } = useAuth();
+  const navRef = useRef<HTMLDivElement | null>(null);
+  const [activeIndicator, setActiveIndicator] = useState({
+    height: 0,
+    left: 0,
+    opacity: 0,
+    top: 0,
+    width: 0,
+  });
   const availableSections = navigationSections
     .map((section) => ({
       ...section,
@@ -231,60 +232,130 @@ export function AppSidebar() {
     .slice(0, 2)
     .map((part) => part[0]?.toUpperCase())
     .join('');
+  const syncActiveIndicator = useCallback(() => {
+    const root = navRef.current;
+    const activeItem = root?.querySelector<HTMLElement>(
+      '[data-sidebar-nav-item="true"][data-active="true"]',
+    );
+
+    if (!root || !activeItem) {
+      setActiveIndicator((current) => ({ ...current, opacity: 0 }));
+      return;
+    }
+
+    const rootRect = root.getBoundingClientRect();
+    const itemRect = activeItem.getBoundingClientRect();
+
+    setActiveIndicator({
+      height: itemRect.height,
+      left: itemRect.left - rootRect.left,
+      opacity: 1,
+      top: itemRect.top - rootRect.top,
+      width: itemRect.width,
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    const frame = window.requestAnimationFrame(syncActiveIndicator);
+    const root = navRef.current;
+    const observer = new ResizeObserver(syncActiveIndicator);
+
+    if (root) observer.observe(root);
+    window.addEventListener('resize', syncActiveIndicator);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+      window.removeEventListener('resize', syncActiveIndicator);
+    };
+  }, [location.pathname, syncActiveIndicator, availableSections.length]);
 
   return (
-    <Sidebar collapsible="icon">
-      <SidebarHeader className="border-b border-sidebar-border p-2">
-        <div className="flex h-10 min-w-0 items-center gap-2">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-md border border-sidebar-border bg-sidebar-accent text-xs font-semibold text-primary group-data-[collapsible=icon]:hidden">
+    <Sidebar collapsible="none">
+      <SidebarHeader className="border-b border-sidebar-border/70 p-4 pb-3">
+        <div className="flex h-10 min-w-0 items-center gap-3">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-sidebar-border bg-sidebar-accent text-xs font-semibold text-primary shadow-sm shadow-foreground/5">
             PP
           </div>
-          <span className="min-w-0 flex-1 truncate font-bold tracking-tight text-primary group-data-[collapsible=icon]:hidden">
+          <span className="block min-w-0 truncate text-sm font-semibold tracking-tight text-primary">
             Padel Park
           </span>
-          <SidebarTrigger className="ml-auto group-data-[collapsible=icon]:mx-auto" />
+          <ThemeToggle />
         </div>
       </SidebarHeader>
 
       <SidebarContent>
-        {availableSections.map((section) => (
-          <SidebarGroup
-            key={section.title}
-            className="py-1 group-data-[collapsible=icon]:py-0"
-          >
-            <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {section.items.map((item) => (
-                  <SidebarMenuItem key={item.url}>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={isRouteActive(location.pathname, item.url)}
-                      tooltip={item.title}
-                    >
-                      <Link to={item.url}>
-                        <item.icon />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ))}
+        <div ref={navRef} className="relative px-1 py-1">
+          <div
+            aria-hidden="true"
+            data-sidebar-active-indicator="true"
+            className="pointer-events-none absolute left-0 top-0 z-0 rounded-xl bg-sidebar-accent shadow-sm shadow-foreground/5 ring-1 ring-sidebar-border/60 transition-[height,opacity,transform,width] duration-300 ease-out"
+            style={{
+              height: activeIndicator.height,
+              opacity: activeIndicator.opacity,
+              transform: `translate3d(${activeIndicator.left}px, ${activeIndicator.top}px, 0)`,
+              width: activeIndicator.width,
+            }}
+          />
+          {availableSections.map((section, sectionIndex) => {
+            const isSectionActive = section.items.some((item) =>
+              isRouteActive(location.pathname, item),
+            );
+
+            return (
+              <SidebarGroup
+                key={section.title}
+                className={cn(
+                  'relative z-10 border-t border-sidebar-border/45 py-1.5 transition-[background-color,border-color,box-shadow] duration-300 ease-out first:border-t-0 group-data-[collapsible=icon]:py-0',
+                  sectionIndex > 0 && 'mt-1',
+                  isSectionActive &&
+                    'rounded-2xl bg-sidebar-accent/30 shadow-[inset_0_1px_0_hsl(var(--sidebar-border)/0.45)]',
+                )}
+              >
+                <SidebarGroupLabel
+                  className={cn(
+                    isSectionActive && 'text-sidebar-foreground/85',
+                  )}
+                >
+                  {section.title}
+                </SidebarGroupLabel>
+                <SidebarGroupContent>
+                  <SidebarMenu>
+                    {section.items.map((item) => {
+                      const isActive = isRouteActive(location.pathname, item);
+
+                      return (
+                        <SidebarMenuItem key={item.url}>
+                          <SidebarMenuButton
+                            asChild
+                            data-sidebar-nav-item="true"
+                            isActive={isActive}
+                          >
+                            <Link to={item.url}>
+                              <item.icon />
+                              <span>{item.title}</span>
+                            </Link>
+                          </SidebarMenuButton>
+                        </SidebarMenuItem>
+                      );
+                    })}
+                  </SidebarMenu>
+                </SidebarGroupContent>
+              </SidebarGroup>
+            );
+          })}
+        </div>
       </SidebarContent>
 
-      <SidebarSeparator />
-      <SidebarFooter className="group-data-[collapsible=icon]:items-center">
+      <SidebarSeparator className="mx-4" />
+      <SidebarFooter className="p-4 pt-3 group-data-[collapsible=icon]:items-center">
         <SidebarMenu>
           <SidebarMenuItem className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
             <SidebarMenuButton
               size="lg"
               className="cursor-default hover:bg-transparent hover:text-sidebar-foreground group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:overflow-visible"
-              tooltip={displayName}
             >
-              <div className="flex size-8 shrink-0 items-center justify-center rounded-md bg-sidebar-accent text-xs font-semibold group-data-[collapsible=icon]:size-7 group-data-[collapsible=icon]:text-[11px]">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-sidebar-accent text-xs font-semibold group-data-[collapsible=icon]:size-7 group-data-[collapsible=icon]:text-[11px]">
                 {initials || 'CRM'}
               </div>
               <span className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
@@ -298,7 +369,7 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem className="group-data-[collapsible=icon]:flex group-data-[collapsible=icon]:justify-center">
-            <SidebarMenuButton onClick={logout} tooltip="Выйти">
+            <SidebarMenuButton onClick={logout}>
               <LogOut />
               <span>Выйти</span>
             </SidebarMenuButton>

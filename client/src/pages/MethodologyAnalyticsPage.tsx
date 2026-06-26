@@ -9,7 +9,6 @@ import {
   Dumbbell,
   Filter,
   Gauge,
-  RefreshCw,
   Target,
   TrendingDown,
   UserRound,
@@ -30,10 +29,9 @@ import {
 import { queryKeys } from '@/api/query-keys';
 import { ErrorState } from '@/components/error-state';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { ModuleSwitch } from '@/components/module-switch';
 import {
   Select,
   SelectContent,
@@ -61,6 +59,11 @@ const DEFAULT_FILTERS = {
   to: format(new Date(), 'yyyy-MM-dd'),
   trainerAccountId: null as number | null,
 };
+
+const METHODOLOGY_SWITCH_ITEMS = [
+  { label: 'Методика', to: '/admin/methodology' },
+  { label: 'Аналитика', to: '/admin/methodology-analytics' },
+];
 
 function formatDate(value?: string | null) {
   if (!value) return '-';
@@ -102,14 +105,14 @@ function KpiCard({
 }) {
   return (
     <Card>
-      <CardHeader className="flex flex-row items-center justify-between pb-2">
+      <CardHeader className="flex flex-row items-center justify-between p-4 pb-1">
         <CardTitle className="text-sm font-medium text-muted-foreground">
           {label}
         </CardTitle>
         <Icon className={cn('h-4 w-4', accent)} />
       </CardHeader>
-      <CardContent>
-        <div className="text-3xl font-semibold">{value}</div>
+      <CardContent className="p-4 pt-1">
+        <div className="text-2xl font-semibold">{value}</div>
       </CardContent>
     </Card>
   );
@@ -593,7 +596,6 @@ export default function MethodologyAnalyticsPage() {
     queryKey: queryKeys.methodology.analytics(analyticsParams),
   });
   const data = analyticsQuery.data;
-  const loading = analyticsQuery.isLoading || analyticsQuery.isFetching;
   const dateRangeError = !isDateRangeValid
     ? 'Дата начала не может быть позже даты окончания.'
     : '';
@@ -602,20 +604,14 @@ export default function MethodologyAnalyticsPage() {
     : '';
 
   return (
-    <div className="mx-auto max-w-[1600px] space-y-6 p-6 md:p-8">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold">Аналитика методики</h1>
-          <p className="mt-1 text-muted-foreground">
-            Качество тренировок, покрытие навыков и использование рекомендаций
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[160px_160px_220px_auto]">
-          <div className="space-y-2">
-            <Label htmlFor="methodology-analytics-from">С</Label>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
+        <ModuleSwitch items={METHODOLOGY_SWITCH_ITEMS} />
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-[160px_160px_220px]">
+          <div>
             <Input
               id="methodology-analytics-from"
+              aria-label="Дата с"
               type="date"
               value={filters.from}
               onChange={(event) =>
@@ -623,10 +619,10 @@ export default function MethodologyAnalyticsPage() {
               }
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="methodology-analytics-to">По</Label>
+          <div>
             <Input
               id="methodology-analytics-to"
+              aria-label="Дата по"
               type="date"
               value={filters.to}
               onChange={(event) =>
@@ -634,8 +630,7 @@ export default function MethodologyAnalyticsPage() {
               }
             />
           </div>
-          <div className="space-y-2">
-            <Label>Тренер</Label>
+          <div>
             <Select
               value={filters.trainerAccountId ? String(filters.trainerAccountId) : 'all'}
               onValueChange={(value) =>
@@ -658,17 +653,6 @@ export default function MethodologyAnalyticsPage() {
                 ))}
               </SelectContent>
             </Select>
-          </div>
-          <div className="flex items-end">
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={() => void analyticsQuery.refetch()}
-              disabled={loading || !isDateRangeValid}
-            >
-              <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
-              Обновить
-            </Button>
           </div>
         </div>
       </div>

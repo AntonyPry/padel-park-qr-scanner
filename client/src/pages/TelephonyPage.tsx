@@ -678,18 +678,13 @@ export default function TelephonyPage() {
             : null;
 
   return (
-    <div className="min-w-0 space-y-4 p-4 md:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Телефония</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Звонки из Билайна, ручная обработка итогов и контроль пропущенных.
-          </p>
-        </div>
-        {canManage && (
-          <div className="flex flex-wrap gap-2">
+    <div className="flex min-w-0 flex-col gap-5">
+      <h1 className="sr-only">Телефония</h1>
+      {canManage && (
+        <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="outline"
+              size="sm"
               onClick={() => syncMutation.mutate({})}
               disabled={syncMutation.isPending || !beelineApiReady}
               title={
@@ -703,6 +698,7 @@ export default function TelephonyPage() {
             </Button>
             <Button
               variant="outline"
+              size="sm"
               onClick={() => syncRecordingsMutation.mutate({})}
               disabled={syncRecordingsMutation.isPending || !beelineApiReady}
               title={
@@ -716,6 +712,7 @@ export default function TelephonyPage() {
             </Button>
             <Button
               variant="outline"
+              size="sm"
               onClick={() => subscribeMutation.mutate({})}
               disabled={subscribeMutation.isPending || !beelineXsiReady}
               title={
@@ -729,6 +726,7 @@ export default function TelephonyPage() {
             </Button>
             <Button
               variant="outline"
+              size="sm"
               onClick={() => checkSubscriptionMutation.mutate()}
               disabled={checkSubscriptionMutation.isPending || !beelineXsiReady}
               title={
@@ -741,8 +739,7 @@ export default function TelephonyPage() {
               Проверить XSI
             </Button>
           </div>
-        )}
-      </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
         <MetricCard
@@ -792,19 +789,20 @@ export default function TelephonyPage() {
       </div>
 
       <div className="space-y-3">
-        <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold">Контроль обработки</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Итоги звонков за период: результаты, просроченные действия и работа операторов.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="w-[155px]">
-              <Label htmlFor="telephony-report-from">С</Label>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <h2 className="sr-only">Контроль обработки</h2>
+          <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5">
+            <span className="px-2 text-xs font-medium text-muted-foreground">
+              Период
+            </span>
+            <div>
+              <Label htmlFor="telephony-report-from" className="sr-only">
+                Начало периода
+              </Label>
               <Input
                 id="telephony-report-from"
                 type="date"
+                className="h-9 w-[150px]"
                 value={reportRange.from}
                 onChange={(event) =>
                   setReportRange((current) => ({
@@ -814,11 +812,14 @@ export default function TelephonyPage() {
                 }
               />
             </div>
-            <div className="w-[155px]">
-              <Label htmlFor="telephony-report-to">По</Label>
+            <div>
+              <Label htmlFor="telephony-report-to" className="sr-only">
+                Конец периода
+              </Label>
               <Input
                 id="telephony-report-to"
                 type="date"
+                className="h-9 w-[150px]"
                 value={reportRange.to}
                 onChange={(event) =>
                   setReportRange((current) => ({
@@ -828,15 +829,6 @@ export default function TelephonyPage() {
                 }
               />
             </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void reportQuery.refetch()}
-              disabled={reportQuery.isFetching}
-            >
-              <RefreshCw className="h-4 w-4" />
-              Обновить
-            </Button>
           </div>
         </div>
 
@@ -1097,11 +1089,14 @@ export default function TelephonyPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="min-w-[220px] flex-1">
-          <Label htmlFor="telephony-search">Поиск</Label>
+      <div className="grid gap-2 rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_180px_170px_170px_170px]">
+        <div className="space-y-1">
+          <Label htmlFor="telephony-search" className="text-xs text-muted-foreground">
+            Поиск
+          </Label>
           <Input
             id="telephony-search"
+            className="h-9"
             value={searchInput}
             onChange={(event) => {
               setSearchInput(event.target.value);
@@ -1109,8 +1104,8 @@ export default function TelephonyPage() {
             placeholder="Имя или телефон"
           />
         </div>
-        <div className="w-[210px]">
-          <Label>Статус обработки</Label>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Статус обработки</Label>
           <Select
             value={status}
             onValueChange={(value) => {
@@ -1118,7 +1113,7 @@ export default function TelephonyPage() {
               setStatus(value);
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1129,8 +1124,8 @@ export default function TelephonyPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="w-[190px]">
-          <Label>Статус звонка</Label>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Статус звонка</Label>
           <Select
             value={callStatus}
             onValueChange={(value) => {
@@ -1138,7 +1133,7 @@ export default function TelephonyPage() {
               setCallStatus(value);
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1151,8 +1146,8 @@ export default function TelephonyPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="w-[190px]">
-          <Label>Запись</Label>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Запись</Label>
           <Select
             value={recordingStatus}
             onValueChange={(value) => {
@@ -1160,7 +1155,7 @@ export default function TelephonyPage() {
               setRecordingStatus(value);
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1172,8 +1167,8 @@ export default function TelephonyPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="w-[190px]">
-          <Label>Направление</Label>
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">Направление</Label>
           <Select
             value={direction}
             onValueChange={(value) => {
@@ -1181,7 +1176,7 @@ export default function TelephonyPage() {
               setDirection(value);
             }}
           >
-            <SelectTrigger>
+            <SelectTrigger className="h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1312,7 +1307,7 @@ export default function TelephonyPage() {
       </div>
 
       <div className="hidden overflow-x-auto rounded-md border md:block">
-        <Table className="min-w-[1240px] table-fixed">
+        <Table className="min-w-[1240px] table-fixed [&_td]:py-4 [&_th]:py-3">
           <TableHeader>
             <TableRow>
               <TableHead className="w-[125px]">

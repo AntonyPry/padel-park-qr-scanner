@@ -8,14 +8,15 @@ import {
   Gift,
   Link2,
   PackageCheck,
-  RefreshCw,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   TrendingDown,
   WalletCards,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ModuleSwitch } from '@/components/module-switch';
 import {
   Card,
   CardContent,
@@ -23,7 +24,17 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import { ErrorState } from '@/components/error-state';
+import { AnimatedMetricValue } from '@/components/animated-data';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -33,7 +44,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
-import { cn } from '@/lib/utils';
 
 type DashboardType =
   | 'all'
@@ -225,6 +235,12 @@ const EXPIRY_LABELS: Record<ExpiryFilter, string> = {
   valid: 'Действующие',
 };
 
+const BILLING_SWITCH_ITEMS = [
+  { label: 'Предоплаты', to: '/admin/prepayments' },
+  { label: 'Сертификаты', to: '/admin/certificates' },
+  { label: 'Корпоративные', to: '/admin/corporate-clients' },
+];
+
 const SALE_INTENT_LABELS: Record<string, string> = {
   certificate: 'Сертификат',
   subscription: 'Абонемент',
@@ -256,19 +272,6 @@ function formatDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '-';
   return new Intl.DateTimeFormat('ru-RU').format(date);
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
-  return new Intl.DateTimeFormat('ru-RU', {
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-  }).format(date);
 }
 
 async function readError(response: Response, fallback: string) {
@@ -333,7 +336,9 @@ function MetricCard({
       <CardHeader className="flex-row items-start justify-between gap-3">
         <div className="min-w-0">
           <CardDescription className="truncate">{label}</CardDescription>
-          <CardTitle className="mt-2 text-2xl leading-tight">{value}</CardTitle>
+          <CardTitle className="mt-2 text-2xl leading-tight">
+            <AnimatedMetricValue value={value} />
+          </CardTitle>
         </div>
         <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted">
           <Icon className="h-4 w-4" />
@@ -373,6 +378,7 @@ export default function PrepaymentsPage() {
   const [typeFilter, setTypeFilter] = useState<DashboardType>('all');
   const [statusFilter, setStatusFilter] = useState<DashboardStatus>('all');
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('all');
+  const [filtersOpen, setFiltersOpen] = useState(false);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -453,45 +459,16 @@ export default function PrepaymentsPage() {
 
   const hasFilters =
     query || typeFilter !== 'all' || statusFilter !== 'all' || expiryFilter !== 'all';
+  const activeFiltersCount = [typeFilter, statusFilter, expiryFilter].filter(
+    (value) => value !== 'all',
+  ).length;
   const pendingSalesSectionTitle =
     PENDING_SALES_SECTION_LABELS[statusFilter] || 'Продажи из очереди';
 
   return (
-    <div className="flex flex-col gap-5 p-4 md:p-6">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-normal">
-            Предоплаты и списания
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            {dashboard
-              ? `Обновлено ${formatDateTime(dashboard.generatedAt)}`
-              : 'Сводка загружается'}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void loadDashboard()}
-            disabled={loading}
-          >
-            <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
-            Обновить
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={resetFilters}
-            disabled={!hasFilters && !searchInput}
-          >
-            <RotateCcw className="mr-2 h-4 w-4" />
-            Сброс
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid gap-3 rounded-md border bg-card p-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_180px_auto]">
+    <div className="flex flex-col gap-5">
+      <div className="grid gap-2 rounded-xl border bg-card/60 p-3 xl:grid-cols-[auto_minmax(280px,1fr)_auto_auto] xl:items-center">
+        <ModuleSwitch items={BILLING_SWITCH_ITEMS} className="shrink-0" />
         <div className="flex min-w-0 gap-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -511,56 +488,101 @@ export default function PrepaymentsPage() {
           </Button>
         </div>
 
-        <Select
-          value={typeFilter}
-          onValueChange={(value) => setTypeFilter(value as DashboardType)}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(TYPE_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <Dialog open={filtersOpen} onOpenChange={setFiltersOpen}>
+          <DialogTrigger asChild>
+            <Button type="button" variant="outline">
+              <SlidersHorizontal className="mr-2 h-4 w-4" />
+              Фильтры
+              {activeFiltersCount > 0 && (
+                <Badge variant="secondary" className="ml-1 rounded-full px-1.5">
+                  {activeFiltersCount}
+                </Badge>
+              )}
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-[520px]">
+            <DialogHeader>
+              <DialogTitle>Фильтры предоплат</DialogTitle>
+              <DialogDescription className="sr-only">
+                Настройте тип, статус и срок предоплат.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 pt-2">
+              <Select
+                value={typeFilter}
+                onValueChange={(value) => setTypeFilter(value as DashboardType)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TYPE_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-        <Select
-          value={statusFilter}
-          onValueChange={(value) => setStatusFilter(value as DashboardStatus)}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(STATUS_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+              <Select
+                value={statusFilter}
+                onValueChange={(value) => setStatusFilter(value as DashboardStatus)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(STATUS_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
 
-        <Select
-          value={expiryFilter}
-          onValueChange={(value) => setExpiryFilter(value as ExpiryFilter)}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {Object.entries(EXPIRY_LABELS).map(([value, label]) => (
-              <SelectItem key={value} value={value}>
-                {label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+              <Select
+                value={expiryFilter}
+                onValueChange={(value) => setExpiryFilter(value as ExpiryFilter)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(EXPIRY_LABELS).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={resetFilters}
+                disabled={!hasFilters && !searchInput}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                Сбросить
+              </Button>
+              <Button type="button" onClick={() => setFiltersOpen(false)}>
+                Готово
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-        <div className="flex items-center justify-end text-xs text-muted-foreground">
-          {dashboard?.filters.expiringDays || 14} дней
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={resetFilters}
+            disabled={!hasFilters && !searchInput}
+          >
+            <RotateCcw className="mr-2 h-4 w-4" />
+            Сброс
+          </Button>
         </div>
       </div>
 

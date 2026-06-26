@@ -14,6 +14,8 @@ import {
 import { Button } from '@/components/ui/button';
 import { DataTable } from '@/components/data-table';
 import { ErrorState } from '@/components/error-state';
+import { EmptyState } from '@/components/empty-state';
+import { ChartLoadingState } from '@/components/chart-loading-state';
 import { toast } from '@/components/ui/toast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -21,6 +23,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -40,7 +43,6 @@ import {
 import { Calendar } from '@/components/ui/calendar';
 import {
   Calendar as CalendarIcon,
-  RefreshCw,
   Plus,
   ChevronRight,
   LayoutList,
@@ -49,20 +51,13 @@ import {
   Download,
   History,
 } from 'lucide-react';
-import {
-  PieChart,
-  Pie,
-  Cell,
-  Tooltip as RechartsTooltip,
-  ResponsiveContainer,
-  Legend,
-} from 'recharts';
 import { format } from 'date-fns';
 import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
+import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
 import { canExportFinance, canManageFinance } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import { MetricCard } from '@/components/dashboard-metric';
@@ -74,16 +69,6 @@ import {
   permissionMessages,
   showPermissionDenied,
 } from '@/lib/permission-feedback';
-
-const PIE_COLORS = [
-  '#3b82f6',
-  '#10b981',
-  '#f59e0b',
-  '#ef4444',
-  '#8b5cf6',
-  '#06b6d4',
-  '#64748b',
-];
 
 interface CatalogCategory {
   id: number;
@@ -171,8 +156,155 @@ type ManualFinanceForm = z.infer<typeof manualFinanceFormSchema>;
 
 const formatCurrencyValue = (val: unknown) => {
   const rawValue = Array.isArray(val) ? val[0] : val;
-  return `${Number(rawValue ?? 0).toLocaleString()} ₽`;
+  return `${Number(rawValue ?? 0).toLocaleString('ru-RU')} ₽`;
 };
+
+const INCOME_CHART_COLORS = [
+  'hsl(160 84% 39%)',
+  'hsl(199 89% 48%)',
+  'hsl(262 83% 58%)',
+  'hsl(43 96% 56%)',
+  'hsl(221 83% 53%)',
+  'hsl(173 80% 40%)',
+];
+
+const EXPENSE_CHART_COLORS = [
+  'hsl(0 84% 60%)',
+  'hsl(24 95% 53%)',
+  'hsl(43 96% 56%)',
+  'hsl(262 83% 58%)',
+  'hsl(199 89% 48%)',
+  'hsl(340 82% 52%)',
+];
+
+const DISTRIBUTION_MAX_ROWS = 7;
+const OTHER_CHART_COLOR = 'hsl(240 5% 64%)';
+
+interface DistributionItem {
+  isOther?: boolean;
+  name: string;
+  sourceCount?: number;
+  value: number;
+}
+
+function buildDistributionItems(items: Array<{ name: string; value: number }>) {
+  const normalizedItems = items
+    .map((item) => ({
+      name: item.name.trim() || 'Без названия',
+      value: Number(item.value || 0),
+    }))
+    .filter((item) => item.value > 0)
+    .sort((a, b) => b.value - a.value);
+
+  if (normalizedItems.length <= DISTRIBUTION_MAX_ROWS) {
+    return normalizedItems;
+  }
+
+  const headItems = normalizedItems.slice(0, DISTRIBUTION_MAX_ROWS - 1);
+  const tailItems = normalizedItems.slice(DISTRIBUTION_MAX_ROWS - 1);
+  const otherValue = tailItems.reduce((sum, item) => sum + item.value, 0);
+
+  return [
+    ...headItems,
+    {
+      isOther: true,
+      name: `Остальное · ${tailItems.length}`,
+      sourceCount: tailItems.length,
+      value: otherValue,
+    },
+  ];
+}
+
+function DistributionChartCard({
+  items,
+  title,
+  tone,
+}: {
+  items: Array<{ name: string; value: number }>;
+  title: string;
+  tone: 'income' | 'expense';
+}) {
+  const distributionItems: DistributionItem[] = buildDistributionItems(items);
+  const colors = tone === 'income' ? INCOME_CHART_COLORS : EXPENSE_CHART_COLORS;
+  const total = distributionItems.reduce((sum, item) => sum + Number(item.value || 0), 0);
+  const segments = distributionItems.map((item, index) => {
+    const value = Number(item.value || 0);
+    const color = item.isOther ? OTHER_CHART_COLOR : colors[index % colors.length];
+
+    return {
+      color,
+      index,
+      item,
+      percent: total > 0 ? Math.round((value / total) * 100) : 0,
+      value,
+    };
+  });
+
+  return (
+    <Card data-finance-distribution={tone}>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base font-semibold">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        {distributionItems.length > 0 && total > 0 ? (
+          <div className="grid min-h-[260px] gap-4 md:grid-cols-[240px_minmax(0,1fr)] md:items-center">
+            <div className="relative mx-auto h-[220px] w-[220px]">
+              <AnimatedDonut
+                ariaLabel={title}
+                items={segments.map(({ color, item, value }) => ({
+                  color,
+                  id: item.name,
+                  title: `${item.name}: ${formatCurrencyValue(value)}`,
+                  value,
+                }))}
+              />
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                <div className="text-center">
+                  <div className="text-xl font-semibold">
+                    <AnimatedMetricValue value={formatCurrencyValue(total)} />
+                  </div>
+                  <div className="text-xs text-muted-foreground">итого</div>
+                </div>
+              </div>
+            </div>
+            <div className="flex min-w-0 flex-col gap-2">
+              {segments.map(({ color, item, percent }) => (
+                <div
+                  key={item.name}
+                  className="flex min-w-0 items-center gap-3 rounded-xl bg-muted/25 px-3 py-2 text-sm"
+                  title={
+                    item.sourceCount
+                      ? `Сумма ${item.sourceCount} небольших категорий`
+                      : item.name
+                  }
+                >
+                  <span
+                    className="h-2.5 w-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span
+                    data-distribution-label
+                    className="min-w-0 flex-1 truncate text-muted-foreground"
+                  >
+                    {item.name}
+                  </span>
+                  <span className="shrink-0 font-medium">{percent}%</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    <AnimatedMetricValue value={formatCurrencyValue(item.value)} />
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <div className="flex min-h-[260px] items-center justify-center text-sm text-muted-foreground">
+            Нет данных
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 const FINANCE_ACTION_LABELS: Record<string, string> = {
   'finance_manual.create': 'Ручная операция добавлена',
@@ -339,17 +471,9 @@ export default function FinancePage() {
 
   if (!report) {
     return (
-      <div className="p-6 md:p-8 space-y-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Финансы</h1>
-          <p className="text-muted-foreground mt-1">
-            P&L: прибыль, расходы, касса и ручные операции.
-          </p>
-        </div>
+      <div className="flex flex-col gap-5">
         {loading ? (
-          <div className="rounded-md border bg-card px-4 py-8 text-center text-muted-foreground">
-            Загрузка финансового отчета...
-          </div>
+          <ChartLoadingState title="Загрузка финансового отчета" />
         ) : errorMessage ? (
           <ErrorState
             message={errorMessage}
@@ -357,9 +481,10 @@ export default function FinancePage() {
             title="Финансовый отчет не загрузился"
           />
         ) : (
-          <div className="rounded-md border bg-card px-4 py-8 text-center text-muted-foreground">
-            Нет данных для отчета
-          </div>
+          <EmptyState
+            title="Нет данных для отчета"
+            description="Выберите другой период или проверьте операции."
+          />
         )}
       </div>
     );
@@ -538,16 +663,9 @@ export default function FinancePage() {
   ];
 
   return (
-    <div className="p-6 md:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Финансы</h1>
-          <p className="text-muted-foreground mt-1">
-            P&L: прибыль, расходы, касса и ручные операции.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+        <div className="flex w-full flex-wrap items-center gap-3 sm:w-auto">
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -585,16 +703,6 @@ export default function FinancePage() {
             </PopoverContent>
           </Popover>
 
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={fetchFinances}
-            disabled={loading}
-            title="Обновить отчет"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-
           {canDownloadFinance && (
             <Button variant="outline" onClick={handleExport}>
               <Download className="w-4 h-4 mr-2" /> Экспорт
@@ -619,6 +727,9 @@ export default function FinancePage() {
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>Новая запись</DialogTitle>
+                <DialogDescription className="sr-only">
+                  Добавьте ручную финансовую запись.
+                </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleAddManual} className="space-y-4 pt-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -795,95 +906,17 @@ export default function FinancePage() {
         />
       </div>
 
-      {/* Диаграммы */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              Структура выручки
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="h-[250px]">
-            {incomePieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250} minWidth={240}>
-                <PieChart>
-                  <Pie
-                    data={incomePieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {incomePieData.map((_, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={PIE_COLORS[index % PIE_COLORS.length]}
-                      />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip
-                    formatter={formatCurrencyValue}
-                  />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                Нет данных
-              </div>
-            )}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              Структура расходов
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="h-[250px]">
-            {expensePieData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250} minWidth={240}>
-                <PieChart>
-                  <Pie
-                    data={expensePieData}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    paddingAngle={2}
-                    dataKey="value"
-                  >
-                    {expensePieData.map((_, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={
-                          [
-                            '#ef4444',
-                            '#f97316',
-                            '#f59e0b',
-                            '#84cc16',
-                            '#06b6d4',
-                            '#6366f1',
-                          ][index % 6]
-                        }
-                      />
-                    ))}
-                  </Pie>
-                  <RechartsTooltip
-                    formatter={formatCurrencyValue}
-                  />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            ) : (
-              <div className="flex items-center justify-center h-full text-muted-foreground">
-                Нет данных
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <DistributionChartCard
+          items={incomePieData}
+          title="Структура выручки"
+          tone="income"
+        />
+        <DistributionChartCard
+          items={expensePieData}
+          title="Структура расходов"
+          tone="expense"
+        />
       </div>
 
       {/* ДИНАМИЧЕСКАЯ ТАБЛИЦА P&L */}
