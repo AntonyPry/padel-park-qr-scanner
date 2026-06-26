@@ -10,6 +10,7 @@ import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { ROUTE_ACCESS } from './lib/permissions';
 import { AuthProvider } from './lib/auth';
 import { queryClient } from './lib/query-client';
+import { ThemeProvider } from './lib/theme';
 import { TrainingModeProvider } from './lib/training-mode';
 
 const AdminPage = lazy(() => import('./pages/Admin'));
@@ -49,11 +50,12 @@ function PageLoader() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AuthProvider>
-          <TooltipProvider delayDuration={0}>
-            <AuthGate>
-              <TrainingModeProvider>
+      <ThemeProvider>
+        <BrowserRouter>
+          <AuthProvider>
+            <TooltipProvider delayDuration={0}>
+              <AuthGate>
+                <TrainingModeProvider>
                 <OnboardingRouteEvents />
                 <Suspense fallback={<PageLoader />}>
                   <Routes>
@@ -261,12 +263,13 @@ function App() {
                     </Route>
                   </Routes>
                 </Suspense>
-              </TrainingModeProvider>
-            </AuthGate>
-            <Toaster />
-          </TooltipProvider>
-        </AuthProvider>
-      </BrowserRouter>
+                </TrainingModeProvider>
+              </AuthGate>
+              <Toaster />
+            </TooltipProvider>
+          </AuthProvider>
+        </BrowserRouter>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }

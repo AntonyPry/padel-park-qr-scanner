@@ -24,13 +24,13 @@ import {
   Gift,
   GitMerge,
   History,
+  ListFilter,
   MessageSquareText,
   PackageCheck,
   Pencil,
   Phone,
   PhoneCall,
   Plus,
-  RefreshCw,
   RotateCcw,
   Save,
   Search,
@@ -70,6 +70,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -110,7 +111,6 @@ import {
   HelpTooltip,
   MetricLabel,
 } from '@/components/dashboard-metric';
-import { completeOnboardingPracticeStep } from '@/api/onboarding';
 import { listMethodologyExercises } from '@/api/methodology';
 import { queryKeys } from '@/api/query-keys';
 import { apiFetch } from '@/lib/api';
@@ -119,10 +119,6 @@ import {
   normalizeNumericFilterInput,
   parseNonNegativeNumericFilter,
 } from '@/lib/client-query';
-import {
-  getStoredActiveOnboardingQuest,
-  ONBOARDING_QUEST_EVENT,
-} from '@/lib/onboarding-quest';
 import {
   canManageClients,
   canManageCallTasks,
@@ -615,14 +611,6 @@ const EMPTY_FORM: ClientFormState = {
   webId: '',
   note: '',
   status: 'active',
-};
-
-const ADMIN_CLIENT_CREATE_QUEST = {
-  name: 'Иван Иванович Тестов',
-  note: '[training] создано в задании администратора',
-  phoneDigits: '9000000999',
-  source: 'Онбординг',
-  taskKey: 'admin.client.create',
 };
 
 const TRAINING_LEVELS: TrainingLevel[] = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
@@ -1352,6 +1340,7 @@ export default function ClientsPage() {
   const [visitCategories, setVisitCategories] = useState<ReferenceItem[]>([]);
   const [savedViews, setSavedViews] = useState<ClientSavedView[]>([]);
   const [selectedSavedViewId, setSelectedSavedViewId] = useState('none');
+  const [clientFiltersOpen, setClientFiltersOpen] = useState(false);
   const [savedViewDialogOpen, setSavedViewDialogOpen] = useState(false);
   const [savedViewName, setSavedViewName] = useState('');
   const [savedViewSaving, setSavedViewSaving] = useState(false);
@@ -1523,7 +1512,6 @@ export default function ClientsPage() {
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const clientsRequestIdRef = useRef(0);
   const detailsRequestIdRef = useRef(0);
-  const completedQuestStepsRef = useRef<Set<string>>(new Set());
   const previousFilterResetKeyRef = useRef<string | null>(null);
   const clientForm = useForm<ClientFormState>({
     defaultValues: EMPTY_FORM,
@@ -1549,25 +1537,6 @@ export default function ClientsPage() {
       keepTouched: true,
     });
   };
-
-  const completeClientCreateQuestStep = useCallback((stepKey: string) => {
-    const quest = getStoredActiveOnboardingQuest();
-    if (quest?.taskKey !== ADMIN_CLIENT_CREATE_QUEST.taskKey) return;
-    if (completedQuestStepsRef.current.has(stepKey)) return;
-
-    completedQuestStepsRef.current.add(stepKey);
-    void completeOnboardingPracticeStep({
-      role: quest.role,
-      stepKey,
-      taskKey: quest.taskKey,
-    })
-      .then(() => {
-        window.dispatchEvent(new Event(ONBOARDING_QUEST_EVENT));
-      })
-      .catch(() => {
-        completedQuestStepsRef.current.delete(stepKey);
-      });
-  }, []);
 
   const queryString = useMemo(() => {
     return buildClientsListQueryString({
@@ -1828,6 +1797,35 @@ export default function ClientsPage() {
   const canExpandClientSearch =
     hasClientSearchQuery && (status !== 'all' || !includeMerged);
   const isExpandedClientSearch = status === 'all' && includeMerged;
+  const activeClientFilterCount = useMemo(() => {
+    const checks = [
+      Boolean(q.trim()),
+      sourceId !== 'all',
+      segment !== 'all',
+      status !== 'active',
+      includeMerged,
+      trainingLevel !== 'all',
+      visitCategoryId !== 'all',
+      Boolean(visitCountMin),
+      Boolean(visitCountMax),
+      Boolean(lastVisitDaysFrom),
+      Boolean(lastVisitDaysTo),
+    ];
+
+    return checks.filter(Boolean).length;
+  }, [
+    includeMerged,
+    lastVisitDaysFrom,
+    lastVisitDaysTo,
+    q,
+    segment,
+    sourceId,
+    status,
+    trainingLevel,
+    visitCategoryId,
+    visitCountMax,
+    visitCountMin,
+  ]);
   const paginationItems = useMemo(
     () => getPaginationItems(page, totalPages),
     [page, totalPages],
@@ -1869,7 +1867,6 @@ export default function ClientsPage() {
     setDuplicateWarning(null);
     setDuplicateWarningMessage(null);
     setFormOpen(true);
-    completeClientCreateQuestStep('open-form');
   };
 
   const openEdit = (client: Client) => {
@@ -2034,16 +2031,16 @@ export default function ClientsPage() {
     setSavedViews((prev) =>
       prev.map((item) => (item.id === updated.id ? updated : item)),
     );
-    toast.success('Фильтр обновлен');
+    toast.success('Фильтр сохранен');
   };
 
   const requestUpdateSavedView = (view: ClientSavedView) => {
     setPendingAction({
-      confirmLabel: 'Обновить',
+      confirmLabel: 'Сохранить',
       description: `Фильтр «${view.name}» будет перезаписан текущими условиями списка клиентов.`,
       isDestructive: false,
       onConfirm: () => updateSelectedSavedView(view),
-      title: 'Обновить сохраненный фильтр?',
+      title: 'Сохранить изменения фильтра?',
     });
   };
 
@@ -2930,7 +2927,7 @@ export default function ClientsPage() {
     {
       accessorKey: 'name',
       header: 'Клиент',
-      size: 230,
+      size: 220,
       cell: ({ row }) => {
         const client = row.original;
 
@@ -2972,7 +2969,7 @@ export default function ClientsPage() {
           {
             accessorKey: 'phone',
             header: 'Телефон',
-            size: 170,
+            size: 150,
             meta: {
               cellClassName: 'truncate text-muted-foreground',
             },
@@ -2982,7 +2979,7 @@ export default function ClientsPage() {
     {
       accessorKey: 'source',
       header: 'Источник',
-      size: 160,
+      size: 140,
       meta: {
         cellClassName: 'truncate text-muted-foreground',
       },
@@ -2990,13 +2987,13 @@ export default function ClientsPage() {
     {
       accessorKey: 'segment',
       header: 'Сегмент',
-      size: 140,
+      size: 120,
       cell: ({ row }) => <Badge variant="outline">{row.original.segment}</Badge>,
     },
     {
       id: 'visitCount',
       header: 'Визиты',
-      size: 90,
+      size: 70,
       meta: {
         cellClassName: 'text-right font-medium',
         headerClassName: 'text-right',
@@ -3006,7 +3003,7 @@ export default function ClientsPage() {
     {
       id: 'lastVisit',
       header: 'Последний визит',
-      size: 130,
+      size: 120,
       meta: {
         cellClassName: 'text-muted-foreground',
       },
@@ -3015,7 +3012,7 @@ export default function ClientsPage() {
     {
       id: 'actions',
       header: '',
-      size: 120,
+      size: 100,
       meta: {
         cellClassName: 'text-right',
         headerClassName: 'text-right',
@@ -3096,77 +3093,35 @@ export default function ClientsPage() {
   ];
 
   return (
-    <div className="min-w-0 space-y-4 p-4 md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Клиенты</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Клиентская база, история визитов, заметки и объединение дублей.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={viewMode === 'list' ? 'default' : 'outline'}
-            onClick={() => setViewMode('list')}
-          >
-            Список
-          </Button>
-          {canMerge && (
+    <div className="flex min-w-0 flex-col gap-5">
+      <h1 className="sr-only">Клиенты</h1>
+      <div className="rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5">
+        <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <Button
-              variant={viewMode === 'duplicates' ? 'default' : 'outline'}
-              onClick={() => setViewMode('duplicates')}
+              size="sm"
+              variant={viewMode === 'list' ? 'default' : 'outline'}
+              onClick={() => setViewMode('list')}
             >
-              <GitMerge className="mr-2 h-4 w-4" /> Дубли
+              Список
             </Button>
-          )}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() =>
-              viewMode === 'duplicates'
-                ? void fetchDuplicateGroups()
-                : void fetchClients()
-            }
-            disabled={viewMode === 'duplicates' ? duplicatesLoading : loading}
-            aria-label="Обновить список клиентов"
-            title="Обновить"
-          >
-            <RefreshCw
-              className={`h-4 w-4 ${
-                (viewMode === 'duplicates' ? duplicatesLoading : loading)
-                  ? 'animate-spin'
-                  : ''
-              }`}
-            />
-          </Button>
-          {canEdit && (
-            <Button
-              onClick={openCreate}
-              data-onboarding-target="admin.client.create.open"
-            >
-              <Plus className="mr-2 h-4 w-4" /> Клиент
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {viewMode === 'list' ? (
-        <>
-          <div className="rounded-md border bg-card p-3">
-            <div className="mb-3 flex flex-col gap-2 border-b pb-3 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="flex items-center gap-1.5 text-sm font-medium">
-                  Представление
-                  <HelpTooltip>
-                    Сохраненный фильтр запоминает текущие условия списка только
-                    для вашего аккаунта.
-                  </HelpTooltip>
-                </div>
+            {canMerge && (
+              <Button
+                size="sm"
+                variant={viewMode === 'duplicates' ? 'default' : 'outline'}
+                onClick={() => setViewMode('duplicates')}
+              >
+                <GitMerge className="mr-2 h-4 w-4" /> Дубли
+              </Button>
+            )}
+            {viewMode === 'list' && (
+              <>
+                <div className="hidden h-8 w-px bg-border sm:block" />
                 <Select
                   value={selectedSavedViewId}
                   onValueChange={handleSavedViewChange}
                 >
-                  <SelectTrigger className="w-full sm:w-[280px]">
+                  <SelectTrigger className="h-9 w-full min-w-[200px] sm:w-[220px]">
                     <SelectValue placeholder="Выберите сохраненный фильтр" />
                   </SelectTrigger>
                   <SelectContent>
@@ -3179,273 +3134,91 @@ export default function ClientsPage() {
                   </SelectContent>
                 </Select>
                 {selectedSavedViewDirty && (
-                  <Badge variant="outline" className="w-fit">
+                  <Badge variant="outline" className="h-8 rounded-full px-3">
                     Изменено
                   </Badge>
                 )}
-                <div className="text-sm text-muted-foreground">
-                  Найдено: {total.toLocaleString('ru-RU')}
-                </div>
-              </div>
-              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary" className="h-8 rounded-full px-2.5">
+                  {total.toLocaleString('ru-RU')}
+                </Badge>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            {viewMode === 'list' && (
+              <>
                 <Button
                   type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setClientFiltersOpen(true)}
+                >
+                  <ListFilter className="mr-2 h-4 w-4" />
+                  Фильтры
+                  {activeClientFilterCount > 0 && (
+                    <Badge variant="secondary" className="ml-1">
+                      {activeClientFilterCount}
+                    </Badge>
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
                   variant="outline"
                   onClick={openSavedViewDialog}
                 >
                   <Save className="mr-2 h-4 w-4" />
-                  Сохранить фильтр
+                  Сохранить
                 </Button>
+                {selectedSavedView && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => requestUpdateSavedView(selectedSavedView)}
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {selectedSavedViewDirty ? 'Сохранить' : 'Синхр.'}
+                  </Button>
+                )}
                 <Button
                   type="button"
+                  size="sm"
                   variant="outline"
                   onClick={resetClientFilters}
                 >
                   <RotateCcw className="mr-2 h-4 w-4" />
-                  Сбросить
+                  Сброс
                 </Button>
                 {selectedSavedView && (
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => requestUpdateSavedView(selectedSavedView)}
-                    >
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      {selectedSavedViewDirty ? 'Обновить текущими' : 'Обновить'}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => requestDeleteSavedView(selectedSavedView)}
-                    >
-                      <Trash2 className="mr-2 h-4 w-4" />
-                      Удалить
-                    </Button>
-                  </>
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="outline"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => requestDeleteSavedView(selectedSavedView)}
+                    aria-label="Удалить сохраненный фильтр"
+                    title="Удалить сохраненный фильтр"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 )}
-              </div>
-            </div>
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(220px,1fr)_180px_180px_160px]">
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Поиск
-                  <HelpTooltip>
-                    Ищет по имени, а для обычных ролей еще по телефону и
-                    нормализованным цифрам номера.
-                  </HelpTooltip>
-                </label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    value={q}
-                    onChange={(event) => setQ(event.target.value)}
-                    placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
-                    className="pl-9"
-                  />
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Источник
-                  <HelpTooltip>
-                    Откуда клиент пришел в базу: ресепшн, Instagram, сайт,
-                    рекомендация и другие справочные источники.
-                  </HelpTooltip>
-                </label>
-                <Select value={sourceId} onValueChange={setSourceId}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Все источники</SelectItem>
-                    {sources.map((item) => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.status === 'archived'
-                          ? `${item.name} (архив)`
-                          : item.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Сегмент
-                  <HelpTooltip>
-                    {CLIENT_SEGMENT_OPTIONS.map((option) => (
-                      <div key={option.value}>
-                        <span className="font-medium">{option.label}:</span>{' '}
-                        {option.condition}
-                      </div>
-                    ))}
-                  </HelpTooltip>
-                </label>
-                <Select
-                  value={segment}
-                  onValueChange={(value) => setSegment(value as ClientSegment)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CLIENT_SEGMENT_OPTIONS.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Статус
-                  <HelpTooltip>
-                    Активные участвуют в рабочей базе. Архивные хранят историю,
-                    но скрыты из операционной работы до восстановления.
-                  </HelpTooltip>
-                </label>
-                <Select
-                  value={status}
-                  onValueChange={(value) =>
-                    setStatus(value as 'active' | 'archived' | 'all')
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Активные</SelectItem>
-                    <SelectItem value="archived">Архив</SelectItem>
-                    <SelectItem value="all">Все статусы</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+              </>
+            )}
+            {canEdit && (
+              <Button size="sm" onClick={openCreate}>
+                <Plus className="mr-2 h-4 w-4" /> Клиент
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
 
-            <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-6">
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Визитов от
-                  <HelpTooltip>
-                    Минимальное количество визитов за всю историю клиента.
-                  </HelpTooltip>
-                </label>
-                <Input
-                  min="0"
-                  type="number"
-                  value={visitCountMin}
-                  onChange={(event) => setVisitCountMin(event.target.value)}
-                  placeholder="0"
-                />
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Визитов до
-                  <HelpTooltip>
-                    Максимальное количество визитов. Удобно для выборок “были
-                    1-2 раза”.
-                  </HelpTooltip>
-                </label>
-                <Input
-                  min="0"
-                  type="number"
-                  value={visitCountMax}
-                  onChange={(event) => setVisitCountMax(event.target.value)}
-                  placeholder="10"
-                />
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Не были от, дней
-                  <HelpTooltip>
-                    Показывает клиентов, чей последний визит был не позже
-                    указанного количества дней назад.
-                  </HelpTooltip>
-                </label>
-                <Input
-                  min="0"
-                  type="number"
-                  value={lastVisitDaysFrom}
-                  onChange={(event) => setLastVisitDaysFrom(event.target.value)}
-                  placeholder="7"
-                />
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Не были до, дней
-                  <HelpTooltip>
-                    Верхняя граница давности последнего визита. Например, 7-14
-                    дней даст клиентов, которые не были примерно одну-две недели.
-                  </HelpTooltip>
-                </label>
-                <Input
-                  min="0"
-                  type="number"
-                  value={lastVisitDaysTo}
-                  onChange={(event) => setLastVisitDaysTo(event.target.value)}
-                  placeholder="14"
-                />
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Уровень
-                  <HelpTooltip>
-                    Последняя оценка тренера в дневнике тренировок клиента.
-                  </HelpTooltip>
-                </label>
-                <Select
-                  value={trainingLevel}
-                  onValueChange={(value) =>
-                    setTrainingLevel(value as TrainingLevel | 'all')
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Любой</SelectItem>
-                    {TRAINING_LEVELS.map((level) => (
-                      <SelectItem key={level} value={level}>
-                        {level}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                  Цель визита
-                  <HelpTooltip>
-                    Категория визита из справочника: тренировка, игра, мастер
-                    класс и другие цели, которые выбирает администратор.
-                  </HelpTooltip>
-                </label>
-                <Select
-                  value={visitCategoryId}
-                  onValueChange={setVisitCategoryId}
-                  disabled={referencesLoading}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">Любая</SelectItem>
-                    {visitCategories.map((item) => (
-                      <SelectItem key={item.id} value={String(item.id)}>
-                        {item.status === 'archived'
-                          ? `${item.name} (архив)`
-                          : item.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {hasClientSearchQuery && (
-              <div className="mt-3 flex flex-col gap-2 rounded-md border bg-muted/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+      {viewMode === 'list' ? (
+        <>
+          {hasClientSearchQuery && (
+            <div className="flex flex-col gap-2 rounded-xl border bg-muted/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-muted-foreground">
                   {isExpandedClientSearch
                     ? 'Поиск включает активных, архивных и объединенных клиентов.'
@@ -3463,8 +3236,242 @@ export default function ClientsPage() {
                   </Button>
                 )}
               </div>
-            )}
-          </div>
+          )}
+
+          <Dialog open={clientFiltersOpen} onOpenChange={setClientFiltersOpen}>
+            <DialogContent className="sm:max-w-4xl">
+              <DialogHeader>
+                <DialogTitle>Фильтры клиентов</DialogTitle>
+                <DialogDescription>
+                  Условия применяются сразу, список обновится после закрытия окна.
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                <div className="md:col-span-2">
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Поиск
+                    <HelpTooltip>
+                      Ищет по имени, а для обычных ролей еще по телефону и
+                      нормализованным цифрам номера.
+                    </HelpTooltip>
+                  </label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      value={q}
+                      onChange={(event) => setQ(event.target.value)}
+                      placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
+                      className="pl-9"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Источник
+                    <HelpTooltip>
+                      Откуда клиент пришел в базу: ресепшн, Instagram, сайт,
+                      рекомендация и другие справочные источники.
+                    </HelpTooltip>
+                  </label>
+                  <Select value={sourceId} onValueChange={setSourceId}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Все источники</SelectItem>
+                      {sources.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.status === 'archived'
+                            ? `${item.name} (архив)`
+                            : item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Сегмент
+                    <HelpTooltip>
+                      {CLIENT_SEGMENT_OPTIONS.map((option) => (
+                        <div key={option.value}>
+                          <span className="font-medium">{option.label}:</span>{' '}
+                          {option.condition}
+                        </div>
+                      ))}
+                    </HelpTooltip>
+                  </label>
+                  <Select
+                    value={segment}
+                    onValueChange={(value) => setSegment(value as ClientSegment)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CLIENT_SEGMENT_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Статус
+                    <HelpTooltip>
+                      Активные участвуют в рабочей базе. Архивные хранят историю,
+                      но скрыты из операционной работы до восстановления.
+                    </HelpTooltip>
+                  </label>
+                  <Select
+                    value={status}
+                    onValueChange={(value) =>
+                      setStatus(value as 'active' | 'archived' | 'all')
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="active">Активные</SelectItem>
+                      <SelectItem value="archived">Архив</SelectItem>
+                      <SelectItem value="all">Все статусы</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Визитов от
+                    <HelpTooltip>
+                      Минимальное количество визитов за всю историю клиента.
+                    </HelpTooltip>
+                  </label>
+                  <Input
+                    min="0"
+                    type="number"
+                    value={visitCountMin}
+                    onChange={(event) => setVisitCountMin(event.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Визитов до
+                    <HelpTooltip>
+                      Максимальное количество визитов. Удобно для выборок “были
+                      1-2 раза”.
+                    </HelpTooltip>
+                  </label>
+                  <Input
+                    min="0"
+                    type="number"
+                    value={visitCountMax}
+                    onChange={(event) => setVisitCountMax(event.target.value)}
+                    placeholder="10"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Не были от, дней
+                    <HelpTooltip>
+                      Показывает клиентов, чей последний визит был не позже
+                      указанного количества дней назад.
+                    </HelpTooltip>
+                  </label>
+                  <Input
+                    min="0"
+                    type="number"
+                    value={lastVisitDaysFrom}
+                    onChange={(event) => setLastVisitDaysFrom(event.target.value)}
+                    placeholder="7"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Не были до, дней
+                    <HelpTooltip>
+                      Верхняя граница давности последнего визита. Например, 7-14
+                      дней даст клиентов, которые не были примерно одну-две недели.
+                    </HelpTooltip>
+                  </label>
+                  <Input
+                    min="0"
+                    type="number"
+                    value={lastVisitDaysTo}
+                    onChange={(event) => setLastVisitDaysTo(event.target.value)}
+                    placeholder="14"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Уровень
+                    <HelpTooltip>
+                      Последняя оценка тренера в дневнике тренировок клиента.
+                    </HelpTooltip>
+                  </label>
+                  <Select
+                    value={trainingLevel}
+                    onValueChange={(value) =>
+                      setTrainingLevel(value as TrainingLevel | 'all')
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Любой</SelectItem>
+                      {TRAINING_LEVELS.map((level) => (
+                        <SelectItem key={level} value={level}>
+                          {level}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
+                    Цель визита
+                    <HelpTooltip>
+                      Категория визита из справочника: тренировка, игра, мастер
+                      класс и другие цели, которые выбирает администратор.
+                    </HelpTooltip>
+                  </label>
+                  <Select
+                    value={visitCategoryId}
+                    onValueChange={setVisitCategoryId}
+                    disabled={referencesLoading}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Любая</SelectItem>
+                      {visitCategories.map((item) => (
+                        <SelectItem key={item.id} value={String(item.id)}>
+                          {item.status === 'archived'
+                            ? `${item.name} (архив)`
+                            : item.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button type="button" variant="outline" onClick={resetClientFilters}>
+                  <RotateCcw className="mr-2 h-4 w-4" />
+                  Сбросить
+                </Button>
+                <Button type="button" onClick={() => setClientFiltersOpen(false)}>
+                  Показать клиентов
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <div className="hidden overflow-x-auto rounded-md border bg-card lg:block">
             <DataTable
@@ -3671,18 +3678,6 @@ export default function ClientsPage() {
                 Основная запись остается, выбранные дубли переносят в нее историю.
               </p>
             </div>
-            <Button
-              variant="outline"
-              onClick={() => void fetchDuplicateGroups()}
-              disabled={duplicatesLoading}
-            >
-              <RefreshCw
-                className={`mr-2 h-4 w-4 ${
-                  duplicatesLoading ? 'animate-spin' : ''
-                }`}
-              />
-              Обновить
-            </Button>
           </div>
 
           {duplicatesLoading && duplicateGroups.length === 0 && (
@@ -3851,14 +3846,9 @@ export default function ClientsPage() {
                 <Input
                   required
                   value={form.name}
-                  data-onboarding-target="admin.client.create.name"
-                  onChange={(event) => {
-                    const name = event.target.value;
-                    setForm({ ...form, name });
-                    if (name.trim() === ADMIN_CLIENT_CREATE_QUEST.name) {
-                      completeClientCreateQuestStep('fill-name');
-                    }
-                  }}
+                  onChange={(event) =>
+                    setForm({ ...form, name: event.target.value })
+                  }
                 />
                 <FieldError>{clientForm.formState.errors.name?.message}</FieldError>
               </div>
@@ -3870,20 +3860,12 @@ export default function ClientsPage() {
                   required
                   inputMode="tel"
                   value={form.phone}
-                  data-onboarding-target="admin.client.create.phone"
-                  onChange={(event) => {
-                    const phone = formatClientPhone(event.target.value);
+                  onChange={(event) =>
                     setForm({
                       ...form,
-                      phone,
-                    });
-                    if (
-                      getPhoneDigits(phone) ===
-                      ADMIN_CLIENT_CREATE_QUEST.phoneDigits
-                    ) {
-                      completeClientCreateQuestStep('fill-phone');
-                    }
-                  }}
+                      phone: formatClientPhone(event.target.value),
+                    })
+                  }
                   placeholder="+7 (999) 000-00-00"
                 />
                 <FieldError>{clientForm.formState.errors.phone?.message}</FieldError>
@@ -3942,13 +3924,10 @@ export default function ClientsPage() {
                       sourceId,
                       source: source?.name || form.source,
                     });
-                    if (source?.name === ADMIN_CLIENT_CREATE_QUEST.source) {
-                      completeClientCreateQuestStep('select-source');
-                    }
                   }}
                   disabled={referencesLoading}
                 >
-                  <SelectTrigger data-onboarding-target="admin.client.create.source">
+                  <SelectTrigger>
                     <SelectValue placeholder="Выберите источник" />
                   </SelectTrigger>
                   <SelectContent>
@@ -4041,24 +4020,15 @@ export default function ClientsPage() {
               </label>
               <textarea
                 value={form.note}
-                data-onboarding-target="admin.client.create.note"
-                onChange={(event) => {
-                  const note = event.target.value;
-                  setForm({ ...form, note });
-                  if (note.trim() === ADMIN_CLIENT_CREATE_QUEST.note) {
-                    completeClientCreateQuestStep('fill-note');
-                  }
-                }}
+                onChange={(event) =>
+                  setForm({ ...form, note: event.target.value })
+                }
                 className="min-h-[120px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="Что важно знать администраторам и менеджеру"
               />
             </div>
 
-            <Button
-              type="submit"
-              className="w-full"
-              data-onboarding-target="admin.client.create.save"
-            >
+            <Button type="submit" className="w-full">
               Сохранить
             </Button>
           </form>
@@ -4531,15 +4501,13 @@ export default function ClientsPage() {
       </Dialog>
 
       <Dialog open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()}>
-        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-x-hidden overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
+        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
-            <DialogTitle className="flex min-w-0 items-start gap-2 pr-8">
-              <Users className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" />
-              <span className="min-w-0 break-words leading-snug">
-                {details?.client.name || 'Клиент'}
-              </span>
+            <DialogTitle className="flex items-center gap-2 pr-8">
+              <Users className="h-5 w-5 text-muted-foreground" />
+              {details?.client.name || 'Клиент'}
             </DialogTitle>
-            <DialogDescription className="break-words pr-8">
+            <DialogDescription>
               Карточка клиента, бронирования, история визитов и возможные дубли.
             </DialogDescription>
           </DialogHeader>
@@ -4551,8 +4519,8 @@ export default function ClientsPage() {
           )}
 
           {details && !detailsLoading && (
-            <div className="min-w-0 space-y-5">
-              <div className="sticky top-0 z-20 -mx-3 flex min-w-0 flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+            <div className="space-y-5">
+              <div className="sticky top-0 z-20 -mx-3 flex flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
                 <div className="min-w-0">
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <Badge
@@ -4571,7 +4539,7 @@ export default function ClientsPage() {
                     )}
                   </div>
                 </div>
-                <div className="flex min-w-0 flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2">
                   {!isTrainerAccount && getPhoneHref(details.client.phone) && (
                     <Button asChild variant="outline" size="sm">
                       <a href={getPhoneHref(details.client.phone)}>
@@ -4632,7 +4600,7 @@ export default function ClientsPage() {
               ) : (
                 <>
                   <div
-                    className={`grid min-w-0 grid-cols-1 gap-4 ${
+                    className={`grid grid-cols-1 gap-4 ${
                       isTrainerAccount ? 'md:grid-cols-2' : 'md:grid-cols-3'
                     }`}
                   >
@@ -4668,7 +4636,7 @@ export default function ClientsPage() {
                     </div>
                   </div>
 
-                  <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div className="min-w-0 rounded-md border p-4">
                       <div className="mb-3 flex items-center justify-between gap-3">
                         <div className="font-medium">Данные клиента</div>

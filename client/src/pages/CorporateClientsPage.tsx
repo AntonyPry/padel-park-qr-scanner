@@ -15,7 +15,6 @@ import {
   MinusCircle,
   Pencil,
   Plus,
-  RefreshCw,
   ReceiptText,
   RotateCcw,
   Search,
@@ -24,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { ModuleSwitch } from '@/components/module-switch';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -68,6 +68,12 @@ type LedgerEntryStatus = 'active' | 'canceled';
 type LedgerEntryType = 'deposit' | 'spending';
 type DepositMode = 'create' | 'link';
 type LedgerStatusFilter = LedgerEntryStatus | 'all';
+
+const BILLING_SWITCH_ITEMS = [
+  { label: 'Предоплаты', to: '/admin/prepayments' },
+  { label: 'Сертификаты', to: '/admin/certificates' },
+  { label: 'Корпоративные', to: '/admin/corporate-clients' },
+];
 type LedgerTypeFilter = LedgerEntryType | 'all';
 
 interface CatalogCategory {
@@ -1117,23 +1123,10 @@ export default function CorporateClientsPage() {
   };
 
   return (
-    <div className="min-w-0 space-y-6 p-4 md:p-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Корпоративные клиенты
-          </h1>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 lg:flex-row lg:items-center lg:justify-between">
+        <ModuleSwitch items={BILLING_SWITCH_ITEMS} />
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={() => void loadClients()}
-            disabled={loading}
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Обновить
-          </Button>
           <PermissionActionButton
             type="button"
             allowed={canManage}

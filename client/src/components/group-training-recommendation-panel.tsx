@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   CalendarPlus,
   Loader2,
-  RefreshCw,
   Sparkles,
   Target,
   UsersRound,
@@ -275,11 +274,11 @@ export function GroupTrainingRecommendationPanel({
               {loading ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : recommendation ? (
-                <RefreshCw className="mr-2 h-4 w-4" />
+                <Sparkles className="mr-2 h-4 w-4" />
               ) : (
                 <Target className="mr-2 h-4 w-4" />
               )}
-              {recommendation ? 'Обновить' : 'Рекомендовать'}
+              {recommendation ? 'Пересчитать' : 'Рекомендовать'}
             </Button>
           </div>
         </div>

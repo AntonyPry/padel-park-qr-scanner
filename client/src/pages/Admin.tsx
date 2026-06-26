@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { io } from 'socket.io-client';
 import {
   UserPlus,
@@ -11,9 +11,7 @@ import {
   Usb,
   Unplug,
   Check,
-  AlertTriangle,
   Clock3,
-  History,
   Loader2,
   RotateCw,
   WifiOff,
@@ -31,6 +29,15 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import {
+  Pagination,
+  PaginationButton,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationNext,
+  PaginationPrevious,
+} from '@/components/ui/pagination';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -45,11 +52,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { toast } from '@/components/ui/toast';
 import { API_URL } from '@/config';
 import { apiFetch, getAuthToken } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
-import { HelpTooltip } from '@/components/dashboard-metric';
 
 const socket = io(API_URL, {
   autoConnect: false,
@@ -73,6 +81,8 @@ type ScannerStatus =
   | 'reconnecting';
 
 type AudioContextConstructor = typeof AudioContext;
+
+const VISITS_PAGE_SIZE = 12;
 
 interface VisitCard {
   id: string;
@@ -114,32 +124,6 @@ interface ScanResultPayload {
   keyIssued?: boolean;
   category?: string;
   categoryIds?: number[];
-}
-
-interface ScannerEvent {
-  id: number;
-  eventType: string;
-  severity: 'info' | 'warning' | 'error';
-  status?: string | null;
-  message?: string | null;
-  code?: string | null;
-  source?: string | null;
-  qrPreview?: string | null;
-  qrHash?: string | null;
-  visitId?: number | null;
-  userId?: number | null;
-  clientEventId?: string | null;
-  createdAt: string;
-  account?: {
-    id: number;
-    name?: string;
-    email?: string;
-    role?: string;
-  } | null;
-  user?: {
-    id: number;
-    name: string;
-  } | null;
 }
 
 interface PendingScan {
@@ -258,6 +242,17 @@ function getVisitCategoryNames(card: VisitCard) {
   return splitVisitCategories(card.category);
 }
 
+function getVisitDisplayMeta(card: VisitCard) {
+  const cleanTime = card.time.replace(/[^0-9:]/g, '') || '-';
+  const categoryNames = getVisitCategoryNames(card);
+
+  return {
+    categoryNames,
+    cleanTime,
+    isRepeated: Boolean(card.isRepeated || card.time.includes('🔄')),
+  };
+}
+
 function getCategoryNamesByIds(categories: ReferenceItem[], categoryIds: number[]) {
   const names = categoryIds
     .map((id) => categories.find((category) => category.id === id)?.name)
@@ -285,37 +280,15 @@ function getPortFingerprint(port: SerialPortLike | null) {
   return `${info.usbVendorId || 'unknown'}:${info.usbProductId || 'unknown'}`;
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return '-';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '-';
-  return date.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+function getErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
 
-function getScannerEventLabel(eventType: string) {
-  const labels: Record<string, string> = {
-    client_connected: 'Подключен',
-    client_disconnected: 'Отключен',
-    client_reconnect_scheduled: 'Автопереподключение',
-    client_reconnect_failed: 'Не удалось переподключить',
-    client_reader_error: 'Ошибка чтения',
-    client_scan_submit_failed: 'Ошибка отправки QR',
-    key_issued: 'Ключ',
-    manual_duplicate: 'Повтор ручного входа',
-    manual_success: 'Ручной вход',
-    qr_duplicate: 'Повтор QR',
-    qr_error: 'Ошибка QR',
-    qr_not_found: 'QR не найден',
-    qr_success: 'QR найден',
-    visit_category_changed: 'Цель визита',
-  };
-
-  return labels[eventType] || eventType;
+function isSerialPortSelectionCancelled(error: unknown, message: string) {
+  return (
+    (error instanceof DOMException && error.name === 'NotFoundError') ||
+    message.includes('No port selected')
+  );
 }
 
 function getScannerStatusText(status: ScannerStatus) {
@@ -323,6 +296,18 @@ function getScannerStatusText(status: ScannerStatus) {
   if (status === 'connecting') return 'Подключение...';
   if (status === 'reconnecting') return 'Переподключение...';
   return 'Сканер отключен';
+}
+
+function formatVisitCategoryCount(count: number) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return `${count} цель`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return `${count} цели`;
+  }
+
+  return `${count} целей`;
 }
 
 function playSound(type: 'success' | 'error') {
@@ -365,13 +350,10 @@ export default function AdminPage() {
   const [scannerStatus, setScannerStatus] = useState<
     ScannerStatus
   >('disconnected');
-  const [scannerLastError, setScannerLastError] = useState('');
-  const [scannerLastEvent, setScannerLastEvent] = useState('');
+  const [, setScannerLastEvent] = useState('');
   const [scannerSessionId, setScannerSessionId] = useState(() =>
     createClientEventId('session'),
   );
-  const [scannerEvents, setScannerEvents] = useState<ScannerEvent[]>([]);
-  const [isScannerJournalOpen, setIsScannerJournalOpen] = useState(false);
   const [queuedVisits, setQueuedVisits] = useState<VisitCard[]>([]);
   const activeVisitRef = useRef<VisitCard | null>(null);
   const processedClientEventsRef = useRef<Set<string>>(new Set());
@@ -390,6 +372,13 @@ export default function AdminPage() {
   const scanQueueRef = useRef<PendingScan[]>([]);
   const scanQueueProcessingRef = useRef(false);
 
+  const notifyScannerError = useCallback(
+    (title: string, description?: string) => {
+      toast.error(title, description ? { description } : undefined);
+    },
+    [],
+  );
+
   const [regForm, setRegForm] = useState(EMPTY_RECEPTION_CLIENT_FORM);
   const [regLoading, setRegLoading] = useState(false);
   const [regError, setRegError] = useState('');
@@ -400,6 +389,8 @@ export default function AdminPage() {
   const [clientSources, setClientSources] = useState<ReferenceItem[]>([]);
   const [visitCategories, setVisitCategories] = useState<ReferenceItem[]>([]);
   const [pendingScanCount, setPendingScanCount] = useState(0);
+  const [visitSearchQuery, setVisitSearchQuery] = useState('');
+  const [visitPage, setVisitPage] = useState(1);
   const [issuingKeyVisitId, setIssuingKeyVisitId] = useState<number | null>(
     null,
   );
@@ -427,7 +418,7 @@ export default function AdminPage() {
     };
   }, [clientSources]);
 
-  const fetchHistory = async () => {
+  const fetchHistory = useCallback(async () => {
     try {
       const res = await apiFetch('/api/visits');
       if (res.ok) {
@@ -436,17 +427,6 @@ export default function AdminPage() {
       }
     } catch (e) {
       console.error('Ошибка загрузки истории:', e);
-    }
-  };
-
-  const fetchScannerEvents = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/scanner-events?limit=30');
-      if (res.ok) {
-        setScannerEvents((await res.json()) as ScannerEvent[]);
-      }
-    } catch (e) {
-      console.error('Ошибка загрузки журнала сканера:', e);
     }
   }, []);
 
@@ -480,18 +460,16 @@ export default function AdminPage() {
             },
           }),
         });
-        void fetchScannerEvents();
       } catch (e) {
         console.error('Ошибка записи события сканера:', e);
       }
     },
-    [fetchScannerEvents],
+    [],
   );
 
   useEffect(() => {
-    fetchHistory();
-    void fetchScannerEvents();
-  }, [fetchScannerEvents]);
+    void fetchHistory();
+  }, [fetchHistory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -675,25 +653,23 @@ export default function AdminPage() {
           const data = await res.json();
           scanQueueRef.current.shift();
           syncPendingScanCount();
-          setScannerLastError('');
           setScannerLastEvent('QR обработан');
 
           if (data.event) {
             handleIncomingVisit(data.event);
-            void fetchScannerEvents();
           }
         } catch (e) {
           console.error('Ошибка сканера:', e);
-          const message =
-            e instanceof Error ? e.message : 'Не удалось отправить QR в CRM';
+          const message = getErrorMessage(e, 'Не удалось отправить QR в CRM');
           scan.attempts += 1;
           const delay = Math.min(
             30000,
             1000 * 2 ** Math.min(scan.attempts, 5),
           );
 
-          setScannerLastError(
-            `${message}. QR сохранен в очереди и будет отправлен повторно.`,
+          notifyScannerError(
+            message,
+            'QR сохранен в очереди и будет отправлен повторно.',
           );
           setScannerLastEvent(
             `Повторная отправка через ${(delay / 1000).toFixed(0)} сек.`,
@@ -720,8 +696,8 @@ export default function AdminPage() {
       scanQueueProcessingRef.current = false;
     }
   }, [
-    fetchScannerEvents,
     handleIncomingVisit,
+    notifyScannerError,
     recordScannerClientEvent,
     syncPendingScanCount,
   ]);
@@ -840,11 +816,8 @@ export default function AdminPage() {
       }
     } catch (error) {
       console.error('Сканер отключился или перестал отдавать данные:', error);
-      const message =
-        error instanceof Error
-          ? error.message
-          : 'Сканер перестал отдавать данные';
-      setScannerLastError(message);
+      const message = getErrorMessage(error, 'Сканер перестал отдавать данные');
+      notifyScannerError('Сканер перестал отдавать данные', message);
       await recordScannerClientEvent('client_reader_error', {
         severity: 'error',
         status: 'failed',
@@ -864,7 +837,6 @@ export default function AdminPage() {
   async function openScannerPort(port: SerialPortLike, reason: string) {
     clearReconnectTimer();
     setScannerStatus(reason === 'manual' ? 'connecting' : 'reconnecting');
-    setScannerLastError('');
 
     await port.open({ baudRate: 9600 });
     selectedPortFingerprintRef.current = getPortFingerprint(port);
@@ -935,11 +907,10 @@ export default function AdminPage() {
           throw new Error('Нет ранее разрешенного Web Serial порта');
         }
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'Не удалось автоматически переподключить сканер';
-        setScannerLastError(message);
+        const message = getErrorMessage(
+          error,
+          'Не удалось автоматически переподключить сканер',
+        );
         await recordScannerClientEvent('client_reconnect_failed', {
           severity: 'warning',
           status: 'failed',
@@ -971,7 +942,7 @@ export default function AdminPage() {
     if (!serial) {
       const message =
         'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.';
-      setScannerLastError(message);
+      notifyScannerError('Сканер недоступен', message);
       await recordScannerClientEvent('client_reconnect_failed', {
         severity: 'error',
         status: 'unsupported',
@@ -994,9 +965,16 @@ export default function AdminPage() {
       selectedPortFingerprintRef.current = getPortFingerprint(port);
       await openScannerPort(port, 'manual');
     } catch (error) {
-      console.error('Ошибка порта:', error);
-      const message =
-        error instanceof Error ? error.message : 'Не удалось открыть сканер';
+      const message = getErrorMessage(error, 'Не удалось открыть сканер');
+      const isPortSelectionCancelled = isSerialPortSelectionCancelled(
+        error,
+        message,
+      );
+      if (isPortSelectionCancelled) {
+        console.info('Выбор порта сканера отменен:', error);
+      } else {
+        console.error('Ошибка порта:', error);
+      }
       if (port) {
         try {
           await port.close();
@@ -1007,10 +985,15 @@ export default function AdminPage() {
       scannerActiveRef.current = false;
       portRef.current = null;
       setScannerStatus('disconnected');
-      setScannerLastError(message);
+      notifyScannerError(
+        isPortSelectionCancelled
+          ? 'Порт сканера не выбран'
+          : 'Не удалось открыть сканер',
+        message,
+      );
       await recordScannerClientEvent('client_reconnect_failed', {
-        severity: 'error',
-        status: 'failed',
+        severity: isPortSelectionCancelled ? 'warning' : 'error',
+        status: isPortSelectionCancelled ? 'cancelled' : 'failed',
         message,
       });
     }
@@ -1026,9 +1009,8 @@ export default function AdminPage() {
         await connectScanner();
       }
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : 'Не удалось переподключить';
-      setScannerLastError(message);
+      const message = getErrorMessage(error, 'Не удалось переподключить');
+      notifyScannerError('Не удалось переподключить сканер', message);
       setScannerStatus('disconnected');
     }
   };
@@ -1052,7 +1034,10 @@ export default function AdminPage() {
     const handleDisconnect = (event: Event) => {
       const disconnectedPort = event.target as unknown as SerialPortLike | null;
       if (!portRef.current || disconnectedPort === portRef.current) {
-        setScannerLastError('Устройство отключено от компьютера');
+        notifyScannerError(
+          'Сканер отключен',
+          'Устройство отключено от компьютера',
+        );
         void recordScannerClientEvent('client_disconnected', {
           severity: 'warning',
           status: 'hardware_disconnect',
@@ -1185,7 +1170,6 @@ export default function AdminPage() {
         if (data.event) handleIncomingVisit(data.event);
         setIsSearchOpen(false);
         setSearchQuery('');
-        void fetchScannerEvents();
       } else {
         const apiError = await readApiError(res, 'Ошибка ручного добавления');
         throw new Error(apiError.error);
@@ -1206,6 +1190,14 @@ export default function AdminPage() {
     setRegCandidate(null);
     setRestoreCandidate(null);
   };
+
+  const openNewClientDialog = useCallback(() => {
+    setRegForm(getEmptyReceptionForm());
+    setRegCandidate(null);
+    setRestoreCandidate(null);
+    setRegError('');
+    setIsRegOpen(true);
+  }, [getEmptyReceptionForm]);
 
   const openReceptionRestore = (candidate: ExistingClientCandidate) => {
     setRestoreCandidate(candidate);
@@ -1356,7 +1348,6 @@ export default function AdminPage() {
         prev?.id === cardId ? { ...prev, keyNumber, keyIssued: true } : prev,
       );
       setVisitActionError('');
-      void fetchScannerEvents();
     } catch (e) {
       console.error('Ошибка выдачи ключа', e);
       setVisitActionError(
@@ -1405,7 +1396,6 @@ export default function AdminPage() {
           : prev,
       );
       setVisitActionError('');
-      void fetchScannerEvents();
     } catch (e) {
       console.error('Ошибка сохранения категории:', e);
       setVisitActionError(
@@ -1447,29 +1437,153 @@ export default function AdminPage() {
     );
   };
 
+  const openVisitDetails = (card: VisitCard) => {
+    setVisitActionError('');
+    setCurrentVisit(card);
+  };
+
+  const renderVisitCategoryStatus = (card: VisitCard) => {
+    const { categoryNames } = getVisitDisplayMeta(card);
+
+    if (!card.success) {
+      return <span className="text-sm text-muted-foreground">-</span>;
+    }
+
+    if (categoryNames.length === 0) {
+      return (
+        <Badge
+          variant="outline"
+          className="h-6 rounded-full border-destructive/25 bg-destructive/10 px-2.5 text-xs text-destructive hover:bg-destructive/10 dark:border-destructive/30"
+        >
+          Не указана
+        </Badge>
+      );
+    }
+
+    return (
+      <Badge
+        variant="outline"
+        className="h-6 rounded-full border-emerald-500/25 bg-emerald-500/10 px-2.5 text-xs text-emerald-700 hover:bg-emerald-500/10 dark:border-emerald-400/25 dark:text-emerald-300"
+        title={categoryNames.join(', ')}
+      >
+        {formatVisitCategoryCount(categoryNames.length)}
+      </Badge>
+    );
+  };
+
+  const renderVisitDeleteButton = (card: VisitCard) => (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className="shrink-0 rounded-xl text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      onClick={(event) => {
+        event.stopPropagation();
+        setCardToDelete(card.id);
+        setIsDeleteOpen(true);
+      }}
+      aria-label="Удалить запись входа"
+    >
+      <Trash2 className="h-4 w-4" />
+    </Button>
+  );
+
+  const normalizedVisitSearchQuery = visitSearchQuery.trim().toLowerCase();
+  const filteredVisitCards = useMemo(() => {
+    if (!normalizedVisitSearchQuery) return cards;
+
+    return cards.filter((card) => {
+      const { cleanTime } = getVisitDisplayMeta(card);
+      const searchableValues = [
+        card.success ? 'найден' : 'не найден',
+        card.name,
+        card.phone,
+        card.source,
+        card.qrRaw,
+        card.category,
+        card.time,
+        cleanTime,
+        card.keyIssued ? `ключ ${card.keyNumber}` : 'ключ не выдан',
+      ];
+
+      return searchableValues.some((value) =>
+        (value || '').toLowerCase().includes(normalizedVisitSearchQuery),
+      );
+    });
+  }, [cards, normalizedVisitSearchQuery]);
+
+  const visitPageCount = Math.max(
+    1,
+    Math.ceil(filteredVisitCards.length / VISITS_PAGE_SIZE),
+  );
+  const currentVisitPage = Math.min(visitPage, visitPageCount);
+  const paginatedVisitCards = filteredVisitCards.slice(
+    (currentVisitPage - 1) * VISITS_PAGE_SIZE,
+    currentVisitPage * VISITS_PAGE_SIZE,
+  );
+  const visitResultStart =
+    filteredVisitCards.length === 0
+      ? 0
+      : (currentVisitPage - 1) * VISITS_PAGE_SIZE + 1;
+  const visitResultEnd = Math.min(
+    currentVisitPage * VISITS_PAGE_SIZE,
+    filteredVisitCards.length,
+  );
+  const visitPaginationItems = useMemo<Array<number | 'ellipsis-start' | 'ellipsis-end'>>(
+    () => {
+      if (visitPageCount <= 5) {
+        return Array.from({ length: visitPageCount }, (_, index) => index + 1);
+      }
+
+      const items: Array<number | 'ellipsis-start' | 'ellipsis-end'> = [1];
+      if (currentVisitPage > 3) items.push('ellipsis-start');
+
+      const start = Math.max(2, currentVisitPage - 1);
+      const end = Math.min(visitPageCount - 1, currentVisitPage + 1);
+
+      for (let page = start; page <= end; page += 1) {
+        items.push(page);
+      }
+
+      if (currentVisitPage < visitPageCount - 2) items.push('ellipsis-end');
+      items.push(visitPageCount);
+
+      return items;
+    },
+    [currentVisitPage, visitPageCount],
+  );
+
+  useEffect(() => {
+    setVisitPage(1);
+  }, [visitSearchQuery]);
+
+  useEffect(() => {
+    setVisitPage((page) => Math.max(1, Math.min(page, visitPageCount)));
+  }, [visitPageCount]);
+
   return (
-    <div className="min-h-screen p-4 font-sans md:p-6">
+    <div className="min-h-screen font-sans">
       <div className="w-full space-y-4">
-        {/* ШАПКА И КНОПКИ */}
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              Монитор входов
-            </h1>
-            <p className="text-sm text-muted-foreground mt-1">
-              Управление гостями, выдача ключей и пометки
-            </p>
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <h1 className="sr-only">Монитор входов</h1>
+          <div className="relative w-full md:max-w-[28rem]">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={visitSearchQuery}
+              onChange={(event) => setVisitSearchQuery(event.target.value)}
+              placeholder="Поиск визитов"
+              className="pl-9"
+            />
           </div>
 
-          <div className="flex flex-wrap gap-3 w-full sm:w-auto">
+          <div className="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-nowrap md:justify-end">
             <Button
               variant={scannerStatus === 'connected' ? 'default' : 'outline'}
-              className={
-                scannerStatus === 'connected'
-                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : ''
-              }
-              onClick={connectScanner}
+              className={cn(
+                'col-span-2 w-full md:col-span-1 md:w-auto',
+                scannerStatus === 'connected' &&
+                  'bg-green-600 text-white hover:bg-green-700',
+              )}
+              onClick={() => void reconnectScanner()}
               disabled={
                 scannerStatus === 'connected' ||
                 scannerStatus === 'connecting' ||
@@ -1498,22 +1612,11 @@ export default function AdminPage() {
               )}
             </Button>
 
-            {scannerStatus !== 'connected' && (
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => void reconnectScanner()}
-                disabled={scannerStatus === 'connecting'}
-              >
-                <RefreshCcw className="w-4 h-4 mr-2" />
-                Переподключить
-              </Button>
-            )}
-
             {scannerStatus === 'connected' && (
               <Button
                 type="button"
                 variant="outline"
+                className="w-full md:w-auto"
                 onClick={() => setIsDisconnectOpen(true)}
               >
                 <WifiOff className="w-4 h-4 mr-2" />
@@ -1522,67 +1625,22 @@ export default function AdminPage() {
             )}
 
             <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                void fetchScannerEvents();
-                setIsScannerJournalOpen(true);
-              }}
-            >
-              <History className="w-4 h-4 mr-2" />
-              Журнал
-            </Button>
-
-            <Button
               variant="outline"
               onClick={() => setIsSearchOpen(true)}
-              className="flex-1 sm:flex-none"
+              className="w-full md:w-auto"
             >
               <Search className="w-4 h-4 mr-2" />
               Ручной поиск
             </Button>
-            <Button
-              onClick={() => {
-                setRegForm(getEmptyReceptionForm());
-                setRegCandidate(null);
-                setRestoreCandidate(null);
-                setRegError('');
-                setIsRegOpen(true);
-              }}
-              className="flex-1 sm:flex-none"
-            >
+            <Button onClick={openNewClientDialog} className="w-full md:w-auto">
               <UserPlus className="w-4 h-4 mr-2" />
               Новый клиент
             </Button>
           </div>
         </div>
 
-        <div className="flex flex-col gap-3 rounded-md border bg-card px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Badge
-              variant={scannerStatus === 'connected' ? 'default' : 'outline'}
-              className={
-                scannerStatus === 'connected'
-                  ? 'bg-green-600 text-white hover:bg-green-600'
-                  : scannerStatus === 'reconnecting'
-                    ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
-                    : scannerStatus === 'disconnected'
-                      ? 'border-destructive/40 text-destructive'
-                      : ''
-              }
-            >
-              {getScannerStatusText(scannerStatus)}
-            </Badge>
-            <span className="min-w-0 whitespace-normal break-words text-muted-foreground">
-              {scannerLastEvent ||
-                'Подключите сканер один раз, дальше CRM попробует восстановить разрешенный порт автоматически.'}
-            </span>
-            <HelpTooltip>
-              В Chrome автопереподключение работает только для порта, которому
-              уже дали доступ через кнопку подключения.
-            </HelpTooltip>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
+        {(pendingScanCount > 0 || queuedVisits.length > 0) && (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
             {pendingScanCount > 0 && (
               <Badge
                 variant="outline"
@@ -1602,343 +1660,175 @@ export default function AdminPage() {
                 Новых входов: {queuedVisits.length}
               </Button>
             )}
-            {scannerLastError && (
-              <span
-                className="inline-flex max-w-full items-start gap-1 whitespace-normal break-words text-destructive"
-                title={scannerLastError}
-              >
-                <AlertTriangle className="h-4 w-4 shrink-0" />
-                <span>{scannerLastError}</span>
-              </span>
+          </div>
+        )}
+
+        <section>
+          <div className="overflow-hidden rounded-2xl bg-card shadow-sm shadow-foreground/5">
+            <div className="overflow-x-auto">
+              <div className="min-w-[860px] overflow-hidden bg-background">
+                <Table className="min-w-[860px]">
+                  <TableHeader className="[&_tr]:border-0">
+                    <TableRow className="border-0 bg-muted/45 hover:bg-muted/45">
+                      <TableHead className="h-12 px-5 text-xs font-medium text-muted-foreground">
+                        Клиент
+                      </TableHead>
+                      <TableHead className="h-12 px-5 text-xs font-medium text-muted-foreground">
+                        Контакты
+                      </TableHead>
+                      <TableHead className="h-12 px-5 text-xs font-medium text-muted-foreground">
+                        Время
+                      </TableHead>
+                      <TableHead className="h-12 px-5 text-xs font-medium text-muted-foreground">
+                        Цель
+                      </TableHead>
+                      <TableHead className="h-12 px-5 text-xs font-medium text-muted-foreground">
+                        Ключ
+                      </TableHead>
+                      <TableHead className="h-12 px-5 text-right text-xs font-medium text-muted-foreground" />
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody
+                    key={currentVisitPage}
+                    className="crm-table-page"
+                  >
+                    {filteredVisitCards.length === 0 ? (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className="h-32 text-center text-sm text-muted-foreground"
+                        >
+                          {cards.length === 0
+                            ? 'Ожидание сканирований...'
+                            : 'По этому поиску визитов нет'}
+                        </TableCell>
+                      </TableRow>
+                    ) : (
+                      paginatedVisitCards.map((card) => {
+                        const { cleanTime, isRepeated } =
+                          getVisitDisplayMeta(card);
+
+                        return (
+                          <TableRow
+                            key={card.id}
+                            className="cursor-pointer border-b transition-colors last:border-0 hover:bg-muted/30"
+                            onClick={() => openVisitDetails(card)}
+                          >
+                            <TableCell className="px-5 py-4">
+                              <div className="flex min-w-[240px] items-start gap-3">
+                                <div className="min-w-0">
+                                  <div
+                                    className={cn(
+                                      'max-w-[260px] truncate font-semibold leading-5',
+                                      !card.success && 'text-destructive',
+                                    )}
+                                  >
+                                    {card.success ? card.name : 'Неизвестный QR'}
+                                  </div>
+                                  <div className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground">
+                                    {card.success
+                                      ? card.source || 'Источник не указан'
+                                      : card.qrRaw || '-'}
+                                  </div>
+                                </div>
+                              </div>
+                            </TableCell>
+                            <TableCell className="max-w-[240px] whitespace-normal break-words px-5 py-4 text-muted-foreground">
+                              {card.success ? (
+                                card.phone || '-'
+                              ) : (
+                                <span className="break-all font-mono text-xs">
+                                  {card.qrRaw || '-'}
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-5 py-4 text-sm text-muted-foreground">
+                              <div className="flex items-center gap-2">
+                                {isRepeated ? (
+                                  <RefreshCcw className="h-3.5 w-3.5 text-amber-600 dark:text-amber-300" />
+                                ) : card.success ? (
+                                  <LogIn className="h-3.5 w-3.5 text-primary" />
+                                ) : (
+                                  <XCircle className="h-3.5 w-3.5 text-destructive" />
+                                )}
+                                <span className="font-medium text-foreground">
+                                  {cleanTime}
+                                </span>
+                              </div>
+                            </TableCell>
+                            <TableCell className="px-5 py-4">
+                              {renderVisitCategoryStatus(card)}
+                            </TableCell>
+                            <TableCell className="px-5 py-4">
+                              {card.success && card.keyIssued ? (
+                                <Badge variant="secondary">
+                                  №{card.keyNumber}
+                                </Badge>
+                              ) : (
+                                <span className="text-sm text-muted-foreground">
+                                  -
+                                </span>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-5 py-4 text-right">
+                              {renderVisitDeleteButton(card)}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+
+            </div>
+
+            {filteredVisitCards.length > 0 && (
+              <div className="flex flex-col gap-3 border-t px-4 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-5">
+                  <div>
+                    {visitResultStart}-{visitResultEnd} из{' '}
+                    {filteredVisitCards.length}
+                  </div>
+                  <Pagination className="mx-0 w-auto justify-start sm:justify-end">
+                    <PaginationContent>
+                      <PaginationItem>
+                        <PaginationPrevious
+                          disabled={currentVisitPage === 1}
+                          onClick={() =>
+                            setVisitPage((page) => Math.max(1, page - 1))
+                          }
+                        />
+                      </PaginationItem>
+                      {visitPaginationItems.map((item) => (
+                        <PaginationItem key={item}>
+                          {typeof item === 'number' ? (
+                            <PaginationButton
+                              isActive={item === currentVisitPage}
+                              onClick={() => setVisitPage(item)}
+                            >
+                              {item}
+                            </PaginationButton>
+                          ) : (
+                            <PaginationEllipsis />
+                          )}
+                        </PaginationItem>
+                      ))}
+                      <PaginationItem>
+                        <PaginationNext
+                          disabled={currentVisitPage === visitPageCount}
+                          onClick={() =>
+                            setVisitPage((page) =>
+                              Math.min(visitPageCount, page + 1),
+                            )
+                          }
+                        />
+                      </PaginationItem>
+                    </PaginationContent>
+                  </Pagination>
+                </div>
             )}
           </div>
-        </div>
-
-        {/* МОБИЛЬНЫЙ СПИСОК */}
-        <div className="space-y-2 md:hidden">
-          {cards.length === 0 ? (
-            <div className="rounded-md border border-dashed bg-card p-6 text-center text-sm text-muted-foreground">
-              Ожидание сканирований...
-            </div>
-          ) : (
-            cards.map((card) => {
-              const cleanTime = card.time.replace(/[^0-9:]/g, '') || '-';
-              const categoryNames = getVisitCategoryNames(card);
-              const visibleCategoryNames = categoryNames.slice(0, 3);
-              const hiddenCategoryCount = Math.max(
-                0,
-                categoryNames.length - visibleCategoryNames.length,
-              );
-              const isRepeated = Boolean(
-                card.isRepeated || card.time.includes('🔄'),
-              );
-
-              return (
-                <div
-                  key={card.id}
-                  className="rounded-md border bg-card p-3 text-sm"
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setVisitActionError('');
-                    setCurrentVisit(card);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      setVisitActionError('');
-                      setCurrentVisit(card);
-                    }
-                  }}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        {card.success ? (
-                          <Badge
-                            variant="outline"
-                            className={
-                              isRepeated
-                                ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
-                                : 'border-primary/40 text-primary'
-                            }
-                          >
-                            {isRepeated ? 'Повтор' : 'Найден'}
-                          </Badge>
-                        ) : (
-                          <Badge
-                            variant="outline"
-                            className="border-destructive/40 text-destructive"
-                          >
-                            Не найден
-                          </Badge>
-                        )}
-                        <span className="text-xs text-muted-foreground">
-                          {cleanTime}
-                        </span>
-                      </div>
-                      <div className="mt-2 truncate font-semibold">
-                        {card.success ? card.name : 'Неизвестный QR'}
-                      </div>
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {card.success ? `Источник: ${card.source}` : card.qrRaw}
-                      </div>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 shrink-0 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setCardToDelete(card.id);
-                        setIsDeleteOpen(true);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-
-                  <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <div className="text-muted-foreground">Контакт</div>
-                      <div className="mt-1 break-words font-medium">
-                        {card.success ? card.phone || '-' : card.qrRaw || '-'}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-muted-foreground">Ключ</div>
-                      <div className="mt-1 font-medium">
-                        {card.keyIssued ? `Выдан №${card.keyNumber}` : '-'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap gap-1">
-	                            {visibleCategoryNames.length > 0 ? (
-	                              <>
-	                                {visibleCategoryNames.map((cat) => (
-	                                  <span
-	                                    key={cat}
-	                                    className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs"
-	                                  >
-	                                    {cat}
-	                                  </span>
-	                                ))}
-                        {hiddenCategoryCount > 0 && (
-                          <span className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs text-muted-foreground">
-                            +{hiddenCategoryCount}
-                          </span>
-                        )}
-                      </>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        Цель не указана
-                      </span>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* ТАБЛИЦА */}
-        <div className="hidden overflow-x-auto rounded-md border bg-card shadow-sm md:block">
-          <Table className="min-w-[900px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-[80px]">Статус</TableHead>
-                <TableHead className="min-w-[150px]">Клиент</TableHead>
-                <TableHead className="min-w-[130px]">Контакты</TableHead>
-                <TableHead className="w-[120px]">Время</TableHead>
-                <TableHead className="w-[200px]">Цель визита</TableHead>
-                <TableHead className="w-[180px]">Ключ</TableHead>
-                <TableHead className="w-[50px] text-right"></TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {cards.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="h-24 text-center text-muted-foreground"
-                  >
-                    Ожидание сканирований...
-                  </TableCell>
-                </TableRow>
-              ) : (
-                cards.map((card) => {
-                  const cleanTime = card.time.replace(/[^0-9:]/g, '');
-                  const categoryNames = getVisitCategoryNames(card);
-                  const visibleCategoryNames = categoryNames.slice(0, 3);
-                  const hiddenCategoryCount = Math.max(
-                    0,
-                    categoryNames.length - visibleCategoryNames.length,
-                  );
-                  const isRepeated = Boolean(
-                    card.isRepeated || card.time.includes('🔄'),
-                  );
-
-                  return (
-                    <TableRow
-                      key={card.id}
-                      className="cursor-pointer animate-in fade-in slide-in-from-top-2"
-                      onClick={() => {
-                        setVisitActionError('');
-                        setCurrentVisit(card);
-                      }}
-                    >
-                      <TableCell>
-                        {card.success ? (
-                          <div
-                            className={`flex items-center gap-2 font-medium ${
-                              isRepeated
-                                ? 'text-amber-600 dark:text-amber-300'
-                                : 'text-primary'
-                            }`}
-                          >
-                            {isRepeated ? (
-                              <RefreshCcw className="w-5 h-5" />
-                            ) : (
-                              <CheckCircle2 className="w-5 h-5" />
-                            )}
-                            <Badge
-                              variant="outline"
-                              className={
-                                isRepeated
-                                  ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
-                                  : 'border-primary/40 text-primary'
-                              }
-                            >
-                              {isRepeated ? 'Повтор' : 'Найден'}
-                            </Badge>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2 font-medium text-destructive">
-                            <XCircle className="w-5 h-5" />
-                            <Badge
-                              variant="outline"
-                              className="border-destructive/40 text-destructive"
-                            >
-                              Не найден
-                            </Badge>
-                          </div>
-                        )}
-                      </TableCell>
-
-                      <TableCell>
-                        <div className="font-semibold text-foreground truncate max-w-[200px]">
-                          {card.success ? card.name : 'НЕИЗВЕСТНЫЙ'}
-                        </div>
-                        {card.success && (
-                          <div className="text-xs text-muted-foreground mt-0.5 truncate max-w-[200px]">
-                            Источник: {card.source}
-                          </div>
-                        )}
-                      </TableCell>
-
-                      <TableCell className="max-w-[220px] whitespace-normal break-words text-muted-foreground">
-                        {card.success ? (
-                          card.phone
-                        ) : (
-                          <span className="break-all font-mono text-xs">
-                            {card.qrRaw}
-                          </span>
-                        )}
-                      </TableCell>
-
-                      <TableCell className="text-muted-foreground font-medium text-sm">
-                        <div className="flex items-center gap-1.5">
-                          {isRepeated ? (
-                            <>
-                              <RefreshCcw className="w-3.5 h-3.5 text-amber-600 dark:text-amber-300" />
-                              <span>{cleanTime}</span>
-                            </>
-                          ) : card.success ? (
-                            <>
-                              <LogIn className="w-3.5 h-3.5 text-primary" />
-                              <span>{cleanTime}</span>
-                            </>
-                          ) : (
-                            <>
-                              <XCircle className="w-3.5 h-3.5 text-destructive" />
-                              <span>{cleanTime}</span>
-                            </>
-                          )}
-                        </div>
-                      </TableCell>
-
-                      <TableCell>
-                        {card.success ? (
-                          <div className="flex max-w-[220px] flex-wrap gap-1">
-                            {visibleCategoryNames.length > 0 ? (
-                              <>
-                                {visibleCategoryNames.map((cat) => (
-                                <span
-                                  key={cat}
-                                  className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs"
-                                >
-                                  {cat}
-                                </span>
-                                ))}
-                                {hiddenCategoryCount > 0 && (
-                                  <span className="rounded border border-border/60 bg-secondary/50 px-1.5 py-0.5 text-xs text-muted-foreground">
-                                    +{hiddenCategoryCount}
-                                  </span>
-                                )}
-                              </>
-                            ) : (
-                              <span className="text-sm text-muted-foreground">
-                                -
-                              </span>
-                            )}
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">
-                            -
-                          </span>
-                        )}
-                      </TableCell>
-
-                      <TableCell>
-                        {card.success ? (
-                          card.keyIssued ? (
-                            <div className="inline-flex items-center px-2.5 py-1.5 rounded-md bg-primary/10 text-primary text-sm font-medium border border-primary/20">
-                              Выдан №{card.keyNumber}
-                            </div>
-                          ) : (
-                            <span className="text-sm text-muted-foreground">
-                              -
-                            </span>
-                          )
-                        ) : (
-                          <span className="text-muted-foreground text-sm">
-                            -
-                          </span>
-                        )}
-                      </TableCell>
-
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 h-8 w-8"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setCardToDelete(card.id);
-                            setIsDeleteOpen(true);
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </div>
+        </section>
       </div>
 
       {/* МОДАЛКА: ПОИСК */}
@@ -2361,88 +2251,6 @@ export default function AdminPage() {
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={closeActiveVisit}>
               {queuedVisits.length > 0 ? 'Следующий вход' : 'Закрыть'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* МОДАЛКА: ЖУРНАЛ СКАНЕРА */}
-      <Dialog open={isScannerJournalOpen} onOpenChange={setIsScannerJournalOpen}>
-        <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[880px]">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <History className="h-5 w-5 text-muted-foreground" />
-              Журнал сканера
-            </DialogTitle>
-            <DialogDescription>
-              Последние подключения, отключения, повторы и ошибки QR.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-2">
-            {scannerEvents.length === 0 ? (
-              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                Событий сканера пока нет.
-              </div>
-            ) : (
-              scannerEvents.map((event) => (
-                <div
-                  key={event.id}
-                  className="grid gap-3 rounded-md border p-3 text-sm md:grid-cols-[160px_minmax(0,1fr)_140px]"
-                >
-                  <div className="space-y-1">
-                    <Badge
-                      variant="outline"
-                      className={
-                        event.severity === 'error'
-                          ? 'border-destructive/40 text-destructive'
-                          : event.severity === 'warning'
-                            ? 'border-amber-500/40 text-amber-600 dark:text-amber-300'
-                            : ''
-                      }
-                    >
-                      {getScannerEventLabel(event.eventType)}
-                    </Badge>
-                    <div className="text-xs text-muted-foreground">
-                      {formatDateTime(event.createdAt)}
-                    </div>
-                  </div>
-                  <div className="min-w-0">
-                    <div
-                      className="whitespace-normal break-words font-medium leading-snug"
-                      title={event.message || event.status || ''}
-                    >
-                      {event.message || event.status || '-'}
-                    </div>
-	                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-	                      {event.user?.name && <span>Клиент: {event.user.name}</span>}
-	                      {event.qrPreview && (
-	                        <span>
-	                          QR: {event.qrPreview}
-	                          {event.qrHash
-	                            ? ` · hash ${event.qrHash.slice(0, 8)}`
-	                            : ''}
-	                        </span>
-	                      )}
-	                      {event.code && <span>Код: {event.code}</span>}
-	                    </div>
-                  </div>
-                  <div className="text-xs text-muted-foreground md:text-right">
-                    {event.account?.name || event.account?.email || 'CRM'}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => void fetchScannerEvents()}
-            >
-              <RefreshCcw className="mr-2 h-4 w-4" />
-              Обновить
             </Button>
           </DialogFooter>
         </DialogContent>

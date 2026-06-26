@@ -40,7 +40,6 @@ import { cn } from '@/lib/utils';
 import {
   Calendar as CalendarIcon,
   Plus,
-  RefreshCw,
   AlertTriangle,
   Archive,
   ArchiveRestore,
@@ -66,12 +65,11 @@ import {
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
 import { DataTable } from '@/components/data-table';
-import { ErrorState } from '@/components/error-state';
 import { MetricCard } from '@/components/dashboard-metric';
 import {
   PermissionActionButton,
-  PermissionHint,
 } from '@/components/permission-feedback';
+import { toast } from '@/components/ui/toast';
 import {
   permissionMessages,
   showPermissionDenied,
@@ -210,16 +208,6 @@ function getStaffPosition(staff: StaffMember) {
   return staff.position || staff.role || '-';
 }
 
-function formatActor(actor?: PayrollActor | null) {
-  if (!actor) return '-';
-  return actor.name || actor.email || '-';
-}
-
-function formatDateTime(value?: string | null) {
-  if (!value) return '-';
-  return format(new Date(value), 'dd.MM.yyyy HH:mm');
-}
-
 function formatTime(value?: string | null) {
   if (!value) return '';
   return format(new Date(value), 'HH:mm');
@@ -248,7 +236,6 @@ export default function StaffPage() {
   const [payrollLocked, setPayrollLocked] = useState(false);
   const [payrollWarnings, setPayrollWarnings] = useState<string[]>([]);
   const [errorMessage, setErrorMessage] = useState('');
-  const [loading, setLoading] = useState(true);
 
   const now = new Date();
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
@@ -282,7 +269,6 @@ export default function StaffPage() {
   const staffFormStatus = staffForm.watch('status');
 
   const fetchPayroll = useCallback(async () => {
-    setLoading(true);
     setErrorMessage('');
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
@@ -324,14 +310,18 @@ export default function StaffPage() {
     } catch (e) {
       console.error(e);
       setErrorMessage(getApiErrorMessage(e, 'Не удалось загрузить payroll'));
-    } finally {
-      setLoading(false);
     }
   }, [dateRange]);
 
   useEffect(() => {
     void fetchPayroll();
   }, [fetchPayroll]);
+
+  useEffect(() => {
+    if (errorMessage) {
+      toast.error(errorMessage);
+    }
+  }, [errorMessage]);
 
   const handleSaveShift = shiftForm.handleSubmit(async (values) => {
     if (payrollLocked) {
@@ -1131,19 +1121,33 @@ export default function StaffPage() {
   );
 
   return (
-    <div className="min-w-0 p-4 md:p-8 space-y-6">
-      {/* ШАПКА */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Персонал и смены
-          </h1>
-          <p className="text-muted-foreground mt-1 text-sm max-w-2xl">
-            Черновики смен создаются автоматически по дням, где есть кассовые
-            операции. Здесь живут сотрудники, смены и расчет начислений.
-          </p>
+    <div className="flex min-w-0 flex-col gap-5">
+      <h1 className="sr-only">Персонал и смены</h1>
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant="outline" className={payrollStatusClass}>
+              {payrollPeriod ? payrollStatusLabel[payrollPeriod.status] : 'Период не создан'}
+            </Badge>
+            <span className="truncate text-sm text-muted-foreground">
+              {payrollPeriod
+                ? `${payrollPeriod.fromDate} — ${payrollPeriod.toDate}`
+                : 'Выберите даты и создайте период'}
+            </span>
+            {payrollLocked && (
+              <Badge variant="outline" className="gap-1">
+                <Lock className="h-3 w-3" /> Закрыт
+              </Badge>
+            )}
+            {payrollWarnings.length > 0 && (
+              <Badge variant="outline" className="gap-1 border-amber-500/40 text-amber-600">
+                <AlertTriangle className="h-3 w-3" />
+                {payrollWarnings.length} предупрежд.
+              </Badge>
+            )}
+          </div>
         </div>
-        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
+        <div className="flex w-full flex-wrap items-center justify-end gap-2 xl:w-auto xl:flex-nowrap">
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -1180,15 +1184,6 @@ export default function StaffPage() {
               />
             </PopoverContent>
           </Popover>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={fetchPayroll}
-            disabled={loading}
-            title="Обновить payroll"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
           <Button variant="outline" onClick={handleExportPayroll}>
             <Download className="w-4 h-4 mr-2" /> Экспорт
           </Button>
@@ -1210,152 +1205,74 @@ export default function StaffPage() {
               <Plus className="w-4 h-4 mr-2" /> Добавить смену
             </Button>
           )}
-        </div>
-      </div>
-
-      {errorMessage && (
-        <ErrorState
-          compact
-          title="Payroll не загрузился полностью"
-          message={errorMessage}
-          onRetry={() => void fetchPayroll()}
-        />
-      )}
-
-      <div className="border rounded-md bg-card p-4">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-lg font-semibold">Payroll-период</h2>
-              <Badge variant="outline" className={payrollStatusClass}>
-                {payrollPeriod
-                  ? payrollStatusLabel[payrollPeriod.status]
-                  : 'Не создан'}
-              </Badge>
-              {payrollLocked && (
-                <Badge variant="outline" className="gap-1">
-                  <Lock className="h-3 w-3" /> Период закрыт для изменений
-                </Badge>
-              )}
-            </div>
-            <div className="mt-1 text-sm text-muted-foreground">
-              {payrollPeriod
-                ? `${payrollPeriod.fromDate} — ${payrollPeriod.toDate}. Закрытые периоды защищают смены и ручные операции от случайных правок.`
-                : 'Создайте период, когда смены за выбранные даты заполнены и расчет готов к проверке.'}
-            </div>
-            {payrollPeriod && (
-              <div className="mt-3 grid gap-2 text-xs text-muted-foreground sm:grid-cols-3">
-                <div>
-                  <span className="text-foreground">Проверка:</span>{' '}
-                  {formatDateTime(payrollPeriod.reviewedAt)} ·{' '}
-                  {formatActor(payrollPeriod.reviewedBy)}
-                </div>
-                <div>
-                  <span className="text-foreground">Утверждение:</span>{' '}
-                  {formatDateTime(payrollPeriod.approvedAt)} ·{' '}
-                  {formatActor(payrollPeriod.approvedBy)}
-                </div>
-                <div>
-                  <span className="text-foreground">Выплата:</span>{' '}
-                  {formatDateTime(payrollPeriod.paidAt)} ·{' '}
-                  {formatActor(payrollPeriod.paidBy)}
-                </div>
-              </div>
-            )}
-            {payrollWarnings.length > 0 && (
-              <div className="mt-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-300">
-                <div className="mb-1 flex items-center gap-2 font-medium">
-                  <AlertTriangle className="h-4 w-4" />
-                  Проверьте расчет
-                </div>
-                <div className="space-y-1">
-                  {payrollWarnings.slice(0, 3).map((warning) => (
-                    <div key={warning}>{warning}</div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {payrollPeriod?.status === 'approved' && !canPay && (
-              <PermissionHint className="mt-3">
-                {permissionMessages.payrollPay}
-              </PermissionHint>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {!payrollPeriod && canReview && (
-              <Button onClick={requestCreatePayrollPeriod}>
-                Создать период
+          {!payrollPeriod && canReview && (
+            <Button onClick={requestCreatePayrollPeriod}>Создать период</Button>
+          )}
+          {payrollPeriod?.status === 'draft' && canReview && (
+            <>
+              <Button variant="outline" onClick={requestRecalculatePayrollPeriod}>
+                <RotateCcw className="w-4 h-4 mr-2" /> Пересчитать
               </Button>
-            )}
-            {payrollPeriod?.status === 'draft' && canReview && (
-              <>
-                <Button
-                  variant="outline"
-                  onClick={requestRecalculatePayrollPeriod}
-                >
-                  <RotateCcw className="w-4 h-4 mr-2" /> Пересчитать
-                </Button>
-                <Button
-                  onClick={() =>
-                    requestPayrollTransition(
-                      'reviewed',
-                      'Отправить payroll на проверку?',
-                      'На проверку',
-                      'Расчет будет пересчитан и зафиксирован. После этого смены и ручные операции в периоде нельзя будет менять без возврата в черновик.',
-                    )
-                  }
-                >
-                  На проверку
-                </Button>
-              </>
-            )}
-            {payrollPeriod?.status === 'reviewed' && canReview && (
-              <Button
-                variant="outline"
-                onClick={() =>
-                  requestPayrollTransition(
-                    'draft',
-                    'Вернуть payroll в черновик?',
-                    'Вернуть',
-                    'Период снова станет редактируемым. Это нужно делать только если нашли ошибку в сменах или корректировках.',
-                    true,
-                  )
-                }
-              >
-                В черновик
-              </Button>
-            )}
-            {payrollPeriod?.status === 'reviewed' && canApprove && (
               <Button
                 onClick={() =>
                   requestPayrollTransition(
-                    'approved',
-                    'Утвердить payroll?',
-                    'Утвердить',
-                    'После утверждения расчет считается финальным для выплаты.',
+                    'reviewed',
+                    'Отправить payroll на проверку?',
+                    'На проверку',
+                    'Расчет будет пересчитан и зафиксирован. После этого смены и ручные операции в периоде нельзя будет менять без возврата в черновик.',
                   )
                 }
               >
-                Утвердить
+                На проверку
               </Button>
-            )}
-            {payrollPeriod?.status === 'approved' && (
-              <PermissionActionButton
-                allowed={canPay}
-                deniedMessage={permissionMessages.payrollPay}
-                onClick={() =>
-                  requestPayrollTransition(
-                    'paid',
-                    'Отметить payroll выплаченным?',
-                    'Выплачено',
-                    'Период будет помечен как выплаченный. Это финальный статус.',
-                  )
-                }
-              >
-                Выплачено
-              </PermissionActionButton>
-            )}
-          </div>
+            </>
+          )}
+          {payrollPeriod?.status === 'reviewed' && canReview && (
+            <Button
+              variant="outline"
+              onClick={() =>
+                requestPayrollTransition(
+                  'draft',
+                  'Вернуть payroll в черновик?',
+                  'Вернуть',
+                  'Период снова станет редактируемым. Это нужно делать только если нашли ошибку в сменах или корректировках.',
+                  true,
+                )
+              }
+            >
+              В черновик
+            </Button>
+          )}
+          {payrollPeriod?.status === 'reviewed' && canApprove && (
+            <Button
+              onClick={() =>
+                requestPayrollTransition(
+                  'approved',
+                  'Утвердить payroll?',
+                  'Утвердить',
+                  'После утверждения расчет считается финальным для выплаты.',
+                )
+              }
+            >
+              Утвердить
+            </Button>
+          )}
+          {payrollPeriod?.status === 'approved' && (
+            <PermissionActionButton
+              allowed={canPay}
+              deniedMessage={permissionMessages.payrollPay}
+              onClick={() =>
+                requestPayrollTransition(
+                  'paid',
+                  'Отметить payroll выплаченным?',
+                  'Выплачено',
+                  'Период будет помечен как выплаченный. Это финальный статус.',
+                )
+              }
+            >
+              Выплачено
+            </PermissionActionButton>
+          )}
         </div>
       </div>
 

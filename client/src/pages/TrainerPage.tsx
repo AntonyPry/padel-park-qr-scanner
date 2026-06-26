@@ -15,13 +15,10 @@ import {
   History,
   Pencil,
   Plus,
-  RefreshCw,
   Save,
   Search,
-  ShieldCheck,
   Target,
   Trash2,
-  UserRound,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -294,7 +291,6 @@ export default function TrainerPage() {
   const [page, setPage] = useState(1);
   const [q, setQ] = useState('');
   const [saving, setSaving] = useState(false);
-  const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [trainingLevel, setTrainingLevel] = useState<'all' | TrainingLevel>('all');
   const [trainingPlans, setTrainingPlans] = useState<TrainingPlan[]>([]);
@@ -405,7 +401,6 @@ export default function TrainerPage() {
         });
         return next;
       });
-      setTotal(data.total);
       setTotalPages(data.totalPages);
     } catch {
       setClientsError('Не удалось загрузить клиентов. Проверьте сервер.');
@@ -951,51 +946,8 @@ export default function TrainerPage() {
   ];
 
   return (
-    <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 p-3 sm:p-4 lg:p-6">
-      <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Тренерский кабинет
-          </h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Без телефонов и CRM-администрирования: только клиенты, уровень,
-            упражнения и дневник тренировок.
-          </p>
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          onClick={() => void fetchClients()}
-          disabled={clientsLoading}
-        >
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Обновить
-        </Button>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <MetricCard
-          icon={<UserRound className="h-3.5 w-3.5" />}
-          label="Клиенты в подборке"
-          tooltip="Количество активных клиентов, которые подходят под текущий поиск и фильтр по уровню."
-          value={total}
-        />
-        <MetricCard
-          icon={<Dumbbell className="h-3.5 w-3.5" />}
-          label="Записей на странице"
-          tooltip="Сколько тренировочных записей есть у клиентов, показанных в текущей таблице."
-          value={clients.reduce(
-            (sum, client) => sum + (client.training?.notesCount || 0),
-            0,
-          )}
-        />
-        <MetricCard
-          icon={<ShieldCheck className="h-3.5 w-3.5" />}
-          label="Безопасный режим"
-          tooltip="На этой странице тренер не видит телефон, Telegram, VK и webId клиента и не может создавать или редактировать клиентов."
-          value="Включен"
-        />
-      </div>
+    <div className="flex w-full flex-col gap-5">
+      <h1 className="sr-only">Тренерский кабинет</h1>
 
       <section className="rounded-md border bg-card">
         <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1008,16 +960,6 @@ export default function TrainerPage() {
               Планы из рекомендаций и бронирований, назначенные на тренера.
             </div>
           </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() => void fetchTrainingPlans()}
-            disabled={trainingPlansLoading}
-          >
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Обновить
-          </Button>
         </div>
         <div className="p-4">
           {trainingPlansError && (

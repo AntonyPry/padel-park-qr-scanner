@@ -1,19 +1,35 @@
-import { type ReactNode } from 'react';
+import { type KeyboardEvent, type ReactNode, useState } from 'react';
 import { HelpCircle } from 'lucide-react';
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
+import { AnimatedMetricValue } from '@/components/animated-data';
+import { cn } from '@/lib/utils';
 
 export function HelpTooltip({ children }: { children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+
+  const closeOnEscape = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Escape') {
+      setOpen(false);
+    }
+  };
+
   return (
-    <Tooltip>
+    <Tooltip open={open}>
       <TooltipTrigger asChild>
         <button
           type="button"
           className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label="Пояснение"
+          aria-expanded={open}
+          onBlur={() => setOpen(false)}
+          onClick={() => setOpen((current) => !current)}
+          onKeyDown={closeOnEscape}
+          onPointerEnter={() => setOpen(true)}
+          onPointerLeave={() => setOpen(false)}
         >
           <HelpCircle className="h-3.5 w-3.5" />
         </button>
@@ -37,7 +53,7 @@ export function MetricLabel({
   tooltip: ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+    <div className="flex min-w-0 items-center gap-1.5 text-xs leading-none text-muted-foreground">
       <span className="inline-flex min-w-0 items-center gap-1 truncate">
         {children}
       </span>
@@ -60,13 +76,20 @@ export function MetricCard({
   valueClassName?: string;
 }) {
   return (
-    <div className="rounded-md border bg-card p-3">
-      <MetricLabel tooltip={tooltip}>
-        {icon}
-        {label}
-      </MetricLabel>
-      <div className={`mt-1 text-2xl font-semibold ${valueClassName}`}>
-        {value}
+    <div className="flex min-h-20 min-w-0 flex-col justify-center rounded-xl border bg-card p-4 shadow-sm shadow-foreground/5">
+      <div className="min-w-0">
+        <MetricLabel tooltip={tooltip}>
+          {icon}
+          {label}
+        </MetricLabel>
+      </div>
+      <div
+        className={cn(
+          'mt-2 max-w-full whitespace-nowrap text-2xl font-semibold leading-none tracking-tight',
+          valueClassName,
+        )}
+      >
+        <AnimatedMetricValue value={value} />
       </div>
     </div>
   );

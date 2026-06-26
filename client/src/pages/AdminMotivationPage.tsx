@@ -1426,16 +1426,8 @@ export default function AdminMotivationPage() {
   ];
 
   return (
-    <div className="p-6 md:p-8 space-y-6 max-w-[1200px] mx-auto">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Мотивация</h1>
-          <p className="text-muted-foreground mt-1">
-            Смена администратора, правила начислений, прогресс бонусов и отчет
-            для копирования.
-          </p>
-        </div>
-
+    <div className="flex flex-col gap-5">
+      <div className="flex justify-end">
         <div
           className={`flex w-full items-center gap-4 rounded-lg border bg-card p-2 sm:w-auto ${
             isLongShift ? 'border-amber-500/40 bg-amber-500/5' : ''
@@ -1496,19 +1488,11 @@ export default function AdminMotivationPage() {
       {canEditMotivation && (
         <>
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-              <div>
-                <CardTitle className="text-lg">Почасовая оплата</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  База для payroll: обычные часы, переработка и порог часов.
-                </p>
+            {rulesLoading && (
+              <div className="border-b px-4 py-2 text-sm text-muted-foreground">
+                Обновление...
               </div>
-              {rulesLoading && (
-                <span className="text-sm text-muted-foreground animate-pulse">
-                  Обновление...
-                </span>
-              )}
-            </CardHeader>
+            )}
             <CardContent className="pt-0 px-0">
               <div className="overflow-x-auto">
                 <DataTable

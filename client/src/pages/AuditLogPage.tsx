@@ -2,13 +2,11 @@ import { useMemo, useState } from 'react';
 import { type ColumnDef } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { RefreshCw } from 'lucide-react';
 import { listAuditLogs, type AuditAction, type AuditLogItem } from '@/api/audit';
 import { queryKeys } from '@/api/query-keys';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import {
   Pagination,
   PaginationContent,
@@ -165,14 +163,11 @@ export default function AuditLogPage() {
   );
 
   return (
-    <div className="mx-auto flex max-w-[1200px] flex-col gap-6 p-6 md:p-8">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Журнал действий</h1>
-          <p className="mt-1 text-muted-foreground">
-            Изменения данных, архивы, восстановления, удаления и ошибки доступа.
-          </p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-between">
+        <Badge variant="outline" className="w-fit">
+          {total.toLocaleString('ru-RU')} событий
+        </Badge>
         <div className="flex gap-2">
           <Select
             value={action}
@@ -192,23 +187,10 @@ export default function AuditLogPage() {
               ))}
             </SelectContent>
           </Select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => void auditQuery.refetch()}
-            aria-label="Обновить журнал"
-            title="Обновить"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
         </div>
       </div>
 
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between border-b py-3">
-          <CardTitle className="text-lg">События</CardTitle>
-          <Badge variant="outline">{total.toLocaleString('ru-RU')}</Badge>
-        </CardHeader>
         <CardContent className="px-0 pt-0">
           <DataTable
             columns={auditColumns}

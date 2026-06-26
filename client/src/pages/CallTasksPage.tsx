@@ -10,7 +10,6 @@ import type { ColumnDef } from '@tanstack/react-table';
 import {
   Archive,
   ArchiveRestore,
-  BarChart3,
   CheckCircle2,
   Clock,
   Eye,
@@ -18,7 +17,6 @@ import {
   MessageSquareText,
   Pencil,
   PhoneCall,
-  RefreshCw,
   Repeat2,
   Save,
   Trash2,
@@ -67,7 +65,6 @@ import {
 } from '@/components/ui/select';
 import {
   HelpTooltip,
-  MetricCard,
   MetricLabel,
 } from '@/components/dashboard-metric';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
@@ -238,6 +235,25 @@ const TASK_STATUS_LABELS: Record<CallTaskStatus, string> = {
   in_progress: 'В работе',
 };
 
+const TASK_FILTER_LABELS: Record<TaskFilterStatus, string> = {
+  active: 'Активные',
+  all: 'Все',
+  archived: 'Архив',
+  backlog: 'Бэклог',
+  done: 'Готово',
+  in_progress: 'В работе',
+};
+
+const TASK_STATUS_BADGE_VARIANTS: Record<
+  CallTaskStatus,
+  'default' | 'secondary' | 'outline'
+> = {
+  archived: 'outline',
+  backlog: 'secondary',
+  done: 'secondary',
+  in_progress: 'default',
+};
+
 const CLIENT_STATUS_LABELS: Record<CallTaskClientStatus, string> = {
   booked: 'Записался',
   callback: 'Перезвонить',
@@ -394,7 +410,6 @@ export default function CallTasksPage() {
   const initialClientStatus = searchParams.get('clientStatus') as ClientFilterStatus | null;
   const [tasks, setTasks] = useState<CallTask[]>([]);
   const [report, setReport] = useState<CallTasksReport | null>(null);
-  const [loading, setLoading] = useState(false);
   const [tasksError, setTasksError] = useState('');
   const [status, setStatus] = useState<TaskFilterStatus>(
     initialStatus && TASK_FILTER_STATUSES.has(initialStatus) ? initialStatus : 'active',
@@ -471,7 +486,6 @@ export default function CallTasksPage() {
   const fetchTasks = useCallback(async () => {
     const requestId = tasksRequestIdRef.current + 1;
     tasksRequestIdRef.current = requestId;
-    setLoading(true);
     setTasksError('');
     try {
       const res = await apiFetch(`/api/call-tasks?status=${status}`);
@@ -509,10 +523,6 @@ export default function CallTasksPage() {
       setTasks([]);
       setTasksError(message);
       toast.error(message);
-    } finally {
-      if (requestId === tasksRequestIdRef.current) {
-        setLoading(false);
-      }
     }
   }, [status]);
 
@@ -1207,8 +1217,8 @@ export default function CallTasksPage() {
                 void openTask(task);
               }
             }}
-            className={`block w-full rounded-md px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
-              isSelected ? 'bg-muted' : ''
+            className={`block w-full rounded-2xl border px-4 py-3.5 text-left transition-colors hover:border-border hover:bg-muted/60 ${
+              isSelected ? 'border-border bg-muted/80' : 'border-transparent'
             }`}
           >
             <div className="flex items-start justify-between gap-3">
@@ -1219,23 +1229,23 @@ export default function CallTasksPage() {
                   {task.assignedTo?.name || 'без исполнителя'}
                 </div>
               </div>
-              <Badge variant="outline">
+              <Badge variant={TASK_STATUS_BADGE_VARIANTS[task.status]}>
                 {TASK_STATUS_LABELS[task.status]}
               </Badge>
             </div>
             <div className="mt-3 grid grid-cols-3 gap-2 text-xs">
               <div>
-                <MetricLabel tooltip="Клиенты с финальным результатом: «Записался» или «Отказ».">
+                <div className="text-muted-foreground">
                   Готово
-                </MetricLabel>
+                </div>
                 <div className="font-medium">
                   {progress.done}/{progress.total}
                 </div>
               </div>
               <div>
-                <MetricLabel tooltip="Клиенты в этой задаче, у которых уже прошел дедлайн и статус еще не финальный.">
+                <div className="text-muted-foreground">
                   Просрочено
-                </MetricLabel>
+                </div>
                 <div
                   className={
                     task.overdueCount > 0
@@ -1247,9 +1257,9 @@ export default function CallTasksPage() {
                 </div>
               </div>
               <div>
-                <MetricLabel tooltip="Доля записавшихся среди клиентов, по которым уже был контакт.">
+                <div className="text-muted-foreground">
                   Запись
-                </MetricLabel>
+                </div>
                 <div className="font-medium">
                   {formatPercent(task.metrics?.conversionRate)}
                 </div>
@@ -1276,95 +1286,73 @@ export default function CallTasksPage() {
   };
 
   return (
-    <div className="min-w-0 space-y-4 p-4 md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Задачи обзвона</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Рабочие списки клиентов из баз: статус разговора, саммари, дедлайн
-            по клиенту и контроль просрочек.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs text-muted-foreground">Показать</span>
-            <HelpTooltip>
-              Фильтр меняет набор задач на экране и в верхней сводке. Клиенты
-              внутри выбранной задачи фильтруются отдельно ниже.
-            </HelpTooltip>
+    <div className="flex min-w-0 flex-col gap-5">
+      <h1 className="sr-only">Задачи обзвона</h1>
+      <div className="flex flex-wrap items-center gap-2 rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5">
+        <Select
+          value={status}
+          onValueChange={(value) => setStatus(value as TaskFilterStatus)}
+        >
+          <SelectTrigger className="h-9 w-full rounded-xl border-0 bg-muted/70 shadow-none sm:w-[180px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="active">Активные</SelectItem>
+            <SelectItem value="backlog">Бэклог</SelectItem>
+            <SelectItem value="in_progress">В работе</SelectItem>
+            <SelectItem value="done">Готово</SelectItem>
+            <SelectItem value="archived">Архив</SelectItem>
+            <SelectItem value="all">Все</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span>{TASK_FILTER_LABELS[status]}</span>
+            <Badge variant="secondary" className="h-5 rounded-full px-2">
+              {(report?.attemptsCount ?? 0).toLocaleString('ru-RU')} попыток
+            </Badge>
           </div>
-          <Select
-            value={status}
-            onValueChange={(value) => setStatus(value as TaskFilterStatus)}
+          <div className="mt-1 text-sm font-semibold">
+            {(report?.tasksCount ?? 0).toLocaleString('ru-RU')} задач ·{' '}
+            {(report?.totalClientCount ?? 0).toLocaleString('ru-RU')} клиентов
+          </div>
+        </div>
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Контакт / запись</div>
+          <div className="mt-1 text-sm font-semibold">
+            {formatPercent(report?.metrics.contactRate)} ·{' '}
+            {formatPercent(report?.metrics.conversionRate)}
+          </div>
+        </div>
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Просрочено</div>
+          <div
+            className={`mt-1 text-sm font-semibold ${
+              report?.overdueCount ? 'text-destructive' : ''
+            }`}
           >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="active">Активные</SelectItem>
-              <SelectItem value="backlog">Бэклог</SelectItem>
-              <SelectItem value="in_progress">В работе</SelectItem>
-              <SelectItem value="done">Готово</SelectItem>
-              <SelectItem value="archived">Архив</SelectItem>
-              <SelectItem value="all">Все</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={fetchTasks}
-            disabled={loading}
-            title="Обновить"
-            aria-label="Обновить задачи обзвона"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
+            {(report?.overdueCount ?? 0).toLocaleString('ru-RU')}
+          </div>
+        </div>
+        <div className="rounded-xl border bg-card/70 px-3 py-2">
+          <div className="text-xs text-muted-foreground">Закрыто</div>
+          <div className="mt-1 text-sm font-semibold">
+            {formatPercent(report?.metrics.completionRate)} ·{' '}
+            {(report?.metrics.finishedCount ?? 0).toLocaleString('ru-RU')}
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <MetricCard
-          icon={<ListChecks className="h-4 w-4" />}
-          label="Задач"
-          tooltip="Количество задач в выбранном фильтре: активные, архив, готовые или все."
-          value={report?.tasksCount ?? 0}
-        />
-        <MetricCard
-          label="Клиентов"
-          tooltip="Суммарное количество клиентов внутри задач, которые сейчас попали в фильтр."
-          value={(report?.totalClientCount ?? 0).toLocaleString('ru-RU')}
-        />
-        <MetricCard
-          label="Контакт"
-          tooltip="Доля клиентов, по которым уже есть результат звонка. Формула: все статусы кроме «Не звонили» / все клиенты."
-          value={formatPercent(report?.metrics.contactRate)}
-        />
-        <MetricCard
-          label="Запись"
-          tooltip="Конверсия в запись среди тех, с кем уже был контакт. Формула: «Записался» / все клиенты не в статусе «Не звонили»."
-          value={formatPercent(report?.metrics.conversionRate)}
-        />
-        <MetricCard
-          label="Просрочено"
-          tooltip="Клиенты, у которых прошел дедлайн обзвона и статус еще не финальный. Финальные статусы: «Записался» и «Отказ»."
-          value={report?.overdueCount ?? 0}
-          valueClassName={report?.overdueCount ? 'text-destructive' : ''}
-        />
-        <MetricCard
-          icon={<BarChart3 className="h-4 w-4" />}
-          label="Попыток"
-          tooltip="Количество сохраненных записей в истории попыток звонка по клиентам из выбранных задач."
-          value={report?.attemptsCount ?? 0}
-        />
-      </div>
-
-      <div className="grid min-h-[520px] grid-cols-1 gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
-        <div className="rounded-md border bg-card">
+      <div className="grid min-h-[520px] grid-cols-1 gap-5 xl:grid-cols-[400px_minmax(0,1fr)]">
+        <div className="overflow-hidden rounded-2xl border bg-card shadow-sm shadow-foreground/5">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div className="font-medium">Список задач</div>
-            <Badge variant="outline">{tasks.length}</Badge>
+            <Badge variant="secondary">{tasks.length}</Badge>
           </div>
-          <div className="divide-y">
+          <div className="space-y-2 p-2">
             {tasksError && tasks.length === 0 ? (
               <div className="p-4">
                 <ErrorState
@@ -1383,7 +1371,7 @@ export default function CallTasksPage() {
           </div>
         </div>
 
-        <div className="min-w-0 rounded-md border bg-card">
+        <div className="min-w-0 overflow-hidden rounded-2xl border bg-card shadow-sm shadow-foreground/5">
           {!selectedTask ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center gap-3 p-8 text-center text-muted-foreground">
               <PhoneCall className="h-8 w-8" />
@@ -1399,7 +1387,7 @@ export default function CallTasksPage() {
             </div>
           ) : (
             <>
-              <div className="space-y-3 border-b px-4 py-3">
+              <div className="space-y-4 border-b px-5 py-4">
                 <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-start 2xl:justify-between">
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
@@ -1552,7 +1540,7 @@ export default function CallTasksPage() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3 text-sm md:grid-cols-4">
-                  <div className="rounded-md border px-3 py-2">
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
                     <MetricLabel tooltip="Доля клиентов, у которых статус уже изменился с «Не звонили» на любой результат.">
                       Контакт
                     </MetricLabel>
@@ -1560,7 +1548,7 @@ export default function CallTasksPage() {
                       {formatPercent(selectedTask.metrics?.contactRate)}
                     </div>
                   </div>
-                  <div className="rounded-md border px-3 py-2">
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
                     <MetricLabel tooltip="Доля «Записался» среди клиентов, по которым уже был контакт.">
                       Конверсия в запись
                     </MetricLabel>
@@ -1568,7 +1556,7 @@ export default function CallTasksPage() {
                       {formatPercent(selectedTask.metrics?.conversionRate)}
                     </div>
                   </div>
-                  <div className="rounded-md border px-3 py-2">
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
                     <MetricLabel tooltip="Доля клиентов с финальным статусом: «Записался» или «Отказ».">
                       Закрыто
                     </MetricLabel>
@@ -1576,7 +1564,7 @@ export default function CallTasksPage() {
                       {formatPercent(selectedTask.metrics?.completionRate)}
                     </div>
                   </div>
-                  <div className="rounded-md border px-3 py-2">
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
                     <MetricLabel tooltip="Доля клиентов в задаче, у которых прошел дедлайн и статус еще не финальный.">
                       Просрочка
                     </MetricLabel>
@@ -1593,7 +1581,7 @@ export default function CallTasksPage() {
                   (selectedTask.membershipDiff.addedCount > 0 ||
                     selectedTask.membershipDiff.removedCount > 0 ||
                     selectedTask.membershipDiff.updatedCount > 0) && (
-                    <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
+                    <div className="rounded-2xl border border-primary/20 bg-primary/5 px-4 py-3 text-sm">
                       <span className="inline-flex items-center gap-1.5 font-medium">
                         Расхождение с базой
                         <HelpTooltip>
@@ -1610,13 +1598,13 @@ export default function CallTasksPage() {
                   )}
               </div>
 
-              <div className="flex flex-col gap-3 border-b px-4 py-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-col gap-3 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
                 <div className="flex flex-1 flex-col gap-2 sm:flex-row">
                   <Input
                     value={clientQuery}
                     onChange={(event) => setClientQuery(event.target.value)}
                     placeholder="Поиск по имени или телефону"
-                    className="sm:max-w-[320px]"
+                    className="rounded-xl sm:max-w-[320px]"
                   />
                   <Select
                     value={clientStatus}
@@ -1624,7 +1612,7 @@ export default function CallTasksPage() {
                       setClientStatus(value as ClientFilterStatus)
                     }
                   >
-                    <SelectTrigger className="sm:w-[190px]">
+                    <SelectTrigger className="rounded-xl sm:w-[190px]">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -1644,7 +1632,7 @@ export default function CallTasksPage() {
               </div>
 
               {selectedClientIds.length > 0 && (
-                <div className="flex flex-col gap-2 border-b bg-muted/35 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex flex-col gap-2 border-b bg-muted/35 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="text-sm">
                     Выбрано клиентов: <span className="font-medium">{selectedClientIds.length}</span>
                   </div>
@@ -1788,13 +1776,13 @@ export default function CallTasksPage() {
                 onChange={(event) =>
                   setAttemptForm({ ...attemptForm, summary: event.target.value })
                 }
-                className="min-h-[140px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="min-h-[140px] w-full rounded-xl border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="Что сказал клиент, когда перезвонить, на что договорились"
               />
             </div>
 
             {editingClient?.attempts && editingClient.attempts.length > 0 && (
-              <div className="rounded-md border">
+              <div className="overflow-hidden rounded-2xl border">
                 <div className="border-b px-3 py-2 text-sm font-medium">
                   История попыток
                 </div>

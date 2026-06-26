@@ -4,11 +4,11 @@ import type { ColumnDef } from '@tanstack/react-table';
 import {
   Archive,
   ArchiveRestore,
+  Ellipsis,
   Eye,
   Pencil,
   PhoneCall,
   Plus,
-  RefreshCw,
   Repeat2,
   Save,
   Trash2,
@@ -31,6 +31,14 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { DataTable } from '@/components/data-table';
 import { Input } from '@/components/ui/input';
 import {
@@ -828,7 +836,7 @@ export default function ClientBasesPage() {
     {
       accessorKey: 'name',
       header: 'База',
-      size: 260,
+      size: 220,
       meta: {
         cellClassName: 'whitespace-normal',
       },
@@ -850,7 +858,7 @@ export default function ClientBasesPage() {
     {
       id: 'filters',
       header: 'Фильтр',
-      size: 250,
+      size: 190,
       meta: {
         cellClassName: 'whitespace-normal text-muted-foreground',
       },
@@ -863,7 +871,7 @@ export default function ClientBasesPage() {
     {
       accessorKey: 'currentClientCount',
       header: 'Клиентов',
-      size: 90,
+      size: 70,
       meta: {
         cellClassName: 'text-right font-medium',
         headerClassName: 'text-right',
@@ -882,7 +890,7 @@ export default function ClientBasesPage() {
           </HelpTooltip>
         </span>
       ),
-      size: 140,
+      size: 110,
       meta: {
         cellClassName: 'whitespace-normal text-sm text-muted-foreground',
       },
@@ -895,7 +903,7 @@ export default function ClientBasesPage() {
     {
       id: 'recurrence',
       header: 'Автозадача',
-      size: 190,
+      size: 140,
       meta: {
         cellClassName: 'whitespace-normal',
       },
@@ -917,7 +925,7 @@ export default function ClientBasesPage() {
     {
       id: 'lastTask',
       header: 'Последняя задача',
-      size: 190,
+      size: 145,
       meta: {
         cellClassName: 'whitespace-normal',
       },
@@ -946,7 +954,7 @@ export default function ClientBasesPage() {
     {
       id: 'actions',
       header: '',
-      size: 180,
+      size: 56,
       meta: {
         cellClassName: 'text-right',
         headerClassName: 'text-right',
@@ -955,79 +963,62 @@ export default function ClientBasesPage() {
         const base = row.original;
 
         return (
-          <div className="flex shrink-0 justify-end gap-1 whitespace-nowrap">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void openPreview(base)}
-              aria-label={`Открыть базу ${base.name}`}
-              title="Открыть"
-            >
-              <Eye className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => openBaseInClients(base)}
-              aria-label={`Открыть клиентов базы ${base.name}`}
-              title="Открыть клиентов"
-            >
-              <Users className="h-4 w-4" />
-            </Button>
-            {base.status === 'active' && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost"
                 size="icon-sm"
-                onClick={() => openCreateCallTask(base)}
-                aria-label={`Создать обзвон по базе ${base.name}`}
-                title={getCallTaskBlockedReason(base) || 'Создать обзвон'}
+                aria-label={`Действия с базой ${base.name}`}
               >
-                <PhoneCall className="h-4 w-4" />
+                <Ellipsis className="h-4 w-4" />
               </Button>
-            )}
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => openEdit(base)}
-              aria-label={`Редактировать базу ${base.name}`}
-              title="Редактировать"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            {base.status === 'active' ? (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => requestBaseStatusChange(base)}
-                aria-label={`Архивировать базу ${base.name}`}
-                title="Архивировать"
-              >
-                <Archive className="h-4 w-4" />
-              </Button>
-            ) : (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => requestBaseStatusChange(base)}
-                  aria-label={`Восстановить базу ${base.name}`}
-                  title="Восстановить"
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Действия</DropdownMenuLabel>
+              <DropdownMenuItem onSelect={() => void openPreview(base)}>
+                <Eye className="h-4 w-4" />
+                Открыть базу
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => openBaseInClients(base)}>
+                <Users className="h-4 w-4" />
+                Открыть клиентов
+              </DropdownMenuItem>
+              {base.status === 'active' && (
+                <DropdownMenuItem
+                  disabled={Boolean(getCallTaskBlockedReason(base))}
+                  onSelect={() => openCreateCallTask(base)}
                 >
-                  <ArchiveRestore className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                  onClick={() => requestPermanentDelete(base)}
-                  aria-label={`Удалить навсегда базу ${base.name}`}
-                  title="Удалить навсегда"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </>
-            )}
-          </div>
+                  <PhoneCall className="h-4 w-4" />
+                  Создать обзвон
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onSelect={() => openEdit(base)}>
+                <Pencil className="h-4 w-4" />
+                Редактировать
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {base.status === 'active' ? (
+                <DropdownMenuItem onSelect={() => requestBaseStatusChange(base)}>
+                  <Archive className="h-4 w-4" />
+                  Архивировать
+                </DropdownMenuItem>
+              ) : (
+                <>
+                  <DropdownMenuItem onSelect={() => requestBaseStatusChange(base)}>
+                    <ArchiveRestore className="h-4 w-4" />
+                    Восстановить
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => requestPermanentDelete(base)}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Удалить навсегда
+                  </DropdownMenuItem>
+                </>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
         );
       },
     },
@@ -1099,21 +1090,14 @@ export default function ClientBasesPage() {
   ];
 
   return (
-    <div className="min-w-0 space-y-4 p-4 md:p-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Базы клиентов</h1>
-          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-            Сохраненные фильтры клиентской базы. Задачи на обзвон будут
-            создаваться из этих баз.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+    <div className="flex min-w-0 flex-col gap-5">
+      <h1 className="sr-only">Базы клиентов</h1>
+      <div className="flex flex-wrap items-center justify-end gap-2 rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5">
           <Select
             value={baseStatus}
             onValueChange={(value) => setBaseStatus(value as ClientBaseStatus)}
           >
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="h-9 w-[160px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -1123,16 +1107,7 @@ export default function ClientBasesPage() {
           </Select>
           <Button
             variant="outline"
-            size="icon"
-            onClick={fetchBases}
-            disabled={loading}
-            aria-label="Обновить базы клиентов"
-            title="Обновить"
-          >
-            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-          </Button>
-          <Button
-            variant="outline"
+            size="sm"
             onClick={() => void runRecurringTasks()}
             disabled={runningRecurring}
             title="Проверить базы с наступившим временем автозадачи"
@@ -1142,10 +1117,9 @@ export default function ClientBasesPage() {
             />
             Автозадачи
           </Button>
-          <Button onClick={openCreate}>
+          <Button size="sm" onClick={openCreate}>
             <Plus className="mr-2 h-4 w-4" /> База
           </Button>
-        </div>
       </div>
 
       <div className="rounded-md border bg-card">
@@ -1163,7 +1137,7 @@ export default function ClientBasesPage() {
             errorText={basesError}
             loading={loading}
             loadingText="Загрузка баз..."
-            minWidthClassName="min-w-[1240px] table-fixed"
+            minWidthClassName="min-w-[920px] table-fixed"
             onRetry={() => void fetchBases()}
           />
         </div>

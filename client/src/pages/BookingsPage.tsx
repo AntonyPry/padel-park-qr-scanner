@@ -2760,17 +2760,49 @@ export default function BookingsPage() {
   );
 
   const gridHeight = slots.length * SLOT_HEIGHT;
+  const bookingSummaryItems = [
+    {
+      label: 'Активных',
+      tooltip:
+        'Все брони выбранного дня, кроме отмененных. Именно они участвуют в плане и загрузке дня.',
+      value: schedule?.stats.activeCount || 0,
+    },
+    {
+      label: 'К подтверждению',
+      tooltip:
+        'Новые брони, которые еще не переведены в статус «Подтверждена».',
+      value: needsConfirmationCount,
+    },
+    {
+      label: 'Первая',
+      tooltip:
+        'Первая по времени активная бронь выбранного дня. Помогает быстро увидеть старт операционного дня.',
+      value: upcomingBooking ? formatTime(upcomingBooking.startsAt) : '-',
+    },
+    {
+      label: 'План',
+      tooltip: 'Сумма всех активных броней за день по сохраненной цене брони.',
+      value: formatCurrency(schedule?.stats.plannedAmount || 0),
+    },
+    {
+      label: 'Оплачено',
+      tooltip: 'Сумма внесенной оплаты по активным броням выбранного дня.',
+      value: formatCurrency(schedule?.stats.paidAmount || 0),
+    },
+    {
+      label: 'Не оплачено',
+      tooltip:
+        'Остаток к оплате по активным броням. В скобках в списке ниже можно быстро найти такие брони фильтром «Нужно оплатить».',
+      value: formatCurrency(schedule?.stats.unpaidAmount || 0),
+      valueClassName: 'text-amber-500',
+    },
+  ];
 
   return (
-    <div className="space-y-6 p-6">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">Бронирование</h1>
-          <p className="mt-1 text-muted-foreground">
-            Расписание ресурсов и быстрые брони администратора по телефону.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-col gap-5">
+      <h1 className="sr-only">Бронирование</h1>
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-end">
+        <div className="flex flex-wrap items-center justify-end gap-2 xl:flex-nowrap">
           <Button
             variant="outline"
             size="icon"
@@ -2796,10 +2828,6 @@ export default function BookingsPage() {
             title="Следующий день"
           >
             <ChevronRight className="size-4" />
-          </Button>
-          <Button variant="outline" onClick={() => scheduleQuery.refetch()}>
-            <RefreshCw className="mr-2 size-4" />
-            Обновить
           </Button>
           <Button variant="outline" onClick={() => setAnalyticsOpen(true)}>
             <BarChart3 className="mr-2 size-4" />
@@ -2828,77 +2856,6 @@ export default function BookingsPage() {
             </Button>
           )}
         </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>
-              <MetricLabel tooltip="Все брони выбранного дня, кроме отмененных. Именно они участвуют в плане и загрузке дня.">
-                Активных
-              </MetricLabel>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">{schedule?.stats.activeCount || 0}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>
-              <MetricLabel tooltip="Новые брони, которые еще не переведены в статус «Подтверждена».">
-                К подтверждению
-              </MetricLabel>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">{needsConfirmationCount}</CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>
-              <MetricLabel tooltip="Первая по времени активная бронь выбранного дня. Помогает быстро увидеть старт операционного дня.">
-                Первая
-              </MetricLabel>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {upcomingBooking ? formatTime(upcomingBooking.startsAt) : '-'}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>
-              <MetricLabel tooltip="Сумма всех активных броней за день по сохраненной цене брони.">
-                План
-              </MetricLabel>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {formatCurrency(schedule?.stats.plannedAmount || 0)}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>
-              <MetricLabel tooltip="Сумма внесенной оплаты по активным броням выбранного дня.">
-                Оплачено
-              </MetricLabel>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold">
-            {formatCurrency(schedule?.stats.paidAmount || 0)}
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle>
-              <MetricLabel tooltip="Остаток к оплате по активным броням. В скобках в списке ниже можно быстро найти такие брони фильтром «Нужно оплатить».">
-                Не оплачено
-              </MetricLabel>
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-2xl font-semibold text-amber-500">
-            {formatCurrency(schedule?.stats.unpaidAmount || 0)}
-          </CardContent>
-        </Card>
       </div>
 
       {scheduleQuery.error && (
@@ -3242,14 +3199,32 @@ export default function BookingsPage() {
         </CardContent>
       </Card>
 
+      <div className="rounded-2xl border bg-card/70 p-2 shadow-sm shadow-foreground/5">
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+          {bookingSummaryItems.map((item) => (
+            <div
+              key={item.label}
+              className="flex min-h-12 items-center justify-between gap-3 rounded-xl bg-muted/25 px-3 py-2"
+            >
+              <MetricLabel tooltip={item.tooltip}>{item.label}</MetricLabel>
+              <div
+                className={cn(
+                  'shrink-0 text-sm font-semibold text-foreground',
+                  item.valueClassName,
+                )}
+              >
+                {item.value}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
       <Card>
         <CardHeader className="gap-4">
           <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <CardTitle>Брони дня</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Фильтры работают только по списку ниже: сетка всегда показывает все брони дня, чтобы свободное время не вводило в заблуждение.
-              </p>
             </div>
             <Badge variant="outline">
               <ListFilter className="mr-1 size-3" />
@@ -4053,20 +4028,6 @@ export default function BookingsPage() {
                 </div>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => analyticsQuery.refetch()}
-                  disabled={analyticsQuery.isFetching}
-                >
-                  <RefreshCw
-                    className={cn(
-                      'mr-2 size-4',
-                      analyticsQuery.isFetching && 'animate-spin',
-                    )}
-                  />
-                  Обновить
-                </Button>
                 <Button
                   type="button"
                   variant="outline"

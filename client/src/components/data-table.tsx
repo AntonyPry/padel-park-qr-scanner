@@ -27,6 +27,8 @@ import {
   PaginationPrevious,
 } from '@/components/ui/pagination';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 
 declare module '@tanstack/react-table' {
@@ -135,6 +137,11 @@ export function DataTable<TData>({
   const showError = Boolean(errorMessage) && !loading && data.length === 0;
   const showInlineError = Boolean(errorMessage) && !loading && data.length > 0;
   const showEmpty = !showError && !loading && table.getRowModel().rows.length === 0;
+  const visibleColumns = table.getVisibleLeafColumns();
+  const showSkeletonRows = loading && data.length === 0;
+  const skeletonRows = Array.from({
+    length: pageSize ? Math.min(pageSize, 6) : 5,
+  });
 
   return (
     <div>
@@ -157,7 +164,12 @@ export function DataTable<TData>({
           </div>
         </div>
       )}
-      <div className="w-full overflow-x-auto">
+      {showSkeletonRows && (
+        <span className="sr-only" role="status">
+          {loadingText}
+        </span>
+      )}
+      <div className="w-full overflow-x-auto" aria-busy={loading || undefined}>
         <Table className={cn(minWidthClassName, tableClassName)}>
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
@@ -182,40 +194,75 @@ export function DataTable<TData>({
               </TableRow>
             ))}
           </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.map((row) => {
-              const rowProps = getRowProps?.(row) ?? {};
+          <TableBody
+            key={pageSize ? currentPage : 'all-rows'}
+            className={pageSize ? 'crm-table-page' : undefined}
+          >
+            {showSkeletonRows ? (
+              skeletonRows.map((_, rowIndex) => (
+                <TableRow key={`skeleton-${rowIndex}`} className="h-16">
+                  {visibleColumns.map((column, columnIndex) => {
+                    const isLast = columnIndex === visibleColumns.length - 1;
+                    const widthClassName =
+                      columnIndex === 0
+                        ? 'w-2/3'
+                        : isLast
+                          ? 'ml-auto w-14'
+                          : columnIndex % 2 === 0
+                            ? 'w-24'
+                            : 'w-32';
 
-              return (
-                <TableRow
-                  {...rowProps}
-                  key={row.id}
-                  className={cn(rowProps.className, getRowClassName?.(row))}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell
-                      key={cell.id}
-                      className={cn(
-                        'whitespace-normal align-top',
-                        cell.column.columnDef.meta?.cellClassName,
-                      )}
-                      style={{ width: cell.column.columnDef.size }}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
+                    return (
+                      <TableCell
+                        key={`${column.id}-${rowIndex}`}
+                        className={cn(
+                          'whitespace-normal align-top',
+                          column.columnDef.meta?.cellClassName,
+                        )}
+                        style={{ width: column.columnDef.size }}
+                      >
+                        {columnIndex === 0 ? (
+                          <div className="flex min-w-0 flex-col gap-2">
+                            <Skeleton className={cn('h-4 max-w-full', widthClassName)} />
+                            <Skeleton className="h-3 w-1/2 max-w-full" />
+                          </div>
+                        ) : (
+                          <Skeleton className={cn('h-4 max-w-full', widthClassName)} />
+                        )}
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
-              );
-            })}
+              ))
+            ) : (
+              table.getRowModel().rows.map((row) => {
+                const rowProps = getRowProps?.(row) ?? {};
+
+                return (
+                  <TableRow
+                    {...rowProps}
+                    key={row.id}
+                    className={cn(rowProps.className, getRowClassName?.(row))}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        className={cn(
+                          'whitespace-normal align-top',
+                          cell.column.columnDef.meta?.cellClassName,
+                        )}
+                        style={{ width: cell.column.columnDef.size }}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
+              })
+            )}
           </TableBody>
         </Table>
       </div>
-
-      {loading && data.length === 0 && (
-        <div className="border-t px-4 py-10 text-center text-sm text-muted-foreground">
-          <span className="block min-w-0 break-words">{loadingText}</span>
-        </div>
-      )}
       {showError && (
         <div className="border-t px-4 py-8">
           <div className="mx-auto flex max-w-[560px] flex-col items-center gap-3 text-center text-destructive">
@@ -236,8 +283,8 @@ export function DataTable<TData>({
         </div>
       )}
       {showEmpty && (
-        <div className="border-t px-4 py-10 text-center text-sm text-muted-foreground">
-          <span className="block min-w-0 break-words">{emptyText}</span>
+        <div className="border-t px-4">
+          <EmptyState compact title={emptyText} />
         </div>
       )}
 

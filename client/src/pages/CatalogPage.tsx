@@ -2023,16 +2023,8 @@ export default function CatalogPage() {
           !certificateLinkForm.serviceName.trim())));
 
   return (
-    <div className="p-6 md:p-8 space-y-6">
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Справочник товаров
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            Распределение номенклатуры Эвотор по категориям P&L
-          </p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           {activeTab !== 'pending' && activeTab !== 'subscriptions' && (
             <Select
@@ -2123,32 +2115,31 @@ export default function CatalogPage() {
             </Button>
           </div>
         </div>
-      </div>
 
-      <div className="flex flex-col gap-2 rounded-md border bg-card p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative w-full sm:max-w-lg">
-          <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            value={catalogSearch}
-            onChange={(event) => setCatalogSearch(event.target.value)}
-            placeholder={`Поиск по ${activeTabLabel}`}
-            className="pl-9"
-          />
-        </div>
-        <div className="text-sm text-muted-foreground">
-          {activeTab === 'unmapped' &&
-            `Показано ${filteredUnmapped.length} из ${unmapped.length}`}
-          {activeTab === 'rules' &&
-            `Показано ${filteredRules.length} из ${rules.length}`}
-          {activeTab === 'categories' &&
-            `Показано ${filteredCategories.length} из ${categories.length}`}
-          {activeTab === 'pending' &&
-            `Показано ${filteredPendingSales.length} из ${pendingSales.length}`}
-          {activeTab === 'subscriptions' &&
-            `Показано ${filteredSubscriptionTypes.length} из ${
-              subscriptionTypes.filter((type) => type.status === subscriptionTypeStatus)
-                .length
-            }`}
+        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center xl:justify-end">
+          <div className="relative w-full sm:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input
+              value={catalogSearch}
+              onChange={(event) => setCatalogSearch(event.target.value)}
+              placeholder={`Поиск по ${activeTabLabel}`}
+              className="pl-9"
+            />
+          </div>
+          <div className="whitespace-nowrap text-sm text-muted-foreground">
+            {activeTab === 'unmapped' &&
+              `${filteredUnmapped.length} из ${unmapped.length}`}
+            {activeTab === 'rules' && `${filteredRules.length} из ${rules.length}`}
+            {activeTab === 'categories' &&
+              `${filteredCategories.length} из ${categories.length}`}
+            {activeTab === 'pending' &&
+              `${filteredPendingSales.length} из ${pendingSales.length}`}
+            {activeTab === 'subscriptions' &&
+              `${filteredSubscriptionTypes.length} из ${
+                subscriptionTypes.filter((type) => type.status === subscriptionTypeStatus)
+                  .length
+              }`}
+          </div>
         </div>
       </div>
 
