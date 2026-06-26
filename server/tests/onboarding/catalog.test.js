@@ -56,7 +56,7 @@ function assertFirstOpenScreenBlock(task) {
   );
   assert.equal(
     firstBlock.text,
-    'Перед началом инструкции открой этот экран в CRM. На скриншоте показано, как он должен выглядеть.',
+    'Сначала открой этот экран в CRM. Это стартовая точка урока; дальше будут конкретные действия и проверка результата.',
     `${task.key} first block text`,
   );
   assert.equal(
