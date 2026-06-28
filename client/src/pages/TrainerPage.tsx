@@ -88,6 +88,7 @@ import {
 import { listMethodologyExercises } from '@/api/methodology';
 import { queryKeys } from '@/api/query-keys';
 import { apiFetch } from '@/lib/api';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
 
 type TrainingLevel = 'D' | 'D+' | 'C' | 'C+' | 'B' | 'B+' | 'A';
@@ -504,6 +505,15 @@ export default function TrainerPage() {
   useEffect(() => {
     void fetchTrainingPlans();
   }, [fetchTrainingPlans]);
+
+  useRealtimeRefresh(
+    ['clients', 'trainingNotes', 'trainingPlans', 'methodology', 'bookings'],
+    () => {
+      void fetchClients();
+      void fetchTrainingPlans();
+      if (details?.client.id) void loadDetails(details.client.id);
+    },
+  );
 
   useEffect(() => {
     setPage(1);

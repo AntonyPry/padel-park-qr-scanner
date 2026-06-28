@@ -69,6 +69,7 @@ import {
   permissionMessages,
   showPermissionDenied,
 } from '@/lib/permission-feedback';
+import { useRealtimeRefresh } from '@/lib/realtime';
 
 interface CatalogCategory {
   id: number;
@@ -412,6 +413,13 @@ export default function FinancePage() {
   useEffect(() => {
     void fetchFinances();
   }, [fetchFinances]); // Автоматически перезапрашиваем при смене дат
+
+  useRealtimeRefresh(
+    ['finance', 'payroll', 'catalog', 'corporateClients', 'prepayments'],
+    () => {
+      void fetchFinances();
+    },
+  );
 
   const handleAddManual = manualForm.handleSubmit(async (values) => {
     if (!canEditFinance) {

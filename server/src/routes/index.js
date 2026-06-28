@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { auditMutations } = require('../middleware/audit');
 const { captureTrainingMode } = require('../middleware/training-mode');
+const { realtimeMutations } = require('../realtime');
 const db = require('../../models');
 const cacheService = require('../services/cache.service');
 const { getOpenApiDocument } = require('../contracts/openapi');
@@ -69,6 +70,7 @@ router.get('/openapi.json', (_req, res) => {
 });
 
 router.use('/auth', authRoutes);
+router.use(realtimeMutations());
 router.use('/webhooks', webhookRoutes);
 
 router.use(requireAuth);

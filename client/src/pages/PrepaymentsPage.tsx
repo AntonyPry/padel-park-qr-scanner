@@ -44,6 +44,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
+import { useRealtimeRefresh } from '@/lib/realtime';
 
 type DashboardType =
   | 'all'
@@ -408,6 +409,21 @@ export default function PrepaymentsPage() {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useRealtimeRefresh(
+    [
+      'prepayments',
+      'prepaymentSales',
+      'clientSubscriptions',
+      'certificates',
+      'corporateClients',
+      'catalog',
+      'finance',
+    ],
+    () => {
+      void loadDashboard();
+    },
+  );
 
   const summaryCards = useMemo(() => {
     if (!dashboard) return [];

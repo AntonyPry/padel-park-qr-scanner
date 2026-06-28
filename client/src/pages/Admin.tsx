@@ -1,5 +1,4 @@
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { io } from 'socket.io-client';
 import {
   UserPlus,
   Search,
@@ -53,18 +52,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
-import { API_URL } from '@/config';
-import { apiFetch, getAuthToken } from '@/lib/api';
+import { apiFetch } from '@/lib/api';
+import { useRealtimeEvent, useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
-
-const socket = io(API_URL, {
-  autoConnect: false,
-  auth: {
-    token: getAuthToken(),
-  },
-});
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
   name: '',
@@ -471,6 +463,10 @@ export default function AdminPage() {
     void fetchHistory();
   }, [fetchHistory]);
 
+  useRealtimeRefresh(['access', 'clients', 'references'], () => {
+    void fetchHistory();
+  });
+
   useEffect(() => {
     let cancelled = false;
 
@@ -597,16 +593,7 @@ export default function AdminPage() {
     setCurrentVisit(nextVisit || null);
   }, [queuedVisits, setCurrentVisit]);
 
-  useEffect(() => {
-    socket.auth = { token: getAuthToken() };
-    socket.connect();
-    socket.on('scan_result', handleIncomingVisit);
-
-    return () => {
-      socket.off('scan_result', handleIncomingVisit);
-      socket.disconnect();
-    };
-  }, [handleIncomingVisit]);
+  useRealtimeEvent<ScanResultPayload>('scan_result', handleIncomingVisit);
 
   const syncPendingScanCount = useCallback(() => {
     setPendingScanCount(scanQueueRef.current.length);

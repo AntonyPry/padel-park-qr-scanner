@@ -10,6 +10,7 @@ import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { ROUTE_ACCESS } from './lib/permissions';
 import { AuthProvider } from './lib/auth';
 import { queryClient } from './lib/query-client';
+import { RealtimeProvider } from './lib/realtime-provider';
 import { ThemeProvider } from './lib/theme';
 import { TrainingModeProvider } from './lib/training-mode';
 
@@ -55,6 +56,7 @@ function App() {
           <AuthProvider>
             <TooltipProvider delayDuration={0}>
               <AuthGate>
+                <RealtimeProvider>
                 <TrainingModeProvider>
                 <OnboardingRouteEvents />
                 <Suspense fallback={<PageLoader />}>
@@ -264,6 +266,7 @@ function App() {
                   </Routes>
                 </Suspense>
                 </TrainingModeProvider>
+                </RealtimeProvider>
               </AuthGate>
               <Toaster />
             </TooltipProvider>

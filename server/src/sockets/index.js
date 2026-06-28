@@ -1,6 +1,7 @@
 const { Server } = require('socket.io');
 const authService = require('../services/auth.service');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
+const { getRealtimeRoomsForRole } = require('../realtime');
 
 const ACCESS_SOCKET_ROOM = 'access';
 
@@ -41,10 +42,6 @@ function createSocketServer(httpServer) {
       ) {
         return next(new Error('Unauthorized'));
       }
-      if (!ACCESS_MATRIX.accessOperate.includes(account.role)) {
-        return next(new Error('Forbidden'));
-      }
-
       socket.data.account = account;
       return next();
     } catch {
@@ -53,7 +50,11 @@ function createSocketServer(httpServer) {
   });
 
   io.on('connection', (socket) => {
-    socket.join(ACCESS_SOCKET_ROOM);
+    const role = socket.data.account?.role;
+    if (ACCESS_MATRIX.accessOperate.includes(role)) {
+      socket.join(ACCESS_SOCKET_ROOM);
+    }
+    getRealtimeRoomsForRole(role).forEach((room) => socket.join(room));
   });
 
   return io;

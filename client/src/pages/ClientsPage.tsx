@@ -132,6 +132,7 @@ import {
 } from '@/lib/permissions';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
 
@@ -2153,6 +2154,28 @@ export default function ClientsPage() {
   const refreshOpenDetails = () => {
     if (details?.client.id) void loadDetails(details.client.id);
   };
+
+  useRealtimeRefresh(
+    [
+      'clients',
+      'access',
+      'bookings',
+      'callTasks',
+      'clientBases',
+      'clientSubscriptions',
+      'certificates',
+      'references',
+      'trainingNotes',
+      'trainingPlans',
+      'telephony',
+    ],
+    () => {
+      void fetchClients();
+      void fetchSavedViews();
+      if (viewMode === 'duplicates') void fetchDuplicateGroups();
+      refreshOpenDetails();
+    },
+  );
 
   const openRedemptionDialog = (subscription: ClientSubscription) => {
     setRedemptionDialogSubscription(subscription);

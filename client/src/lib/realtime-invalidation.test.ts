@@ -1,0 +1,60 @@
+import { describe, expect, it } from 'vitest';
+import {
+  getRealtimeQueryGroups,
+  getRealtimeQueryKeys,
+  type CrmChangedEvent,
+} from './realtime-invalidation';
+
+function event(overrides: Partial<CrmChangedEvent>): CrmChangedEvent {
+  return {
+    action: 'updated',
+    actorId: '1',
+    actorRole: 'owner',
+    domain: 'clients',
+    entity: 'client',
+    entityId: '42',
+    id: 'change-1',
+    occurredAt: '2026-06-28T12:00:00.000Z',
+    source: 'api',
+    ...overrides,
+  };
+}
+
+describe('realtime invalidation mapping', () => {
+  it('uses server hints and domain fallback without duplicate query keys', () => {
+    const keys = getRealtimeQueryKeys(
+      event({
+        domain: 'access',
+        hints: {
+          queryGroups: ['access', 'clients', 'visitsAnalytics', 'clients'],
+          routes: ['/admin'],
+        },
+      }),
+    );
+
+    expect(keys).toEqual([['access'], ['clients'], ['visits-analytics']]);
+  });
+
+  it('invalidates bookings for training plan lifecycle changes', () => {
+    const groups = getRealtimeQueryGroups(
+      event({
+        domain: 'training_plans',
+        hints: { queryGroups: ['trainingPlans', 'bookings'] },
+      }),
+    );
+
+    expect(groups).toContain('trainingPlans');
+    expect(groups).toContain('bookings');
+  });
+
+  it('keeps unknown groups usable for legacy screens', () => {
+    expect(
+      getRealtimeQueryKeys(
+        event({
+          domain: 'custom_domain',
+          hints: { queryGroups: ['legacyThing'] },
+        }),
+      ),
+    ).toEqual([['legacyThing'], ['custom_domain']]);
+  });
+});

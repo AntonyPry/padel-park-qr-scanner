@@ -35,6 +35,7 @@ import { ConfirmActionDialog, type ConfirmAction } from '@/components/confirm-ac
 import { toast } from '@/components/ui/toast';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { canRedeemCertificates } from '@/lib/permissions';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
 
 type CertificateType = 'money' | 'service';
@@ -276,6 +277,11 @@ export default function CertificatesPage() {
     if (!selectedCertificateId) return;
     void loadCertificateDetail(selectedCertificateId);
   }, [loadCertificateDetail, selectedCertificateId]);
+
+  useRealtimeRefresh(['certificates', 'clients', 'prepayments'], () => {
+    void loadCertificates();
+    if (selectedCertificateId) void loadCertificateDetail(selectedCertificateId);
+  });
 
   const openRedeemDialog = () => {
     if (!selectedCertificate) return;
