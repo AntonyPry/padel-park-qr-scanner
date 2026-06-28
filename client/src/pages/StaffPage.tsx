@@ -74,6 +74,7 @@ import {
   permissionMessages,
   showPermissionDenied,
 } from '@/lib/permission-feedback';
+import { useRealtimeRefresh } from '@/lib/realtime';
 
 interface AdminStat {
   staffId?: number | null;
@@ -316,6 +317,10 @@ export default function StaffPage() {
   useEffect(() => {
     void fetchPayroll();
   }, [fetchPayroll]);
+
+  useRealtimeRefresh(['staff', 'shifts', 'payroll', 'accounts', 'finance'], () => {
+    void fetchPayroll();
+  });
 
   useEffect(() => {
     if (errorMessage) {

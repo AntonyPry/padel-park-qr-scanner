@@ -62,6 +62,7 @@ import {
   canManageCorporateDeposits,
 } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import { useRealtimeRefresh } from '@/lib/realtime';
 
 type CorporateClientStatus = 'active' | 'archived';
 type LedgerEntryStatus = 'active' | 'canceled';
@@ -545,6 +546,12 @@ export default function CorporateClientsPage() {
     if (!selectedClientId) return;
     void loadClientDetail(selectedClientId);
   }, [loadClientDetail, selectedClientId]);
+
+  useRealtimeRefresh(['corporateClients', 'finance', 'catalog'], () => {
+    void loadClients();
+    void loadCategories();
+    if (selectedClientId) void loadClientDetail(selectedClientId);
+  });
 
   const openCreateClientDialog = () => {
     if (!canManage) {

@@ -52,6 +52,7 @@ import {
   type AccountRole,
 } from '@/lib/roles';
 import { useAuth } from '@/lib/useAuth';
+import { useRealtimeRefresh } from '@/lib/realtime';
 
 type AccountStatus = 'active' | 'inactive' | 'archived';
 
@@ -235,6 +236,10 @@ export default function SystemUsersPage() {
   useEffect(() => {
     void fetchData();
   }, [fetchData]);
+
+  useRealtimeRefresh(['accounts', 'staff'], () => {
+    void fetchData();
+  });
 
   const canManageAccount = (target: SystemAccount) => {
     if (account?.role === 'owner') return true;

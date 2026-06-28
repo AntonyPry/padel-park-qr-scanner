@@ -56,6 +56,7 @@ import {
   type MotivationThresholdType,
 } from '@/lib/motivation';
 import { canManageMotivation } from '@/lib/permissions';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
 
 interface FinanceRecord {
@@ -981,6 +982,12 @@ export default function AdminMotivationPage() {
     void fetchActiveShift();
     void fetchFinances();
   }, [fetchActiveShift, fetchFinances, fetchMotivationSettings]);
+
+  useRealtimeRefresh(['motivation', 'shifts', 'finance', 'catalog'], () => {
+    void fetchMotivationSettings();
+    void fetchActiveShift();
+    void fetchFinances();
+  });
 
   useEffect(() => {
     if (!isShiftActive) return;

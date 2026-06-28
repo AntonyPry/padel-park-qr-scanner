@@ -51,6 +51,7 @@ import {
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { useNavigate } from 'react-router-dom';
 
 type ClientBaseStatus = 'active' | 'archived';
@@ -583,6 +584,12 @@ export default function ClientBasesPage() {
   useEffect(() => {
     void fetchAccounts();
   }, [fetchAccounts]);
+
+  useRealtimeRefresh(['clientBases', 'clients', 'callTasks', 'references'], () => {
+    void fetchBases();
+    void fetchReferencesData();
+    void fetchAccounts();
+  });
 
   const openCreate = () => {
     setEditingBase(null);

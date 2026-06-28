@@ -1,0 +1,119 @@
+import { queryKeys } from '@/api/query-keys';
+
+export interface CrmChangedEvent {
+  id: string;
+  domain: string;
+  entity: string;
+  entityId: string | null;
+  action:
+    | 'created'
+    | 'updated'
+    | 'deleted'
+    | 'restored'
+    | 'archived'
+    | 'merged'
+    | 'recalculated'
+    | 'imported'
+    | 'synced';
+  occurredAt: string;
+  actorRole: string | null;
+  actorId: string | null;
+  source: 'api' | 'webhook' | 'system' | string;
+  trainingMode?: boolean;
+  trainingRole?: string | null;
+  hints?: {
+    queryGroups?: string[];
+    routes?: string[];
+  };
+}
+
+type QueryKey = readonly unknown[];
+
+export const REALTIME_QUERY_GROUP_KEYS: Record<string, QueryKey[]> = {
+  access: [['access']],
+  accounts: [['accounts']],
+  audit: [queryKeys.audit.all],
+  bookings: [queryKeys.bookings.all],
+  callTasks: [['callTasks']],
+  catalog: [['catalog']],
+  certificates: [['certificates'], queryKeys.clients.all, queryKeys.bookings.all],
+  clientBases: [['clientBases']],
+  clientSubscriptions: [['clientSubscriptions'], queryKeys.clients.all],
+  clients: [queryKeys.clients.all],
+  corporateClients: [['corporateClients'], ['finance'], ['prepayments']],
+  finance: [['finance']],
+  managerControl: [['manager-control-dashboard']],
+  methodology: [queryKeys.methodology.all],
+  methodologyAnalytics: [queryKeys.methodology.all],
+  motivation: [['motivation']],
+  onboarding: [queryKeys.onboarding.all],
+  payroll: [['payroll'], ['finance'], ['staff']],
+  prepayments: [['prepayments']],
+  references: [queryKeys.references.all],
+  reports: [['reports']],
+  shifts: [['shifts'], ['payroll'], ['staff']],
+  staff: [['staff']],
+  subscriptionTypes: [['subscriptionTypes'], ['catalog']],
+  telephony: [queryKeys.telephony.all],
+  trainingNotes: [queryKeys.clients.all],
+  trainingPlans: [queryKeys.trainingPlans.all, queryKeys.bookings.all],
+  utilization: [queryKeys.utilization.all],
+  visitsAnalytics: [queryKeys.visitsAnalytics.all],
+};
+
+const DOMAIN_FALLBACK_GROUPS: Record<string, string[]> = {
+  access: ['access', 'clients', 'visitsAnalytics'],
+  accounts: ['accounts', 'staff'],
+  bookings: ['bookings'],
+  booking_resources: ['bookings'],
+  call_tasks: ['callTasks'],
+  catalog: ['catalog', 'finance'],
+  certificates: ['certificates', 'clients', 'bookings'],
+  client_bases: ['clientBases', 'callTasks'],
+  client_subscriptions: ['clientSubscriptions', 'clients', 'bookings'],
+  clients: ['clients'],
+  corporate_clients: ['corporateClients', 'finance', 'prepayments'],
+  finance: ['finance'],
+  manager_control: ['managerControl'],
+  methodology: ['methodology', 'methodologyAnalytics'],
+  methodology_analytics: ['methodologyAnalytics'],
+  motivation: ['motivation', 'finance'],
+  onboarding: ['onboarding'],
+  payroll: ['payroll', 'finance', 'staff'],
+  prepayment_sales: ['prepayments', 'catalog', 'clients'],
+  prepayment_settings: ['prepayments', 'catalog'],
+  prepayments: ['prepayments'],
+  references: ['references', 'clients', 'access'],
+  reports: ['reports'],
+  shifts: ['shifts', 'payroll', 'staff', 'motivation'],
+  staff: ['staff', 'payroll', 'accounts'],
+  subscription_types: ['subscriptionTypes', 'catalog', 'prepayments'],
+  telephony: ['telephony', 'clients', 'callTasks'],
+  training_notes: ['trainingNotes', 'clients', 'methodologyAnalytics'],
+  training_plans: ['trainingPlans', 'bookings', 'clients'],
+  utilization: ['utilization'],
+  visits_analytics: ['visitsAnalytics'],
+};
+
+function serializeQueryKey(queryKey: QueryKey) {
+  return JSON.stringify(queryKey);
+}
+
+export function getRealtimeQueryGroups(event: CrmChangedEvent) {
+  const hintedGroups = event.hints?.queryGroups || [];
+  const fallbackGroups = DOMAIN_FALLBACK_GROUPS[event.domain] || [event.domain];
+  return Array.from(new Set([...hintedGroups, ...fallbackGroups]));
+}
+
+export function getRealtimeQueryKeys(event: CrmChangedEvent) {
+  const seen = new Set<string>();
+  return getRealtimeQueryGroups(event).flatMap((group) => {
+    const keys = REALTIME_QUERY_GROUP_KEYS[group] || [[group]];
+    return keys.filter((queryKey) => {
+      const serialized = serializeQueryKey(queryKey);
+      if (seen.has(serialized)) return false;
+      seen.add(serialized);
+      return true;
+    });
+  });
+}

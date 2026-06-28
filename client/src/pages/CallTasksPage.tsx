@@ -69,6 +69,7 @@ import {
 } from '@/components/dashboard-metric';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import { canManageCallTasks } from '@/lib/permissions';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
 
 type CallTaskStatus = 'backlog' | 'in_progress' | 'done' | 'archived';
@@ -681,6 +682,16 @@ export default function CallTasksPage() {
   useEffect(() => {
     void fetchClients();
   }, [fetchClients]);
+
+  useRealtimeRefresh(
+    ['callTasks', 'clientBases', 'clients', 'telephony'],
+    () => {
+      void fetchTasks();
+      void fetchReport();
+      void fetchClients();
+      if (selectedTaskId) void refreshTaskDetails(selectedTaskId);
+    },
+  );
 
   const openClientResult = (client: CallTaskClient) => {
     setEditingClient(client);

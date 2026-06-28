@@ -65,6 +65,7 @@ import {
   canManageSubscriptionTypes,
 } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import { useRealtimeRefresh } from '@/lib/realtime';
 
 const PNL_GROUPS = [
   { value: 'REVENUE_POS', label: 'Касса (Эвотор)', type: 'income' },
@@ -495,6 +496,20 @@ export default function CatalogPage() {
     catalogStatus,
     pendingStatus,
   ]);
+
+  useRealtimeRefresh(
+    [
+      'catalog',
+      'prepaymentSales',
+      'prepaymentSettings',
+      'subscriptionTypes',
+      'finance',
+      'motivation',
+    ],
+    () => {
+      void fetchData();
+    },
+  );
 
   useEffect(() => {
     void fetchData();

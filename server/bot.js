@@ -4,6 +4,7 @@ const http = require('http');
 const db = require('./models');
 const createApp = require('./src/app');
 const { createSocketServer } = require('./src/sockets');
+const { publishRealtimeChange } = require('./src/realtime');
 const { createTelegramBot } = require('./src/bots/telegram');
 const { createVkBot } = require('./src/bots/vk');
 const callTasksService = require('./src/services/call-tasks.service');
@@ -51,6 +52,21 @@ function startRecurringCallTasksRunner() {
         console.log(
           `📞 Автозадачи обзвона: обработано баз ${result.processed}.`,
         );
+        publishRealtimeChange(io, {
+          domain: 'call_tasks',
+          entity: 'call_task',
+          action: 'synced',
+          source: 'system',
+          hints: {
+            queryGroups: ['callTasks', 'clientBases', 'clients', 'managerControl'],
+            routes: [
+              '/admin/call-tasks',
+              '/admin/client-bases',
+              '/admin/clients',
+              '/admin/manager-control',
+            ],
+          },
+        });
       }
     } catch (error) {
       console.error('❌ Ошибка автозадач обзвона:', error);
@@ -73,6 +89,16 @@ function startTelephonySubscriptionRunner() {
       const result = await telephonyService.maintainEventSubscription();
       if (['created', 'renewed'].includes(result.action)) {
         console.log(`☎️ XSI-подписка Билайна: ${result.action}.`);
+        publishRealtimeChange(io, {
+          domain: 'telephony',
+          entity: 'telephony_subscription',
+          action: 'synced',
+          source: 'system',
+          hints: {
+            queryGroups: ['telephony'],
+            routes: ['/admin/telephony'],
+          },
+        });
       }
       if (result.action === 'failed') {
         console.error('❌ Ошибка автопродления XSI-подписки:', result.error);
