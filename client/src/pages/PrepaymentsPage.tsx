@@ -335,9 +335,9 @@ function MetricCard({
   return (
     <Card size="sm" className="min-h-[120px]">
       <CardHeader className="flex-row items-start justify-between gap-3">
-        <div className="min-w-0">
+        <div className="min-w-0 [container-type:inline-size]">
           <CardDescription className="truncate">{label}</CardDescription>
-          <CardTitle className="mt-2 text-2xl leading-tight">
+          <CardTitle className="mt-2 whitespace-normal [font-size:clamp(1rem,12cqw,1.5rem)] leading-tight [overflow-wrap:anywhere]">
             <AnimatedMetricValue value={value} />
           </CardTitle>
         </div>

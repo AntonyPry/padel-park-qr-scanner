@@ -76,7 +76,7 @@ export function MetricCard({
   valueClassName?: string;
 }) {
   return (
-    <div className="flex min-h-20 min-w-0 flex-col justify-center rounded-xl border bg-card p-4 shadow-sm shadow-foreground/5">
+    <div className="flex min-h-20 min-w-0 flex-col justify-center rounded-xl border bg-card p-4 shadow-sm shadow-foreground/5 [container-type:inline-size]">
       <div className="min-w-0">
         <MetricLabel tooltip={tooltip}>
           {icon}
@@ -85,7 +85,7 @@ export function MetricCard({
       </div>
       <div
         className={cn(
-          'mt-2 max-w-full whitespace-nowrap text-2xl font-semibold leading-none tracking-tight',
+          'mt-2 max-w-full whitespace-normal [font-size:clamp(1rem,12cqw,1.5rem)] font-semibold leading-tight tracking-tight [overflow-wrap:anywhere]',
           valueClassName,
         )}
       >
