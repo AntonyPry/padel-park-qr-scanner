@@ -46,19 +46,36 @@ function parseAnimatedValue(value: ReactNode): ParsedAnimatedValue | null {
 
   const rawNumber = match[0].trimEnd();
   const compactNumber = rawNumber.replace(/[\s\u00a0]/g, '');
+  const commaCount = compactNumber.match(/,/g)?.length ?? 0;
+  const dotCount = compactNumber.match(/\./g)?.length ?? 0;
+  const lastCommaIndex = compactNumber.lastIndexOf(',');
+  const lastDotIndex = compactNumber.lastIndexOf('.');
   const commaIsDecimal =
-    compactNumber.includes(',') && /,\d{1,2}$/.test(compactNumber);
-  const normalized = commaIsDecimal
-    ? compactNumber.replace(',', '.')
-    : compactNumber.replace(/,/g, '');
+    commaCount === 1 &&
+    lastCommaIndex !== -1 &&
+    (lastDotIndex === -1 || lastCommaIndex > lastDotIndex);
+  const dotIsDecimal =
+    !commaIsDecimal &&
+    dotCount === 1 &&
+    lastDotIndex !== -1 &&
+    lastDotIndex > lastCommaIndex;
+  let decimalPart = '';
+  let normalized = compactNumber.replace(/,/g, '');
+
+  if (commaIsDecimal) {
+    decimalPart = compactNumber.slice(lastCommaIndex + 1);
+    normalized = `${compactNumber
+      .slice(0, lastCommaIndex)
+      .replace(/[,.]/g, '')}.${decimalPart}`;
+  } else if (dotIsDecimal) {
+    decimalPart = compactNumber.slice(lastDotIndex + 1);
+    normalized = `${compactNumber
+      .slice(0, lastDotIndex)
+      .replace(/[,.]/g, '')}.${decimalPart}`;
+  }
   const target = Number(normalized);
 
   if (!Number.isFinite(target)) return null;
-
-  const decimalPart =
-    compactNumber.match(/\.(\d+)$/)?.[1] ??
-    (commaIsDecimal ? compactNumber.match(/,(\d+)$/)?.[1] : '') ??
-    '';
 
   return {
     fractionDigits: decimalPart.length,

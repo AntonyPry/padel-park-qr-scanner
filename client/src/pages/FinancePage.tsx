@@ -155,9 +155,13 @@ const manualFinanceFormSchema = z.object({
 });
 type ManualFinanceForm = z.infer<typeof manualFinanceFormSchema>;
 
+const currencyValueFormatter = new Intl.NumberFormat('ru-RU', {
+  maximumFractionDigits: 2,
+});
+
 const formatCurrencyValue = (val: unknown) => {
   const rawValue = Array.isArray(val) ? val[0] : val;
-  return `${Number(rawValue ?? 0).toLocaleString('ru-RU')} ₽`;
+  return `${currencyValueFormatter.format(Number(rawValue ?? 0))} ₽`;
 };
 
 const INCOME_CHART_COLORS = [
@@ -879,22 +883,22 @@ export default function FinancePage() {
         <MetricCard
           label="Выручка"
           tooltip="Все доходы за выбранный период: касса Эвотор и ручные доходные операции."
-          value={`${summary.revenue.toLocaleString('ru-RU')} ₽`}
+          value={formatCurrencyValue(summary.revenue)}
         />
         <MetricCard
           label="Валовая прибыль"
           tooltip="Выручка минус себестоимость и комиссии."
-          value={`${summary.gross.toLocaleString('ru-RU')} ₽`}
+          value={formatCurrencyValue(summary.gross)}
         />
         <MetricCard
           label="Опер. расходы"
           tooltip="Операционные расходы, включая автоматический расчет зарплаты администраторов."
-          value={`${summary.opex.toLocaleString('ru-RU')} ₽`}
+          value={formatCurrencyValue(summary.opex)}
         />
         <MetricCard
           label="Чистая прибыль"
           tooltip="Итоговый финансовый результат после себестоимости, комиссий и операционных расходов."
-          value={`${summary.net.toLocaleString('ru-RU')} ₽`}
+          value={formatCurrencyValue(summary.net)}
           valueClassName={summary.net >= 0 ? 'text-green-500' : 'text-destructive'}
         />
         <MetricCard
@@ -905,7 +909,7 @@ export default function FinancePage() {
         <MetricCard
           label="Сверка чеков"
           tooltip="Разница между суммой чеков Эвотора и суммой их позиций. Ноль означает, что чековая сумма и позиции сходятся."
-          value={`${Number(report.reconciliation?.difference || 0).toLocaleString('ru-RU')} ₽`}
+          value={formatCurrencyValue(report.reconciliation?.difference || 0)}
           valueClassName={
             Math.abs(Number(report.reconciliation?.difference || 0)) <= 1
               ? 'text-green-500'
