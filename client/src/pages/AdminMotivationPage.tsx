@@ -6,10 +6,12 @@ import {
   CheckCircle2,
   Clock,
   Copy,
+  FileCheck2,
   Pencil,
   Percent,
   Play,
   Plus,
+  RotateCcw,
   Save,
   Square,
   Tags,
@@ -26,6 +28,7 @@ import {
 } from '@/components/confirm-action-dialog';
 import { DataTable } from '@/components/data-table';
 import { ErrorState } from '@/components/error-state';
+import { ShiftReportDialog } from '@/components/shift-report-dialog';
 import { toast } from '@/components/ui/toast';
 import {
   Dialog,
@@ -58,6 +61,11 @@ import {
 import { canManageMotivation } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
+import {
+  listActiveShiftReports,
+  type ShiftReport,
+  type ShiftReportStatus,
+} from '@/api/shift-reports';
 
 interface FinanceRecord {
   categoryId?: number | null;
@@ -88,6 +96,23 @@ interface CurrentSalesResponse {
 
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<boolean | void> | boolean | void;
+};
+
+const shiftReportStatusLabels: Record<ShiftReportStatus, string> = {
+  draft: 'Черновик',
+  overdue: 'Просрочен',
+  pending: 'Ожидается',
+  submitted: 'Сдан',
+};
+
+const shiftReportStatusVariants: Record<
+  ShiftReportStatus,
+  'default' | 'destructive' | 'outline' | 'secondary'
+> = {
+  draft: 'secondary',
+  overdue: 'destructive',
+  pending: 'outline',
+  submitted: 'default',
 };
 
 interface BonusRecord extends FinanceRecord {
@@ -824,6 +849,10 @@ export default function AdminMotivationPage() {
     null,
   );
   const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
+  const [activeShiftReports, setActiveShiftReports] = useState<ShiftReport[]>([]);
+  const [shiftReportsError, setShiftReportsError] = useState('');
+  const [selectedShiftReport, setSelectedShiftReport] = useState<ShiftReport | null>(null);
+  const [shiftReportDialogOpen, setShiftReportDialogOpen] = useState(false);
   const [shiftReport, setShiftReport] = useState('');
   const [reportCopied, setReportCopied] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -908,6 +937,20 @@ export default function AdminMotivationPage() {
     }
   }, []);
 
+  const fetchActiveShiftReports = useCallback(async () => {
+    try {
+      const data = await listActiveShiftReports();
+      setActiveShiftReports(data.reports);
+      setShiftReportsError('');
+    } catch (error) {
+      console.error(error);
+      setActiveShiftReports([]);
+      setShiftReportsError(
+        getApiErrorMessage(error, 'Не удалось загрузить отчеты активной смены'),
+      );
+    }
+  }, []);
+
   const fetchMotivationSettings = useCallback(async () => {
     setRulesLoading(true);
     setHourlyRulesError('');
@@ -980,12 +1023,14 @@ export default function AdminMotivationPage() {
   useEffect(() => {
     void fetchMotivationSettings();
     void fetchActiveShift();
+    void fetchActiveShiftReports();
     void fetchFinances();
-  }, [fetchActiveShift, fetchFinances, fetchMotivationSettings]);
+  }, [fetchActiveShift, fetchActiveShiftReports, fetchFinances, fetchMotivationSettings]);
 
-  useRealtimeRefresh(['motivation', 'shifts', 'finance', 'catalog'], () => {
+  useRealtimeRefresh(['motivation', 'shifts', 'shiftReports', 'finance', 'catalog'], () => {
     void fetchMotivationSettings();
     void fetchActiveShift();
+    void fetchActiveShiftReports();
     void fetchFinances();
   });
 
@@ -1032,6 +1077,7 @@ export default function AdminMotivationPage() {
       setReportCopied(false);
       toast.success('Смена начата');
       void fetchFinances();
+      void fetchActiveShiftReports();
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Не удалось начать смену'));
     }
@@ -1072,6 +1118,7 @@ export default function AdminMotivationPage() {
       setShiftReport(buildShiftReport(data.shift, latestStats));
       setReportCopied(false);
       setActiveShift(null);
+      setActiveShiftReports([]);
       toast.success('Смена завершена, отчет сформирован');
       void fetchFinances();
       return true;
@@ -1263,6 +1310,19 @@ export default function AdminMotivationPage() {
       toast.error(getApiErrorMessage(error, 'Не удалось скопировать отчет'));
     }
   };
+
+  const openShiftReport = (report: ShiftReport) => {
+    setSelectedShiftReport(report);
+    setShiftReportDialogOpen(true);
+  };
+
+  const handleShiftReportUpdated = (report: ShiftReport) => {
+    setActiveShiftReports((current) =>
+      current.map((item) => (item.id === report.id ? report : item)),
+    );
+    setSelectedShiftReport(report);
+  };
+
   const hourlyRuleColumns: ColumnDef<MotivationRule>[] = [
     {
       accessorKey: 'label',
@@ -1490,6 +1550,72 @@ export default function AdminMotivationPage() {
           onRetry={() => void fetchActiveShift()}
           title="Статус смены не загрузился"
         />
+      )}
+
+      {isShiftActive && (
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-3 border-b pb-3">
+            <div>
+              <CardTitle className="text-lg">Отчеты смены</CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {activeShiftReports.length > 0
+                  ? `${activeShiftReports.length} ожидаемых отчетов`
+                  : 'Нет ожидаемых отчетов'}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void fetchActiveShiftReports()}
+            >
+              <RotateCcw className="mr-2 h-4 w-4" />
+              Обновить
+            </Button>
+          </CardHeader>
+          <CardContent className="grid gap-3 pt-4">
+            {shiftReportsError ? (
+              <ErrorState
+                compact
+                message={shiftReportsError}
+                onRetry={() => void fetchActiveShiftReports()}
+                title="Отчеты смены не загрузились"
+              />
+            ) : activeShiftReports.length === 0 ? (
+              <div className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">
+                Для активной смены нет отчетов по включенным шаблонам.
+              </div>
+            ) : (
+              <div className="grid gap-3 xl:grid-cols-2">
+                {activeShiftReports.map((report) => (
+                  <button
+                    key={report.id}
+                    className="min-w-0 rounded-lg border p-3 text-left transition hover:bg-muted/50"
+                    type="button"
+                    onClick={() => openShiftReport(report)}
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <FileCheck2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                          <span className="truncate font-medium">
+                            {report.templateSnapshot.name}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                          План: {formatDateTime(report.scheduledAt)} • дедлайн:{' '}
+                          {formatDateTime(report.deadlineAt)}
+                        </div>
+                      </div>
+                      <Badge variant={shiftReportStatusVariants[report.computedStatus]}>
+                        {shiftReportStatusLabels[report.computedStatus]}
+                      </Badge>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {canEditMotivation && (
@@ -1987,6 +2113,13 @@ export default function AdminMotivationPage() {
 
         </>
       )}
+
+      <ShiftReportDialog
+        onOpenChange={setShiftReportDialogOpen}
+        onUpdated={handleShiftReportUpdated}
+        open={shiftReportDialogOpen}
+        report={selectedShiftReport}
+      />
 
       <ConfirmActionDialog
         action={pendingAction}

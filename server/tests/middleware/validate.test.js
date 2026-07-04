@@ -167,6 +167,62 @@ test('accepts manual shift payload used by staff page', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('accepts shift report template and answer payloads', () => {
+  const templateValidation = runValidation(
+    { body: apiSchemas.shiftReports.templateBody },
+    {
+      body: {
+        gracePeriodMinutes: 20,
+        name: 'Промежуточный отчет',
+        scheduleConfig: { times: ['09:00', '12:00', '15:00'] },
+        scheduleType: 'daily_times',
+        status: 'active',
+      },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(templateValidation.nextCalled, true);
+  assert.equal(templateValidation.res.statusCode, null);
+
+  const answerValidation = runValidation(
+    { body: apiSchemas.shiftReports.reportSaveBody },
+    {
+      body: {
+        answers: [
+          {
+            booleanValue: true,
+            comment: '',
+            id: 1,
+          },
+        ],
+      },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(answerValidation.nextCalled, true);
+  assert.equal(answerValidation.res.statusCode, null);
+});
+
+test('rejects invalid shift report attachment mime type', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.shiftReports.attachmentBody },
+    {
+      body: {
+        data: 'data:text/plain;base64,SGVsbG8sIHdvcmxkIQ==',
+        fileName: 'note.txt',
+        mimeType: 'text/plain',
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 400);
+});
+
 test('accepts scanner diagnostic statuses from the browser scanner', () => {
   const { nextCalled, res } = runValidation(apiSchemas.access.scannerEvent, {
     body: {

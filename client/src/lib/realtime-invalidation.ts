@@ -13,6 +13,7 @@ export interface CrmChangedEvent {
     | 'archived'
     | 'merged'
     | 'recalculated'
+    | 'submitted'
     | 'imported'
     | 'synced';
   occurredAt: string;
@@ -51,7 +52,8 @@ export const REALTIME_QUERY_GROUP_KEYS: Record<string, QueryKey[]> = {
   prepayments: [['prepayments']],
   references: [queryKeys.references.all],
   reports: [['reports']],
-  shifts: [['shifts'], ['payroll'], ['staff']],
+  shiftReports: [['shiftReports'], ['shifts']],
+  shifts: [['shifts'], ['shiftReports'], ['payroll'], ['staff']],
   staff: [['staff']],
   subscriptionTypes: [['subscriptionTypes'], ['catalog']],
   telephony: [queryKeys.telephony.all],
@@ -85,7 +87,7 @@ const DOMAIN_FALLBACK_GROUPS: Record<string, string[]> = {
   prepayments: ['prepayments'],
   references: ['references', 'clients', 'access'],
   reports: ['reports'],
-  shifts: ['shifts', 'payroll', 'staff', 'motivation'],
+  shifts: ['shifts', 'shiftReports', 'payroll', 'staff', 'motivation'],
   staff: ['staff', 'payroll', 'accounts'],
   subscription_types: ['subscriptionTypes', 'catalog', 'prepayments'],
   telephony: ['telephony', 'clients', 'callTasks'],

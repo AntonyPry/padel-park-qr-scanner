@@ -9,6 +9,7 @@ import {
   canManageMethodology,
   canManagePrepaymentSales,
   canManagePrepaymentSettings,
+  canManageShiftReportTemplates,
   canManageSubscriptionTypes,
   canManageTelephony,
   canViewManagerControlDashboard,
@@ -132,5 +133,14 @@ describe('permissions', () => {
     expect(canManageTelephony('admin')).toBe(false);
     expect(canManageTelephony('manager')).toBe(true);
     expect(canWorkTelephony('viewer')).toBe(false);
+  });
+
+  it('keeps shift report settings owner-only while managers can review reports', () => {
+    expect(canAccessPath('owner', '/admin/shift-reports')).toBe(true);
+    expect(canAccessPath('manager', '/admin/shift-reports')).toBe(true);
+    expect(canAccessPath('admin', '/admin/shift-reports')).toBe(false);
+    expect(canManageShiftReportTemplates('owner')).toBe(true);
+    expect(canManageShiftReportTemplates('manager')).toBe(false);
+    expect(canManageShiftReportTemplates('admin')).toBe(false);
   });
 });

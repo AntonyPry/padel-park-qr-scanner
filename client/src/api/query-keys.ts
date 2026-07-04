@@ -60,6 +60,14 @@ export const queryKeys = {
     list: (type: ReferenceType, status: ReferenceStatus | 'all') =>
       [...queryKeys.references.all, 'list', type, status] as const,
   },
+  shiftReports: {
+    all: ['shiftReports'] as const,
+    active: () => [...queryKeys.shiftReports.all, 'active'] as const,
+    list: (params: Record<string, unknown>) =>
+      [...queryKeys.shiftReports.all, 'list', params] as const,
+    templates: (status: string) =>
+      [...queryKeys.shiftReports.all, 'templates', status] as const,
+  },
   telephony: {
     all: ['telephony'] as const,
     calls: (params: Record<string, unknown>) =>

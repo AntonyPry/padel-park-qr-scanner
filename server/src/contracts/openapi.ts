@@ -12,7 +12,7 @@ interface EndpointContract {
   path: string;
   public?: boolean;
   query?: unknown;
-  responseType?: 'json' | 'xlsx';
+  responseType?: 'binary' | 'json' | 'xlsx';
   successStatus?: number;
   summary: string;
   tags: string[];
@@ -263,6 +263,24 @@ const endpointContracts: EndpointContract[] = [
   { id: 'shifts.update', method: 'put', path: '/shifts', body: apiSchemas.shifts.updateBody, summary: 'Update manual shift', tags: ['Shifts'] },
   { id: 'shifts.archive', method: 'delete', path: '/shifts', body: apiSchemas.shifts.deleteBody, summary: 'Archive shift', tags: ['Shifts'] },
 
+  { id: 'shiftReportTemplates.list', method: 'get', path: '/shift-report-templates', query: apiSchemas.shiftReports.templateListQuery, summary: 'List shift report templates', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.create', method: 'post', path: '/shift-report-templates', body: apiSchemas.shiftReports.templateBody, successStatus: 201, summary: 'Create shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.update', method: 'put', path: '/shift-report-templates/{id}', body: apiSchemas.shiftReports.templateUpdateBody, params: apiSchemas.shiftReports.withId.params, summary: 'Update shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.archive', method: 'post', path: '/shift-report-templates/{id}/archive', params: apiSchemas.shiftReports.withId.params, summary: 'Archive shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.restore', method: 'post', path: '/shift-report-templates/{id}/restore', params: apiSchemas.shiftReports.withId.params, summary: 'Restore shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.create', method: 'post', path: '/shift-report-templates/{templateId}/items', body: apiSchemas.shiftReports.templateItemBody, params: apiSchemas.shiftReports.templateItemCreateParams, successStatus: 201, summary: 'Create shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.update', method: 'put', path: '/shift-report-template-items/{id}', body: apiSchemas.shiftReports.templateItemUpdateBody, params: apiSchemas.shiftReports.withId.params, summary: 'Update shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.archive', method: 'post', path: '/shift-report-template-items/{id}/archive', params: apiSchemas.shiftReports.withId.params, summary: 'Archive shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.restore', method: 'post', path: '/shift-report-template-items/{id}/restore', params: apiSchemas.shiftReports.withId.params, summary: 'Restore shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReports.activeShift', method: 'get', path: '/shifts/active/reports', summary: 'List reports for active shift', tags: ['Shift Reports'] },
+  { id: 'shiftReports.list', method: 'get', path: '/shift-reports', query: apiSchemas.shiftReports.reportListQuery, summary: 'List shift reports', tags: ['Shift Reports'] },
+  { id: 'shiftReports.get', method: 'get', path: '/shift-reports/{id}', params: apiSchemas.shiftReports.withId.params, summary: 'Get shift report', tags: ['Shift Reports'] },
+  { id: 'shiftReports.saveDraft', method: 'put', path: '/shift-reports/{id}/draft', body: apiSchemas.shiftReports.reportSaveBody, params: apiSchemas.shiftReports.withId.params, summary: 'Save shift report draft', tags: ['Shift Reports'] },
+  { id: 'shiftReports.submit', method: 'post', path: '/shift-reports/{id}/submit', body: apiSchemas.shiftReports.reportSaveBody, params: apiSchemas.shiftReports.withId.params, summary: 'Submit shift report', tags: ['Shift Reports'] },
+  { id: 'shiftReports.uploadAttachment', method: 'post', path: '/shift-reports/{reportId}/answers/{answerId}/attachments', body: apiSchemas.shiftReports.attachmentBody, params: apiSchemas.shiftReports.attachmentParams, successStatus: 201, summary: 'Upload shift report photo', tags: ['Shift Reports'] },
+  { id: 'shiftReports.removeAttachment', method: 'delete', path: '/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}', params: apiSchemas.shiftReports.attachmentDeleteParams, summary: 'Remove shift report photo', tags: ['Shift Reports'] },
+  { id: 'shiftReports.attachment', method: 'get', path: '/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}', params: apiSchemas.shiftReports.attachmentDeleteParams, responseType: 'binary', summary: 'Get shift report photo', tags: ['Shift Reports'] },
+
   { id: 'trainingNotes.list', method: 'get', path: '/clients/{clientId}/training-notes', params: apiSchemas.trainingNotes.clientParams, summary: 'List training notes for client', tags: ['Training Notes'] },
   { id: 'trainingNotes.create', method: 'post', path: '/clients/{clientId}/training-notes', body: apiSchemas.trainingNotes.body, params: apiSchemas.trainingNotes.clientParams, summary: 'Create training note', tags: ['Training Notes'] },
   { id: 'trainingNotes.update', method: 'put', path: '/training-notes/{noteId}', body: apiSchemas.trainingNotes.updateBody, params: apiSchemas.trainingNotes.noteParams, summary: 'Update training note', tags: ['Training Notes'] },
@@ -341,18 +359,25 @@ function buildParameters(endpoint: EndpointContract) {
 
 function buildOperation(endpoint: EndpointContract) {
   const successStatus = endpoint.successStatus || 200;
-  const successContent =
-    endpoint.responseType === 'xlsx'
-      ? {
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
-            schema: { format: 'binary', type: 'string' },
-          },
-        }
-      : {
-          'application/json': {
-            schema: schemaToJsonSchema(responseOk),
-          },
-        };
+  let successContent: Record<string, unknown> = {
+    'application/json': {
+      schema: schemaToJsonSchema(responseOk),
+    },
+  };
+  if (endpoint.responseType === 'xlsx') {
+    successContent = {
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+        schema: { format: 'binary', type: 'string' },
+      },
+    };
+  }
+  if (endpoint.responseType === 'binary') {
+    successContent = {
+      'application/octet-stream': {
+        schema: { format: 'binary', type: 'string' },
+      },
+    };
+  }
   const operation: Record<string, unknown> = {
     operationId: endpoint.id,
     responses: {
