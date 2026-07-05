@@ -111,3 +111,10 @@ test('telephony separates setup from call processing', () => {
   assert.equal(ACCESS_MATRIX.telephonyView.includes('viewer'), true);
   assert.equal(ACCESS_MATRIX.telephonyWork.includes('viewer'), false);
 });
+
+test('shift report templates are owner and manager managed while admins submit active shift reports', () => {
+  assert.deepEqual(ACCESS_MATRIX.shiftReportTemplatesManage, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.shiftReportsSubmit, ['owner', 'manager', 'admin']);
+  assert.deepEqual(ACCESS_MATRIX.shiftReportsView, ['owner', 'manager', 'admin']);
+  assert.equal(ACCESS_MATRIX.shiftReportTemplatesManage.includes('manager'), true);
+});

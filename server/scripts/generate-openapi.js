@@ -158,7 +158,8 @@ function generateClientTypes() {
 
   const endpointMap = endpointContracts
     .map((endpoint) => {
-      const clientResponseType = endpoint.responseType === 'xlsx' ? 'blob' : 'json';
+      const clientResponseType =
+        endpoint.responseType && endpoint.responseType !== 'json' ? 'blob' : 'json';
       return `  ${quote(endpoint.id)}: { method: ${quote(endpoint.method.toUpperCase())}, path: ${quote(endpoint.path)}, responseType: ${quote(clientResponseType)} },`;
     })
     .join('\n');

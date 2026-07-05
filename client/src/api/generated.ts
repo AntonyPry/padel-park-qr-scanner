@@ -210,6 +210,23 @@ export const apiEndpoints = {
   "shifts.create": { method: "POST", path: "/shifts", responseType: "json" },
   "shifts.update": { method: "PUT", path: "/shifts", responseType: "json" },
   "shifts.archive": { method: "DELETE", path: "/shifts", responseType: "json" },
+  "shiftReportTemplates.list": { method: "GET", path: "/shift-report-templates", responseType: "json" },
+  "shiftReportTemplates.create": { method: "POST", path: "/shift-report-templates", responseType: "json" },
+  "shiftReportTemplates.update": { method: "PUT", path: "/shift-report-templates/{id}", responseType: "json" },
+  "shiftReportTemplates.archive": { method: "POST", path: "/shift-report-templates/{id}/archive", responseType: "json" },
+  "shiftReportTemplates.restore": { method: "POST", path: "/shift-report-templates/{id}/restore", responseType: "json" },
+  "shiftReportTemplateItems.create": { method: "POST", path: "/shift-report-templates/{templateId}/items", responseType: "json" },
+  "shiftReportTemplateItems.update": { method: "PUT", path: "/shift-report-template-items/{id}", responseType: "json" },
+  "shiftReportTemplateItems.archive": { method: "POST", path: "/shift-report-template-items/{id}/archive", responseType: "json" },
+  "shiftReportTemplateItems.restore": { method: "POST", path: "/shift-report-template-items/{id}/restore", responseType: "json" },
+  "shiftReports.activeShift": { method: "GET", path: "/shifts/active/reports", responseType: "json" },
+  "shiftReports.list": { method: "GET", path: "/shift-reports", responseType: "json" },
+  "shiftReports.get": { method: "GET", path: "/shift-reports/{id}", responseType: "json" },
+  "shiftReports.saveDraft": { method: "PUT", path: "/shift-reports/{id}/draft", responseType: "json" },
+  "shiftReports.submit": { method: "POST", path: "/shift-reports/{id}/submit", responseType: "json" },
+  "shiftReports.uploadAttachment": { method: "POST", path: "/shift-reports/{reportId}/answers/{answerId}/attachments", responseType: "json" },
+  "shiftReports.removeAttachment": { method: "DELETE", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "json" },
+  "shiftReports.attachment": { method: "GET", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "blob" },
   "trainingNotes.list": { method: "GET", path: "/clients/{clientId}/training-notes", responseType: "json" },
   "trainingNotes.create": { method: "POST", path: "/clients/{clientId}/training-notes", responseType: "json" },
   "trainingNotes.update": { method: "PUT", path: "/training-notes/{noteId}", responseType: "json" },
@@ -1617,6 +1634,145 @@ export type ShiftsArchiveBody = {
   reason?: string | "" | null;
   [key: string]: unknown;
 };
+export type ShiftReportTemplatesListQuery = {
+  status?: "active" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplatesCreateBody = {
+  appliesToRole?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer" | "" | null;
+  appliesToShiftType?: string | "" | null;
+  description?: string | "" | null;
+  gracePeriodMinutes?: number | string | "" | null;
+  name: string;
+  scheduleConfig?: {
+    endTime?: string;
+    everyHours?: number | string | "" | null;
+    startTime?: string;
+    time?: string;
+    times?: Array<string>;
+    [key: string]: unknown;
+  };
+  scheduleType: "once_daily" | "daily_times" | "interval_hours" | "shift_start" | "shift_end";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplatesUpdateParams = {
+  id: number | string;
+};
+export type ShiftReportTemplatesUpdateBody = {
+  appliesToRole?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer" | "" | null;
+  appliesToShiftType?: string | "" | null;
+  description?: string | "" | null;
+  gracePeriodMinutes?: number | string | "" | null;
+  name?: string;
+  scheduleConfig?: {
+    endTime?: string;
+    everyHours?: number | string | "" | null;
+    startTime?: string;
+    time?: string;
+    times?: Array<string>;
+    [key: string]: unknown;
+  };
+  scheduleType?: "once_daily" | "daily_times" | "interval_hours" | "shift_start" | "shift_end";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplatesArchiveParams = {
+  id: number | string;
+};
+export type ShiftReportTemplatesRestoreParams = {
+  id: number | string;
+};
+export type ShiftReportTemplateItemsCreateParams = {
+  templateId: number | string;
+};
+export type ShiftReportTemplateItemsCreateBody = {
+  itemType: "checkbox" | "text" | "number";
+  label: string;
+  photoRequired?: boolean | "true" | "false" | "1" | "0";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplateItemsUpdateParams = {
+  id: number | string;
+};
+export type ShiftReportTemplateItemsUpdateBody = {
+  itemType?: "checkbox" | "text" | "number";
+  label?: string;
+  photoRequired?: boolean | "true" | "false" | "1" | "0";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplateItemsArchiveParams = {
+  id: number | string;
+};
+export type ShiftReportTemplateItemsRestoreParams = {
+  id: number | string;
+};
+export type ShiftReportsListQuery = {
+  date?: string | "";
+  from?: string | "";
+  shiftId?: number | string | "" | null;
+  status?: "all" | "pending" | "draft" | "submitted" | "overdue";
+  templateId?: number | string | "" | null;
+  to?: string | "";
+  [key: string]: unknown;
+};
+export type ShiftReportsGetParams = {
+  id: number | string;
+};
+export type ShiftReportsSaveDraftParams = {
+  id: number | string;
+};
+export type ShiftReportsSaveDraftBody = {
+  answers?: Array<{
+    booleanValue?: boolean | "true" | "false" | "1" | "0" | null;
+    id: number | string;
+    numberValue?: number | string | "" | null;
+    textValue?: string | "" | null;
+    [key: string]: unknown;
+  }>;
+  comment?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ShiftReportsSubmitParams = {
+  id: number | string;
+};
+export type ShiftReportsSubmitBody = {
+  answers?: Array<{
+    booleanValue?: boolean | "true" | "false" | "1" | "0" | null;
+    id: number | string;
+    numberValue?: number | string | "" | null;
+    textValue?: string | "" | null;
+    [key: string]: unknown;
+  }>;
+  comment?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ShiftReportsUploadAttachmentParams = {
+  answerId: number | string;
+  reportId: number | string;
+};
+export type ShiftReportsUploadAttachmentBody = {
+  data: string;
+  fileName?: string | "" | null;
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  [key: string]: unknown;
+};
+export type ShiftReportsRemoveAttachmentParams = {
+  answerId: number | string;
+  attachmentId: string;
+  reportId: number | string;
+};
+export type ShiftReportsAttachmentParams = {
+  answerId: number | string;
+  attachmentId: string;
+  reportId: number | string;
+};
 export type TrainingNotesListParams = {
   clientId: number | string;
 };
@@ -2096,6 +2252,23 @@ export interface ApiEndpointRequestMap {
   "shifts.create": ApiEndpointRequest<undefined, undefined, ShiftsCreateBody>;
   "shifts.update": ApiEndpointRequest<undefined, undefined, ShiftsUpdateBody>;
   "shifts.archive": ApiEndpointRequest<undefined, undefined, ShiftsArchiveBody>;
+  "shiftReportTemplates.list": ApiEndpointRequest<undefined, ShiftReportTemplatesListQuery, undefined>;
+  "shiftReportTemplates.create": ApiEndpointRequest<undefined, undefined, ShiftReportTemplatesCreateBody>;
+  "shiftReportTemplates.update": ApiEndpointRequest<ShiftReportTemplatesUpdateParams, undefined, ShiftReportTemplatesUpdateBody>;
+  "shiftReportTemplates.archive": ApiEndpointRequest<ShiftReportTemplatesArchiveParams, undefined, undefined>;
+  "shiftReportTemplates.restore": ApiEndpointRequest<ShiftReportTemplatesRestoreParams, undefined, undefined>;
+  "shiftReportTemplateItems.create": ApiEndpointRequest<ShiftReportTemplateItemsCreateParams, undefined, ShiftReportTemplateItemsCreateBody>;
+  "shiftReportTemplateItems.update": ApiEndpointRequest<ShiftReportTemplateItemsUpdateParams, undefined, ShiftReportTemplateItemsUpdateBody>;
+  "shiftReportTemplateItems.archive": ApiEndpointRequest<ShiftReportTemplateItemsArchiveParams, undefined, undefined>;
+  "shiftReportTemplateItems.restore": ApiEndpointRequest<ShiftReportTemplateItemsRestoreParams, undefined, undefined>;
+  "shiftReports.activeShift": ApiEndpointRequest<undefined, undefined, undefined>;
+  "shiftReports.list": ApiEndpointRequest<undefined, ShiftReportsListQuery, undefined>;
+  "shiftReports.get": ApiEndpointRequest<ShiftReportsGetParams, undefined, undefined>;
+  "shiftReports.saveDraft": ApiEndpointRequest<ShiftReportsSaveDraftParams, undefined, ShiftReportsSaveDraftBody>;
+  "shiftReports.submit": ApiEndpointRequest<ShiftReportsSubmitParams, undefined, ShiftReportsSubmitBody>;
+  "shiftReports.uploadAttachment": ApiEndpointRequest<ShiftReportsUploadAttachmentParams, undefined, ShiftReportsUploadAttachmentBody>;
+  "shiftReports.removeAttachment": ApiEndpointRequest<ShiftReportsRemoveAttachmentParams, undefined, undefined>;
+  "shiftReports.attachment": ApiEndpointRequest<ShiftReportsAttachmentParams, undefined, undefined>;
   "trainingNotes.list": ApiEndpointRequest<TrainingNotesListParams, undefined, undefined>;
   "trainingNotes.create": ApiEndpointRequest<TrainingNotesCreateParams, undefined, TrainingNotesCreateBody>;
   "trainingNotes.update": ApiEndpointRequest<TrainingNotesUpdateParams, undefined, TrainingNotesUpdateBody>;

@@ -167,6 +167,77 @@ test('accepts manual shift payload used by staff page', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('accepts shift report template and answer payloads', () => {
+  const templateResult = runValidation(
+    { body: apiSchemas.shiftReports.templateBody },
+    {
+      body: {
+        description: '',
+        gracePeriodMinutes: '15',
+        name: 'Утренний отчет',
+        scheduleConfig: { times: ['09:00', '13:30'] },
+        scheduleType: 'daily_times',
+      },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(templateResult.nextCalled, true);
+  assert.equal(templateResult.res.statusCode, null);
+
+  const itemResult = runValidation(
+    { body: apiSchemas.shiftReports.templateItemBody },
+    {
+      body: {
+        itemType: 'checkbox',
+        label: 'Проверить ресепшн',
+        photoRequired: true,
+      },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(itemResult.nextCalled, true);
+  assert.equal(itemResult.res.statusCode, null);
+
+  const answerResult = runValidation(
+    { body: apiSchemas.shiftReports.reportSaveBody },
+    {
+      body: {
+        answers: [
+          {
+            booleanValue: true,
+            id: 1,
+          },
+        ],
+        comment: 'Комментарий по отчету',
+      },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(answerResult.nextCalled, true);
+  assert.equal(answerResult.res.statusCode, null);
+});
+
+test('rejects invalid shift report attachment mime type', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.shiftReports.attachmentBody },
+    {
+      body: {
+        data: 'data:image/svg+xml;base64,PHN2Zy8+',
+        fileName: 'bad.svg',
+        mimeType: 'image/svg+xml',
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 400);
+});
+
 test('accepts scanner diagnostic statuses from the browser scanner', () => {
   const { nextCalled, res } = runValidation(apiSchemas.access.scannerEvent, {
     body: {
