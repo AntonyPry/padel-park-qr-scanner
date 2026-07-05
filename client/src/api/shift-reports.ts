@@ -10,9 +10,7 @@ export type ShiftReportScheduleType =
 export type ShiftReportItemType =
   | 'checkbox'
   | 'text'
-  | 'number'
-  | 'photo'
-  | 'checkbox_with_photo';
+  | 'number';
 
 export type ShiftReportStatus = 'pending' | 'draft' | 'submitted' | 'overdue';
 export type ShiftReportTemplateStatus = 'active' | 'archived';
@@ -27,9 +25,7 @@ export interface ShiftReportScheduleConfig {
 
 export interface ShiftReportTemplateItem {
   archivedAt?: string | null;
-  helperText?: string | null;
   id: number;
-  isRequired: boolean;
   itemType: ShiftReportItemType;
   label: string;
   photoRequired: boolean;
@@ -67,9 +63,7 @@ export interface ShiftReportAttachment {
 export interface ShiftReportAnswer {
   attachments: ShiftReportAttachment[];
   booleanValue: boolean | null;
-  comment?: string | null;
   id: number;
-  isRequired: boolean;
   itemLabel: string;
   itemSnapshot: ShiftReportTemplateItem;
   itemType: ShiftReportItemType;
@@ -82,6 +76,7 @@ export interface ShiftReportAnswer {
 
 export interface ShiftReport {
   answers: ShiftReportAnswer[];
+  comment?: string | null;
   computedStatus: ShiftReportStatus;
   deadlineAt: string;
   id: number;
@@ -108,7 +103,6 @@ export interface ShiftReport {
 
 export interface ShiftReportSaveAnswer {
   booleanValue?: boolean | null;
-  comment?: string | null;
   id: number;
   numberValue?: number | string | null;
   textValue?: string | null;
@@ -127,8 +121,6 @@ export interface ShiftReportTemplatePayload {
 }
 
 export interface ShiftReportTemplateItemPayload {
-  helperText?: string | null;
-  isRequired?: boolean;
   itemType: ShiftReportItemType;
   label: string;
   photoRequired?: boolean;
@@ -182,6 +174,14 @@ export function updateShiftReportTemplateStatus(
   );
 }
 
+export function deleteShiftReportTemplate(id: number) {
+  return apiRequest<ShiftReportTemplate>(
+    `/api/shift-report-templates/${id}/archive`,
+    { method: 'POST' },
+    'Не удалось удалить шаблон отчета',
+  );
+}
+
 export function createShiftReportTemplateItem(
   templateId: number,
   payload: ShiftReportTemplateItemPayload,
@@ -219,6 +219,14 @@ export function updateShiftReportTemplateItemStatus(
     `/api/shift-report-template-items/${itemId}/${action}`,
     { method: 'POST' },
     'Не удалось изменить статус пункта отчета',
+  );
+}
+
+export function deleteShiftReportTemplateItem(itemId: number) {
+  return apiRequest<ShiftReportTemplate>(
+    `/api/shift-report-template-items/${itemId}/archive`,
+    { method: 'POST' },
+    'Не удалось удалить пункт отчета',
   );
 }
 
@@ -260,23 +268,31 @@ export function getShiftReport(id: number) {
   );
 }
 
-export function saveShiftReportDraft(id: number, answers: ShiftReportSaveAnswer[]) {
+export function saveShiftReportDraft(
+  id: number,
+  answers: ShiftReportSaveAnswer[],
+  comment = '',
+) {
   return apiRequest<ShiftReport>(
     `/api/shift-reports/${id}/draft`,
     {
       method: 'PUT',
-      body: JSON.stringify({ answers }),
+      body: JSON.stringify({ answers, comment }),
     },
     'Не удалось сохранить черновик отчета',
   );
 }
 
-export function submitShiftReport(id: number, answers: ShiftReportSaveAnswer[]) {
+export function submitShiftReport(
+  id: number,
+  answers: ShiftReportSaveAnswer[],
+  comment = '',
+) {
   return apiRequest<ShiftReport>(
     `/api/shift-reports/${id}/submit`,
     {
       method: 'POST',
-      body: JSON.stringify({ answers }),
+      body: JSON.stringify({ answers, comment }),
     },
     'Не удалось сдать отчет смены',
   );

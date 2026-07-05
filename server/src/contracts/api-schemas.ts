@@ -773,8 +773,6 @@ const shiftReportItemType = z.enum([
   'checkbox',
   'text',
   'number',
-  'photo',
-  'checkbox_with_photo',
 ]);
 const shiftReportTemplateStatus = z.enum(['active', 'archived']);
 const shiftReportScheduleConfig = z
@@ -801,8 +799,6 @@ const shiftReportTemplateBody = z
   .passthrough();
 const shiftReportTemplateItemBody = z
   .object({
-    helperText: optionalString,
-    isRequired: optionalBoolValue,
     itemType: shiftReportItemType,
     label: nameString,
     photoRequired: optionalBoolValue,
@@ -813,7 +809,6 @@ const shiftReportTemplateItemBody = z
 const shiftReportAnswerBody = z
   .object({
     booleanValue: z.union([boolValue, z.null()]).optional(),
-    comment: optionalString,
     id,
     numberValue: optionalNumberValue,
     textValue: optionalString,
@@ -822,6 +817,7 @@ const shiftReportAnswerBody = z
 const shiftReportSaveBody = z
   .object({
     answers: z.array(shiftReportAnswerBody).max(80).optional(),
+    comment: optionalString,
   })
   .passthrough();
 const shiftReportAttachmentBody = z

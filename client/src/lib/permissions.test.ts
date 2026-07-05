@@ -135,12 +135,12 @@ describe('permissions', () => {
     expect(canWorkTelephony('viewer')).toBe(false);
   });
 
-  it('keeps shift report settings owner-only while managers can review reports', () => {
+  it('allows owners and managers to manage shift report templates', () => {
     expect(canAccessPath('owner', '/admin/shift-reports')).toBe(true);
     expect(canAccessPath('manager', '/admin/shift-reports')).toBe(true);
     expect(canAccessPath('admin', '/admin/shift-reports')).toBe(false);
     expect(canManageShiftReportTemplates('owner')).toBe(true);
-    expect(canManageShiftReportTemplates('manager')).toBe(false);
+    expect(canManageShiftReportTemplates('manager')).toBe(true);
     expect(canManageShiftReportTemplates('admin')).toBe(false);
   });
 });

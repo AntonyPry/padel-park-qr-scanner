@@ -10,19 +10,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false,
     },
-    helperText: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
     itemType: {
       type: DataTypes.STRING,
       allowNull: false,
       defaultValue: 'checkbox',
-    },
-    isRequired: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
     },
     photoRequired: {
       type: DataTypes.BOOLEAN,

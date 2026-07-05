@@ -179,7 +179,7 @@ export function canManageShifts(role: AccountRole | null | undefined) {
 }
 
 export function canManageShiftReportTemplates(role: AccountRole | null | undefined) {
-  return hasRoleAccess(role, ['owner']);
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canReviewPayroll(role: AccountRole | null | undefined) {

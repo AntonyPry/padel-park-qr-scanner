@@ -1601,9 +1601,13 @@ export default function AdminMotivationPage() {
                             {report.templateSnapshot.name}
                           </span>
                         </div>
+                        {report.templateSnapshot.description && (
+                          <div className="mt-1 line-clamp-2 text-sm text-foreground">
+                            {report.templateSnapshot.description}
+                          </div>
+                        )}
                         <div className="mt-1 text-xs text-muted-foreground">
-                          План: {formatDateTime(report.scheduledAt)} • дедлайн:{' '}
-                          {formatDateTime(report.deadlineAt)}
+                          Дедлайн: {formatDateTime(report.deadlineAt)}
                         </div>
                       </div>
                       <Badge variant={shiftReportStatusVariants[report.computedStatus]}>

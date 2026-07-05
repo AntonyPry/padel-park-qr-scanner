@@ -40,10 +40,8 @@ test('ensureReportsForShift creates scheduled reports with item snapshots', asyn
     id: 10,
     items: [
       makeModel({
-        helperText: 'Сделайте фото',
         id: 100,
-        isRequired: true,
-        itemType: 'checkbox_with_photo',
+        itemType: 'checkbox',
         label: 'Санитарная зона проверена',
         photoRequired: true,
         sortOrder: 10,
@@ -51,7 +49,6 @@ test('ensureReportsForShift creates scheduled reports with item snapshots', asyn
       }),
       makeModel({
         id: 101,
-        isRequired: true,
         itemType: 'text',
         label: 'Старый пункт',
         photoRequired: false,
@@ -136,11 +133,9 @@ test('createTemplate normalizes daily report times', async () => {
   assert.deepEqual(template.scheduleConfig.times, ['09:00', '15:00']);
 });
 
-test('archiving a template item updates status and bumps template version', async () => {
+test('deleting a template item soft-deletes it and bumps template version', async () => {
   const item = makeModel({
-    helperText: '',
     id: 20,
-    isRequired: true,
     itemType: 'checkbox',
     label: 'Проверить вход',
     photoRequired: false,
@@ -181,12 +176,60 @@ test('archiving a template item updates status and bumps template version', asyn
   assert.equal(template.version, 5);
 });
 
-test('submit does not require a comment for required checkbox answers', async () => {
+test('deleting a template soft-deletes it so it no longer creates new reports', async () => {
+  const template = makeModel({
+    archivedAt: null,
+    gracePeriodMinutes: 30,
+    id: 8,
+    items: [],
+    name: 'Контроль смены',
+    scheduleConfig: { times: ['09:00'] },
+    scheduleType: 'daily_times',
+    sortOrder: 1,
+    status: 'active',
+    version: 2,
+  });
+
+  db.ShiftReportTemplate = {
+    async findByPk(id) {
+      assert.equal(Number(id), template.id);
+      return template;
+    },
+  };
+
+  await shiftReportsService.setTemplateStatus(template.id, 'archived', {
+    id: 1,
+    role: 'owner',
+  });
+
+  assert.equal(template.status, 'archived');
+  assert.ok(template.archivedAt instanceof Date);
+});
+
+test('ensureReportsForShift asks only for active templates', async () => {
+  let where = null;
+  db.ShiftReportTemplate = {
+    async findAll(options) {
+      where = options.where;
+      return [];
+    },
+  };
+
+  const reports = await shiftReportsService.ensureReportsForShift({
+    date: '2026-07-04',
+    id: 5,
+    status: 'active',
+  });
+
+  assert.deepEqual(reports, []);
+  assert.deepEqual(where, { status: 'active' });
+});
+
+test('submit saves a report comment separately from item answers', async () => {
   const answer = makeModel({
     attachments: [],
     booleanValue: null,
     id: 7,
-    isRequired: true,
     itemLabel: 'Входная зона проверена',
     itemSnapshot: { sortOrder: 10 },
     itemType: 'checkbox',
@@ -196,6 +239,7 @@ test('submit does not require a comment for required checkbox answers', async ()
   const report = makeModel({
     answers: [answer],
     id: 3,
+    comment: null,
     scheduledAt: new Date('2026-07-04T09:00:00+03:00'),
     shift: { id: 2, staffId: 11, status: 'active' },
     status: 'draft',
@@ -216,24 +260,25 @@ test('submit does not require a comment for required checkbox answers', async ()
 
   const saved = await shiftReportsService.saveReport(
     report.id,
-    { answers: [{ booleanValue: true, comment: '', id: answer.id }] },
+    { answers: [{ booleanValue: true, id: answer.id }], comment: 'Все спокойно' },
     { id: 5, role: 'owner', staffId: 11 },
     { submit: true },
   );
 
   assert.equal(answer.booleanValue, true);
-  assert.equal(answer.comment, null);
+  assert.equal(report.comment, 'Все спокойно');
+  assert.equal(saved.comment, 'Все спокойно');
   assert.equal(saved.computedStatus, 'submitted');
 });
 
-test('submit rejects required photo answers without attachments', async () => {
+test('submit does not require photos for photo-enabled answers', async () => {
   const answer = makeModel({
     attachments: [],
+    booleanValue: true,
     id: 7,
-    isRequired: true,
     itemLabel: 'Фото санитарной зоны',
     itemSnapshot: { sortOrder: 10 },
-    itemType: 'photo',
+    itemType: 'checkbox',
     photoRequired: true,
     reportId: 3,
   });
@@ -258,16 +303,51 @@ test('submit rejects required photo answers without attachments', async () => {
     },
   };
 
-  await assert.rejects(
-    () =>
-      shiftReportsService.saveReport(
-        report.id,
-        { answers: [{ id: answer.id }] },
-        { id: 5, role: 'admin', staffId: 11 },
-        { submit: true },
-      ),
-    /Фото санитарной зоны: фото/,
+  const saved = await shiftReportsService.saveReport(
+    report.id,
+    { answers: [{ booleanValue: true, id: answer.id }] },
+    { id: 5, role: 'admin', staffId: 11 },
+    { submit: true },
   );
+
+  assert.equal(saved.computedStatus, 'submitted');
+});
+
+test('historical report opens from snapshot when template was deleted', async () => {
+  const answer = makeModel({
+    attachments: [],
+    booleanValue: true,
+    id: 7,
+    itemLabel: 'Входная зона',
+    itemSnapshot: { sortOrder: 10 },
+    itemType: 'checkbox',
+    photoRequired: false,
+    reportId: 3,
+  });
+  const report = makeModel({
+    answers: [answer],
+    id: 3,
+    scheduledAt: new Date('2026-07-04T09:00:00+03:00'),
+    shift: { id: 2, staffId: 11, status: 'active' },
+    status: 'submitted',
+    template: null,
+    templateSnapshot: { gracePeriodMinutes: 30, name: 'Удаленный шаблон' },
+  });
+
+  db.ShiftReport = {
+    async findByPk(id) {
+      assert.equal(Number(id), report.id);
+      return report;
+    },
+  };
+
+  const saved = await shiftReportsService.getReport(report.id, {
+    id: 5,
+    role: 'owner',
+  });
+
+  assert.equal(saved.templateSnapshot.name, 'Удаленный шаблон');
+  assert.equal(saved.answers[0].itemLabel, 'Входная зона');
 });
 
 test('uploadAttachment rejects more than 10 photos per answer', async () => {
@@ -277,7 +357,7 @@ test('uploadAttachment rejects more than 10 photos per answer', async () => {
       relativePath: `3/photo-${index}.png`,
     })),
     id: 8,
-    itemType: 'photo',
+    itemType: 'checkbox',
     photoRequired: true,
     reportId: 3,
   });
@@ -324,4 +404,45 @@ test('admin report list is limited to active shift scope', async () => {
   );
 
   assert.deepEqual(reports, []);
+});
+
+test('active shift reports hide reports an admin cannot operate', async () => {
+  const shift = makeModel({
+    id: 2,
+    staffId: 11,
+    status: 'active',
+  });
+  const report = makeModel({
+    answers: [],
+    id: 3,
+    scheduledAt: new Date('2026-07-04T09:00:00+03:00'),
+    shift,
+    status: 'pending',
+    templateSnapshot: { gracePeriodMinutes: 30, name: 'Чужая смена' },
+  });
+
+  db.Shift = {
+    async findOne() {
+      return shift;
+    },
+  };
+  db.ShiftReportTemplate = {
+    async findAll() {
+      return [];
+    },
+  };
+  db.ShiftReport = {
+    async findAll() {
+      return [report];
+    },
+  };
+
+  const result = await shiftReportsService.getActiveShiftReports({
+    id: 7,
+    role: 'admin',
+    staffId: 99,
+  });
+
+  assert.deepEqual(result.reports, []);
+  assert.equal(result.shift.id, shift.id);
 });

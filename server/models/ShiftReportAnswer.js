@@ -22,11 +22,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: false,
     },
-    isRequired: {
-      type: DataTypes.BOOLEAN,
-      allowNull: false,
-      defaultValue: false,
-    },
     photoRequired: {
       type: DataTypes.BOOLEAN,
       allowNull: false,
@@ -42,10 +37,6 @@ module.exports = (sequelize, DataTypes) => {
     },
     numberValue: {
       type: DataTypes.DECIMAL(12, 2),
-      allowNull: true,
-    },
-    comment: {
-      type: DataTypes.TEXT,
       allowNull: true,
     },
     attachments: {

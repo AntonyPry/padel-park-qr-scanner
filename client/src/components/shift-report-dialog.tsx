@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Download,
   FileImage,
   Loader2,
   Save,
@@ -54,6 +55,10 @@ const IMAGE_MIME_TYPES = new Set([
   'image/webp',
 ]);
 
+function showSuccessToast(title: string) {
+  toast.show({ title, variant: 'success' });
+}
+
 function formatDateTime(value?: string | null) {
   if (!value) return '-';
   return new Intl.DateTimeFormat('ru-RU', {
@@ -76,7 +81,6 @@ function readFileAsDataUrl(file: File) {
 function answerToPayload(answer: ShiftReportAnswer): ShiftReportSaveAnswer {
   return {
     booleanValue: answer.booleanValue,
-    comment: answer.comment || '',
     id: answer.id,
     numberValue: answer.numberValue,
     textValue: answer.textValue || '',
@@ -86,10 +90,12 @@ function answerToPayload(answer: ShiftReportAnswer): ShiftReportSaveAnswer {
 function AttachmentPreview({
   attachment,
   canEdit,
+  onOpen,
   onRemove,
 }: {
   attachment: ShiftReportAnswer['attachments'][number];
   canEdit: boolean;
+  onOpen: () => void;
   onRemove: () => void;
 }) {
   const [url, setUrl] = useState('');
@@ -116,23 +122,29 @@ function AttachmentPreview({
 
   return (
     <div className="flex min-w-0 items-center gap-3 rounded-lg border bg-muted/30 p-2">
-      {url ? (
-        <img
-          alt={attachment.originalName}
-          className="h-16 w-16 shrink-0 rounded-md object-cover"
-          src={url}
-        />
-      ) : (
-        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
-          <FileImage className="h-5 w-5" />
+      <button
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        type="button"
+        onClick={onOpen}
+      >
+        {url ? (
+          <img
+            alt={attachment.originalName}
+            className="h-16 w-16 shrink-0 rounded-md object-cover"
+            src={url}
+          />
+        ) : (
+          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md bg-background text-muted-foreground">
+            <FileImage className="h-5 w-5" />
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{attachment.originalName}</div>
+          <div className="text-xs text-muted-foreground">
+            {(attachment.size / 1024).toFixed(0)} КБ
+          </div>
         </div>
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{attachment.originalName}</div>
-        <div className="text-xs text-muted-foreground">
-          {(attachment.size / 1024).toFixed(0)} КБ
-        </div>
-      </div>
+      </button>
       {canEdit && (
         <Button size="icon-sm" variant="ghost" onClick={onRemove}>
           <Trash2 className="h-4 w-4" />
@@ -143,12 +155,97 @@ function AttachmentPreview({
   );
 }
 
-function canAttachPhoto(answer: ShiftReportAnswer) {
+function AttachmentLightbox({
+  attachment,
+  onClose,
+}: {
+  attachment: ShiftReportAnswer['attachments'][number] | null;
+  onClose: () => void;
+}) {
+  const [blob, setBlob] = useState<{ attachmentId: string; url: string } | null>(null);
+
+  useEffect(() => {
+    if (!attachment) return;
+
+    let revokedUrl = '';
+    let mounted = true;
+    fetchShiftReportAttachmentBlobUrl(attachment.url)
+      .then((blobUrl) => {
+        if (!mounted) {
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        revokedUrl = blobUrl;
+        setBlob({ attachmentId: attachment.id, url: blobUrl });
+      })
+      .catch(() => {});
+
+    return () => {
+      mounted = false;
+      if (revokedUrl) URL.revokeObjectURL(revokedUrl);
+    };
+  }, [attachment]);
+
+  if (!attachment) return null;
+  const url = blob?.attachmentId === attachment.id ? blob.url : '';
+
+  const download = () => {
+    if (!url) return;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = attachment.originalName || 'shift-report-photo';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  };
+
   return (
-    answer.itemType === 'photo' ||
-    answer.itemType === 'checkbox_with_photo' ||
-    answer.photoRequired
+    <Dialog
+      open={Boolean(attachment)}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose();
+      }}
+    >
+      <DialogContent className="max-w-[min(1280px,calc(100vw-2rem))] gap-3 p-2 sm:max-w-[min(1280px,calc(100vw-2rem))]">
+        <DialogTitle className="sr-only">
+          {attachment.originalName || 'Фото отчета смены'}
+        </DialogTitle>
+        <DialogDescription className="sr-only">
+          Увеличенное фото, прикрепленное к пункту отчета смены.
+        </DialogDescription>
+        <div className="flex justify-end pr-9">
+          <Button
+            disabled={!url}
+            size="sm"
+            type="button"
+            variant="secondary"
+            onClick={download}
+          >
+            <Download className="mr-2 h-4 w-4" />
+            Скачать
+          </Button>
+        </div>
+        {url ? (
+          <div className="max-h-[calc(100dvh-7rem)] overflow-auto rounded-lg">
+            <img
+              alt={attachment.originalName}
+              className="w-full min-w-[720px] max-w-none rounded-lg object-contain md:min-w-0"
+              src={url}
+            />
+          </div>
+        ) : (
+          <div className="flex min-h-48 items-center justify-center gap-2 rounded-lg bg-muted/30 px-4 py-3 text-sm">
+            <Loader2 className="h-4 w-4 animate-spin" />
+            Загрузка фото...
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
+}
+
+function canAttachPhoto(answer: ShiftReportAnswer) {
+  return Boolean(answer.photoRequired);
 }
 
 export function ShiftReportDialog({
@@ -163,19 +260,35 @@ export function ShiftReportDialog({
   report: ShiftReport | null;
 }) {
   const [answers, setAnswers] = useState<ShiftReportAnswer[]>([]);
+  const [comment, setComment] = useState('');
   const [saving, setSaving] = useState(false);
   const [uploadingAnswerId, setUploadingAnswerId] = useState<number | null>(null);
   const [draggingAnswerId, setDraggingAnswerId] = useState<number | null>(null);
   const [uploadErrors, setUploadErrors] = useState<Record<number, string>>({});
+  const [selectedAttachment, setSelectedAttachment] = useState<
+    ShiftReportAnswer['attachments'][number] | null
+  >(null);
   const canEdit = Boolean(report && report.computedStatus !== 'submitted');
 
   useEffect(() => {
     setAnswers(report?.answers || []);
+    setComment(report?.comment || '');
+    setSelectedAttachment(null);
   }, [report]);
+
+  useEffect(() => {
+    if (!open) setSelectedAttachment(null);
+  }, [open]);
 
   const payload = useMemo(() => answers.map(answerToPayload), [answers]);
 
   if (!report) return null;
+  const reportCommentInputId = `shift-report-${report.id}-comment`;
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen) setSelectedAttachment(null);
+    onOpenChange(nextOpen);
+  };
 
   const updateAnswer = (answerId: number, patch: Partial<ShiftReportAnswer>) => {
     setAnswers((current) =>
@@ -198,9 +311,9 @@ export function ShiftReportDialog({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const updated = await saveShiftReportDraft(report.id, payload);
+      const updated = await saveShiftReportDraft(report.id, payload, comment);
       onUpdated(updated);
-      toast.success('Черновик сохранен');
+      showSuccessToast('Черновик сохранен');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось сохранить отчет');
     } finally {
@@ -211,9 +324,9 @@ export function ShiftReportDialog({
   const handleSubmit = async () => {
     setSaving(true);
     try {
-      const updated = await submitShiftReport(report.id, payload);
+      const updated = await submitShiftReport(report.id, payload, comment);
       onUpdated(updated);
-      toast.success('Отчет сдан');
+      showSuccessToast('Отчет сдан');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось сдать отчет');
     } finally {
@@ -265,7 +378,7 @@ export function ShiftReportDialog({
         });
         replaceAnswer(updatedAnswer);
       }
-      toast.success(
+      showSuccessToast(
         validation.files.length === 1 ? 'Фото загружено' : 'Фото загружены',
       );
     } catch (error) {
@@ -285,24 +398,32 @@ export function ShiftReportDialog({
         attachmentId,
       );
       replaceAnswer(updatedAnswer);
-      toast.success('Фото удалено');
+      showSuccessToast('Фото удалено');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось удалить фото');
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-[880px] sm:p-6">
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent
+        className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-[880px] sm:p-6"
+        onEscapeKeyDown={(event) => {
+          if (selectedAttachment) event.preventDefault();
+        }}
+        onInteractOutside={(event) => {
+          if (selectedAttachment) event.preventDefault();
+        }}
+      >
         <DialogHeader>
           <div className="flex flex-wrap items-start justify-between gap-3 pr-8">
             <div className="min-w-0">
               <DialogTitle className="text-xl">
                 {report.templateSnapshot.name}
               </DialogTitle>
-              <DialogDescription>
-                План: {formatDateTime(report.scheduledAt)} • дедлайн:{' '}
-                {formatDateTime(report.deadlineAt)}
+              <DialogDescription className="mt-1">
+                Дедлайн: {formatDateTime(report.deadlineAt)}
+                {report.submittedAt ? ` • сдан: ${formatDateTime(report.submittedAt)}` : ''}
               </DialogDescription>
             </div>
             <Badge variant={statusVariants[report.computedStatus] || 'outline'}>
@@ -311,68 +432,84 @@ export function ShiftReportDialog({
           </div>
         </DialogHeader>
 
+        {report.templateSnapshot.description && (
+          <div className="rounded-lg border bg-muted/20 px-3 py-2 text-sm text-foreground">
+            {report.templateSnapshot.description}
+          </div>
+        )}
+
         <div className="grid gap-3">
           {answers.map((answer) => {
-            const showValueInput = answer.itemType !== 'photo';
             const isUploading = uploadingAnswerId === answer.id;
             const isDragging = draggingAnswerId === answer.id;
             const uploadError = uploadErrors[answer.id] || '';
             const canUploadMore = answer.attachments.length < MAX_ATTACHMENTS_PER_ANSWER;
+            const textValue = answer.textValue?.trim();
+            const numberValue =
+              answer.numberValue === null || answer.numberValue === undefined
+                ? ''
+                : String(answer.numberValue);
 
             return (
               <section
                 key={answer.id}
                 className="rounded-lg border bg-background p-3"
               >
-                <div className="flex flex-col gap-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-medium">{answer.itemLabel}</div>
-                    {answer.isRequired && <Badge variant="outline">Обязательно</Badge>}
-                    {answer.photoRequired && <Badge variant="outline">Фото</Badge>}
-                  </div>
-                  {answer.itemSnapshot.helperText && (
-                    <p className="text-sm text-muted-foreground">
-                      {answer.itemSnapshot.helperText}
-                    </p>
-                  )}
-                </div>
-
-                {showValueInput && (
-                  <div className="mt-3">
-                    {answer.itemType === 'checkbox' ||
-                    answer.itemType === 'checkbox_with_photo' ? (
-                      <Label className="flex min-h-9 items-center gap-2 rounded-md border px-3 py-2">
-                        <input
-                          checked={Boolean(answer.booleanValue)}
-                          className="h-4 w-4 accent-primary"
-                          disabled={!canEdit}
-                          type="checkbox"
-                          onChange={(event) =>
-                            updateAnswer(answer.id, {
-                              booleanValue: event.currentTarget.checked,
-                            })
-                          }
-                        />
-                        <span>Проверено</span>
-                      </Label>
-                    ) : answer.itemType === 'number' ? (
-                      <Input
-                        disabled={!canEdit}
-                        inputMode="decimal"
-                        value={answer.numberValue ?? ''}
+                {answer.itemType === 'checkbox' ? (
+                  canEdit ? (
+                    <Label className="flex min-h-10 items-start gap-3 rounded-md border px-3 py-2 text-sm font-medium">
+                      <input
+                        checked={Boolean(answer.booleanValue)}
+                        className="mt-0.5 h-4 w-4 shrink-0 accent-primary"
+                        type="checkbox"
                         onChange={(event) =>
                           updateAnswer(answer.id, {
-                            numberValue:
-                              event.currentTarget.value === ''
-                                ? null
-                                : Number(event.currentTarget.value),
+                            booleanValue: event.currentTarget.checked,
                           })
                         }
                       />
-                    ) : (
+                      <span>{answer.itemLabel}</span>
+                    </Label>
+                  ) : (
+                    <div className="flex min-h-10 items-start gap-3 rounded-md border px-3 py-2 text-sm font-medium">
+                      <span
+                        className={cn(
+                          'mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border',
+                          answer.booleanValue
+                            ? 'border-primary bg-primary text-primary-foreground'
+                            : 'border-muted-foreground/50',
+                        )}
+                      >
+                        {answer.booleanValue && <CheckCircle2 className="h-3 w-3" />}
+                      </span>
+                      <span>{answer.itemLabel}</span>
+                    </div>
+                  )
+                ) : (
+                  <div className="grid gap-2">
+                    <div className="font-medium">{answer.itemLabel}</div>
+                    {answer.itemType === 'number' ? (
+                      canEdit ? (
+                        <Input
+                          inputMode="decimal"
+                          value={answer.numberValue ?? ''}
+                          onChange={(event) =>
+                            updateAnswer(answer.id, {
+                              numberValue:
+                                event.currentTarget.value === ''
+                                  ? null
+                                  : Number(event.currentTarget.value),
+                            })
+                          }
+                        />
+                      ) : (
+                        <div className="min-h-10 rounded-md border px-3 py-2 text-sm text-foreground">
+                          {numberValue || 'Не заполнено'}
+                        </div>
+                      )
+                    ) : canEdit ? (
                       <textarea
-                        className="min-h-24 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                        disabled={!canEdit}
+                        className="min-h-24 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                         value={answer.textValue || ''}
                         onChange={(event) =>
                           updateAnswer(answer.id, {
@@ -380,15 +517,21 @@ export function ShiftReportDialog({
                           })
                         }
                       />
+                    ) : (
+                      <div className="min-h-16 whitespace-pre-wrap rounded-md border px-3 py-2 text-sm text-foreground">
+                        {textValue || 'Не заполнено'}
+                      </div>
                     )}
                   </div>
                 )}
 
                 {canAttachPhoto(answer) && (
                   <div className="mt-3 grid gap-2">
-                    <Label className="text-xs text-muted-foreground">
-                      Фото · {answer.attachments.length}/{MAX_ATTACHMENTS_PER_ANSWER}
-                    </Label>
+                    {(canEdit || answer.attachments.length > 0) && (
+                      <Label className="text-xs text-muted-foreground">
+                        Фото · {answer.attachments.length}/{MAX_ATTACHMENTS_PER_ANSWER}
+                      </Label>
+                    )}
                     {canEdit && (
                       <label
                         className={cn(
@@ -453,17 +596,14 @@ export function ShiftReportDialog({
                         {uploadError}
                       </div>
                     )}
-                    {answer.attachments.length === 0 ? (
-                      <div className="rounded-lg border border-dashed py-4 text-center text-sm text-muted-foreground">
-                        Фото не прикреплено.
-                      </div>
-                    ) : (
+                    {answer.attachments.length > 0 && (
                       <div className="grid gap-2 sm:grid-cols-2">
                         {answer.attachments.map((attachment) => (
                           <AttachmentPreview
                             key={attachment.id}
                             attachment={attachment}
                             canEdit={canEdit}
+                            onOpen={() => setSelectedAttachment(attachment)}
                             onRemove={() =>
                               void handleRemoveAttachment(answer.id, attachment.id)
                             }
@@ -473,25 +613,29 @@ export function ShiftReportDialog({
                     )}
                   </div>
                 )}
-
-                <div className="mt-3">
-                  <Label className="text-xs text-muted-foreground">
-                    Комментарий, если нужно
-                  </Label>
-                  <textarea
-                    className="mt-1 min-h-11 w-full rounded-lg border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50"
-                    disabled={!canEdit}
-                    placeholder="Необязательная заметка"
-                    value={answer.comment || ''}
-                    onChange={(event) =>
-                      updateAnswer(answer.id, { comment: event.currentTarget.value })
-                    }
-                  />
-                </div>
               </section>
             );
           })}
         </div>
+
+        {(canEdit || comment.trim()) && (
+          <div className="grid gap-2">
+            <Label htmlFor={reportCommentInputId}>Комментарий к отчету</Label>
+            {canEdit ? (
+              <textarea
+                id={reportCommentInputId}
+                className="min-h-20 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                placeholder="Необязательный комментарий по смене"
+                value={comment}
+                onChange={(event) => setComment(event.currentTarget.value)}
+              />
+            ) : (
+              <div className="min-h-12 whitespace-pre-wrap rounded-lg border px-3 py-2 text-sm text-foreground">
+                {comment}
+              </div>
+            )}
+          </div>
+        )}
 
         {report.submittedAt && (
           <div className="flex items-center gap-2 rounded-lg bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
@@ -519,6 +663,12 @@ export function ShiftReportDialog({
           )}
         </DialogFooter>
       </DialogContent>
+      {selectedAttachment && (
+        <AttachmentLightbox
+          attachment={selectedAttachment}
+          onClose={() => setSelectedAttachment(null)}
+        />
+      )}
     </Dialog>
   );
 }

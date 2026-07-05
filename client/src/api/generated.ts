@@ -1668,9 +1668,7 @@ export type ShiftReportTemplateItemsCreateParams = {
   templateId: number | string;
 };
 export type ShiftReportTemplateItemsCreateBody = {
-  helperText?: string | "" | null;
-  isRequired?: boolean | "true" | "false" | "1" | "0";
-  itemType: "checkbox" | "text" | "number" | "photo" | "checkbox_with_photo";
+  itemType: "checkbox" | "text" | "number";
   label: string;
   photoRequired?: boolean | "true" | "false" | "1" | "0";
   sortOrder?: number | string | "" | null;
@@ -1681,9 +1679,7 @@ export type ShiftReportTemplateItemsUpdateParams = {
   id: number | string;
 };
 export type ShiftReportTemplateItemsUpdateBody = {
-  helperText?: string | "" | null;
-  isRequired?: boolean | "true" | "false" | "1" | "0";
-  itemType?: "checkbox" | "text" | "number" | "photo" | "checkbox_with_photo";
+  itemType?: "checkbox" | "text" | "number";
   label?: string;
   photoRequired?: boolean | "true" | "false" | "1" | "0";
   sortOrder?: number | string | "" | null;
@@ -1714,12 +1710,12 @@ export type ShiftReportsSaveDraftParams = {
 export type ShiftReportsSaveDraftBody = {
   answers?: Array<{
     booleanValue?: boolean | "true" | "false" | "1" | "0" | null;
-    comment?: string | "" | null;
     id: number | string;
     numberValue?: number | string | "" | null;
     textValue?: string | "" | null;
     [key: string]: unknown;
   }>;
+  comment?: string | "" | null;
   [key: string]: unknown;
 };
 export type ShiftReportsSubmitParams = {
@@ -1728,12 +1724,12 @@ export type ShiftReportsSubmitParams = {
 export type ShiftReportsSubmitBody = {
   answers?: Array<{
     booleanValue?: boolean | "true" | "false" | "1" | "0" | null;
-    comment?: string | "" | null;
     id: number | string;
     numberValue?: number | string | "" | null;
     textValue?: string | "" | null;
     [key: string]: unknown;
   }>;
+  comment?: string | "" | null;
   [key: string]: unknown;
 };
 export type ShiftReportsUploadAttachmentParams = {

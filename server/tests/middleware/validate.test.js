@@ -189,10 +189,10 @@ test('accepts shift report template and answer payloads', () => {
     { body: apiSchemas.shiftReports.reportSaveBody },
     {
       body: {
+        comment: 'Комментарий по отчету',
         answers: [
           {
             booleanValue: true,
-            comment: '',
             id: 1,
           },
         ],

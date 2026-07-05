@@ -40646,51 +40646,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "helperText": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "string",
-                        "const": ""
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "isRequired": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "string",
-                        "const": "true"
-                      },
-                      {
-                        "type": "string",
-                        "const": "false"
-                      },
-                      {
-                        "type": "string",
-                        "const": "1"
-                      },
-                      {
-                        "type": "string",
-                        "const": "0"
-                      }
-                    ]
-                  },
                   "itemType": {
                     "type": "string",
                     "enum": [
                       "checkbox",
                       "text",
-                      "number",
-                      "photo",
-                      "checkbox_with_photo"
+                      "number"
                     ]
                   },
                   "label": {
@@ -40918,51 +40879,12 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "helperText": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "string",
-                        "const": ""
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "isRequired": {
-                    "anyOf": [
-                      {
-                        "type": "boolean"
-                      },
-                      {
-                        "type": "string",
-                        "const": "true"
-                      },
-                      {
-                        "type": "string",
-                        "const": "false"
-                      },
-                      {
-                        "type": "string",
-                        "const": "1"
-                      },
-                      {
-                        "type": "string",
-                        "const": "0"
-                      }
-                    ]
-                  },
                   "itemType": {
                     "type": "string",
                     "enum": [
                       "checkbox",
                       "text",
-                      "number",
-                      "photo",
-                      "checkbox_with_photo"
+                      "number"
                     ]
                   },
                   "label": {
@@ -42063,20 +41985,6 @@
                             }
                           ]
                         },
-                        "comment": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "string",
-                              "const": ""
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
                         "id": {
                           "anyOf": [
                             {
@@ -42132,6 +42040,20 @@
                       ],
                       "additionalProperties": {}
                     }
+                  },
+                  "comment": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": {}
@@ -42333,20 +42255,6 @@
                             }
                           ]
                         },
-                        "comment": {
-                          "anyOf": [
-                            {
-                              "type": "string"
-                            },
-                            {
-                              "type": "string",
-                              "const": ""
-                            },
-                            {
-                              "type": "null"
-                            }
-                          ]
-                        },
                         "id": {
                           "anyOf": [
                             {
@@ -42402,6 +42310,20 @@
                       ],
                       "additionalProperties": {}
                     }
+                  },
+                  "comment": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": {}

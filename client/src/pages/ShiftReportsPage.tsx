@@ -1,26 +1,26 @@
 import {
-  Archive,
-  Clock3,
+  CalendarDays,
   CopyPlus,
-  Eye,
   FileCheck2,
   ListChecks,
   Loader2,
+  Pencil,
   Plus,
   RotateCcw,
   Save,
+  Trash2,
   X,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   createShiftReportTemplate,
   createShiftReportTemplateItem,
+  deleteShiftReportTemplate,
+  deleteShiftReportTemplateItem,
   listShiftReports,
   listShiftReportTemplates,
   updateShiftReportTemplate,
   updateShiftReportTemplateItem,
-  updateShiftReportTemplateItemStatus,
-  updateShiftReportTemplateStatus,
   type ShiftReport,
   type ShiftReportItemType,
   type ShiftReportTemplate,
@@ -30,6 +30,8 @@ import {
   type ShiftReportStatus,
 } from '@/api/shift-reports';
 import { ShiftReportDialog } from '@/components/shift-report-dialog';
+import { EmptyState } from '@/components/empty-state';
+import { ErrorState } from '@/components/error-state';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -39,8 +41,22 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover';
 import {
   Select,
   SelectContent,
@@ -48,12 +64,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Calendar } from '@/components/ui/calendar';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
-import { ErrorState } from '@/components/error-state';
-import { EmptyState } from '@/components/empty-state';
+import { cn } from '@/lib/utils';
 import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
-import { cn } from '@/lib/utils';
+import { canManageShiftReportTemplates } from '@/lib/permissions';
+import { ru } from 'date-fns/locale';
 
 const statusLabels: Record<ShiftReportStatus | 'all', string> = {
   all: 'Все',
@@ -63,6 +81,13 @@ const statusLabels: Record<ShiftReportStatus | 'all', string> = {
   submitted: 'Сданы',
 };
 
+const reportStatusLabels: Record<ShiftReportStatus, string> = {
+  draft: 'Черновик',
+  overdue: 'Просрочен',
+  pending: 'Ожидается',
+  submitted: 'Сдан',
+};
+
 const statusVariants: Record<ShiftReportStatus, 'default' | 'destructive' | 'outline' | 'secondary'> = {
   draft: 'secondary',
   overdue: 'destructive',
@@ -70,13 +95,15 @@ const statusVariants: Record<ShiftReportStatus, 'default' | 'destructive' | 'out
   submitted: 'default',
 };
 
-const itemTypeLabels: Record<ShiftReportItemType, string> = {
-  checkbox: 'Чекбокс',
-  checkbox_with_photo: 'Чекбокс + фото',
-  number: 'Число',
-  photo: 'Фото',
-  text: 'Текст',
-};
+function showSuccessToast(title: string) {
+  toast.show({ title, variant: 'success' });
+}
+
+const editableItemTypes: Array<{ label: string; value: ShiftReportItemType }> = [
+  { label: 'Чекбокс', value: 'checkbox' },
+  { label: 'Текст', value: 'text' },
+  { label: 'Число', value: 'number' },
+];
 
 interface TemplateDraft {
   description: string;
@@ -84,28 +111,32 @@ interface TemplateDraft {
   name: string;
   scheduleTimes: string[];
   sortOrder: string;
-  status: 'active' | 'archived';
 }
 
 interface ItemDraft {
-  helperText: string;
-  isRequired: boolean;
   itemType: ShiftReportItemType;
   label: string;
   photoRequired: boolean;
-  sortOrder: string;
-  status: 'active' | 'archived';
+}
+
+interface EditableItemDraft {
+  draft: ItemDraft;
+  id?: number;
+  isNew: boolean;
+  key: string;
+  originalDraft?: ItemDraft;
+  sortOrder: number;
 }
 
 const emptyItemDraft: ItemDraft = {
-  helperText: '',
-  isRequired: false,
   itemType: 'checkbox',
   label: '',
   photoRequired: false,
-  sortOrder: '100',
-  status: 'active',
 };
+
+function createEmptyItemDraft(): ItemDraft {
+  return { ...emptyItemDraft };
+}
 
 function todayDate() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -116,14 +147,26 @@ function todayDate() {
   }).format(new Date());
 }
 
-function formatDateTime(value?: string | null) {
-  if (!value) return '-';
+function parseDateValue(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) return undefined;
+  return new Date(year, month - 1, day);
+}
+
+function formatDateValue(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate(),
+  ).padStart(2, '0')}`;
+}
+
+function formatDateLabel(value: string) {
+  const date = parseDateValue(value);
+  if (!date) return 'Выберите дату';
   return new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-  }).format(new Date(value));
+    month: 'long',
+    year: 'numeric',
+  }).format(date);
 }
 
 function normalizeTimeValue(value: string) {
@@ -191,12 +234,50 @@ function getTemplateTimes(template: ShiftReportTemplate) {
   return ['09:00'];
 }
 
-function formatSchedule(template: ShiftReportTemplate) {
-  try {
-    return getTemplateTimes(template).join(', ');
-  } catch {
-    return '-';
+function isAnswerCompleted(answer: ShiftReport['answers'][number]) {
+  if (answer.itemType === 'checkbox') return answer.booleanValue === true;
+  if (answer.itemType === 'text') return Boolean(answer.textValue?.trim());
+  if (answer.itemType === 'number') {
+    return answer.numberValue !== null && answer.numberValue !== undefined;
   }
+  return false;
+}
+
+function isReportComplete(report: ShiftReport) {
+  return report.answers.length > 0 && report.answers.every(isAnswerCompleted);
+}
+
+function getCompletionBadge(report: ShiftReport) {
+  const total = report.answers.length;
+  const completed = report.answers.filter(isAnswerCompleted).length;
+  const isComplete = isReportComplete(report);
+
+  return {
+    className: isComplete
+      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+      : undefined,
+    label: `${completed}/${total} пунктов`,
+    variant: isComplete ? ('outline' as const) : ('destructive' as const),
+  };
+}
+
+function getDeadlineBadge(report: ShiftReport) {
+  const deadlineTime = new Date(report.deadlineAt).getTime();
+  const submittedTime = report.submittedAt
+    ? new Date(report.submittedAt).getTime()
+    : null;
+
+  if (submittedTime) {
+    return submittedTime <= deadlineTime
+      ? { label: 'Сдано в дедлайн', variant: 'default' as const }
+      : { label: 'Сдано позже дедлайна', variant: 'destructive' as const };
+  }
+
+  if (report.computedStatus === 'overdue') {
+    return { label: 'Дедлайн прошел', variant: 'destructive' as const };
+  }
+
+  return { label: 'Дедлайн впереди', variant: 'outline' as const };
 }
 
 function getEditableTemplateTimes(template: ShiftReportTemplate) {
@@ -214,44 +295,112 @@ function templateToDraft(template: ShiftReportTemplate): TemplateDraft {
     name: template.name,
     scheduleTimes: getEditableTemplateTimes(template),
     sortOrder: String(template.sortOrder ?? 0),
-    status: template.status,
   };
 }
 
 function itemToDraft(item: ShiftReportTemplateItem): ItemDraft {
+  const rawItemType = String(item.itemType);
+  const itemType: ShiftReportItemType =
+    rawItemType === 'text' || rawItemType === 'number' ? rawItemType : 'checkbox';
+
   return {
-    helperText: item.helperText || '',
-    isRequired: item.isRequired,
-    itemType: item.itemType,
+    itemType,
     label: item.label,
-    photoRequired: item.photoRequired,
-    sortOrder: String(item.sortOrder ?? 0),
-    status: item.status,
+    photoRequired:
+      item.photoRequired || rawItemType === 'photo' || rawItemType === 'checkbox_with_photo',
   };
 }
 
 function draftToPayload(draft: TemplateDraft): ShiftReportTemplatePayload {
   return {
-    description: draft.description || null,
+    description: draft.description.trim() || null,
     gracePeriodMinutes: draft.gracePeriodMinutes || 0,
-    name: draft.name,
+    name: draft.name.trim(),
     scheduleConfig: { times: normalizeTimeList(draft.scheduleTimes) },
     scheduleType: 'daily_times',
     sortOrder: draft.sortOrder || 0,
-    status: draft.status,
+    status: 'active',
   };
 }
 
-function itemDraftToPayload(draft: ItemDraft): ShiftReportTemplateItemPayload {
+function itemDraftToPayload(
+  draft: ItemDraft,
+  options: { sortOrder: number | string },
+): ShiftReportTemplateItemPayload {
   return {
-    helperText: draft.helperText || null,
-    isRequired: draft.isRequired,
     itemType: draft.itemType,
-    label: draft.label,
-    photoRequired: draft.photoRequired || draft.itemType === 'photo',
-    sortOrder: draft.sortOrder || 0,
-    status: draft.status,
+    label: draft.label.trim(),
+    photoRequired: draft.photoRequired,
+    sortOrder: options.sortOrder,
+    status: 'active',
   };
+}
+
+function areTemplateDraftsEqual(left: TemplateDraft, right: TemplateDraft) {
+  return (
+    left.description === right.description &&
+    left.gracePeriodMinutes === right.gracePeriodMinutes &&
+    left.name === right.name &&
+    left.sortOrder === right.sortOrder &&
+    left.scheduleTimes.join('|') === right.scheduleTimes.join('|')
+  );
+}
+
+function areItemDraftsEqual(left: ItemDraft, right: ItemDraft) {
+  return (
+    left.itemType === right.itemType &&
+    left.label === right.label &&
+    left.photoRequired === right.photoRequired
+  );
+}
+
+function templateItemsToDrafts(template: ShiftReportTemplate): EditableItemDraft[] {
+  return template.items.map((item, index) => {
+    const draft = itemToDraft(item);
+
+    return {
+      draft,
+      id: item.id,
+      isNew: false,
+      key: `item-${item.id}`,
+      originalDraft: draft,
+      sortOrder: Number(item.sortOrder ?? (index + 1) * 10),
+    };
+  });
+}
+
+function getNextItemSortOrder(items: EditableItemDraft[]) {
+  return Math.max(0, ...items.map((item) => Number(item.sortOrder) || 0)) + 10;
+}
+
+function hasDirtyItems(items: EditableItemDraft[], deletedItemIds: number[]) {
+  return (
+    deletedItemIds.length > 0 ||
+    items.some(
+      (item) =>
+        item.isNew ||
+        !item.originalDraft ||
+        !areItemDraftsEqual(item.draft, item.originalDraft),
+    )
+  );
+}
+
+function validateTemplateDraft(draft: TemplateDraft, items: EditableItemDraft[]) {
+  if (!draft.name.trim()) throw new Error('Введите название шаблона');
+  normalizeTimeList(draft.scheduleTimes);
+  if (items.length === 0) {
+    throw new Error('Добавьте хотя бы один пункт');
+  }
+  if (items.some((item) => !item.draft.label.trim())) {
+    throw new Error('Заполните текст каждого пункта');
+  }
+}
+
+function isTemplateDraftValid(draft: TemplateDraft | null, items: EditableItemDraft[]) {
+  if (!draft?.name.trim()) return false;
+  if (draft.scheduleTimes.length === 0) return false;
+  if (items.length === 0) return false;
+  return items.every((item) => item.draft.label.trim());
 }
 
 function TimeEditor({
@@ -288,7 +437,6 @@ function TimeEditor({
 
   return (
     <div className="grid gap-2">
-      <Label>Времена отчетов</Label>
       <div className="flex flex-col gap-2 sm:flex-row">
         <Input
           className="sm:max-w-44"
@@ -344,139 +492,158 @@ function TimeEditor({
   );
 }
 
-function TemplateItemEditor({
-  item,
-  onSaved,
+function ShiftReportDatePicker({
+  onChange,
+  value,
 }: {
-  item: ShiftReportTemplateItem;
-  onSaved: (template: ShiftReportTemplate) => void;
+  onChange: (value: string) => void;
+  value: string;
 }) {
-  const [draft, setDraft] = useState<ItemDraft>(() => itemToDraft(item));
-  const [saving, setSaving] = useState(false);
+  const selectedDate = parseDateValue(value);
 
-  useEffect(() => setDraft(itemToDraft(item)), [item]);
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          className={cn(
+            'w-full justify-start bg-card text-left font-normal',
+            !selectedDate && 'text-muted-foreground',
+          )}
+          variant="outline"
+        >
+          <CalendarDays className="mr-2 h-4 w-4" />
+          {formatDateLabel(value)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-auto p-0">
+        <Calendar
+          initialFocus
+          mode="single"
+          locale={ru}
+          selected={selectedDate}
+          onSelect={(nextDate) => {
+            if (nextDate) onChange(formatDateValue(nextDate));
+          }}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
 
-  const save = async () => {
-    setSaving(true);
-    try {
-      onSaved(await updateShiftReportTemplateItem(item.id, itemDraftToPayload(draft)));
-      toast.success('Пункт сохранен');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить пункт');
-    } finally {
-      setSaving(false);
-    }
-  };
+function ItemTypeControl({
+  disabled,
+  onChange,
+  value,
+}: {
+  disabled?: boolean;
+  onChange: (value: ShiftReportItemType) => void;
+  value: ShiftReportItemType;
+}) {
+  return (
+    <Select
+      disabled={disabled}
+      value={value}
+      onValueChange={(nextValue) => onChange(nextValue as ShiftReportItemType)}
+    >
+      <SelectTrigger className="h-10 w-full rounded-lg bg-background">
+        <SelectValue placeholder="Выберите тип" />
+      </SelectTrigger>
+      <SelectContent
+        align="start"
+        className="w-[var(--radix-select-trigger-width)]"
+        position="popper"
+        side="bottom"
+      >
+        {editableItemTypes.map((type) => (
+          <SelectItem key={type.value} value={type.value}>
+            {type.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
-  const toggleStatus = async () => {
-    setSaving(true);
-    try {
-      onSaved(
-        await updateShiftReportTemplateItemStatus(
-          item.id,
-          item.status === 'active' ? 'archived' : 'active',
-        ),
-      );
-      toast.success(item.status === 'active' ? 'Пункт архивирован' : 'Пункт восстановлен');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось изменить пункт');
-    } finally {
-      setSaving(false);
-    }
+function TemplateItemEditor({
+  disabled,
+  invalid,
+  item,
+  onDeleted,
+  onDraftChange,
+}: {
+  disabled?: boolean;
+  invalid?: boolean;
+  item: EditableItemDraft;
+  onDeleted: () => void;
+  onDraftChange: (draft: ItemDraft) => void;
+}) {
+  const labelInputId = `shift-report-item-${item.key}-label`;
+  const photoInputId = `shift-report-item-${item.key}-photo`;
+  const updateDraft = (patch: Partial<ItemDraft>) => {
+    onDraftChange({ ...item.draft, ...patch });
   };
 
   return (
-    <div className="rounded-lg border p-3">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_90px]">
-        <div className="min-w-0">
-          <Label>Пункт</Label>
+    <div
+      className={cn(
+        'rounded-lg border bg-background p-4',
+        invalid && 'border-destructive/70',
+      )}
+    >
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="grid min-w-0 gap-2">
+          <Label htmlFor={labelInputId}>Пункт</Label>
           <Input
-            value={draft.label}
-            onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
+            disabled={disabled}
+            id={labelInputId}
+            placeholder="Например: Проверить ресепшен"
+            value={item.draft.label}
+            onChange={(event) => updateDraft({ label: event.target.value })}
           />
+          {invalid && (
+            <p className="text-sm text-destructive">Заполните текст пункта.</p>
+          )}
         </div>
-        <div>
+        <div className="grid gap-2">
           <Label>Тип</Label>
-          <Select
-            value={draft.itemType}
-            onValueChange={(value) =>
-              setDraft((current) => ({
-                ...current,
-                itemType: value as ShiftReportItemType,
-                photoRequired:
-                  value === 'photo' ? true : current.photoRequired,
-              }))
-            }
-          >
-            <SelectTrigger className="w-full">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(itemTypeLabels).map(([value, label]) => (
-                <SelectItem key={value} value={value}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div>
-          <Label>Порядок</Label>
-          <Input
-            inputMode="numeric"
-            value={draft.sortOrder}
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, sortOrder: event.target.value }))
+          <ItemTypeControl
+            disabled={disabled}
+            value={item.draft.itemType}
+            onChange={(value) =>
+              onDraftChange({
+                ...item.draft,
+                itemType: value,
+              })
             }
           />
         </div>
-      </div>
-      <div className="mt-3">
-        <Label>Инструкция</Label>
-        <textarea
-          className="mt-1 min-h-16 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-          value={draft.helperText}
-          onChange={(event) =>
-            setDraft((current) => ({ ...current, helperText: event.target.value }))
-          }
-        />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-3">
-        <Label className="flex items-center gap-2">
+        <Label className="flex items-center gap-2 text-sm" htmlFor={photoInputId}>
           <input
-            checked={draft.isRequired}
+            id={photoInputId}
+            checked={item.draft.photoRequired}
             className="h-4 w-4 accent-primary"
+            disabled={disabled}
             type="checkbox"
             onChange={(event) =>
-              setDraft((current) => ({ ...current, isRequired: event.target.checked }))
+              updateDraft({
+                photoRequired: event.target.checked,
+              })
             }
           />
-          Обязательный
+          Фото
         </Label>
-        <Label className="flex items-center gap-2">
-          <input
-            checked={draft.photoRequired}
-            className="h-4 w-4 accent-primary"
-            disabled={draft.itemType === 'photo'}
-            type="checkbox"
-            onChange={(event) =>
-              setDraft((current) => ({ ...current, photoRequired: event.target.checked }))
-            }
-          />
-          Требует фото
-        </Label>
-        <div className="ml-auto flex gap-2">
-          <Button variant="outline" size="sm" disabled={saving} onClick={() => void toggleStatus()}>
-            {item.status === 'active' ? (
-              <Archive className="mr-2 h-4 w-4" />
-            ) : (
-              <RotateCcw className="mr-2 h-4 w-4" />
-            )}
-            {item.status === 'active' ? 'Архив' : 'Вернуть'}
-          </Button>
-          <Button size="sm" disabled={saving} onClick={() => void save()}>
-            <Save className="mr-2 h-4 w-4" />
-            Сохранить
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
+          <Button
+            disabled={disabled}
+            size="sm"
+            type="button"
+            variant="destructive"
+            onClick={onDeleted}
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Удалить
           </Button>
         </div>
       </div>
@@ -484,288 +651,354 @@ function TemplateItemEditor({
   );
 }
 
-function TemplateEditor({
+function TemplateEditorDialog({
+  initialSortOrder,
+  mode,
+  onCreated,
+  onDeleted,
+  onOpenChange,
   onSaved,
+  open,
   template,
 }: {
+  initialSortOrder: number;
+  mode: 'create' | 'edit';
+  onCreated: (template: ShiftReportTemplate) => void;
+  onDeleted: (templateId: number) => void;
+  onOpenChange: (open: boolean) => void;
   onSaved: (template: ShiftReportTemplate) => void;
+  open: boolean;
   template: ShiftReportTemplate | null;
 }) {
   const [draft, setDraft] = useState<TemplateDraft | null>(null);
-  const [newItem, setNewItem] = useState<ItemDraft>(emptyItemDraft);
+  const [items, setItems] = useState<EditableItemDraft[]>([]);
+  const [deletedItemIds, setDeletedItemIds] = useState<number[]>([]);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const originalDraft = useMemo(
+    () =>
+      mode === 'edit' && template
+        ? templateToDraft(template)
+        : {
+            description: '',
+            gracePeriodMinutes: '30',
+            name: 'Новый отчет смены',
+            scheduleTimes: ['09:00'],
+            sortOrder: String(initialSortOrder),
+          },
+    [initialSortOrder, mode, template],
+  );
+  const templateDirty = Boolean(
+    draft && originalDraft && !areTemplateDraftsEqual(draft, originalDraft),
+  );
+  const itemsDirty = hasDirtyItems(items, deletedItemIds);
+  const isDirty = mode === 'create' || templateDirty || itemsDirty;
+  const hasInvalidItems = items.some((item) => !item.draft.label.trim());
+  const canSubmit =
+    isTemplateDraftValid(draft, items) && !saving && !deleting;
 
   useEffect(() => {
-    setDraft(template ? templateToDraft(template) : null);
-    setNewItem(emptyItemDraft);
-  }, [template]);
+    if (!open) return;
+    if (mode === 'edit' && template) {
+      setDraft(templateToDraft(template));
+      setItems(templateItemsToDrafts(template));
+      setDeletedItemIds([]);
+      setSubmitAttempted(false);
+      return;
+    }
+    if (mode === 'create') {
+      setDraft({
+        description: '',
+        gracePeriodMinutes: '30',
+        name: 'Новый отчет смены',
+        scheduleTimes: ['09:00'],
+        sortOrder: String(initialSortOrder),
+      });
+      setItems([]);
+      setDeletedItemIds([]);
+      setSubmitAttempted(false);
+    }
+  }, [initialSortOrder, mode, open, template]);
 
-  if (!template || !draft) {
-    return (
-      <Card className="min-h-80">
-        <CardContent className="flex flex-1 items-center justify-center py-12">
-          <EmptyState
-            icon={<ListChecks className="h-4 w-4" />}
-            title="Выберите шаблон"
-            description="Шаблоны меняются владельцем и применяются к новым сменам."
-          />
-        </CardContent>
-      </Card>
+  if ((mode === 'edit' && !template) || !draft) return null;
+
+  const persistTemplate = async () => {
+    if (!draft) return;
+    if (mode === 'edit' && !template) return;
+    if (mode === 'edit' && !isDirty) return;
+    setSubmitAttempted(true);
+    setSaving(true);
+    try {
+      validateTemplateDraft(draft, items);
+
+      if (mode === 'create') {
+        let updated = await createShiftReportTemplate(draftToPayload(draft));
+        for (const item of items) {
+          updated = await createShiftReportTemplateItem(
+            updated.id,
+            itemDraftToPayload(item.draft, {
+              sortOrder: item.sortOrder,
+            }),
+          );
+        }
+        onCreated(updated);
+        onOpenChange(false);
+        showSuccessToast('Шаблон создан');
+        return;
+      }
+
+      const existingTemplate = template;
+      if (!existingTemplate) return;
+      let updated: ShiftReportTemplate | null = null;
+      if (templateDirty) {
+        updated = await updateShiftReportTemplate(existingTemplate.id, draftToPayload(draft));
+      }
+
+      for (const itemId of deletedItemIds) {
+        updated = await deleteShiftReportTemplateItem(itemId);
+      }
+
+      for (const item of items) {
+        if (item.isNew) {
+          updated = await createShiftReportTemplateItem(
+            existingTemplate.id,
+            itemDraftToPayload(item.draft, {
+              sortOrder: item.sortOrder,
+            }),
+          );
+          continue;
+        }
+        if (item.id && item.originalDraft && !areItemDraftsEqual(item.draft, item.originalDraft)) {
+          updated = await updateShiftReportTemplateItem(
+            item.id,
+            itemDraftToPayload(item.draft, {
+              sortOrder: item.sortOrder,
+            }),
+          );
+        }
+      }
+
+      const nextTemplate = updated || existingTemplate;
+      onSaved(nextTemplate);
+      setDraft(templateToDraft(nextTemplate));
+      setItems(templateItemsToDrafts(nextTemplate));
+      setDeletedItemIds([]);
+      showSuccessToast('Шаблон сохранен');
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : mode === 'create'
+            ? 'Не удалось создать шаблон'
+            : 'Не удалось сохранить шаблон',
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteTemplate = async () => {
+    if (!template) return;
+    setDeleting(true);
+    try {
+      await deleteShiftReportTemplate(template.id);
+      onDeleted(template.id);
+      onOpenChange(false);
+      showSuccessToast('Шаблон удален');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось удалить шаблон');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const addItem = () => {
+    setItems((current) => [
+      ...current,
+      {
+        draft: createEmptyItemDraft(),
+        isNew: true,
+        key: `new-${Date.now()}-${current.length}`,
+        sortOrder: getNextItemSortOrder(current),
+      },
+    ]);
+  };
+
+  const updateItemDraft = (key: string, nextDraft: ItemDraft) => {
+    setItems((current) =>
+      current.map((item) => (item.key === key ? { ...item, draft: nextDraft } : item)),
     );
-  }
-
-  const saveTemplate = async () => {
-    setSaving(true);
-    try {
-      onSaved(await updateShiftReportTemplate(template.id, draftToPayload(draft)));
-      toast.success('Шаблон сохранен');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить шаблон');
-    } finally {
-      setSaving(false);
-    }
   };
 
-  const toggleTemplateStatus = async () => {
-    setSaving(true);
-    try {
-      onSaved(
-        await updateShiftReportTemplateStatus(
-          template.id,
-          template.status === 'active' ? 'archived' : 'active',
-        ),
+  const removeItem = (item: EditableItemDraft) => {
+    setItems((current) => current.filter((currentItem) => currentItem.key !== item.key));
+    if (!item.isNew && item.id) {
+      setDeletedItemIds((current) =>
+        current.includes(item.id as number) ? current : [...current, item.id as number],
       );
-      toast.success(
-        template.status === 'active' ? 'Шаблон архивирован' : 'Шаблон включен',
-      );
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось изменить шаблон');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const addItem = async () => {
-    setSaving(true);
-    try {
-      const updated = await createShiftReportTemplateItem(
-        template.id,
-        itemDraftToPayload(newItem),
-      );
-      onSaved(updated);
-      setNewItem(emptyItemDraft);
-      toast.success('Пункт добавлен');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось добавить пункт');
-    } finally {
-      setSaving(false);
     }
   };
 
   return (
-    <div className="grid gap-4">
-      <Card>
-        <CardHeader>
-          <CardTitle>Настройки отчета</CardTitle>
-          <CardDescription>
-            Версия {template.version} • {template.status === 'active' ? 'активен' : 'архив'}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-4">
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px]">
-            <div className="min-w-0">
-              <Label>Название</Label>
-              <Input
-                value={draft.name}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-[980px] sm:p-6">
+        <DialogHeader className="sr-only">
+          <DialogTitle>
+            {mode === 'create' ? 'Создание шаблона' : 'Настройки шаблона'}
+          </DialogTitle>
+          <DialogDescription>
+            {mode === 'create'
+              ? 'Заполните настройки нового шаблона отчета смены.'
+              : 'Измените настройки шаблона отчета смены.'}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-4">
+          <section className="rounded-lg border p-4">
+            <div className="mb-4">
+              <h3 className="font-medium">Основное</h3>
+            </div>
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_150px]">
+              <div className="grid min-w-0 gap-2">
+                <Label>Название</Label>
+                <Input
+                  disabled={saving || deleting}
+                  value={draft.name}
+                  onChange={(event) =>
+                    setDraft((current) =>
+                      current ? { ...current, name: event.target.value } : current,
+                    )
+                  }
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>Опоздание, минут</Label>
+                <Input
+                  disabled={saving || deleting}
+                  inputMode="numeric"
+                  value={draft.gracePeriodMinutes}
+                  onChange={(event) =>
+                    setDraft((current) =>
+                      current
+                        ? { ...current, gracePeriodMinutes: event.target.value }
+                        : current,
+                    )
+                  }
+                />
+              </div>
+            </div>
+            <div className="mt-4 grid gap-2">
+              <Label>Описание</Label>
+              <textarea
+                className="min-h-20 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                disabled={saving || deleting}
+                value={draft.description}
                 onChange={(event) =>
                   setDraft((current) =>
-                    current ? { ...current, name: event.target.value } : current,
+                    current ? { ...current, description: event.target.value } : current,
                   )
                 }
               />
             </div>
-            <div>
-              <Label>Опоздание, мин</Label>
-              <Input
-                inputMode="numeric"
-                value={draft.gracePeriodMinutes}
-                onChange={(event) =>
-                  setDraft((current) =>
-                    current
-                      ? { ...current, gracePeriodMinutes: event.target.value }
-                      : current,
-                  )
-                }
-              />
+          </section>
+
+          <section className="rounded-lg border p-4">
+            <div className="mb-4">
+              <h3 className="font-medium">Расписание</h3>
             </div>
-          </div>
-          <div>
-            <Label>Описание</Label>
-            <textarea
-              className="mt-1 min-h-20 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              value={draft.description}
-              onChange={(event) =>
-                setDraft((current) =>
-                  current ? { ...current, description: event.target.value } : current,
-                )
+            <TimeEditor
+              disabled={saving || deleting}
+              times={draft.scheduleTimes}
+              onChange={(scheduleTimes) =>
+                setDraft((current) => (current ? { ...current, scheduleTimes } : current))
               }
             />
-          </div>
-          <TimeEditor
-            times={draft.scheduleTimes}
-            onChange={(scheduleTimes) =>
-              setDraft((current) => (current ? { ...current, scheduleTimes } : current))
-            }
-          />
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={saving} onClick={() => void saveTemplate()}>
-              <Save className="mr-2 h-4 w-4" />
-              Сохранить
-            </Button>
-            <Button
-              disabled={saving}
-              variant="outline"
-              onClick={() => void toggleTemplateStatus()}
-            >
-              {template.status === 'active' ? (
-                <Archive className="mr-2 h-4 w-4" />
-              ) : (
-                <RotateCcw className="mr-2 h-4 w-4" />
-              )}
-              {template.status === 'active' ? 'Выключить' : 'Включить'}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </section>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Пункты отчета</CardTitle>
-          <CardDescription>
-            Активные пункты попадут в новые отчеты как snapshot.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="grid gap-3">
-          {template.items.length === 0 ? (
-            <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
-              Пункты еще не добавлены.
+          <section className="rounded-lg border p-4">
+            <div className="mb-4">
+              <h3 className="font-medium">Пункты отчета</h3>
             </div>
-          ) : (
-            template.items.map((item) => (
-              <TemplateItemEditor key={item.id} item={item} onSaved={onSaved} />
-            ))
-          )}
-          <div className="rounded-lg border border-dashed p-3">
-            <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_180px_120px]">
-              <div className="min-w-0">
-                <Label>Новый пункт</Label>
-                <Input
-                  value={newItem.label}
-                  onChange={(event) =>
-                    setNewItem((current) => ({ ...current, label: event.target.value }))
-                  }
-                />
-              </div>
-              <div>
-                <Label>Тип</Label>
-                <Select
-                  value={newItem.itemType}
-                  onValueChange={(value) =>
-                    setNewItem((current) => ({
-                      ...current,
-                      itemType: value as ShiftReportItemType,
-                      photoRequired: value === 'photo' ? true : current.photoRequired,
-                    }))
-                  }
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(itemTypeLabels).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Порядок</Label>
-                <Input
-                  inputMode="numeric"
-                  value={newItem.sortOrder}
-                  onChange={(event) =>
-                    setNewItem((current) => ({
-                      ...current,
-                      sortOrder: event.target.value,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className="mt-3">
-              <Label>Инструкция</Label>
-              <textarea
-                className="mt-1 min-h-16 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                value={newItem.helperText}
-                onChange={(event) =>
-                  setNewItem((current) => ({
-                    ...current,
-                    helperText: event.target.value,
-                  }))
-                }
-              />
-            </div>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              <Label className="flex items-center gap-2">
-                <input
-                  checked={newItem.isRequired}
-                  className="h-4 w-4 accent-primary"
-                  type="checkbox"
-                  onChange={(event) =>
-                    setNewItem((current) => ({
-                      ...current,
-                      isRequired: event.target.checked,
-                    }))
-                  }
-                />
-                Обязательный
-              </Label>
-              <Label className="flex items-center gap-2">
-                <input
-                  checked={newItem.photoRequired}
-                  className="h-4 w-4 accent-primary"
-                  disabled={newItem.itemType === 'photo'}
-                  type="checkbox"
-                  onChange={(event) =>
-                    setNewItem((current) => ({
-                      ...current,
-                      photoRequired: event.target.checked,
-                    }))
-                  }
-                />
-                Требует фото
-              </Label>
-              <Button className="ml-auto" disabled={saving} onClick={() => void addItem()}>
+            <div className="grid gap-3">
+              {items.length === 0 ? (
+                <div className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
+                  Пункты еще не добавлены.
+                </div>
+              ) : (
+                items.map((item) => (
+                  <TemplateItemEditor
+                    key={item.key}
+                    disabled={saving || deleting}
+                    invalid={(submitAttempted || hasInvalidItems) && !item.draft.label.trim()}
+                    item={item}
+                    onDeleted={() => removeItem(item)}
+                    onDraftChange={(nextDraft) => updateItemDraft(item.key, nextDraft)}
+                  />
+                ))
+              )}
+              <Button
+                className="justify-self-start"
+                disabled={saving || deleting}
+                type="button"
+                variant="outline"
+                onClick={addItem}
+              >
                 <Plus className="mr-2 h-4 w-4" />
-                Добавить
+                Добавить пункт
               </Button>
             </div>
+          </section>
+        </div>
+
+        <DialogFooter className="gap-2 sm:justify-between">
+          {mode === 'edit' ? (
+            <Button
+              disabled={deleting || saving}
+              type="button"
+              variant="destructive"
+              onClick={() => void deleteTemplate()}
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Удалить шаблон
+            </Button>
+          ) : (
+            <span />
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <DialogClose asChild>
+              <Button type="button" variant="outline">
+                Закрыть
+              </Button>
+            </DialogClose>
+            <Button
+              disabled={!canSubmit || (mode === 'edit' && !isDirty)}
+              onClick={() => void persistTemplate()}
+            >
+              {mode === 'create' ? (
+                <CopyPlus className="mr-2 h-4 w-4" />
+              ) : (
+                <Save className="mr-2 h-4 w-4" />
+              )}
+              {mode === 'create' ? 'Создать' : 'Сохранить'}
+            </Button>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 export default function ShiftReportsPage() {
   const { account } = useAuth();
-  const canManageTemplates = account?.role === 'owner';
+  const canManageTemplates = canManageShiftReportTemplates(account?.role);
   const [activeTab, setActiveTab] = useState<'reports' | 'templates'>('reports');
   const [reports, setReports] = useState<ShiftReport[]>([]);
   const [templates, setTemplates] = useState<ShiftReportTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [templateDialogMode, setTemplateDialogMode] = useState<'create' | 'edit'>('edit');
   const [selectedReport, setSelectedReport] = useState<ShiftReport | null>(null);
   const [reportDialogOpen, setReportDialogOpen] = useState(false);
   const [status, setStatus] = useState<ShiftReportStatus | 'all'>('all');
@@ -784,14 +1017,14 @@ export default function ShiftReportsPage() {
     try {
       const [nextReports, nextTemplates] = await Promise.all([
         listShiftReports({ date, status }),
-        listShiftReportTemplates('all'),
+        listShiftReportTemplates('active'),
       ]);
       setReports(nextReports);
       setTemplates(nextTemplates);
       setSelectedTemplateId((current) =>
         current && nextTemplates.some((template) => template.id === current)
           ? current
-          : nextTemplates[0]?.id || null,
+          : null,
       );
     } catch (loadError) {
       setError(
@@ -812,32 +1045,49 @@ export default function ShiftReportsPage() {
     void refresh();
   });
 
-  const createTemplate = async () => {
-    try {
-      const template = await createShiftReportTemplate({
-        description: '',
-        gracePeriodMinutes: 30,
-        name: 'Новый отчет смены',
-        scheduleConfig: { times: ['09:00'] },
-        scheduleType: 'daily_times',
-        sortOrder: templates.length * 10 + 10,
-        status: 'active',
-      });
-      setTemplates((current) => [...current, template]);
-      setSelectedTemplateId(template.id);
-      setActiveTab('templates');
-      toast.success('Шаблон создан');
-    } catch (createError) {
-      toast.error(
-        createError instanceof Error ? createError.message : 'Не удалось создать шаблон',
-      );
-    }
+  const openCreateTemplate = () => {
+    setSelectedTemplateId(null);
+    setTemplateDialogMode('create');
+    setTemplateDialogOpen(true);
+    setActiveTab('templates');
+  };
+
+  const handleTemplateCreated = (template: ShiftReportTemplate) => {
+    setTemplates((current) =>
+      current.some((item) => item.id === template.id)
+        ? current.map((item) => (item.id === template.id ? template : item))
+        : [...current, template],
+    );
+    setSelectedTemplateId(template.id);
   };
 
   const handleTemplateSaved = (template: ShiftReportTemplate) => {
     setTemplates((current) =>
       current.map((item) => (item.id === template.id ? template : item)),
     );
+  };
+
+  const handleTemplateDeleted = (templateId: number) => {
+    setTemplates((current) => current.filter((template) => template.id !== templateId));
+    setSelectedTemplateId((current) => (current === templateId ? null : current));
+  };
+
+  const openTemplate = (template: ShiftReportTemplate) => {
+    setSelectedTemplateId(template.id);
+    setTemplateDialogMode('edit');
+    setTemplateDialogOpen(true);
+  };
+
+  const deleteTemplateFromList = async (template: ShiftReportTemplate) => {
+    try {
+      await deleteShiftReportTemplate(template.id);
+      handleTemplateDeleted(template.id);
+      showSuccessToast('Шаблон удален');
+    } catch (deleteError) {
+      toast.error(
+        deleteError instanceof Error ? deleteError.message : 'Не удалось удалить шаблон',
+      );
+    }
   };
 
   const handleReportUpdated = (report: ShiftReport) => {
@@ -854,220 +1104,223 @@ export default function ShiftReportsPage() {
 
   return (
     <div className="grid gap-5">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">Отчеты смены</h1>
-          <p className="text-sm text-muted-foreground">
-            Контроль ожидаемых отчетов, статусов и шаблонов смены.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant={activeTab === 'reports' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('reports')}
-          >
-            <FileCheck2 className="mr-2 h-4 w-4" />
-            Отчеты
-          </Button>
-          <Button
-            variant={activeTab === 'templates' ? 'default' : 'outline'}
-            onClick={() => setActiveTab('templates')}
-          >
-            <ListChecks className="mr-2 h-4 w-4" />
-            Шаблоны
-          </Button>
-          {canManageTemplates && (
-            <Button variant="outline" onClick={() => void createTemplate()}>
-              <CopyPlus className="mr-2 h-4 w-4" />
-              Создать
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {error && (
-        <ErrorState
-          compact
-          message={error}
-          onRetry={() => void refresh()}
-          title="Отчеты смены не загрузились"
-        />
-      )}
-
-      {activeTab === 'reports' ? (
-        <div className="grid gap-4">
-          <Card>
-            <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-end">
-              <div className="sm:w-48">
-                <Label>Дата</Label>
-                <Input
-                  type="date"
-                  value={date}
-                  onChange={(event) => setDate(event.target.value)}
-                />
-              </div>
-              <div className="sm:w-52">
-                <Label>Статус</Label>
-                <Select
-                  value={status}
-                  onValueChange={(value) => setStatus(value as ShiftReportStatus | 'all')}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(statusLabels).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <Button variant="outline" disabled={loading} onClick={() => void refresh()}>
-                {loading ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                )}
-                Обновить
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <TabsList className="w-full sm:w-auto">
+            <TabsTrigger value="reports">
+              <FileCheck2 className="h-4 w-4" />
+              Отчеты
+            </TabsTrigger>
+            <TabsTrigger value="templates">
+              <ListChecks className="h-4 w-4" />
+              Шаблоны
+            </TabsTrigger>
+          </TabsList>
+          <div className="flex min-h-10 items-center justify-start sm:min-w-[188px] sm:justify-end">
+            {canManageTemplates && activeTab === 'templates' && (
+              <Button variant="outline" onClick={openCreateTemplate}>
+                <CopyPlus className="mr-2 h-4 w-4" />
+                Создать шаблон
               </Button>
-            </CardContent>
-          </Card>
-
-          {loading && reports.length === 0 ? (
-            <div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
-              Загрузка отчетов...
-            </div>
-          ) : reports.length === 0 ? (
-            <EmptyState
-              icon={<FileCheck2 className="h-4 w-4" />}
-              title="Отчетов за выбранный период нет"
-              description="Новые смены получают отчеты из активных шаблонов."
-            />
-          ) : (
-            <div className="grid gap-3 xl:grid-cols-2">
-              {reports.map((report) => (
-                <Card key={report.id} size="sm">
-                  <CardContent className="grid gap-3">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="truncate font-semibold">
-                          {report.templateSnapshot.name}
-                        </div>
-                        <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                          <span>Смена #{report.shiftId}</span>
-                          <span>{report.shift?.adminName}</span>
-                          <span>{formatDateTime(report.scheduledAt)}</span>
-                        </div>
-                      </div>
-                      <Badge variant={statusVariants[report.computedStatus]}>
-                        {statusLabels[report.computedStatus]}
-                      </Badge>
-                    </div>
-                    <div className="grid gap-2 sm:grid-cols-3">
-                      <div className="rounded-lg bg-muted/40 p-2">
-                        <div className="text-xs text-muted-foreground">Пунктов</div>
-                        <div className="font-semibold">{report.answers.length}</div>
-                      </div>
-                      <div className="rounded-lg bg-muted/40 p-2">
-                        <div className="text-xs text-muted-foreground">Дедлайн</div>
-                        <div className="font-semibold">{formatDateTime(report.deadlineAt)}</div>
-                      </div>
-                      <div className="rounded-lg bg-muted/40 p-2">
-                        <div className="text-xs text-muted-foreground">Сдан</div>
-                        <div className="font-semibold">{formatDateTime(report.submittedAt)}</div>
-                      </div>
-                    </div>
-                    <div className="flex justify-end">
-                      <Button size="sm" variant="outline" onClick={() => openReport(report)}>
-                        <Eye className="mr-2 h-4 w-4" />
-                        Открыть
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          )}
+            )}
+          </div>
         </div>
-      ) : (
-        <div className="grid gap-4 xl:grid-cols-[340px_minmax(0,1fr)]">
-          <Card className="self-start">
-            <CardHeader>
-              <CardTitle>Шаблоны</CardTitle>
-              <CardDescription>
-                {canManageTemplates ? 'Редактируемые настройки' : 'Доступен просмотр'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-2">
-              {templates.map((template) => (
-                <button
-                  key={template.id}
-                  className={cn(
-                    'min-w-0 rounded-lg border p-3 text-left transition hover:bg-muted/50',
-                    selectedTemplateId === template.id && 'border-primary bg-primary/5',
-                  )}
-                  type="button"
-                  onClick={() => setSelectedTemplateId(template.id)}
-                >
-                  <div className="flex min-w-0 items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium">{template.name}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        {formatSchedule(template)}
-                      </div>
-                    </div>
-                    <Badge variant={template.status === 'active' ? 'default' : 'outline'}>
-                      {template.status === 'active' ? 'Вкл' : 'Архив'}
-                    </Badge>
-                  </div>
-                </button>
-              ))}
-            </CardContent>
-          </Card>
 
-          {canManageTemplates ? (
-            <TemplateEditor template={selectedTemplate} onSaved={handleTemplateSaved} />
-          ) : (
+        {error && (
+          <ErrorState
+            compact
+            message={error}
+            onRetry={() => void refresh()}
+            title="Отчеты смены не загрузились"
+          />
+        )}
+
+        <TabsContent value="reports">
+          <div className="grid gap-4">
             <Card>
-              <CardContent className="grid gap-3 py-4">
-                {selectedTemplate ? (
-                  <>
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div>
-                        <CardTitle>{selectedTemplate.name}</CardTitle>
-                        <CardDescription>{formatSchedule(selectedTemplate)}</CardDescription>
-                      </div>
-                      <Badge variant={selectedTemplate.status === 'active' ? 'default' : 'outline'}>
-                        {selectedTemplate.status === 'active' ? 'Активен' : 'Архив'}
-                      </Badge>
-                    </div>
-                    <div className="grid gap-2">
-                      {selectedTemplate.items.map((item) => (
-                        <div key={item.id} className="rounded-lg border p-3">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium">{item.label}</span>
-                            {item.isRequired && <Badge variant="outline">Обязательно</Badge>}
-                            {item.photoRequired && <Badge variant="outline">Фото</Badge>}
-                          </div>
-                          {item.helperText && (
-                            <p className="mt-1 text-sm text-muted-foreground">
-                              {item.helperText}
-                            </p>
-                          )}
-                        </div>
+              <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-end">
+                <div className="grid gap-2 sm:w-64">
+                  <Label>Дата</Label>
+                  <ShiftReportDatePicker value={date} onChange={setDate} />
+                </div>
+                <div className="grid gap-2 sm:w-52">
+                  <Label>Статус</Label>
+                  <Select
+                    value={status}
+                    onValueChange={(value) => setStatus(value as ShiftReportStatus | 'all')}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(statusLabels).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
                       ))}
-                    </div>
-                  </>
-                ) : (
-                  <EmptyState icon={<Clock3 className="h-4 w-4" />} title="Шаблон не выбран" />
-                )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button variant="outline" disabled={loading} onClick={() => void refresh()}>
+                  {loading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                  )}
+                  Обновить
+                </Button>
               </CardContent>
             </Card>
-          )}
-        </div>
-      )}
+
+            {loading && reports.length === 0 ? (
+              <div className="rounded-lg border py-12 text-center text-sm text-muted-foreground">
+                Загрузка отчетов...
+              </div>
+            ) : reports.length === 0 ? (
+              <EmptyState
+                icon={<FileCheck2 className="h-4 w-4" />}
+                title="Отчетов за выбранный период нет"
+                description="Новые смены получают отчеты из активных шаблонов."
+              />
+            ) : (
+              <div className="grid gap-3 xl:grid-cols-2">
+                {reports.map((report) => {
+                  const completionBadge = getCompletionBadge(report);
+                  const deadlineBadge = getDeadlineBadge(report);
+
+                  return (
+                    <Card
+                      key={report.id}
+                      className="min-w-0 cursor-pointer transition hover:border-primary/50 hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      role="button"
+                      size="sm"
+                      tabIndex={0}
+                      onClick={() => openReport(report)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openReport(report);
+                        }
+                      }}
+                    >
+                      <CardContent className="grid gap-3">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="truncate font-semibold">
+                              {report.templateSnapshot.name}
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                              <span>Смена #{report.shiftId}</span>
+                              {report.shift?.adminName && (
+                                <span>{report.shift.adminName}</span>
+                              )}
+                            </div>
+                          </div>
+                          <Badge variant={statusVariants[report.computedStatus]}>
+                            {reportStatusLabels[report.computedStatus]}
+                          </Badge>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Badge
+                            className={completionBadge.className}
+                            variant={completionBadge.variant}
+                          >
+                            {completionBadge.label}
+                          </Badge>
+                          <Badge variant={deadlineBadge.variant}>
+                            {deadlineBadge.label}
+                          </Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </TabsContent>
+
+        <TabsContent value="templates">
+          <Card>
+            <CardHeader>
+              <div>
+                <CardTitle>Шаблоны</CardTitle>
+                <CardDescription>
+                  Список чеклистов, из которых создаются новые отчеты смены.
+                </CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {templates.length === 0 ? (
+                <EmptyState
+                  icon={<ListChecks className="h-4 w-4" />}
+                  title="Шаблонов пока нет"
+                  description="Создайте первый шаблон и добавьте времена отчетов."
+                />
+              ) : (
+                <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                  {templates.map((template) => (
+                    <Card key={template.id} size="sm" className="min-w-0">
+                      <CardContent className="grid gap-3">
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold">{template.name}</div>
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {getEditableTemplateTimes(template).map((time) => (
+                              <Badge key={time} variant="secondary">
+                                {time}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                        {template.description && (
+                          <p className="line-clamp-3 text-sm text-muted-foreground">
+                            {template.description}
+                          </p>
+                        )}
+                        {canManageTemplates ? (
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => openTemplate(template)}
+                            >
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Редактировать
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="destructive"
+                              onClick={() => void deleteTemplateFromList(template)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Удалить
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">
+                            Доступен просмотр настроек.
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
+
+      <TemplateEditorDialog
+        initialSortOrder={templates.length * 10 + 10}
+        mode={templateDialogMode}
+        onCreated={handleTemplateCreated}
+        onDeleted={handleTemplateDeleted}
+        onOpenChange={setTemplateDialogOpen}
+        onSaved={handleTemplateSaved}
+        open={templateDialogOpen}
+        template={templateDialogMode === 'edit' ? selectedTemplate : null}
+      />
 
       <ShiftReportDialog
         onOpenChange={setReportDialogOpen}

@@ -5,21 +5,19 @@ const TEMPLATE_SEEDS = [
     description: 'Проверки открытия клуба перед первыми гостями.',
     gracePeriodMinutes: 30,
     name: 'Утренний отчет об открытии',
-    scheduleConfig: { time: '09:00', times: ['09:00'] },
-    scheduleType: 'once_daily',
+    scheduleConfig: { times: ['09:00'] },
+    scheduleType: 'daily_times',
     sortOrder: 10,
     items: [
       {
-        helperText: 'Проверьте входную зону, ресепшен и доступность ключей.',
-        itemType: 'checkbox_with_photo',
+        itemType: 'checkbox',
         label: 'Ресепшен и зона входа готовы к приему гостей',
         photoRequired: true,
         sortOrder: 10,
       },
       {
-        helperText: 'Укажите, если есть поломки или нехватка расходников.',
         itemType: 'text',
-        label: 'Комментарий по готовности клуба',
+        label: 'Что нужно передать следующей смене',
         sortOrder: 20,
       },
     ],
@@ -33,14 +31,12 @@ const TEMPLATE_SEEDS = [
     sortOrder: 20,
     items: [
       {
-        helperText: 'Проверьте чистоту, полотенца, бумагу и мыло.',
-        itemType: 'checkbox_with_photo',
+        itemType: 'checkbox',
         label: 'Санитарная зона проверена и приведена в порядок',
         photoRequired: true,
         sortOrder: 10,
       },
       {
-        helperText: 'Если требуется пополнение, укажите что именно.',
         itemType: 'text',
         label: 'Что нужно пополнить или исправить',
         sortOrder: 20,
@@ -51,19 +47,17 @@ const TEMPLATE_SEEDS = [
     description: 'Контроль закрытия смены и передачи клуба.',
     gracePeriodMinutes: 45,
     name: 'Вечерний отчет о закрытии',
-    scheduleConfig: { time: '21:30', times: ['21:30'] },
-    scheduleType: 'once_daily',
+    scheduleConfig: { times: ['21:30'] },
+    scheduleType: 'daily_times',
     sortOrder: 30,
     items: [
       {
-        helperText: 'Проверьте кассу, оборудование, свет и двери.',
-        itemType: 'checkbox_with_photo',
+        itemType: 'checkbox',
         label: 'Клуб подготовлен к закрытию',
         photoRequired: true,
         sortOrder: 10,
       },
       {
-        helperText: 'Опишите важные события смены для владельца или менеджера.',
         itemType: 'text',
         label: 'Комментарий по итогам смены',
         sortOrder: 20,
@@ -181,19 +175,10 @@ module.exports = {
         allowNull: false,
         type: Sequelize.STRING,
       },
-      helperText: {
-        allowNull: true,
-        type: Sequelize.TEXT,
-      },
       itemType: {
         allowNull: false,
         defaultValue: 'checkbox',
         type: Sequelize.STRING,
-      },
-      isRequired: {
-        allowNull: false,
-        defaultValue: false,
-        type: Sequelize.BOOLEAN,
       },
       photoRequired: {
         allowNull: false,
@@ -286,6 +271,10 @@ module.exports = {
         onDelete: 'SET NULL',
         onUpdate: 'CASCADE',
       },
+      comment: {
+        allowNull: true,
+        type: Sequelize.TEXT,
+      },
       status: {
         allowNull: false,
         defaultValue: 'pending',
@@ -340,11 +329,6 @@ module.exports = {
         allowNull: false,
         type: Sequelize.STRING,
       },
-      isRequired: {
-        allowNull: false,
-        defaultValue: false,
-        type: Sequelize.BOOLEAN,
-      },
       photoRequired: {
         allowNull: false,
         defaultValue: false,
@@ -361,10 +345,6 @@ module.exports = {
       numberValue: {
         allowNull: true,
         type: Sequelize.DECIMAL(12, 2),
-      },
-      comment: {
-        allowNull: true,
-        type: Sequelize.TEXT,
       },
       attachments: {
         allowNull: true,
@@ -428,8 +408,6 @@ module.exports = {
       'ShiftReportTemplateItems',
       TEMPLATE_SEEDS.flatMap((template) =>
         template.items.map((item) => ({
-          helperText: item.helperText,
-          isRequired: true,
           itemType: item.itemType,
           label: item.label,
           photoRequired: Boolean(item.photoRequired),

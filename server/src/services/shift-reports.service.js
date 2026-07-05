@@ -59,8 +59,6 @@ const ITEM_TYPES = new Set([
   'checkbox',
   'text',
   'number',
-  'photo',
-  'checkbox_with_photo',
 ]);
 const REPORT_STATUSES = new Set(['pending', 'draft', 'submitted', 'overdue']);
 
@@ -205,16 +203,10 @@ function normalizeItemPayload(payload, existing = null) {
   if (!label || label.length < 2) throw makeError('Укажите текст пункта отчета');
   if (label.length > 240) throw makeError('Пункт отчета слишком длинный');
 
-  const photoRequired =
-    normalizeBoolean(payload.photoRequired, Boolean(existing?.photoRequired)) ||
-    itemType === 'photo';
-
   return {
-    helperText: normalizeString(payload.helperText ?? existing?.helperText) || null,
-    isRequired: normalizeBoolean(payload.isRequired, Boolean(existing?.isRequired)),
     itemType,
     label,
-    photoRequired,
+    photoRequired: normalizeBoolean(payload.photoRequired, Boolean(existing?.photoRequired)),
     sortOrder: normalizeInteger(payload.sortOrder ?? existing?.sortOrder, 0),
     status: normalizeStatus(payload.status ?? existing?.status ?? 'active'),
   };
@@ -249,9 +241,7 @@ function getTemplateItems(template, { activeOnly = false } = {}) {
 function buildItemSnapshot(item) {
   const plain = toPlain(item);
   return {
-    helperText: plain.helperText || '',
     id: plain.id,
-    isRequired: Boolean(plain.isRequired),
     itemType: plain.itemType,
     label: plain.label,
     photoRequired: Boolean(plain.photoRequired),
@@ -317,9 +307,8 @@ function serializeTemplate(template) {
   const plain = toPlain(template);
   return {
     ...plain,
-    items: getTemplateItems(plain).map((item) => ({
+    items: getTemplateItems(plain, { activeOnly: true }).map((item) => ({
       ...item,
-      isRequired: Boolean(item.isRequired),
       photoRequired: Boolean(item.photoRequired),
     })),
     scheduleConfig: readJson(plain.scheduleConfig, {}),
@@ -549,7 +538,6 @@ async function ensureReportsForShift(shiftInput) {
             itemLabel: item.label,
             itemSnapshot: item,
             itemType: item.itemType,
-            isRequired: item.isRequired,
             photoRequired: item.photoRequired,
             reportId: created.id,
             templateItemId: item.id,
@@ -581,7 +569,9 @@ async function getActiveShiftReports(account) {
     where: { shiftId: shift.id },
   });
   return {
-    reports: reports.map((report) => serializeReport(report)),
+    reports: reports
+      .filter((report) => canOperateReport(report, account))
+      .map((report) => serializeReport(report)),
     shift: toPlain(shift),
   };
 }
@@ -669,7 +659,7 @@ function normalizeAnswerValue(answer, payload) {
     textValue: null,
   };
 
-  if (itemType === 'checkbox' || itemType === 'checkbox_with_photo') {
+  if (itemType === 'checkbox') {
     next.booleanValue = normalizeBoolean(payload.booleanValue);
   }
 
@@ -686,48 +676,29 @@ function normalizeAnswerValue(answer, payload) {
     }
   }
 
-  if (itemType === 'photo') {
-    next.booleanValue = true;
-  }
-
-  return {
-    ...next,
-    comment: normalizeString(payload.comment) || null,
-  };
+  return next;
 }
 
 function validateRequiredAnswers(answers) {
   const missing = [];
   answers.forEach((answer) => {
-    const attachments = readJson(answer.attachments, []) || [];
-    const needsValue = Boolean(answer.isRequired);
-    const needsPhoto =
-      Boolean(answer.photoRequired) ||
-      (answer.isRequired && answer.itemType === 'photo');
-
     if (
-      needsValue &&
-      (answer.itemType === 'checkbox' || answer.itemType === 'checkbox_with_photo') &&
+      answer.itemType === 'checkbox' &&
       answer.booleanValue !== true
     ) {
       missing.push(answer.itemLabel);
     }
     if (
-      needsValue &&
       answer.itemType === 'text' &&
       !normalizeString(answer.textValue)
     ) {
       missing.push(answer.itemLabel);
     }
     if (
-      needsValue &&
       answer.itemType === 'number' &&
       (answer.numberValue === null || answer.numberValue === undefined)
     ) {
       missing.push(answer.itemLabel);
-    }
-    if (needsPhoto && attachments.length === 0) {
-      missing.push(`${answer.itemLabel}: фото`);
     }
   });
 
@@ -745,6 +716,7 @@ async function saveReport(id, payload, account, { submit = false } = {}) {
 
   const incomingAnswers = Array.isArray(payload.answers) ? payload.answers : [];
   const answerById = new Map(report.answers.map((answer) => [Number(answer.id), answer]));
+  const reportComment = normalizeString(payload.comment) || null;
 
   await db.sequelize.transaction(async (transaction) => {
     for (const incoming of incomingAnswers) {
@@ -758,6 +730,7 @@ async function saveReport(id, payload, account, { submit = false } = {}) {
   if (submit) validateRequiredAnswers(freshReport.answers || []);
 
   await freshReport.update({
+    comment: reportComment,
     status: submit ? 'submitted' : 'draft',
     submittedAt: submit ? new Date() : null,
     submittedByAccountId: submit ? account?.id || null : null,
@@ -782,7 +755,7 @@ function parseDataUrl(data, mimeType) {
 }
 
 function assertAnswerAllowsPhoto(answer) {
-  if (!['photo', 'checkbox_with_photo'].includes(answer.itemType) && !answer.photoRequired) {
+  if (!answer.photoRequired) {
     throw makeError('К этому пункту нельзя прикрепить фото');
   }
 }
