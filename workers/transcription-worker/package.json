@@ -1,0 +1,16 @@
+{
+  "name": "padel-park-transcription-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dashboard": "python3 -m server.app",
+    "once": "node src/index.js --once",
+    "sample": "node src/index.js --sample-audio",
+    "start": "python3 -m server.app",
+    "test": "node --test test/**/*.test.js && python3 -m unittest discover -s server/tests"
+  }
+}

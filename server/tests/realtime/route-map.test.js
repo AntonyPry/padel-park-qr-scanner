@@ -37,12 +37,24 @@ test('route mapper classifies destructive and lifecycle actions', () => {
 test('route mapper covers integrations and system-facing sync endpoints', () => {
   const webhook = matchRealtimeChange(req('POST', '/api/webhooks/evotor'));
   const telephony = matchRealtimeChange(req('POST', '/api/telephony/beeline/sync'));
+  const transcription = matchRealtimeChange(
+    req('POST', '/api/telephony/transcription-jobs/12/result'),
+  );
+  const workerRetry = matchRealtimeChange(
+    req('POST', '/api/telephony/transcription-jobs/12/worker-retry'),
+  );
 
   assert.equal(webhook.domain, 'finance');
   assert.equal(webhook.source, 'webhook');
   assert.equal(webhook.action, 'imported');
   assert.equal(telephony.domain, 'telephony');
   assert.equal(telephony.action, 'synced');
+  assert.equal(transcription.domain, 'telephony');
+  assert.equal(transcription.entity, 'telephony_transcription_job');
+  assert.equal(transcription.action, 'updated');
+  assert.equal(workerRetry.domain, 'telephony');
+  assert.equal(workerRetry.entity, 'telephony_transcription_job');
+  assert.equal(workerRetry.action, 'updated');
 });
 
 test('event schema stays narrow and excludes response body data', () => {

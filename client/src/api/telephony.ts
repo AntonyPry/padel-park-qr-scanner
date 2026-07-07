@@ -14,6 +14,12 @@ export type TelephonyProcessingStatus =
   | 'processed'
   | 'ignored';
 export type TelephonyDirection = 'inbound' | 'outbound' | 'unknown';
+export type TelephonyTranscriptionStatus =
+  | 'queued'
+  | 'processing'
+  | 'completed'
+  | 'failed';
+export type TelephonyTranscriptSpeaker = 'administrator' | 'client' | 'unknown';
 export type TelephonyResult =
   | 'booked'
   | 'refused'
@@ -30,6 +36,58 @@ export type TelephonyInterest =
   | 'master_class'
   | 'corporate'
   | 'other';
+
+export interface TelephonyTranscriptSegment {
+  channel?: string | null;
+  confidence?: number | null;
+  endMs?: number | null;
+  id: number;
+  sortOrder: number;
+  speaker: TelephonyTranscriptSpeaker;
+  startMs?: number | null;
+  text: string;
+}
+
+export interface TelephonyTranscription {
+  attemptCount: number;
+  claimedAt?: string | null;
+  completedAt?: string | null;
+  corrections?: Record<string, unknown>[];
+  createdAt?: string;
+  errorMessage?: string | null;
+  failedAt?: string | null;
+  id: number;
+  language?: string | null;
+  rawTranscriptText?: string | null;
+  segments?: TelephonyTranscriptSegment[];
+  status: TelephonyTranscriptionStatus;
+  telephonyCallId: number;
+  transcriptText?: string | null;
+  updatedAt?: string;
+}
+
+export interface TelephonyTranscriptionJob extends TelephonyTranscription {
+  call?: {
+    callStatus: TelephonyCallStatus;
+    client?: {
+      id: number;
+      name: string;
+      phone: string;
+      status: string;
+    } | null;
+    clientPhone?: string | null;
+    direction: TelephonyDirection;
+    durationSeconds?: number | null;
+    id: number;
+    recordingStatus: TelephonyCall['recordingStatus'];
+    staff?: {
+      id: number;
+      name: string;
+      role: string;
+    } | null;
+    startedAt?: string | null;
+  } | null;
+}
 
 export interface TelephonyCall {
   answeredAt?: string | null;
@@ -77,6 +135,7 @@ export interface TelephonyCall {
   } | null;
   startedAt?: string | null;
   summary?: string | null;
+  transcription?: TelephonyTranscription | null;
 }
 
 export interface TelephonyListResponse {
@@ -84,6 +143,18 @@ export interface TelephonyListResponse {
   page: number;
   pageSize: number;
   total: number;
+}
+
+export interface TelephonyTranscriptionJobsResponse {
+  items: TelephonyTranscriptionJob[];
+  page: number;
+  pageSize: number;
+  total: number;
+}
+
+export interface TelephonyTranscriptionStats {
+  generatedAt: string;
+  totals: Record<TelephonyTranscriptionStatus | 'total', number>;
 }
 
 export interface TelephonyStats {
@@ -215,6 +286,13 @@ export interface TelephonyCallsQuery {
   status?: string;
 }
 
+export interface TelephonyTranscriptionJobsQuery {
+  callId?: number;
+  page?: number;
+  pageSize?: number;
+  status?: TelephonyTranscriptionStatus | 'all';
+}
+
 export interface CompleteTelephonyCallPayload {
   interest?: TelephonyInterest | null;
   nextActionAt?: string | null;
@@ -254,6 +332,43 @@ export function getTelephonyCall(id: number) {
     `/api/telephony/calls/${id}`,
     {},
     'Не удалось получить звонок',
+  );
+}
+
+export function getTelephonyCallTranscriptionJobs(
+  callId: number,
+  params: TelephonyTranscriptionJobsQuery = {},
+) {
+  return apiRequest<TelephonyTranscriptionJobsResponse>(
+    `/api/telephony/calls/${callId}/transcription-jobs${toQueryString(params)}`,
+    {},
+    'Не удалось получить задачи транскрибации звонка',
+  );
+}
+
+export function getTelephonyTranscriptionJobs(
+  params: TelephonyTranscriptionJobsQuery = {},
+) {
+  return apiRequest<TelephonyTranscriptionJobsResponse>(
+    `/api/telephony/transcription-jobs${toQueryString(params)}`,
+    {},
+    'Не удалось получить задачи транскрибации',
+  );
+}
+
+export function getTelephonyTranscriptionJob(jobId: number) {
+  return apiRequest<{ job: TelephonyTranscriptionJob }>(
+    `/api/telephony/transcription-jobs/${jobId}`,
+    {},
+    'Не удалось получить задачу транскрибации',
+  );
+}
+
+export function getTelephonyTranscriptionStats() {
+  return apiRequest<TelephonyTranscriptionStats>(
+    '/api/telephony/transcription-jobs/stats',
+    {},
+    'Не удалось получить статистику транскрибации',
   );
 }
 
@@ -392,6 +507,22 @@ export function refreshTelephonyRecordingReference(callId: number) {
     `/api/telephony/calls/${callId}/recording-reference`,
     { method: 'POST' },
     'Не удалось получить ссылку на запись звонка',
+  );
+}
+
+export function createTelephonyTranscriptionJob(callId: number) {
+  return apiRequest<TelephonyCall>(
+    `/api/telephony/calls/${callId}/transcription-jobs`,
+    { method: 'POST' },
+    'Не удалось поставить звонок на транскрибацию',
+  );
+}
+
+export function retryTelephonyTranscriptionJob(jobId: number) {
+  return apiRequest<TelephonyCall>(
+    `/api/telephony/transcription-jobs/${jobId}/retry`,
+    { method: 'POST' },
+    'Не удалось повторить транскрибацию',
   );
 }
 

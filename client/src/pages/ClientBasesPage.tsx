@@ -164,6 +164,7 @@ interface CallTaskFormState {
   assignedToAccountId: string;
   description: string;
   dueAt: string;
+  scriptText: string;
   scopeType: 'snapshot' | 'dynamic';
   title: string;
 }
@@ -202,6 +203,7 @@ const EMPTY_CALL_TASK_FORM: CallTaskFormState = {
   assignedToAccountId: 'none',
   description: '',
   dueAt: '',
+  scriptText: '',
   scopeType: 'snapshot',
   title: '',
 };
@@ -257,6 +259,7 @@ const callTaskFormSchema = z.object({
   assignedToAccountId: z.string(),
   description: z.string(),
   dueAt: z.string(),
+  scriptText: z.string(),
   scopeType: z.enum(['snapshot', 'dynamic']),
   title: z.string().trim().min(2, 'Введите название задачи'),
 });
@@ -809,6 +812,7 @@ export default function ClientBasesPage() {
               : Number(values.assignedToAccountId),
           description: values.description.trim(),
           dueAt: values.dueAt || null,
+          scriptText: values.scriptText.trim(),
           scopeType: values.scopeType,
           title: values.title.trim(),
         }),
@@ -1743,6 +1747,23 @@ export default function ClientBasesPage() {
                 }
                 className="min-h-[90px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="Кого звоним и какой результат нужен"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Скрипт обзвона
+              </label>
+              <textarea
+                value={callTaskForm.scriptText}
+                onChange={(event) =>
+                  setCallTaskForm({
+                    ...callTaskForm,
+                    scriptText: event.target.value,
+                  })
+                }
+                className="min-h-[180px] w-full rounded-md border bg-background px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Вставьте текст скрипта для администратора"
               />
             </div>
 

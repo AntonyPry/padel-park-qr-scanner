@@ -1,6 +1,7 @@
 const db = require('../../models');
 const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
+const shiftReportsService = require('./shift-reports.service');
 
 const SHIFT_INCLUDE = [{ model: db.Staff, attributes: ['id', 'name', 'role'] }];
 
@@ -116,6 +117,8 @@ async function create(data, account) {
       status: shift.status,
     },
   });
+
+  await shiftReportsService.ensureReportsForShift(shift);
 
   return shift;
 }
@@ -288,6 +291,8 @@ async function endActive(account) {
       status: activeShift.status,
     },
   });
+
+  await shiftReportsService.ensureReportsForShift(activeShift);
 
   return db.Shift.findByPk(activeShift.id, { include: SHIFT_INCLUDE });
 }

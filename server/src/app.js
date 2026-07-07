@@ -15,7 +15,7 @@ function createApp() {
     express.text({ type: '*/*' }),
     telephonyController.receiveBeelineEvent,
   );
-  app.use(express.json());
+  app.use(express.json({ limit: '6mb' }));
   app.use(express.static(path.resolve(__dirname, '../public')));
   app.use('/api', apiRoutes);
 

@@ -22,10 +22,13 @@ import {
 } from '@/lib/realtime-invalidation';
 import { useAuth } from '@/lib/useAuth';
 
+const REALTIME_DISABLED = import.meta.env.VITE_DISABLE_REALTIME === 'true';
+
 export function RealtimeProvider({ children }: { children: ReactNode }) {
   const { account } = useAuth();
   const queryClient = useQueryClient();
   const socketRef = useRef<Socket | null>(null);
+  const connectTimerRef = useRef<number | null>(null);
   const invalidationTimerRef = useRef<number | null>(null);
   const pendingKeysRef = useRef<Map<string, readonly unknown[]>>(new Map());
   const [status, setStatus] = useState<RealtimeStatus>('idle');
@@ -55,7 +58,11 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (!account || !getAuthToken()) {
+    if (REALTIME_DISABLED || !account || !getAuthToken()) {
+      if (connectTimerRef.current) {
+        window.clearTimeout(connectTimerRef.current);
+        connectTimerRef.current = null;
+      }
       socketRef.current?.disconnect();
       socketRef.current = null;
       window.queueMicrotask(() => setStatus('idle'));
@@ -69,6 +76,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       reconnectionAttempts: Infinity,
       reconnectionDelay: 500,
       reconnectionDelayMax: 5000,
+      transports: ['websocket'],
     });
 
     socketRef.current = socket;
@@ -97,9 +105,18 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       emitRealtimeBrowserEvent('scan_result', event);
     });
 
-    socket.connect();
+    connectTimerRef.current = window.setTimeout(() => {
+      connectTimerRef.current = null;
+      if (socketRef.current === socket) {
+        socket.connect();
+      }
+    }, 150);
 
     return () => {
+      if (connectTimerRef.current) {
+        window.clearTimeout(connectTimerRef.current);
+        connectTimerRef.current = null;
+      }
       if (invalidationTimerRef.current) {
         window.clearTimeout(invalidationTimerRef.current);
         invalidationTimerRef.current = null;

@@ -32,6 +32,9 @@ const PROCESSING_STATUSES = new Set([
   'processed',
   'ignored',
 ]);
+const TRANSCRIPTION_STATUSES = new Set(['queued', 'processing', 'completed', 'failed']);
+const TRANSCRIPTION_ACTIVE_STATUSES = new Set(['queued', 'processing']);
+const TRANSCRIPT_SPEAKERS = new Set(['administrator', 'client', 'unknown']);
 const SUBSCRIPTION_TYPES = new Set(['BASIC_CALL', 'ADVANCED_CALL']);
 const DEFAULT_MISSED_CALL_DEADLINE_MINUTES = 15;
 const DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS = 10 * 60;
@@ -764,9 +767,188 @@ function canAccessRecordingUrl(actor = null) {
   return ['owner', 'manager', 'admin'].includes(actor?.role);
 }
 
-function mapCall(row, actor = null) {
+function canAccessTranscription(actor = null) {
+  return ['owner', 'manager', 'admin'].includes(actor?.role);
+}
+
+function mapTranscriptSegment(row) {
   if (!row) return null;
   const raw = row.toJSON ? row.toJSON() : row;
+
+  return {
+    channel: raw.channel || null,
+    confidence: raw.confidence == null ? null : Number(raw.confidence),
+    endMs: raw.endMs,
+    id: raw.id,
+    sortOrder: raw.sortOrder,
+    speaker: raw.speaker,
+    startMs: raw.startMs,
+    text: raw.text,
+  };
+}
+
+function buildTranscriptTextFromSegments(segments = []) {
+  const text = (segments || [])
+    .map((segment) => normalizeText(segment?.text))
+    .filter(Boolean)
+    .join('\n');
+  return text || null;
+}
+
+function compareTranscriptSegments(left, right) {
+  const leftHasStart =
+    left?.startMs !== null &&
+    left?.startMs !== undefined &&
+    left?.startMs !== '' &&
+    Number.isFinite(Number(left.startMs));
+  const rightHasStart =
+    right?.startMs !== null &&
+    right?.startMs !== undefined &&
+    right?.startMs !== '' &&
+    Number.isFinite(Number(right.startMs));
+  const leftStart = Number(left?.startMs);
+  const rightStart = Number(right?.startMs);
+
+  if (leftHasStart && rightHasStart && leftStart !== rightStart) {
+    return leftStart - rightStart;
+  }
+  if (leftHasStart !== rightHasStart) {
+    return leftHasStart ? -1 : 1;
+  }
+
+  const sortOrderDiff = Number(left?.sortOrder || 0) - Number(right?.sortOrder || 0);
+  if (sortOrderDiff !== 0) return sortOrderDiff;
+
+  return Number(left?.id || 0) - Number(right?.id || 0);
+}
+
+function mapTranscriptionJob(row, options = {}) {
+  if (!row) return null;
+  const raw = row.toJSON ? row.toJSON() : row;
+  const mapped = {
+    attemptCount: raw.attemptCount,
+    claimedAt: raw.claimedAt,
+    completedAt: raw.completedAt,
+    createdAt: raw.createdAt,
+    errorMessage: raw.errorMessage,
+    failedAt: raw.failedAt,
+    id: raw.id,
+    language: raw.language,
+    corrections: Array.isArray(raw.corrections) ? raw.corrections : [],
+    rawTranscriptText: raw.rawTranscriptText || null,
+    status: raw.status,
+    telephonyCallId: raw.telephonyCallId,
+    transcriptText: raw.transcriptText,
+    updatedAt: raw.updatedAt,
+  };
+
+  if (options.includeSegments) {
+    mapped.segments = (raw.segments || [])
+      .map(mapTranscriptSegment)
+      .filter(Boolean)
+      .sort(compareTranscriptSegments);
+    mapped.transcriptText = buildTranscriptTextFromSegments(mapped.segments) || mapped.transcriptText;
+  }
+
+  return mapped;
+}
+
+function mapTranscriptionCall(row) {
+  if (!row) return null;
+  const raw = row.toJSON ? row.toJSON() : row;
+
+  return {
+    callStatus: raw.callStatus,
+    client: raw.client
+      ? {
+          id: raw.client.id,
+          name: raw.client.name,
+          phone: raw.client.phone,
+          status: raw.client.status,
+        }
+      : null,
+    clientPhone: raw.clientPhone,
+    direction: raw.direction,
+    durationSeconds: raw.durationSeconds,
+    id: raw.id,
+    recordingStatus: raw.recordingStatus,
+    staff: raw.staff
+      ? {
+          id: raw.staff.id,
+          name: raw.staff.name,
+          role: raw.staff.role,
+        }
+      : null,
+    startedAt: raw.startedAt,
+  };
+}
+
+function mapUserTranscriptionJob(row, options = {}) {
+  if (!row) return null;
+  const raw = row.toJSON ? row.toJSON() : row;
+  const mapped = mapTranscriptionJob(raw, options);
+  mapped.call = mapTranscriptionCall(raw.call);
+  return mapped;
+}
+
+function mapWorkerTranscriptionJob(row, options = {}) {
+  if (!row) return null;
+  const raw = row.toJSON ? row.toJSON() : row;
+  const mapped = mapTranscriptionJob(raw, options);
+  mapped.workerId = raw.workerId || null;
+  mapped.call = raw.call
+    ? {
+        callStatus: raw.call.callStatus,
+        client: raw.call.client
+          ? {
+              id: raw.call.client.id,
+              name: raw.call.client.name,
+              phone: raw.call.client.phone,
+              status: raw.call.client.status,
+            }
+          : null,
+        clientPhone: raw.call.clientPhone,
+        direction: raw.call.direction,
+        durationSeconds: raw.call.durationSeconds,
+        id: raw.call.id,
+        recordingStatus: raw.call.recordingStatus,
+        startedAt: raw.call.startedAt,
+      }
+    : null;
+
+  return mapped;
+}
+
+function workerQueueCallInclude() {
+  return {
+    model: db.TelephonyCall,
+    as: 'call',
+    attributes: [
+      'callStatus',
+      'clientPhone',
+      'direction',
+      'durationSeconds',
+      'id',
+      'recordingStatus',
+      'startedAt',
+    ],
+    include: [
+      {
+        model: db.User,
+        as: 'client',
+        attributes: ['id', 'name', 'phone', 'status'],
+      },
+    ],
+    required: true,
+  };
+}
+
+function mapCall(row, actor = null, options = {}) {
+  if (!row) return null;
+  const raw = row.toJSON ? row.toJSON() : row;
+  const transcriptionJob =
+    options.transcriptionJob ||
+    (Array.isArray(raw.transcriptionJobs) ? raw.transcriptionJobs[0] : null);
   const mapped = {
     ...raw,
     client: raw.client || null,
@@ -780,8 +962,24 @@ function mapCall(row, actor = null) {
   };
 
   delete mapped.rawSnapshot;
+  delete mapped.transcriptionJobs;
+  delete mapped.transcriptSegments;
   if (!canAccessRecordingUrl(actor)) {
+    delete mapped.recordingStatus;
     delete mapped.recordingUrl;
+    delete mapped.recordingExpiresAt;
+    delete mapped.recordingFileSize;
+    delete mapped.recordingFileType;
+    delete mapped.recordingSyncedAt;
+    delete mapped.recordId;
+    delete mapped.recordExternalId;
+  }
+  if (canAccessTranscription(actor)) {
+    mapped.transcription = mapTranscriptionJob(transcriptionJob, {
+      includeSegments: Boolean(options.includeTranscriptSegments),
+    });
+  } else {
+    delete mapped.transcription;
   }
 
   return mapped;
@@ -1393,9 +1591,16 @@ async function listCalls(actor, query = {}) {
     ],
     where,
   });
+  const transcriptionJobs = await getLatestTranscriptionJobsForCallIds(
+    rows.map((row) => row.id),
+  );
 
   return {
-    items: rows.map((row) => mapCall(row, actor)),
+    items: rows.map((row) =>
+      mapCall(row, actor, {
+        transcriptionJob: transcriptionJobs.get(Number(row.id)),
+      }),
+    ),
     page,
     pageSize,
     total: count,
@@ -1415,8 +1620,132 @@ async function getCallOrFail(actor, id, options = {}) {
   return call;
 }
 
+function transcriptionJobInclude(options = {}) {
+  const include = [];
+  if (options.includeSegments) {
+    include.push({
+      model: db.TelephonyTranscriptSegment,
+      as: 'segments',
+      attributes: [
+        'channel',
+        'confidence',
+        'endMs',
+        'id',
+        'sortOrder',
+        'speaker',
+        'startMs',
+        'text',
+      ],
+      separate: true,
+      order: [
+        ['startMs', 'ASC'],
+        ['sortOrder', 'ASC'],
+        ['id', 'ASC'],
+      ],
+    });
+  }
+
+  if (options.includeCall) {
+    include.push({
+      model: db.TelephonyCall,
+      as: 'call',
+      attributes: [
+        'callStatus',
+        'direction',
+        'durationSeconds',
+        'id',
+        'recordingStatus',
+        'startedAt',
+      ],
+    });
+  }
+
+  return include;
+}
+
+function scopedTranscriptionCallInclude(actor, options = {}) {
+  const where = {};
+  applyActorScope(where, actor);
+
+  return {
+    model: db.TelephonyCall,
+    as: 'call',
+    attributes: options.attributes || [
+      'callStatus',
+      'clientPhone',
+      'direction',
+      'durationSeconds',
+      'id',
+      'recordingStatus',
+      'startedAt',
+    ],
+    include: options.includeRelations
+      ? [
+          {
+            model: db.User,
+            as: 'client',
+            attributes: ['id', 'name', 'phone', 'status'],
+          },
+          {
+            model: db.Staff,
+            as: 'staff',
+            attributes: ['id', 'name', 'role'],
+          },
+        ]
+      : [],
+    required: true,
+    where,
+  };
+}
+
+function scopedTranscriptionJobInclude(actor, options = {}) {
+  return [
+    ...transcriptionJobInclude({ includeSegments: options.includeSegments }),
+    scopedTranscriptionCallInclude(actor, {
+      attributes: options.callAttributes,
+      includeRelations: Boolean(options.includeCallRelations),
+    }),
+  ];
+}
+
+async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
+  const ids = [...new Set(callIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  const latest = new Map();
+  if (ids.length === 0) return latest;
+
+  const jobs = await db.TelephonyTranscriptionJob.findAll({
+    include: transcriptionJobInclude(options),
+    order: [
+      ['createdAt', 'DESC'],
+      ['id', 'DESC'],
+    ],
+    where: { telephonyCallId: { [Op.in]: ids } },
+  });
+
+  jobs.forEach((job) => {
+    if (!latest.has(Number(job.telephonyCallId))) {
+      latest.set(Number(job.telephonyCallId), job);
+    }
+  });
+
+  return latest;
+}
+
+async function getLatestTranscriptionJobForCallId(callId, options = {}) {
+  const latest = await getLatestTranscriptionJobsForCallIds([callId], options);
+  return latest.get(Number(callId)) || null;
+}
+
 async function getCall(actor, id) {
-  return mapCall(await getCallOrFail(actor, id), actor);
+  const call = await getCallOrFail(actor, id);
+  const transcriptionJob = await getLatestTranscriptionJobForCallId(call.id, {
+    includeSegments: true,
+  });
+
+  return mapCall(call, actor, {
+    includeTranscriptSegments: true,
+    transcriptionJob,
+  });
 }
 
 async function getActiveClientForCall(clientId, transaction = undefined) {
@@ -2007,6 +2336,193 @@ function normalizeRecordingReference(data) {
   };
 }
 
+function normalizeTranscriptSpeaker(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'unknown';
+  if (
+    [
+      'admin',
+      'administrator',
+      'operator',
+      'employee',
+      'staff',
+      'agent',
+      'manager',
+      'администратор',
+      'оператор',
+      'сотрудник',
+      'менеджер',
+    ].includes(normalized)
+  ) {
+    return 'administrator';
+  }
+  if (
+    [
+      'client',
+      'customer',
+      'user',
+      'guest',
+      'клиент',
+      'гость',
+      'пользователь',
+    ].includes(normalized)
+  ) {
+    return 'client';
+  }
+  if (TRANSCRIPT_SPEAKERS.has(normalized)) return normalized;
+
+  return 'unknown';
+}
+
+function normalizeOptionalInteger(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.round(number);
+}
+
+function normalizeTranscriptTimeMs(segment, baseName) {
+  const msValue = normalizeOptionalInteger(segment[`${baseName}Ms`]);
+  if (msValue !== null) return msValue;
+
+  const secondsValue = Number(segment[`${baseName}Seconds`] ?? segment[baseName]);
+  if (!Number.isFinite(secondsValue) || secondsValue < 0) return null;
+
+  return secondsValue <= 36 * 60 * 60
+    ? Math.round(secondsValue * 1000)
+    : Math.round(secondsValue);
+}
+
+function normalizeTranscriptConfidence(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(1, number));
+}
+
+function normalizeTranscriptChannel(value) {
+  const channel = normalizeText(value);
+  return channel ? channel.slice(0, 255) : null;
+}
+
+function normalizeCorrections(value) {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asObject(item))
+    .filter((item) => Object.keys(item).length > 0);
+}
+
+function normalizeRawAsrJson(data = {}) {
+  if (data.rawAsrJson && typeof data.rawAsrJson === 'object') return data.rawAsrJson;
+  if (data.rawAsrResult && typeof data.rawAsrResult === 'object') return data.rawAsrResult;
+  if (data.raw && typeof data.raw === 'object') return data.raw;
+  return null;
+}
+
+function normalizeRawTranscriptText(data = {}) {
+  return normalizeText(
+    data.rawTranscriptText ||
+      data.rawText ||
+      data.rawTranscript ||
+      data.raw?.transcriptText ||
+      data.raw?.text,
+  );
+}
+
+function normalizeTranscriptSegments(data = {}) {
+  const rawSegments = Array.isArray(data.segments) ? data.segments : [];
+  const segments = rawSegments
+    .map((segment, index) => {
+      const payload = asObject(segment);
+      const text = normalizeText(payload.text || payload.transcript || payload.phrase);
+      if (!text) return null;
+
+      return {
+        channel: normalizeTranscriptChannel(
+          payload.channel ?? payload.audioChannel ?? payload.track,
+        ),
+        confidence: normalizeTranscriptConfidence(payload.confidence),
+        endMs: normalizeTranscriptTimeMs(payload, 'end'),
+        sortOrder: normalizeOptionalInteger(payload.sortOrder) ?? index,
+        speaker: normalizeTranscriptSpeaker(payload.speaker || payload.role),
+        startMs: normalizeTranscriptTimeMs(payload, 'start'),
+        text,
+      };
+    })
+    .filter(Boolean)
+    .sort(compareTranscriptSegments)
+    .map((segment, index) => ({
+      ...segment,
+      sortOrder: index,
+    }));
+  const transcriptText =
+    buildTranscriptTextFromSegments(segments) ||
+    normalizeText(data.transcriptText || data.text || data.transcript);
+
+  if (segments.length === 0 && transcriptText) {
+    segments.push({
+      channel: null,
+      confidence: null,
+      endMs: null,
+      sortOrder: 0,
+      speaker: 'unknown',
+      startMs: null,
+      text: transcriptText,
+    });
+  }
+
+  return {
+    corrections: normalizeCorrections(data.corrections),
+    language: normalizeText(data.language),
+    metadata: asObject(data.metadata),
+    rawAsrJson: normalizeRawAsrJson(data),
+    rawTranscriptText: normalizeRawTranscriptText(data),
+    segments,
+    transcriptText: transcriptText || null,
+  };
+}
+
+function buildRecordingReferencePath(call) {
+  if (call.recordId) {
+    return `/records/${encodeURIComponent(call.recordId)}/reference`;
+  }
+  if (call.recordExternalId && call.beelineUserId) {
+    return `/records/${encodeURIComponent(call.recordExternalId)}/${encodeURIComponent(call.beelineUserId)}/reference`;
+  }
+  if (call.externalTrackingId && call.beelineUserId) {
+    return `/records/${encodeURIComponent(call.externalTrackingId)}/${encodeURIComponent(call.beelineUserId)}/reference`;
+  }
+
+  return null;
+}
+
+async function refreshRecordingReferenceForCall(call) {
+  const client = getBeelineClient();
+  const path = buildRecordingReferencePath(call);
+
+  if (!path) {
+    throw appError('У звонка пока нет идентификатора записи Билайна', 409);
+  }
+
+  const response = await client.get(path);
+  const reference = normalizeRecordingReference(response.data);
+  await call.update({
+    recordingExpiresAt: reference.recordingExpiresAt,
+    recordingFileSize: reference.fileSize || call.recordingFileSize,
+    recordingFileType: reference.fileType || call.recordingFileType,
+    recordingStatus: 'available',
+    recordingSyncedAt: new Date(),
+    recordingUrl: reference.recordingUrl,
+  });
+
+  return {
+    downloadUrl: reference.recordingUrl,
+    expiresAt: reference.recordingExpiresAt,
+    fileSize: reference.fileSize || call.recordingFileSize || null,
+    fileType: reference.fileType || call.recordingFileType || null,
+  };
+}
+
 function normalizeSubscriptionResponse(data, requestPayload = {}) {
   const payload = asObject(data);
   const expiresSeconds = Number(requestPayload.expires || requestPayload.expiresSeconds);
@@ -2077,33 +2593,452 @@ function subscriptionMatchesDesired(subscription, desired) {
 
 async function refreshRecordingReference(actor, id) {
   const call = await getCallOrFail(actor, id);
-  const client = getBeelineClient();
-  let path = null;
+  await refreshRecordingReferenceForCall(call);
 
-  if (call.recordId) {
-    path = `/records/${encodeURIComponent(call.recordId)}/reference`;
-  } else if (call.recordExternalId && call.beelineUserId) {
-    path = `/records/${encodeURIComponent(call.recordExternalId)}/${encodeURIComponent(call.beelineUserId)}/reference`;
-  } else if (call.externalTrackingId && call.beelineUserId) {
-    path = `/records/${encodeURIComponent(call.externalTrackingId)}/${encodeURIComponent(call.beelineUserId)}/reference`;
+  return getCall(actor, call.id);
+}
+
+async function createTranscriptionJob(actor, callId) {
+  const call = await getCallOrFail(actor, callId);
+  if (call.recordingStatus !== 'available') {
+    throw appError('Транскрибация доступна только для звонков с записью', 409);
   }
 
-  if (!path) {
-    throw appError('У звонка пока нет идентификатора записи Билайна', 409);
+  const latestJob = await getLatestTranscriptionJobForCallId(call.id);
+  if (
+    latestJob &&
+    (TRANSCRIPTION_ACTIVE_STATUSES.has(latestJob.status) || latestJob.status === 'completed')
+  ) {
+    return getCall(actor, call.id);
   }
 
-  const response = await client.get(path);
-  const reference = normalizeRecordingReference(response.data);
-  await call.update({
-    recordingExpiresAt: reference.recordingExpiresAt,
-    recordingFileSize: reference.fileSize || call.recordingFileSize,
-    recordingFileType: reference.fileType || call.recordingFileType,
-    recordingStatus: 'available',
-    recordingSyncedAt: new Date(),
-    recordingUrl: reference.recordingUrl,
+  await db.TelephonyTranscriptionJob.create({
+    createdByAccountId: actor?.id || null,
+    status: 'queued',
+    telephonyCallId: call.id,
   });
 
   return getCall(actor, call.id);
+}
+
+function normalizeTranscriptionJobQuery(query = {}) {
+  const page = Math.max(Number(query.page) || 1, 1);
+  const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 100);
+  const where = {};
+
+  if (query.status && query.status !== 'all') {
+    if (!TRANSCRIPTION_STATUSES.has(query.status)) {
+      throw appError('Некорректный статус транскрибации');
+    }
+    where.status = query.status;
+  }
+
+  if (query.callId) {
+    const callId = Number(query.callId);
+    if (!Number.isInteger(callId) || callId <= 0) {
+      throw appError('Некорректный звонок для транскрибации');
+    }
+    where.telephonyCallId = callId;
+  }
+
+  return { page, pageSize, where };
+}
+
+async function listTranscriptionJobs(actor, query = {}) {
+  const { page, pageSize, where } = normalizeTranscriptionJobQuery(query);
+  const { count, rows } = await db.TelephonyTranscriptionJob.findAndCountAll({
+    distinct: true,
+    include: scopedTranscriptionJobInclude(actor, {
+      includeCallRelations: true,
+      includeSegments: true,
+    }),
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+    order: [
+      ['createdAt', 'DESC'],
+      ['id', 'DESC'],
+    ],
+    where,
+  });
+
+  return {
+    items: rows.map((row) => mapUserTranscriptionJob(row, { includeSegments: true })),
+    page,
+    pageSize,
+    total: count,
+  };
+}
+
+async function listCallTranscriptionJobs(actor, callId, query = {}) {
+  const call = await getCallOrFail(actor, callId);
+  return listTranscriptionJobs(actor, {
+    ...query,
+    callId: call.id,
+  });
+}
+
+async function getTranscriptionJob(actor, id) {
+  const jobId = Number(id);
+  if (!Number.isInteger(jobId) || jobId <= 0) {
+    throw appError('Некорректная задача транскрибации');
+  }
+
+  const job = await db.TelephonyTranscriptionJob.findOne({
+    include: scopedTranscriptionJobInclude(actor, {
+      includeCallRelations: true,
+      includeSegments: true,
+    }),
+    where: { id: jobId },
+  });
+  if (!job) throw appError('Задача транскрибации не найдена', 404);
+
+  return { job: mapUserTranscriptionJob(job, { includeSegments: true }) };
+}
+
+async function getTranscriptionStats(actor) {
+  const rows = await db.TelephonyTranscriptionJob.findAll({
+    attributes: [
+      'status',
+      [db.Sequelize.fn('COUNT', db.Sequelize.col('TelephonyTranscriptionJob.id')), 'count'],
+    ],
+    group: ['TelephonyTranscriptionJob.status'],
+    include: [
+      scopedTranscriptionCallInclude(actor, {
+        attributes: [],
+        includeRelations: false,
+      }),
+    ],
+    raw: true,
+  });
+  const totals = {
+    completed: 0,
+    failed: 0,
+    processing: 0,
+    queued: 0,
+    total: 0,
+  };
+
+  rows.forEach((row) => {
+    const status = row.status;
+    const count = Number(row.count || 0);
+    if (TRANSCRIPTION_STATUSES.has(status)) {
+      totals[status] = count;
+      totals.total += count;
+    }
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totals,
+  };
+}
+
+async function getWorkerTranscriptionQueue(query = {}) {
+  const pageSize = Math.min(Math.max(Number(query.pageSize) || 50, 1), 100);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const activeStatuses = ['queued', 'processing', 'failed'];
+
+  const [statusRows, completedToday, jobs] = await Promise.all([
+    db.TelephonyTranscriptionJob.findAll({
+      attributes: [
+        'status',
+        [db.Sequelize.fn('COUNT', db.Sequelize.col('id')), 'count'],
+      ],
+      group: ['status'],
+      raw: true,
+    }),
+    db.TelephonyTranscriptionJob.count({
+      where: {
+        completedAt: { [Op.gte]: today },
+        status: 'completed',
+      },
+    }),
+    db.TelephonyTranscriptionJob.findAll({
+      include: [
+        ...transcriptionJobInclude({ includeSegments: true }),
+        workerQueueCallInclude(),
+      ],
+      limit: pageSize,
+      order: [
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
+      ],
+      where: {
+        [Op.or]: [
+          { status: { [Op.in]: activeStatuses } },
+          {
+            completedAt: { [Op.gte]: today },
+            status: 'completed',
+          },
+        ],
+      },
+    }),
+  ]);
+
+  const totals = {
+    completedToday,
+    failed: 0,
+    processing: 0,
+    queued: 0,
+    total: 0,
+    untranscribedInCrm: 0,
+  };
+  statusRows.forEach((row) => {
+    const status = row.status;
+    const count = Number(row.count || 0);
+    if (TRANSCRIPTION_STATUSES.has(status)) {
+      totals[status] = count;
+      totals.total += count;
+    }
+  });
+  totals.untranscribedInCrm = totals.queued + totals.processing + totals.failed;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    items: jobs
+      .sort((left, right) => {
+        const rank = { processing: 0, queued: 1, failed: 2, completed: 3 };
+        const statusDiff = (rank[left.status] ?? 9) - (rank[right.status] ?? 9);
+        if (statusDiff !== 0) return statusDiff;
+        return Number(left.id || 0) - Number(right.id || 0);
+      })
+      .map((job) => mapWorkerTranscriptionJob(job, { includeSegments: true })),
+    totals,
+  };
+}
+
+async function getTranscriptionJobOrFail(id, options = {}) {
+  const job = await db.TelephonyTranscriptionJob.findByPk(id, {
+    include: transcriptionJobInclude({
+      includeCall: options.includeCall,
+      includeSegments: options.includeSegments,
+    }),
+    lock: options.lock,
+    transaction: options.transaction,
+  });
+  if (!job) throw appError('Задача транскрибации не найдена', 404);
+  return job;
+}
+
+async function getUserTranscriptionJobOrFail(actor, id, options = {}) {
+  const job = await getTranscriptionJobOrFail(id, options);
+  await getCallOrFail(actor, job.telephonyCallId, {
+    transaction: options.transaction,
+  });
+  return job;
+}
+
+async function claimTranscriptionJob(data = {}) {
+  const jobId = await db.sequelize.transaction(async (transaction) => {
+    const job = await db.TelephonyTranscriptionJob.findOne({
+      lock: transaction.LOCK.UPDATE,
+      order: [
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
+      ],
+      transaction,
+      where: { status: 'queued' },
+    });
+
+    if (!job) return null;
+
+    await job.update(
+      {
+        attemptCount: Number(job.attemptCount || 0) + 1,
+        claimedAt: new Date(),
+        errorMessage: null,
+        failedAt: null,
+        status: 'processing',
+        workerId: normalizeText(data.workerId),
+      },
+      { transaction },
+    );
+
+    return job.id;
+  });
+
+  if (!jobId) return { job: null };
+
+  const job = await getTranscriptionJobOrFail(jobId, { includeCall: true });
+  return { job: mapWorkerTranscriptionJob(job) };
+}
+
+async function getTranscriptionJobAudioReference(jobId) {
+  const job = await getTranscriptionJobOrFail(jobId, { includeCall: true });
+  if (job.status !== 'processing') {
+    throw appError('Получить аудио можно только для задачи в обработке', 409);
+  }
+
+  const call = await db.TelephonyCall.findByPk(job.telephonyCallId);
+  if (!call) throw appError('Звонок для транскрибации не найден', 404);
+  if (call.recordingStatus !== 'available') {
+    throw appError('У звонка нет доступной записи для транскрибации', 409);
+  }
+
+  const audio = await refreshRecordingReferenceForCall(call);
+  return {
+    audio,
+    job: mapWorkerTranscriptionJob(job),
+  };
+}
+
+async function completeTranscriptionJob(jobId, data = {}) {
+  const normalized = normalizeTranscriptSegments(data);
+  if (!normalized.transcriptText && normalized.segments.length === 0) {
+    throw appError('Передайте текст транскрибации или segments', 400);
+  }
+
+  const savedJobId = await db.sequelize.transaction(async (transaction) => {
+    const job = await getTranscriptionJobOrFail(jobId, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (job.status !== 'processing') {
+      throw appError('Завершить можно только задачу в обработке', 409);
+    }
+
+    await db.TelephonyTranscriptSegment.destroy({
+      transaction,
+      where: { transcriptionJobId: job.id },
+    });
+    if (normalized.segments.length > 0) {
+      await db.TelephonyTranscriptSegment.bulkCreate(
+        normalized.segments.map((segment) => ({
+          ...segment,
+          telephonyCallId: job.telephonyCallId,
+          transcriptionJobId: job.id,
+        })),
+        { transaction },
+      );
+    }
+
+    await job.update(
+      {
+        completedAt: new Date(),
+        errorMessage: null,
+        failedAt: null,
+        language: normalized.language,
+        metadata: normalized.metadata,
+        corrections: normalized.corrections,
+        rawAsrJson: normalized.rawAsrJson,
+        rawTranscriptText: normalized.rawTranscriptText,
+        status: 'completed',
+        transcriptText: normalized.transcriptText,
+      },
+      { transaction },
+    );
+
+    return job.id;
+  });
+
+  const job = await getTranscriptionJobOrFail(savedJobId, {
+    includeCall: true,
+    includeSegments: true,
+  });
+  return { job: mapWorkerTranscriptionJob(job, { includeSegments: true }) };
+}
+
+async function failTranscriptionJob(jobId, data = {}) {
+  const job = await getTranscriptionJobOrFail(jobId);
+  if (job.status !== 'processing') {
+    throw appError('Пометить ошибку можно только для задачи в обработке', 409);
+  }
+
+  await job.update({
+    errorMessage: normalizeText(data.errorMessage || data.error) || 'Worker failed',
+    failedAt: new Date(),
+    status: 'failed',
+  });
+
+  const freshJob = await getTranscriptionJobOrFail(job.id, { includeCall: true });
+  return { job: mapWorkerTranscriptionJob(freshJob) };
+}
+
+async function retryTranscriptionJob(actor, jobId) {
+  const job = await getUserTranscriptionJobOrFail(actor, jobId);
+  if (job.status === 'queued' || job.status === 'processing') {
+    return getCall(actor, job.telephonyCallId);
+  }
+  if (job.status === 'completed') {
+    throw appError('Завершенную транскрибацию нельзя повторить через retry', 409);
+  }
+
+  await db.sequelize.transaction(async (transaction) => {
+    const lockedJob = await getUserTranscriptionJobOrFail(actor, job.id, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (lockedJob.status !== 'failed') {
+      throw appError('Повторить можно только задачу с ошибкой', 409);
+    }
+
+    await db.TelephonyTranscriptSegment.destroy({
+      transaction,
+      where: { transcriptionJobId: lockedJob.id },
+    });
+    await lockedJob.update(
+      {
+        claimedAt: null,
+        completedAt: null,
+        errorMessage: null,
+        failedAt: null,
+        corrections: null,
+        rawAsrJson: null,
+        rawTranscriptText: null,
+        status: 'queued',
+        workerId: null,
+      },
+      { transaction },
+    );
+  });
+
+  return getCall(actor, job.telephonyCallId);
+}
+
+async function retryTranscriptionJobForWorker(jobId, data = {}) {
+  const job = await getTranscriptionJobOrFail(jobId);
+  if (job.status === 'processing') {
+    return { job: mapWorkerTranscriptionJob(job) };
+  }
+  if (job.status === 'completed') {
+    throw appError('Завершенную транскрибацию нельзя повторить через worker retry', 409);
+  }
+
+  const savedJobId = await db.sequelize.transaction(async (transaction) => {
+    const lockedJob = await getTranscriptionJobOrFail(job.id, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (!['failed', 'queued'].includes(lockedJob.status)) {
+      throw appError('Повторить можно только задачу с ошибкой', 409);
+    }
+
+    await db.TelephonyTranscriptSegment.destroy({
+      transaction,
+      where: { transcriptionJobId: lockedJob.id },
+    });
+    await lockedJob.update(
+      {
+        attemptCount: Number(lockedJob.attemptCount || 0) + 1,
+        completedAt: null,
+        errorMessage: null,
+        failedAt: null,
+        corrections: null,
+        rawAsrJson: null,
+        rawTranscriptText: null,
+        claimedAt: new Date(),
+        status: 'processing',
+        workerId: normalizeText(data.workerId),
+      },
+      { transaction },
+    );
+
+    return lockedJob.id;
+  });
+
+  const freshJob = await getTranscriptionJobOrFail(savedJobId, { includeCall: true });
+  return { job: mapWorkerTranscriptionJob(freshJob) };
 }
 
 async function subscribeToEvents(data = {}) {
@@ -2388,23 +3323,38 @@ async function listRawEvents(query = {}) {
 
 module.exports = {
   completeCall,
+  completeTranscriptionJob,
   createClientForCall,
+  createTranscriptionJob,
+  failTranscriptionJob,
+  claimTranscriptionJob,
+  getTranscriptionJobAudioReference,
   getCall,
   getConfig,
   getReport,
   getStats,
+  getTranscriptionJob,
+  getTranscriptionStats,
+  getWorkerTranscriptionQueue,
   ignoreCall,
   linkCallClient,
   listCalls,
+  listCallTranscriptionJobs,
   listRawEvents,
+  mapCall,
+  listTranscriptionJobs,
+  mapTranscriptionJob,
   maintainEventSubscription,
   parseIncomingBeelinePayload,
+  normalizeTranscriptSegments,
   normalizeRecordingPayload,
   normalizeSubscriptionResponse,
   normalizePayload,
   receiveBeelineEvent,
   refreshRecordingReference,
   reprocessRawEvent,
+  retryTranscriptionJob,
+  retryTranscriptionJobForWorker,
   startProcessing,
   checkEventSubscription,
   subscribeToEvents,

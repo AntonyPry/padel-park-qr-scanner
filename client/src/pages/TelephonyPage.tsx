@@ -6,6 +6,7 @@ import {
   Copy,
   EyeOff,
   FileAudio,
+  FileText,
   LinkIcon,
   PhoneCall,
   PhoneIncoming,
@@ -61,6 +62,7 @@ import {
   checkBeelineSubscription,
   completeTelephonyCall,
   createTelephonyCallClient,
+  createTelephonyTranscriptionJob,
   getTelephonyCall,
   getTelephonyCalls,
   getTelephonyConfig,
@@ -71,6 +73,7 @@ import {
   linkTelephonyCallClient,
   refreshTelephonyRecordingReference,
   reprocessTelephonyRawEvent,
+  retryTelephonyTranscriptionJob,
   subscribeBeelineEvents,
   syncBeelineRecordings,
   syncBeelineStatistics,
@@ -80,6 +83,9 @@ import {
   type TelephonyInterest,
   type TelephonyProcessingStatus,
   type TelephonyResult,
+  type TelephonyTranscriptSegment,
+  type TelephonyTranscriptSpeaker,
+  type TelephonyTranscriptionStatus,
 } from '@/api/telephony';
 import { queryKeys } from '@/api/query-keys';
 import { fetchReferences } from '@/lib/references';
@@ -88,6 +94,7 @@ import {
   canWorkTelephony,
 } from '@/lib/permissions';
 import { getApiErrorMessage } from '@/lib/api';
+import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/useAuth';
 
 const PAGE_SIZE = 20;
@@ -130,6 +137,27 @@ const RECORDING_LABELS: Record<TelephonyCall['recordingStatus'], string> = {
   available: 'Есть',
   missing: 'Нет',
   pending: 'Готовится',
+  unknown: 'Неизвестно',
+};
+
+const TRANSCRIPTION_LABELS: Record<TelephonyTranscriptionStatus, string> = {
+  completed: 'Готово',
+  failed: 'Ошибка',
+  processing: 'Обрабатывается',
+  queued: 'В очереди',
+};
+
+type TranscriptionViewState = TelephonyTranscriptionStatus | 'no_recording' | 'not_started';
+
+const TRANSCRIPTION_VIEW_LABELS: Record<TranscriptionViewState, string> = {
+  ...TRANSCRIPTION_LABELS,
+  no_recording: 'Нет записи',
+  not_started: 'Нет транскрипции',
+};
+
+const TRANSCRIPT_SPEAKER_LABELS: Record<TelephonyTranscriptSpeaker, string> = {
+  administrator: 'Администратор',
+  client: 'Клиент',
   unknown: 'Неизвестно',
 };
 
@@ -253,6 +281,73 @@ function getRawEventStatusVariant(status: keyof typeof RAW_EVENT_STATUS_LABELS) 
   return 'secondary';
 }
 
+function getTranscriptionViewState(call: TelephonyCall): TranscriptionViewState {
+  if (call.transcription?.status) return call.transcription.status;
+  return call.recordingStatus === 'available' ? 'not_started' : 'no_recording';
+}
+
+function getTranscriptionStatusVariant(status?: TranscriptionViewState) {
+  if (status === 'completed') return 'outline';
+  if (status === 'failed') return 'destructive';
+  return 'secondary';
+}
+
+function isTranscriptionPending(status?: TelephonyTranscriptionStatus) {
+  return status === 'queued' || status === 'processing';
+}
+
+function formatTranscriptTime(ms?: number | null) {
+  if (ms === null || ms === undefined) return null;
+  return formatDuration(Math.max(0, Math.round(ms / 1000)));
+}
+
+function sortTranscriptSegments(segments?: TelephonyTranscriptSegment[]) {
+  return [...(segments || [])].sort((left, right) => {
+    const leftHasStart =
+      left.startMs !== null &&
+      left.startMs !== undefined &&
+      Number.isFinite(Number(left.startMs));
+    const rightHasStart =
+      right.startMs !== null &&
+      right.startMs !== undefined &&
+      Number.isFinite(Number(right.startMs));
+    const leftStart = Number(left.startMs);
+    const rightStart = Number(right.startMs);
+
+    if (leftHasStart && rightHasStart && leftStart !== rightStart) {
+      return leftStart - rightStart;
+    }
+    if (leftHasStart !== rightHasStart) {
+      return leftHasStart ? -1 : 1;
+    }
+
+    const sortOrderDiff = Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+    if (sortOrderDiff !== 0) return sortOrderDiff;
+
+    return Number(left.id || 0) - Number(right.id || 0);
+  });
+}
+
+function getTranscriptSegmentTone(speaker: TelephonyTranscriptSpeaker) {
+  if (speaker === 'administrator') {
+    return 'border-l-4 border-l-sky-500 bg-sky-50/70 dark:bg-sky-950/20';
+  }
+  if (speaker === 'client') {
+    return 'border-l-4 border-l-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/20';
+  }
+
+  return 'border-l-4 border-l-muted-foreground/50 bg-muted/40';
+}
+
+function formatTranscriptCorrection(correction: Record<string, unknown>, index: number) {
+  const original = typeof correction.original === 'string' ? correction.original : null;
+  const normalized = typeof correction.normalized === 'string' ? correction.normalized : null;
+  const rule = typeof correction.rule === 'string' ? correction.rule : null;
+  const type = typeof correction.type === 'string' ? correction.type : null;
+  const label = original && normalized ? `${original} -> ${normalized}` : type || `Правка ${index + 1}`;
+  return rule ? `${label} (${rule})` : label;
+}
+
 function formatPayloadPreview(payload: unknown) {
   const formatted = JSON.stringify(payload, null, 2) || '';
   return formatted.length > 900 ? `${formatted.slice(0, 900)}...` : formatted;
@@ -321,6 +416,7 @@ export default function TelephonyPage() {
   const [searchInput, setSearchInput] = useState(initialQuery);
   const [reportRange, setReportRange] = useState(getDefaultReportRange);
   const [selectedCall, setSelectedCall] = useState<TelephonyCall | null>(null);
+  const [transcriptDialogCall, setTranscriptDialogCall] = useState<TelephonyCall | null>(null);
   const openedCallIdRef = useRef<number | null>(null);
   const [form, setForm] = useState<CompletionForm>(EMPTY_FORM);
   const [clientDialogCall, setClientDialogCall] = useState<TelephonyCall | null>(null);
@@ -330,18 +426,23 @@ export default function TelephonyPage() {
 
   const canManage = canManageTelephony(account?.role);
   const canWork = canWorkTelephony(account?.role);
+  const canAccessCallRecordings = canWork;
+  const callsTableColumnCount = canWork ? 10 : 7;
 
   const listParams = useMemo(
     () => ({
       direction: direction === 'all' ? undefined : direction,
       callStatus: callStatus === 'all' ? undefined : callStatus,
-      recordingStatus: recordingStatus === 'all' ? undefined : recordingStatus,
+      recordingStatus:
+        canAccessCallRecordings && recordingStatus !== 'all'
+          ? recordingStatus
+          : undefined,
       page,
       pageSize: PAGE_SIZE,
       q: query,
       status,
     }),
-    [callStatus, direction, page, query, recordingStatus, status],
+    [callStatus, canAccessCallRecordings, direction, page, query, recordingStatus, status],
   );
 
   const callsQuery = useQuery({
@@ -392,6 +493,38 @@ export default function TelephonyPage() {
     queryKey: queryKeys.clients.list(clientSearchParams),
     queryFn: () => listClients(clientSearchParams),
   });
+  const selectedCallId = selectedCall?.id ?? null;
+  const selectedCallDetailQuery = useQuery({
+    enabled: canWork && Boolean(selectedCallId),
+    queryKey: queryKeys.telephony.call(selectedCallId),
+    queryFn: () => getTelephonyCall(selectedCallId as number),
+    refetchInterval: (query) =>
+      isTranscriptionPending(
+        query.state.data?.transcription?.status || selectedCall?.transcription?.status,
+      )
+        ? 5000
+        : false,
+  });
+  const selectedCallForView =
+    selectedCallDetailQuery.data?.id === selectedCall?.id
+      ? selectedCallDetailQuery.data
+      : selectedCall;
+  const transcriptDialogCallId = transcriptDialogCall?.id ?? null;
+  const transcriptDetailQuery = useQuery({
+    enabled: canWork && Boolean(transcriptDialogCallId),
+    queryKey: queryKeys.telephony.call(transcriptDialogCallId),
+    queryFn: () => getTelephonyCall(transcriptDialogCallId as number),
+    refetchInterval: (query) =>
+      isTranscriptionPending(
+        query.state.data?.transcription?.status || transcriptDialogCall?.transcription?.status,
+      )
+        ? 5000
+        : false,
+  });
+  const transcriptCallForView =
+    transcriptDetailQuery.data?.id === transcriptDialogCall?.id
+      ? transcriptDetailQuery.data
+      : transcriptDialogCall;
   const beelineApiReady = Boolean(
     configQuery.data?.apiTokenConfigured && configQuery.data?.apiBaseUrl,
   );
@@ -418,6 +551,9 @@ export default function TelephonyPage() {
 
     return () => {
       cancelled = true;
+      if (openedCallIdRef.current === requestedCallId) {
+        openedCallIdRef.current = null;
+      }
     };
   }, [canWork, searchParams, selectedCall?.id]);
 
@@ -545,6 +681,33 @@ export default function TelephonyPage() {
     onSuccess: (call) => {
       toast.success('Ссылка на запись обновлена');
       setSelectedCall((current) => (current?.id === call.id ? call : current));
+      setTranscriptDialogCall((current) => (current?.id === call.id ? call : current));
+      invalidate();
+    },
+  });
+
+  const createTranscriptionMutation = useMutation({
+    mutationFn: createTelephonyTranscriptionJob,
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Не удалось поставить звонок на транскрибацию'));
+    },
+    onSuccess: (call) => {
+      toast.success('Звонок поставлен на транскрибацию');
+      setSelectedCall((current) => (current?.id === call.id ? call : current));
+      setTranscriptDialogCall((current) => (current?.id === call.id ? call : current));
+      invalidate();
+    },
+  });
+
+  const retryTranscriptionMutation = useMutation({
+    mutationFn: retryTelephonyTranscriptionJob,
+    onError: (error) => {
+      toast.error(getApiErrorMessage(error, 'Не удалось повторить транскрибацию'));
+    },
+    onSuccess: (call) => {
+      toast.success('Транскрибация снова в очереди');
+      setSelectedCall((current) => (current?.id === call.id ? call : current));
+      setTranscriptDialogCall((current) => (current?.id === call.id ? call : current));
       invalidate();
     },
   });
@@ -603,6 +766,11 @@ export default function TelephonyPage() {
     setClientForm(EMPTY_CLIENT_FORM);
   };
 
+  const openTranscriptDialog = (call: TelephonyCall) => {
+    if (!canWork) return;
+    setTranscriptDialogCall(call);
+  };
+
   const openRecording = async (call: TelephonyCall) => {
     if (call.recordingUrl && !shouldRefreshRecordingLink(call)) {
       window.open(call.recordingUrl, '_blank', 'noopener,noreferrer');
@@ -617,6 +785,16 @@ export default function TelephonyPage() {
     } catch {
       // Error is shown by the mutation handler.
     }
+  };
+
+  const startTranscription = (call: TelephonyCall) => {
+    if (!canWork || call.recordingStatus !== 'available') return;
+    createTranscriptionMutation.mutate(call.id);
+  };
+
+  const retryTranscription = (call: TelephonyCall) => {
+    if (!canWork || !call.transcription?.id) return;
+    retryTranscriptionMutation.mutate(call.transcription.id);
   };
 
   const submitCompletion = () => {
@@ -676,6 +854,199 @@ export default function TelephonyPage() {
           : !selectedClientSourceId
             ? 'Выберите источник клиента.'
             : null;
+  const transcriptionActionPending =
+    createTranscriptionMutation.isPending || retryTranscriptionMutation.isPending;
+  const renderTranscriptionAction = (call: TelephonyCall, iconOnly = false) => {
+    const transcription = call.transcription;
+    if (call.recordingStatus !== 'available') return null;
+    if (transcription?.status === 'completed' || isTranscriptionPending(transcription?.status)) {
+      return null;
+    }
+
+    if (transcription?.status === 'failed') {
+      return (
+        <Button
+          variant="outline"
+          size={iconOnly ? 'icon-sm' : 'sm'}
+          onClick={() => retryTranscription(call)}
+          disabled={transcriptionActionPending}
+          aria-label="Повторить транскрибацию"
+          title="Повторить транскрибацию"
+        >
+          <RefreshCw className="h-4 w-4" />
+          {!iconOnly && 'Повторить'}
+        </Button>
+      );
+    }
+
+    return (
+      <Button
+        variant="outline"
+        size={iconOnly ? 'icon-sm' : 'sm'}
+        onClick={() => startTranscription(call)}
+        disabled={transcriptionActionPending}
+        aria-label="Транскрибировать звонок"
+        title="Транскрибировать звонок"
+      >
+        <FileText className="h-4 w-4" />
+        {!iconOnly && 'Транскрибировать'}
+      </Button>
+    );
+  };
+  const renderTranscriptOpenAction = (call: TelephonyCall, iconOnly = false) => {
+    const viewState = getTranscriptionViewState(call);
+
+    return (
+      <Button
+        variant={viewState === 'completed' ? 'default' : 'outline'}
+        size={iconOnly ? 'icon-sm' : 'sm'}
+        onClick={() => openTranscriptDialog(call)}
+        aria-label="Открыть транскрипцию"
+        title="Транскрипция"
+      >
+        <FileText className="h-4 w-4" />
+        {!iconOnly && 'Транскрипция'}
+      </Button>
+    );
+  };
+  const renderTranscriptContent = (call: TelephonyCall, isFetching = false) => {
+    const viewState = getTranscriptionViewState(call);
+    const transcription = call.transcription;
+    const segments = sortTranscriptSegments(transcription?.segments);
+    const corrections = transcription?.corrections || [];
+    const segmentTranscriptText = segments
+      .map((segment) => segment.text.trim())
+      .filter(Boolean)
+      .join('\n');
+
+    if (viewState === 'no_recording') {
+      return (
+        <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+          У звонка нет доступной записи, поэтому транскрибация пока недоступна.
+        </div>
+      );
+    }
+
+    if (viewState === 'not_started') {
+      return (
+        <div className="space-y-3 rounded-md bg-muted p-4 text-sm text-muted-foreground">
+          <div>Транскрипция еще не запускалась. Запись есть, можно поставить задачу в очередь.</div>
+          {renderTranscriptionAction(call)}
+        </div>
+      );
+    }
+
+    if (viewState === 'queued' || viewState === 'processing') {
+      return (
+        <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+          {viewState === 'queued'
+            ? 'Задача ожидает свободный worker.'
+            : 'Worker обрабатывает запись.'}
+          {isFetching && <span className="ml-2">Обновляем статус...</span>}
+        </div>
+      );
+    }
+
+    if (viewState === 'failed') {
+      return (
+        <div className="space-y-3">
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
+            {transcription?.errorMessage || 'Worker вернул ошибку транскрибации.'}
+          </div>
+          {renderTranscriptionAction(call)}
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {segments.length > 0 ? (
+          <div className="space-y-2">
+            {segments.map((segment, index) => {
+              const timeLabel = formatTranscriptTime(segment.startMs);
+              const endTimeLabel = formatTranscriptTime(segment.endMs);
+              const speakerLabel = TRANSCRIPT_SPEAKER_LABELS[segment.speaker];
+
+              return (
+                <div
+                  key={segment.id || `${segment.startMs || 'segment'}-${index}`}
+                  className={`rounded-md border p-3 ${getTranscriptSegmentTone(segment.speaker)}`}
+                >
+                  <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground">{speakerLabel}</span>
+                    {timeLabel && (
+                      <span>
+                        {timeLabel}
+                        {endTimeLabel ? `-${endTimeLabel}` : ''}
+                      </span>
+                    )}
+                    {segment.channel && <span>Канал: {segment.channel}</span>}
+                    {segment.confidence !== null && segment.confidence !== undefined && (
+                      <span>Уверенность: {Math.round(segment.confidence * 100)}%</span>
+                    )}
+                  </div>
+                  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                    {segment.text}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : transcription?.transcriptText ? (
+          <div className="whitespace-pre-wrap break-words rounded-md border bg-card p-3 text-sm leading-relaxed">
+            {transcription.transcriptText}
+          </div>
+        ) : (
+          <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+            Worker завершил задачу без сегментов.
+          </div>
+        )}
+
+        {segmentTranscriptText && segments.length > 0 && (
+          <div className="rounded-md border bg-card p-3">
+            <div className="mb-2 text-sm font-medium">Нормализованный текст</div>
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+              {segmentTranscriptText}
+            </div>
+          </div>
+        )}
+
+        {transcription?.rawTranscriptText && (
+          <div className="rounded-md border bg-muted/30 p-3">
+            <div className="mb-2 text-sm font-medium">Raw ASR transcript</div>
+            <div className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+              {transcription.rawTranscriptText}
+            </div>
+          </div>
+        )}
+
+        {corrections.length > 0 && (
+          <div className="rounded-md border bg-card p-3">
+            <div className="mb-2 text-sm font-medium">Структурные правки</div>
+            <div className="space-y-1 text-xs text-muted-foreground">
+              {corrections.slice(0, 24).map((correction, index) => (
+                <div key={`${formatTranscriptCorrection(correction, index)}-${index}`}>
+                  {formatTranscriptCorrection(correction, index)}
+                </div>
+              ))}
+              {corrections.length > 24 && (
+                <div>Еще {corrections.length - 24} правок скрыто в компактном просмотре.</div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {call.summary && (
+          <div className="rounded-md border bg-muted/40 p-3">
+            <div className="mb-2 text-sm font-medium">Summary обработки</div>
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
+              {call.summary}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="flex min-w-0 flex-col gap-5">
@@ -774,12 +1145,14 @@ export default function TelephonyPage() {
           tooltip="Технические или нецелевые звонки, которые убрали из активной очереди."
           value={stats?.ignored ?? '...'}
         />
-        <MetricCard
-          icon={<FileAudio className="h-3.5 w-3.5" />}
-          label="С записью"
-          tooltip="Звонки, для которых CRM уже нашла запись разговора в Билайне."
-          value={stats?.recordingsAvailable ?? '...'}
-        />
+        {canAccessCallRecordings && (
+          <MetricCard
+            icon={<FileAudio className="h-3.5 w-3.5" />}
+            label="С записью"
+            tooltip="Звонки, для которых CRM уже нашла запись разговора в Билайне."
+            value={stats?.recordingsAvailable ?? '...'}
+          />
+        )}
         <MetricCard
           icon={<Settings className="h-3.5 w-3.5" />}
           label="Без клиента"
@@ -1089,7 +1462,14 @@ export default function TelephonyPage() {
         </div>
       )}
 
-      <div className="grid gap-2 rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5 md:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_180px_170px_170px_170px]">
+      <div
+        className={cn(
+          'grid gap-2 rounded-2xl border bg-card/80 p-2 shadow-sm shadow-foreground/5 md:grid-cols-2',
+          canAccessCallRecordings
+            ? 'xl:grid-cols-[minmax(220px,1fr)_180px_170px_170px_170px]'
+            : 'xl:grid-cols-[minmax(220px,1fr)_180px_170px_170px]',
+        )}
+      >
         <div className="space-y-1">
           <Label htmlFor="telephony-search" className="text-xs text-muted-foreground">
             Поиск
@@ -1146,27 +1526,29 @@ export default function TelephonyPage() {
             </SelectContent>
           </Select>
         </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Запись</Label>
-          <Select
-            value={recordingStatus}
-            onValueChange={(value) => {
-              setPage(1);
-              setRecordingStatus(value);
-            }}
-          >
-            <SelectTrigger className="h-9">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">Все</SelectItem>
-              <SelectItem value="available">С записью</SelectItem>
-              <SelectItem value="unknown">Неизвестно</SelectItem>
-              <SelectItem value="missing">Без записи</SelectItem>
-              <SelectItem value="pending">Готовится</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
+        {canAccessCallRecordings && (
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">Запись</Label>
+            <Select
+              value={recordingStatus}
+              onValueChange={(value) => {
+                setPage(1);
+                setRecordingStatus(value);
+              }}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все</SelectItem>
+                <SelectItem value="available">С записью</SelectItem>
+                <SelectItem value="unknown">Неизвестно</SelectItem>
+                <SelectItem value="missing">Без записи</SelectItem>
+                <SelectItem value="pending">Готовится</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
         <div className="space-y-1">
           <Label className="text-xs text-muted-foreground">Направление</Label>
           <Select
@@ -1249,10 +1631,20 @@ export default function TelephonyPage() {
                 <div className="text-xs text-muted-foreground">Итог</div>
                 <div>{call.result ? RESULT_LABELS[call.result] : 'Не указан'}</div>
               </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Запись</div>
-                <div>{RECORDING_LABELS[call.recordingStatus]}</div>
-              </div>
+              {canAccessCallRecordings && (
+                <div>
+                  <div className="text-xs text-muted-foreground">Запись</div>
+                  <div>{RECORDING_LABELS[call.recordingStatus]}</div>
+                </div>
+              )}
+              {canWork && (
+                <div>
+                  <div className="text-xs text-muted-foreground">Транскрипт</div>
+                  <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(call))}>
+                    {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}
+                  </Badge>
+                </div>
+              )}
               <div>
                 <div className="text-xs text-muted-foreground">Ответственный</div>
                 <div className="truncate">{call.staff?.name || call.processedByAccount?.name || 'Не назначен'}</div>
@@ -1276,7 +1668,7 @@ export default function TelephonyPage() {
                   <UserPlus className="h-4 w-4" />
                   Клиент
                 </Button>
-                {call.recordingStatus === 'available' && (
+                {canAccessCallRecordings && call.recordingStatus === 'available' && (
                   <Button
                     variant="outline"
                     size="sm"
@@ -1287,6 +1679,7 @@ export default function TelephonyPage() {
                     Запись
                   </Button>
                 )}
+                {renderTranscriptOpenAction(call)}
                 <Button
                   variant="outline"
                   size="sm"
@@ -1307,7 +1700,12 @@ export default function TelephonyPage() {
       </div>
 
       <div className="hidden overflow-x-auto rounded-md border md:block">
-        <Table className="min-w-[1240px] table-fixed [&_td]:py-4 [&_th]:py-3">
+        <Table
+          className={cn(
+            'table-fixed [&_td]:py-4 [&_th]:py-3',
+            canAccessCallRecordings ? 'min-w-[1390px]' : 'min-w-[1010px]',
+          )}
+        >
           <TableHeader>
             <TableRow>
               <TableHead className="w-[125px]">
@@ -1319,7 +1717,8 @@ export default function TelephonyPage() {
               <TableHead className="w-[95px]">Тип</TableHead>
               <TableHead className="w-[95px]">Статус</TableHead>
               <TableHead className="w-[110px]">Итог</TableHead>
-              <TableHead className="w-[115px]">Запись</TableHead>
+              {canAccessCallRecordings && <TableHead className="w-[115px]">Запись</TableHead>}
+              {canWork && <TableHead className="w-[145px]">Транскрипт</TableHead>}
               <TableHead className="w-[145px]">Ответственный</TableHead>
               <TableHead className="w-[135px]">Следующий шаг</TableHead>
               {canWork && <TableHead className="w-[125px] text-right">Действия</TableHead>}
@@ -1329,7 +1728,7 @@ export default function TelephonyPage() {
             {callsQuery.isLoading &&
               Array.from({ length: 4 }).map((_, index) => (
                 <TableRow key={`loading-${index}`}>
-                  <TableCell colSpan={canWork ? 9 : 8}>
+                  <TableCell colSpan={callsTableColumnCount}>
                     <div className="h-8 animate-pulse rounded-md bg-muted" />
                   </TableCell>
                 </TableRow>
@@ -1385,16 +1784,32 @@ export default function TelephonyPage() {
                     </div>
                   )}
                 </TableCell>
-                <TableCell>
-                  <Badge variant={call.recordingStatus === 'available' ? 'outline' : 'secondary'}>
-                    {RECORDING_LABELS[call.recordingStatus]}
-                  </Badge>
-                  {call.recordingFileSize && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {formatFileSize(call.recordingFileSize)}
+                {canAccessCallRecordings && (
+                  <TableCell>
+                    <Badge variant={call.recordingStatus === 'available' ? 'outline' : 'secondary'}>
+                      {RECORDING_LABELS[call.recordingStatus]}
+                    </Badge>
+                    {call.recordingFileSize && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        {formatFileSize(call.recordingFileSize)}
+                      </div>
+                    )}
+                  </TableCell>
+                )}
+                {canWork && (
+                  <TableCell>
+                    <div className="space-y-1">
+                      <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(call))}>
+                        {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}
+                      </Badge>
+                      {call.transcription?.status === 'failed' && call.transcription.errorMessage && (
+                        <div className="line-clamp-2 text-xs text-destructive">
+                          {call.transcription.errorMessage}
+                        </div>
+                      )}
                     </div>
-                  )}
-                </TableCell>
+                  </TableCell>
+                )}
                 <TableCell className="min-w-0">
                   <div className="truncate">
                     {call.staff?.name || call.processedByAccount?.name || 'Не назначен'}
@@ -1435,7 +1850,7 @@ export default function TelephonyPage() {
                       >
                         <UserPlus className="h-4 w-4" />
                       </Button>
-                      {call.recordingStatus === 'available' && (
+                      {canAccessCallRecordings && call.recordingStatus === 'available' && (
                         <Button
                           variant="outline"
                           size="icon-sm"
@@ -1447,6 +1862,7 @@ export default function TelephonyPage() {
                           <LinkIcon className="h-4 w-4" />
                         </Button>
                       )}
+                      {renderTranscriptOpenAction(call, true)}
                       <Button
                         variant="outline"
                         size="icon-sm"
@@ -1463,7 +1879,7 @@ export default function TelephonyPage() {
             ))}
             {!callsQuery.isLoading && !callsQuery.isError && callsQuery.data?.items.length === 0 && (
               <TableRow>
-                <TableCell colSpan={canWork ? 9 : 8} className="h-28 text-center text-muted-foreground">
+                <TableCell colSpan={callsTableColumnCount} className="h-28 text-center text-muted-foreground">
                   Звонков по текущему фильтру нет.
                 </TableCell>
               </TableRow>
@@ -1797,6 +2213,66 @@ export default function TelephonyPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={Boolean(transcriptDialogCall)}
+        onOpenChange={(open) => !open && setTranscriptDialogCall(null)}
+      >
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {transcriptCallForView
+                ? `${formatDateTime(transcriptCallForView.startedAt)} · ${
+                    transcriptCallForView.client?.name ||
+                    transcriptCallForView.clientPhone ||
+                    'Неизвестный номер'
+                  }`
+                : 'Транскрипция звонка'}
+            </DialogTitle>
+            <DialogDescription>
+              {transcriptCallForView
+                ? `${
+                    transcriptCallForView.client?.phone ||
+                    transcriptCallForView.clientPhone ||
+                    'Телефон не распознан'
+                  } · ${formatDuration(transcriptCallForView.durationSeconds)}`
+                : 'Загружаем звонок'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {transcriptCallForView && (
+            <div className="space-y-4">
+              <div className="rounded-md border p-3 text-sm">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium">
+                      {transcriptCallForView.client?.name || 'Неизвестный номер'}
+                    </div>
+                    <div className="break-words text-muted-foreground">
+                      {transcriptCallForView.client?.phone ||
+                        transcriptCallForView.clientPhone ||
+                        'Телефон не распознан'}
+                      {' · '}
+                      {DIRECTION_LABELS[transcriptCallForView.direction]}
+                      {' · '}
+                      {formatDuration(transcriptCallForView.durationSeconds)}
+                    </div>
+                  </div>
+                  <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(transcriptCallForView))}>
+                    {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(transcriptCallForView)]}
+                  </Badge>
+                </div>
+              </div>
+
+              {transcriptDetailQuery.isLoading && !transcriptDetailQuery.data ? (
+                <div className="h-24 animate-pulse rounded-md bg-muted" />
+              ) : (
+                renderTranscriptContent(transcriptCallForView, transcriptDetailQuery.isFetching)
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={Boolean(selectedCall)} onOpenChange={(open) => !open && setSelectedCall(null)}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
@@ -1807,28 +2283,28 @@ export default function TelephonyPage() {
             </DialogDescription>
           </DialogHeader>
 
-          {selectedCall && (
+          {selectedCallForView && (
             <div className="space-y-4">
               <div className="rounded-md border p-3 text-sm">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <div className="font-medium">
-                      {selectedCall.client?.name || 'Неизвестный номер'}
+                      {selectedCallForView.client?.name || 'Неизвестный номер'}
                     </div>
                     <div className="text-muted-foreground">
-                      {selectedCall.client?.phone || selectedCall.clientPhone || 'Телефон не распознан'}
+                      {selectedCallForView.client?.phone || selectedCallForView.clientPhone || 'Телефон не распознан'}
                       {' · '}
-                      {formatDateTime(selectedCall.startedAt)}
+                      {formatDateTime(selectedCallForView.startedAt)}
                       {' · '}
-                      {DIRECTION_LABELS[selectedCall.direction]}
+                      {DIRECTION_LABELS[selectedCallForView.direction]}
                     </div>
                   </div>
-                  {selectedCall.recordingStatus === 'available' && (
+                  {selectedCallForView.recordingStatus === 'available' && (
                     <div className="flex flex-wrap justify-end gap-2">
-                      {selectedCall.recordingUrl && !shouldRefreshRecordingLink(selectedCall) ? (
+                      {selectedCallForView.recordingUrl && !shouldRefreshRecordingLink(selectedCallForView) ? (
                         <Button asChild variant="outline" size="sm">
                           <a
-                            href={selectedCall.recordingUrl}
+                            href={selectedCallForView.recordingUrl}
                             target="_blank"
                             rel="noreferrer"
                           >
@@ -1841,7 +2317,7 @@ export default function TelephonyPage() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          onClick={() => recordingReferenceMutation.mutate(selectedCall.id)}
+                          onClick={() => recordingReferenceMutation.mutate(selectedCallForView.id)}
                           disabled={recordingReferenceMutation.isPending}
                         >
                           <LinkIcon className="h-4 w-4" />
@@ -1850,6 +2326,22 @@ export default function TelephonyPage() {
                       )}
                     </div>
                   )}
+                </div>
+              </div>
+
+              <div className="rounded-md border p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-medium">
+                    <FileText className="h-4 w-4" />
+                    Транскрипт
+                    <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(selectedCallForView))}>
+                      {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(selectedCallForView)]}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="mt-3">
+                  {renderTranscriptContent(selectedCallForView, selectedCallDetailQuery.isFetching)}
                 </div>
               </div>
 
@@ -1966,7 +2458,7 @@ export default function TelephonyPage() {
                         return;
                       }
                       ignoreMutation.mutate({
-                        callId: selectedCall.id,
+                        callId: selectedCallForView.id,
                         summary: form.summary,
                       });
                     }}

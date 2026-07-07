@@ -22,14 +22,20 @@ const dateOnly = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата должна быть в формате YYYY-MM-DD');
 const optionalDateOnly = z.union([dateOnly, z.literal('')]).optional();
-const dateTime = z.union([
-  z.string().trim().datetime({ offset: true }),
-  z.string().trim().refine((value: string) => !Number.isNaN(new Date(value).getTime()), {
+const dateTimeString = z.string().trim().refine(
+  (value: string) => !Number.isNaN(new Date(value).getTime()),
+  {
     message: 'Дата и время указаны некорректно',
-  }),
+  },
+);
+const dateTime = z.union([
+  dateTimeString,
   z.date(),
 ]);
 const optionalDateTime = z.union([dateTime, z.literal(''), z.null()]).optional();
+const optionalHttpDateTime = z
+  .union([dateTimeString, z.literal(''), z.null()])
+  .optional();
 const numberValue = z.union([
   z.number().finite(),
   z
@@ -69,7 +75,12 @@ const nameString = z.string().trim().min(2, 'Минимум 2 символа').m
 const optionalString = z.union([z.string().trim(), z.literal(''), z.null()]).optional();
 const jsonObject = z.record(z.string(), z.unknown());
 const optionalJsonObject = z.union([jsonObject, z.null()]).optional();
+const optionalJsonArray = z.union([z.array(jsonObject), z.null()]).optional();
 const accountRoleValue = z.enum(ACCOUNT_ROLE_VALUES);
+const timeOfDay = z
+  .string()
+  .trim()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Время должно быть в формате HH:mm');
 const saleIntentValue = z.enum(['normal', 'subscription', 'certificate']);
 const pendingSaleStatusValue = z.enum([
   'pending',
@@ -752,6 +763,72 @@ const bookingBody = z
   .object(bookingShape)
   .passthrough();
 
+const shiftReportScheduleType = z.enum([
+  'once_daily',
+  'daily_times',
+  'interval_hours',
+  'shift_start',
+  'shift_end',
+]);
+const shiftReportItemType = z.enum([
+  'checkbox',
+  'text',
+  'number',
+]);
+const shiftReportTemplateStatus = z.enum(['active', 'archived']);
+const shiftReportScheduleConfig = z
+  .object({
+    endTime: timeOfDay.optional(),
+    everyHours: z.union([id, z.literal(''), z.null()]).optional(),
+    startTime: timeOfDay.optional(),
+    time: timeOfDay.optional(),
+    times: z.array(timeOfDay).max(12).optional(),
+  })
+  .passthrough();
+const shiftReportTemplateBody = z
+  .object({
+    appliesToRole: z.union([accountRoleValue, z.literal(''), z.null()]).optional(),
+    appliesToShiftType: optionalString,
+    description: optionalString,
+    gracePeriodMinutes: optionalNonNegativeNumberValue,
+    name: nameString,
+    scheduleConfig: shiftReportScheduleConfig.optional(),
+    scheduleType: shiftReportScheduleType,
+    sortOrder: optionalNumberValue,
+    status: shiftReportTemplateStatus.optional(),
+  })
+  .passthrough();
+const shiftReportTemplateItemBody = z
+  .object({
+    itemType: shiftReportItemType,
+    label: nameString,
+    photoRequired: optionalBoolValue,
+    sortOrder: optionalNumberValue,
+    status: shiftReportTemplateStatus.optional(),
+  })
+  .passthrough();
+const shiftReportAnswerBody = z
+  .object({
+    booleanValue: z.union([boolValue, z.null()]).optional(),
+    id,
+    numberValue: optionalNumberValue,
+    textValue: optionalString,
+  })
+  .passthrough();
+const shiftReportSaveBody = z
+  .object({
+    answers: z.array(shiftReportAnswerBody).max(80).optional(),
+    comment: optionalString,
+  })
+  .passthrough();
+const shiftReportAttachmentBody = z
+  .object({
+    data: z.string().min(16, 'Фото не передано').max(8_000_000, 'Фото слишком большое'),
+    fileName: optionalString,
+    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+  })
+  .passthrough();
+
 const bookingUpdateBody = z
   .object(bookingShape)
   .partial()
@@ -766,7 +843,8 @@ const callTaskBody = z
   .object({
     assignedToAccountId: nullableId,
     description: optionalString,
-    dueAt: optionalDateTime,
+    dueAt: optionalHttpDateTime,
+    scriptText: optionalString,
     scopeType: z.enum(['snapshot', 'dynamic']).optional(),
     title: optionalString,
   })
@@ -1148,6 +1226,14 @@ const apiSchemas = {
           .optional(),
       })
       .passthrough(),
+    transcriptionJobsQuery: paginationQuery
+      .extend({
+        callId: z.union([id, z.literal('')]).optional(),
+        status: z
+          .enum(['all', 'queued', 'processing', 'completed', 'failed'])
+          .optional(),
+      })
+      .passthrough(),
     recordsSyncBody: z
       .object({
         dateFrom: optionalDateTime,
@@ -1164,6 +1250,61 @@ const apiSchemas = {
         url: optionalString,
       })
       .passthrough(),
+    transcriptionClaimBody: z
+      .object({
+        workerId: optionalString,
+      })
+      .passthrough(),
+    transcriptionFail: {
+      body: z
+        .object({
+          error: optionalString,
+          errorMessage: optionalString,
+        })
+        .passthrough(),
+      params: idParams,
+    },
+    transcriptionResult: {
+      body: z
+        .object({
+          language: optionalString,
+          corrections: optionalJsonArray,
+          metadata: optionalJsonObject,
+          raw: optionalJsonObject,
+          rawAsrJson: optionalJsonObject,
+          rawAsrResult: optionalJsonObject,
+          rawText: optionalString,
+          rawTranscript: optionalString,
+          rawTranscriptText: optionalString,
+          segments: z
+            .array(
+              z
+                .object({
+                  confidence: optionalNonNegativeNumberValue,
+                  channel: optionalString,
+                  end: optionalNonNegativeNumberValue,
+                  endMs: optionalNonNegativeNumberValue,
+                  endSeconds: optionalNonNegativeNumberValue,
+                  phrase: optionalString,
+                  role: optionalString,
+                  sortOrder: optionalNonNegativeNumberValue,
+                  speaker: optionalString,
+                  start: optionalNonNegativeNumberValue,
+                  startMs: optionalNonNegativeNumberValue,
+                  startSeconds: optionalNonNegativeNumberValue,
+                  text: optionalString,
+                  transcript: optionalString,
+                })
+                .passthrough(),
+            )
+            .optional(),
+          text: optionalString,
+          transcript: optionalString,
+          transcriptText: optionalString,
+        })
+        .passthrough(),
+      params: idParams,
+    },
     syncBody: z
       .object({
         dateFrom: optionalDateTime,
@@ -1434,6 +1575,40 @@ const apiSchemas = {
         status: archiveStatus.optional(),
       })
       .passthrough(),
+  },
+  shiftReports: {
+    attachmentBody: shiftReportAttachmentBody,
+    attachmentDeleteParams: z.object({
+      answerId: id,
+      attachmentId: z.string().trim().min(8).max(80),
+      reportId: id,
+    }),
+    attachmentParams: z.object({
+      answerId: id,
+      reportId: id,
+    }),
+    reportListQuery: z
+      .object({
+        date: optionalDateOnly,
+        from: optionalDateOnly,
+        shiftId: nullableId,
+        status: z.enum(['all', 'pending', 'draft', 'submitted', 'overdue']).optional(),
+        templateId: nullableId,
+        to: optionalDateOnly,
+      })
+      .passthrough(),
+    reportSaveBody: shiftReportSaveBody,
+    templateBody: shiftReportTemplateBody,
+    templateItemBody: shiftReportTemplateItemBody,
+    templateItemCreateParams: z.object({ templateId: id }),
+    templateItemUpdateBody: shiftReportTemplateItemBody.partial().passthrough(),
+    templateListQuery: z
+      .object({
+        status: z.enum(['active', 'archived', 'all']).optional(),
+      })
+      .passthrough(),
+    templateUpdateBody: shiftReportTemplateBody.partial().passthrough(),
+    withId: { params: idParams },
   },
   shifts: {
     body: z

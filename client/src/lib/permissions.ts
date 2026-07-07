@@ -21,6 +21,7 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/staff': ['owner', 'manager', 'accountant'],
   '/admin/users': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
+  '/admin/shift-reports': ['owner', 'manager'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
   '/admin/references': ['owner', 'manager', 'admin', 'accountant', 'viewer'],
@@ -174,6 +175,10 @@ export function canManageSystemUsers(role: AccountRole | null | undefined) {
 }
 
 export function canManageShifts(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canManageShiftReportTemplates(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
 }
 

@@ -12,6 +12,7 @@ import {
   LineChart,
   ListChecks,
   ClipboardCheck,
+  ClipboardList,
   LogOut,
   ListTree,
   PhoneCall,
@@ -149,6 +150,11 @@ const navigationSections: NavSection[] = [
         title: 'Контроль менеджера',
         url: '/admin/manager-control',
         icon: ClipboardCheck,
+      },
+      {
+        title: 'Отчеты смены',
+        url: '/admin/shift-reports',
+        icon: ClipboardList,
       },
       {
         title: 'Аналитика входов',

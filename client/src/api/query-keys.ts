@@ -60,8 +60,17 @@ export const queryKeys = {
     list: (type: ReferenceType, status: ReferenceStatus | 'all') =>
       [...queryKeys.references.all, 'list', type, status] as const,
   },
+  shiftReports: {
+    all: ['shiftReports'] as const,
+    active: () => [...queryKeys.shiftReports.all, 'active'] as const,
+    list: (params: Record<string, unknown>) =>
+      [...queryKeys.shiftReports.all, 'list', params] as const,
+    templates: (status: string) =>
+      [...queryKeys.shiftReports.all, 'templates', status] as const,
+  },
   telephony: {
     all: ['telephony'] as const,
+    call: (id: number | null) => [...queryKeys.telephony.all, 'call', id] as const,
     calls: (params: Record<string, unknown>) =>
       [...queryKeys.telephony.all, 'calls', params] as const,
     config: () => [...queryKeys.telephony.all, 'config'] as const,
@@ -70,6 +79,11 @@ export const queryKeys = {
     report: (params: Record<string, unknown>) =>
       [...queryKeys.telephony.all, 'report', params] as const,
     stats: () => [...queryKeys.telephony.all, 'stats'] as const,
+    transcriptionJob: (id: number | null) =>
+      [...queryKeys.telephony.all, 'transcription-job', id] as const,
+    transcriptionJobs: (params: Record<string, unknown>) =>
+      [...queryKeys.telephony.all, 'transcription-jobs', params] as const,
+    transcriptionStats: () => [...queryKeys.telephony.all, 'transcription-stats'] as const,
   },
   trainingPlans: {
     all: ['training-plans'] as const,

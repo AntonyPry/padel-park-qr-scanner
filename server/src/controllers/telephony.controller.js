@@ -137,6 +137,120 @@ class TelephonyController {
     }
   }
 
+  async createTranscriptionJob(req, res) {
+    try {
+      res.status(201).json(
+        await telephonyService.createTranscriptionJob(req.account, req.params.id),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка создания задачи транскрибации');
+    }
+  }
+
+  async listTranscriptionJobs(req, res) {
+    try {
+      res.json(await telephonyService.listTranscriptionJobs(req.account, req.query));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения задач транскрибации');
+    }
+  }
+
+  async listCallTranscriptionJobs(req, res) {
+    try {
+      res.json(
+        await telephonyService.listCallTranscriptionJobs(
+          req.account,
+          req.params.id,
+          req.query,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения задач транскрибации звонка');
+    }
+  }
+
+  async getTranscriptionStats(req, res) {
+    try {
+      res.json(await telephonyService.getTranscriptionStats(req.account));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения статистики транскрибации');
+    }
+  }
+
+  async getWorkerTranscriptionQueue(req, res) {
+    try {
+      res.json(await telephonyService.getWorkerTranscriptionQueue(req.query || {}));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения очереди транскрибации для worker');
+    }
+  }
+
+  async getTranscriptionJob(req, res) {
+    try {
+      res.json(await telephonyService.getTranscriptionJob(req.account, req.params.id));
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения задачи транскрибации');
+    }
+  }
+
+  async retryTranscriptionJob(req, res) {
+    try {
+      res.json(
+        await telephonyService.retryTranscriptionJob(req.account, req.params.id),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка повторной постановки транскрибации');
+    }
+  }
+
+  async claimTranscriptionJob(req, res) {
+    try {
+      res.json(await telephonyService.claimTranscriptionJob(req.body || {}));
+    } catch (error) {
+      handleError(res, error, 'Ошибка выдачи задачи транскрибации');
+    }
+  }
+
+  async getTranscriptionJobAudioReference(req, res) {
+    try {
+      res.json(
+        await telephonyService.getTranscriptionJobAudioReference(req.params.id),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка получения аудио для транскрибации');
+    }
+  }
+
+  async completeTranscriptionJob(req, res) {
+    try {
+      res.json(
+        await telephonyService.completeTranscriptionJob(req.params.id, req.body || {}),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка сохранения транскрибации');
+    }
+  }
+
+  async failTranscriptionJob(req, res) {
+    try {
+      res.json(
+        await telephonyService.failTranscriptionJob(req.params.id, req.body || {}),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка сохранения ошибки транскрибации');
+    }
+  }
+
+  async retryTranscriptionJobForWorker(req, res) {
+    try {
+      res.json(
+        await telephonyService.retryTranscriptionJobForWorker(req.params.id, req.body || {}),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка повторной постановки транскрибации worker');
+    }
+  }
+
   async subscribe(req, res) {
     try {
       res.json(await telephonyService.subscribeToEvents(req.body || {}));

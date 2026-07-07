@@ -1,11 +1,27 @@
 const assert = require('node:assert/strict');
-const test = require('node:test');
+const { afterEach, test } = require('node:test');
+const db = require('../../models');
 const {
+  getWorkerTranscriptionQueue,
+  listTranscriptionJobs,
+  mapCall,
+  mapTranscriptionJob,
   normalizePayload,
   normalizeRecordingPayload,
   normalizeSubscriptionResponse,
+  normalizeTranscriptSegments,
   parseIncomingBeelinePayload,
 } = require('../../src/services/telephony.service');
+
+const originalTranscriptionJobCount = db.TelephonyTranscriptionJob.count;
+const originalTranscriptionJobFindAndCountAll = db.TelephonyTranscriptionJob.findAndCountAll;
+const originalTranscriptionJobFindAll = db.TelephonyTranscriptionJob.findAll;
+
+afterEach(() => {
+  db.TelephonyTranscriptionJob.count = originalTranscriptionJobCount;
+  db.TelephonyTranscriptionJob.findAndCountAll = originalTranscriptionJobFindAndCountAll;
+  db.TelephonyTranscriptionJob.findAll = originalTranscriptionJobFindAll;
+});
 
 test('normalizes Beeline statistics payload into an inbound call', () => {
   const normalized = normalizePayload({
@@ -124,6 +140,402 @@ test('normalizes Beeline recording payload', () => {
   assert.equal(normalized.durationSeconds, 6);
   assert.equal(normalized.recordingFileSize, 11808);
   assert.equal(normalized.startedAt.toISOString(), '2026-05-28T05:37:31.443Z');
+});
+
+test('normalizes transcription result segments for CRM transcript view', () => {
+  const normalized = normalizeTranscriptSegments({
+    corrections: [
+      {
+        original: 'подал теннис',
+        normalized: 'падел-теннис',
+        rule: 'padel_tennis_alias',
+      },
+    ],
+    language: 'ru',
+    rawAsrJson: {
+      channels: [{ channel: 'left', rawResponses: [{ text: 'Добрый день, Падел Парк.' }] }],
+    },
+    rawTranscriptText: 'Администратор: Добрый день, Падел Парк.',
+    transcriptText: [
+      'Поздняя реплика клиента.',
+      'Реплика без времени идет после реплик с startMs.',
+      'Добрый день, Падел Парк.',
+    ].join('\n'),
+    segments: [
+      {
+        channel: 'right',
+        endMs: 8700,
+        role: 'customer',
+        startMs: 4300,
+        text: 'Здравствуйте, хочу записаться.',
+      },
+      {
+        channel: 'left',
+        confidence: 0.91,
+        end: 4.2,
+        speaker: 'operator',
+        start: 1.25,
+        text: 'Добрый день, Падел Парк.',
+      },
+      {
+        speaker: 'noise',
+        text: '   ',
+      },
+      {
+        sortOrder: 99,
+        speaker: 'unknown',
+        text: 'Реплика без времени идет после реплик с startMs.',
+      },
+    ],
+  });
+
+  assert.equal(normalized.language, 'ru');
+  assert.equal(normalized.rawTranscriptText, 'Администратор: Добрый день, Падел Парк.');
+  assert.equal(normalized.rawAsrJson.channels[0].channel, 'left');
+  assert.deepEqual(normalized.corrections, [
+    {
+      original: 'подал теннис',
+      normalized: 'падел-теннис',
+      rule: 'padel_tennis_alias',
+    },
+  ]);
+  assert.equal(normalized.segments.length, 3);
+  assert.equal(normalized.segments[0].speaker, 'administrator');
+  assert.equal(normalized.segments[0].channel, 'left');
+  assert.equal(normalized.segments[0].startMs, 1250);
+  assert.equal(normalized.segments[0].endMs, 4200);
+  assert.equal(normalized.segments[0].sortOrder, 0);
+  assert.equal(normalized.segments[1].speaker, 'client');
+  assert.equal(normalized.segments[1].channel, 'right');
+  assert.equal(normalized.segments[1].startMs, 4300);
+  assert.equal(normalized.segments[1].sortOrder, 1);
+  assert.equal(normalized.segments[2].speaker, 'unknown');
+  assert.equal(normalized.segments[2].startMs, null);
+  assert.equal(normalized.segments[2].sortOrder, 2);
+  assert.equal(normalized.transcriptText, [
+    'Добрый день, Падел Парк.',
+    'Здравствуйте, хочу записаться.',
+    'Реплика без времени идет после реплик с startMs.',
+  ].join('\n'));
+});
+
+test('serializes chronological transcript text from sorted segments', () => {
+  const mapped = mapTranscriptionJob(
+    {
+      attemptCount: 1,
+      id: 77,
+      corrections: [
+        {
+          original: 'код',
+          normalized: 'корт',
+          rule: 'court_size_context',
+        },
+      ],
+      rawTranscriptText: '[00:00] Администратор: маленький код',
+      status: 'completed',
+      telephonyCallId: 12,
+      transcriptText: [
+        'Поздняя реплика клиента.',
+        'Средняя реплика.',
+        'Первая реплика администратора.',
+      ].join('\n'),
+      segments: [
+        {
+          endMs: 96000,
+          id: 3,
+          sortOrder: 0,
+          speaker: 'client',
+          startMs: 90000,
+          text: 'Поздняя реплика клиента.',
+        },
+        {
+          endMs: 12000,
+          id: 1,
+          sortOrder: 1,
+          speaker: 'administrator',
+          startMs: 0,
+          text: 'Первая реплика администратора.',
+        },
+        {
+          endMs: 42000,
+          id: 2,
+          sortOrder: 2,
+          speaker: 'unknown',
+          startMs: 30000,
+          text: 'Средняя реплика.',
+        },
+      ],
+    },
+    { includeSegments: true },
+  );
+
+  assert.deepEqual(
+    mapped.segments.map((segment) => segment.text),
+    [
+      'Первая реплика администратора.',
+      'Средняя реплика.',
+      'Поздняя реплика клиента.',
+    ],
+  );
+  assert.equal(mapped.rawTranscriptText, '[00:00] Администратор: маленький код');
+  assert.deepEqual(mapped.corrections, [
+    {
+      original: 'код',
+      normalized: 'корт',
+      rule: 'court_size_context',
+    },
+  ]);
+  assert.equal(
+    mapped.transcriptText,
+    [
+      'Первая реплика администратора.',
+      'Средняя реплика.',
+      'Поздняя реплика клиента.',
+    ].join('\n'),
+  );
+});
+
+test('hides recording and transcription details from viewer call payloads', () => {
+  const mapped = mapCall(
+    {
+      toJSON() {
+        return {
+          id: 105,
+          callStatus: 'completed',
+          clientPhone: '+7 (999) 111-22-33',
+          direction: 'inbound',
+          durationSeconds: 126,
+          processingStatus: 'processed',
+          recordExternalId: 'external-record-105',
+          recordId: 'record-105',
+          recordingExpiresAt: '2026-07-07T12:30:00.000Z',
+          recordingFileSize: 204800,
+          recordingFileType: 'audio/mpeg',
+          recordingStatus: 'available',
+          recordingSyncedAt: '2026-07-07T12:00:00.000Z',
+          recordingUrl: 'https://recording.example/105.mp3',
+          transcriptionJobs: [
+            {
+              attemptCount: 1,
+              corrections: [
+                {
+                  original: 'подал теннис',
+                  normalized: 'падел-теннис',
+                  rule: 'padel_tennis_alias',
+                },
+              ],
+              id: 501,
+              rawTranscriptText: 'Администратор: подал теннис',
+              status: 'completed',
+              telephonyCallId: 105,
+              transcriptText: 'Администратор: падел-теннис',
+            },
+          ],
+        };
+      },
+    },
+    { role: 'viewer' },
+  );
+
+  assert.equal(mapped.recordingStatus, undefined);
+  assert.equal(mapped.recordingUrl, undefined);
+  assert.equal(mapped.recordingFileSize, undefined);
+  assert.equal(mapped.recordingFileType, undefined);
+  assert.equal(mapped.recordingExpiresAt, undefined);
+  assert.equal(mapped.recordingSyncedAt, undefined);
+  assert.equal(mapped.recordId, undefined);
+  assert.equal(mapped.recordExternalId, undefined);
+  assert.equal(mapped.transcription, undefined);
+});
+
+test('lists transcription jobs with chronological transcript text from included segments', async () => {
+  let capturedOptions = null;
+  db.TelephonyTranscriptionJob.findAndCountAll = async (options) => {
+    capturedOptions = options;
+    return {
+      count: 1,
+      rows: [
+        {
+          toJSON() {
+            return {
+              attemptCount: 1,
+              call: {
+                callStatus: 'completed',
+                client: {
+                  id: 34,
+                  name: 'Анна Клиент',
+                  phone: '+7 (999) 111-22-33',
+                  status: 'active',
+                },
+                clientPhone: '+7 (999) 111-22-33',
+                direction: 'inbound',
+                durationSeconds: 96,
+                id: 12,
+                recordingStatus: 'available',
+                staff: {
+                  id: 7,
+                  name: 'Мария Администратор',
+                  role: 'admin',
+                },
+                startedAt: '2026-06-30T09:00:00.000Z',
+              },
+              completedAt: '2026-06-30T09:05:00.000Z',
+              createdAt: '2026-06-30T09:01:00.000Z',
+              id: 77,
+              language: 'ru',
+              segments: [
+                {
+                  endMs: 96000,
+                  id: 3,
+                  sortOrder: 0,
+                  speaker: 'client',
+                  startMs: 90000,
+                  text: 'Поздняя реплика клиента.',
+                },
+                {
+                  endMs: 12000,
+                  id: 1,
+                  sortOrder: 1,
+                  speaker: 'administrator',
+                  startMs: 0,
+                  text: 'Первая реплика администратора.',
+                },
+                {
+                  endMs: 42000,
+                  id: 2,
+                  sortOrder: 2,
+                  speaker: 'unknown',
+                  startMs: 30000,
+                  text: 'Средняя реплика.',
+                },
+              ],
+              status: 'completed',
+              telephonyCallId: 12,
+              transcriptText: [
+                'Поздняя реплика клиента.',
+                'Средняя реплика.',
+                'Первая реплика администратора.',
+              ].join('\n'),
+              updatedAt: '2026-06-30T09:05:00.000Z',
+            };
+          },
+        },
+      ],
+    };
+  };
+
+  const result = await listTranscriptionJobs({ role: 'owner' }, { status: 'all' });
+
+  assert.ok(capturedOptions);
+  assert.ok(capturedOptions.include.some((include) => include.as === 'segments'));
+  assert.deepEqual(
+    result.items[0].segments.map((segment) => segment.text),
+    [
+      'Первая реплика администратора.',
+      'Средняя реплика.',
+      'Поздняя реплика клиента.',
+    ],
+  );
+  assert.equal(
+    result.items[0].transcriptText,
+    [
+      'Первая реплика администратора.',
+      'Средняя реплика.',
+      'Поздняя реплика клиента.',
+    ].join('\n'),
+  );
+});
+
+test('serializes worker queue transcript text from included segments', async () => {
+  const findAllCalls = [];
+  db.TelephonyTranscriptionJob.count = async () => 1;
+  db.TelephonyTranscriptionJob.findAll = async (options) => {
+    findAllCalls.push(options);
+    if (options.raw) {
+      return [{ count: '1', status: 'completed' }];
+    }
+
+    return [
+      {
+        id: 88,
+        status: 'completed',
+        toJSON() {
+          return {
+            attemptCount: 1,
+            call: {
+              callStatus: 'completed',
+              client: {
+                id: 44,
+                name: 'Анна Клиент',
+                phone: '+7 (999) 111-22-33',
+                status: 'active',
+              },
+              clientPhone: '+7 (999) 111-22-33',
+              direction: 'inbound',
+              durationSeconds: 96,
+              id: 13,
+              recordingStatus: 'available',
+              startedAt: '2026-06-30T09:00:00.000Z',
+            },
+            completedAt: '2026-06-30T09:05:00.000Z',
+            createdAt: '2026-06-30T09:01:00.000Z',
+            id: 88,
+            language: 'ru',
+            segments: [
+              {
+                endMs: 96000,
+                id: 3,
+                sortOrder: 0,
+                speaker: 'client',
+                startMs: 90000,
+                text: 'Поздняя реплика клиента.',
+              },
+              {
+                endMs: 12000,
+                id: 1,
+                sortOrder: 1,
+                speaker: 'administrator',
+                startMs: 0,
+                text: 'Первая реплика администратора.',
+              },
+            ],
+            status: 'completed',
+            telephonyCallId: 13,
+            transcriptText: [
+              'Поздняя реплика клиента.',
+              'Первая реплика администратора.',
+            ].join('\n'),
+            updatedAt: '2026-06-30T09:05:00.000Z',
+            workerId: 'mac-worker',
+          };
+        },
+      },
+    ];
+  };
+
+  const result = await getWorkerTranscriptionQueue({ pageSize: 10 });
+  const jobsQuery = findAllCalls.find((options) => Array.isArray(options.include));
+
+  assert.ok(jobsQuery);
+  assert.ok(jobsQuery.include.some((include) => include.as === 'segments'));
+  assert.deepEqual(
+    result.items[0].segments.map((segment) => segment.text),
+    ['Первая реплика администратора.', 'Поздняя реплика клиента.'],
+  );
+  assert.equal(
+    result.items[0].transcriptText,
+    ['Первая реплика администратора.', 'Поздняя реплика клиента.'].join('\n'),
+  );
+});
+
+test('keeps transcript text when worker sends no diarized segments', () => {
+  const normalized = normalizeTranscriptSegments({
+    text: 'Администратор: добрый день.\nКлиент: хочу забронировать корт.',
+  });
+
+  assert.equal(normalized.segments.length, 1);
+  assert.equal(normalized.segments[0].speaker, 'unknown');
+  assert.equal(normalized.transcriptText.includes('Клиент'), true);
 });
 
 test('normalizes missed call events and keeps client phone lookup digits', () => {

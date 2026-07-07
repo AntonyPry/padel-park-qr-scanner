@@ -12,6 +12,10 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true,
     },
+    scriptText: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
     scopeType: {
       type: DataTypes.ENUM('snapshot', 'dynamic'),
       allowNull: false,

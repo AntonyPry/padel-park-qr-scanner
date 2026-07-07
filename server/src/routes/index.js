@@ -22,6 +22,7 @@ const clientBasesRoutes = require('./client-bases');
 const clientsRoutes = require('./clients');
 const staffRoutes = require('./staff');
 const shiftsRoutes = require('./shifts');
+const shiftReportsRoutes = require('./shift-reports');
 const utilizationRoutes = require('./utilization');
 const visitsAnalyticsRoutes = require('./visits-analytics');
 const motivationRoutes = require('./motivation');
@@ -34,6 +35,7 @@ const trainingNotesRoutes = require('./training-notes');
 const trainingPlansRoutes = require('./training-plans');
 const trainingMethodologyRoutes = require('./training-methodology');
 const telephonyRoutes = require('./telephony');
+const telephonyTranscriptionWorkerRoutes = require('./telephony-transcription-worker');
 const onboardingRoutes = require('./onboarding');
 
 router.get('/health', async (_req, res) => {
@@ -72,6 +74,7 @@ router.get('/openapi.json', (_req, res) => {
 router.use('/auth', authRoutes);
 router.use(realtimeMutations());
 router.use('/webhooks', webhookRoutes);
+router.use(telephonyTranscriptionWorkerRoutes);
 
 router.use(requireAuth);
 router.use(captureTrainingMode());
@@ -91,6 +94,7 @@ router.use(managerControlDashboardRoutes);
 router.use(prepaymentsDashboardRoutes);
 router.use(clientsRoutes);
 router.use(staffRoutes);
+router.use(shiftReportsRoutes);
 router.use(shiftsRoutes);
 router.use(utilizationRoutes);
 router.use(visitsAnalyticsRoutes);

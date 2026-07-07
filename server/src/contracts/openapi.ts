@@ -12,7 +12,7 @@ interface EndpointContract {
   path: string;
   public?: boolean;
   query?: unknown;
-  responseType?: 'json' | 'xlsx';
+  responseType?: 'binary' | 'json' | 'xlsx';
   successStatus?: number;
   summary: string;
   tags: string[];
@@ -196,6 +196,18 @@ const endpointContracts: EndpointContract[] = [
   { id: 'telephony.completeCall', method: 'post', path: '/telephony/calls/{id}/complete', body: apiSchemas.telephony.complete.body, params: apiSchemas.telephony.complete.params, summary: 'Complete call processing', tags: ['Telephony'] },
   { id: 'telephony.ignoreCall', method: 'post', path: '/telephony/calls/{id}/ignore', body: apiSchemas.telephony.ignore.body, params: apiSchemas.telephony.ignore.params, summary: 'Ignore telephony call', tags: ['Telephony'] },
   { id: 'telephony.recordingReference', method: 'post', path: '/telephony/calls/{id}/recording-reference', params: apiSchemas.telephony.withId.params, summary: 'Refresh call recording reference', tags: ['Telephony'] },
+  { id: 'telephony.createTranscriptionJob', method: 'post', path: '/telephony/calls/{id}/transcription-jobs', params: apiSchemas.telephony.withId.params, successStatus: 201, summary: 'Create call transcription job', tags: ['Telephony'] },
+  { id: 'telephony.callTranscriptionJobs', method: 'get', path: '/telephony/calls/{id}/transcription-jobs', params: apiSchemas.telephony.withId.params, query: apiSchemas.telephony.transcriptionJobsQuery, summary: 'List call transcription jobs', tags: ['Telephony'] },
+  { id: 'telephony.transcriptionJobs', method: 'get', path: '/telephony/transcription-jobs', query: apiSchemas.telephony.transcriptionJobsQuery, summary: 'List transcription jobs', tags: ['Telephony'] },
+  { id: 'telephony.transcriptionJobStats', method: 'get', path: '/telephony/transcription-jobs/stats', summary: 'Get transcription job stats', tags: ['Telephony'] },
+  { id: 'telephony.getTranscriptionJob', method: 'get', path: '/telephony/transcription-jobs/{id}', params: apiSchemas.telephony.withId.params, summary: 'Get transcription job', tags: ['Telephony'] },
+  { id: 'telephony.workerTranscriptionQueue', method: 'get', path: '/telephony/transcription-jobs/worker-queue', query: apiSchemas.telephony.transcriptionJobsQuery, public: true, summary: 'Get worker transcription queue snapshot', tags: ['Telephony'] },
+  { id: 'telephony.claimTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/claim', body: apiSchemas.telephony.transcriptionClaimBody, public: true, summary: 'Claim queued transcription job', tags: ['Telephony'] },
+  { id: 'telephony.transcriptionAudioReference', method: 'post', path: '/telephony/transcription-jobs/{id}/audio-reference', params: apiSchemas.telephony.withId.params, public: true, summary: 'Get transcription audio reference', tags: ['Telephony'] },
+  { id: 'telephony.completeTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/result', body: apiSchemas.telephony.transcriptionResult.body, params: apiSchemas.telephony.transcriptionResult.params, public: true, summary: 'Submit transcription result', tags: ['Telephony'] },
+  { id: 'telephony.failTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/fail', body: apiSchemas.telephony.transcriptionFail.body, params: apiSchemas.telephony.transcriptionFail.params, public: true, summary: 'Fail transcription job', tags: ['Telephony'] },
+  { id: 'telephony.workerRetryTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/worker-retry', params: apiSchemas.telephony.withId.params, public: true, summary: 'Retry failed transcription job from worker dashboard', tags: ['Telephony'] },
+  { id: 'telephony.retryTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/retry', params: apiSchemas.telephony.withId.params, summary: 'Retry failed transcription job', tags: ['Telephony'] },
   { id: 'telephony.syncStatistics', method: 'post', path: '/telephony/beeline/sync', body: apiSchemas.telephony.syncBody, summary: 'Sync Beeline statistics', tags: ['Telephony'] },
   { id: 'telephony.syncRecordings', method: 'post', path: '/telephony/beeline/records/sync', body: apiSchemas.telephony.recordsSyncBody, summary: 'Sync Beeline recordings', tags: ['Telephony'] },
   { id: 'telephony.subscribe', method: 'post', path: '/telephony/beeline/subscribe', body: apiSchemas.telephony.subscribeBody, summary: 'Create Beeline XSI subscription', tags: ['Telephony'] },
@@ -262,6 +274,24 @@ const endpointContracts: EndpointContract[] = [
   { id: 'shifts.create', method: 'post', path: '/shifts', body: apiSchemas.shifts.body, summary: 'Create manual shift', tags: ['Shifts'] },
   { id: 'shifts.update', method: 'put', path: '/shifts', body: apiSchemas.shifts.updateBody, summary: 'Update manual shift', tags: ['Shifts'] },
   { id: 'shifts.archive', method: 'delete', path: '/shifts', body: apiSchemas.shifts.deleteBody, summary: 'Archive shift', tags: ['Shifts'] },
+
+  { id: 'shiftReportTemplates.list', method: 'get', path: '/shift-report-templates', query: apiSchemas.shiftReports.templateListQuery, summary: 'List shift report templates', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.create', method: 'post', path: '/shift-report-templates', body: apiSchemas.shiftReports.templateBody, successStatus: 201, summary: 'Create shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.update', method: 'put', path: '/shift-report-templates/{id}', body: apiSchemas.shiftReports.templateUpdateBody, params: apiSchemas.shiftReports.withId.params, summary: 'Update shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.archive', method: 'post', path: '/shift-report-templates/{id}/archive', params: apiSchemas.shiftReports.withId.params, summary: 'Archive shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplates.restore', method: 'post', path: '/shift-report-templates/{id}/restore', params: apiSchemas.shiftReports.withId.params, summary: 'Restore shift report template', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.create', method: 'post', path: '/shift-report-templates/{templateId}/items', body: apiSchemas.shiftReports.templateItemBody, params: apiSchemas.shiftReports.templateItemCreateParams, successStatus: 201, summary: 'Create shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.update', method: 'put', path: '/shift-report-template-items/{id}', body: apiSchemas.shiftReports.templateItemUpdateBody, params: apiSchemas.shiftReports.withId.params, summary: 'Update shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.archive', method: 'post', path: '/shift-report-template-items/{id}/archive', params: apiSchemas.shiftReports.withId.params, summary: 'Archive shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReportTemplateItems.restore', method: 'post', path: '/shift-report-template-items/{id}/restore', params: apiSchemas.shiftReports.withId.params, summary: 'Restore shift report template item', tags: ['Shift Reports'] },
+  { id: 'shiftReports.activeShift', method: 'get', path: '/shifts/active/reports', summary: 'List reports for active shift', tags: ['Shift Reports'] },
+  { id: 'shiftReports.list', method: 'get', path: '/shift-reports', query: apiSchemas.shiftReports.reportListQuery, summary: 'List shift reports', tags: ['Shift Reports'] },
+  { id: 'shiftReports.get', method: 'get', path: '/shift-reports/{id}', params: apiSchemas.shiftReports.withId.params, summary: 'Get shift report', tags: ['Shift Reports'] },
+  { id: 'shiftReports.saveDraft', method: 'put', path: '/shift-reports/{id}/draft', body: apiSchemas.shiftReports.reportSaveBody, params: apiSchemas.shiftReports.withId.params, summary: 'Save shift report draft', tags: ['Shift Reports'] },
+  { id: 'shiftReports.submit', method: 'post', path: '/shift-reports/{id}/submit', body: apiSchemas.shiftReports.reportSaveBody, params: apiSchemas.shiftReports.withId.params, summary: 'Submit shift report', tags: ['Shift Reports'] },
+  { id: 'shiftReports.uploadAttachment', method: 'post', path: '/shift-reports/{reportId}/answers/{answerId}/attachments', body: apiSchemas.shiftReports.attachmentBody, params: apiSchemas.shiftReports.attachmentParams, successStatus: 201, summary: 'Upload shift report photo', tags: ['Shift Reports'] },
+  { id: 'shiftReports.removeAttachment', method: 'delete', path: '/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}', params: apiSchemas.shiftReports.attachmentDeleteParams, summary: 'Remove shift report photo', tags: ['Shift Reports'] },
+  { id: 'shiftReports.attachment', method: 'get', path: '/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}', params: apiSchemas.shiftReports.attachmentDeleteParams, responseType: 'binary', summary: 'Get shift report photo', tags: ['Shift Reports'] },
 
   { id: 'trainingNotes.list', method: 'get', path: '/clients/{clientId}/training-notes', params: apiSchemas.trainingNotes.clientParams, summary: 'List training notes for client', tags: ['Training Notes'] },
   { id: 'trainingNotes.create', method: 'post', path: '/clients/{clientId}/training-notes', body: apiSchemas.trainingNotes.body, params: apiSchemas.trainingNotes.clientParams, summary: 'Create training note', tags: ['Training Notes'] },
@@ -341,18 +371,25 @@ function buildParameters(endpoint: EndpointContract) {
 
 function buildOperation(endpoint: EndpointContract) {
   const successStatus = endpoint.successStatus || 200;
-  const successContent =
-    endpoint.responseType === 'xlsx'
-      ? {
-          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
-            schema: { format: 'binary', type: 'string' },
-          },
-        }
-      : {
-          'application/json': {
-            schema: schemaToJsonSchema(responseOk),
-          },
-        };
+  let successContent: Record<string, unknown> = {
+    'application/json': {
+      schema: schemaToJsonSchema(responseOk),
+    },
+  };
+  if (endpoint.responseType === 'xlsx') {
+    successContent = {
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': {
+        schema: { format: 'binary', type: 'string' },
+      },
+    };
+  }
+  if (endpoint.responseType === 'binary') {
+    successContent = {
+      'application/octet-stream': {
+        schema: { format: 'binary', type: 'string' },
+      },
+    };
+  }
   const operation: Record<string, unknown> = {
     operationId: endpoint.id,
     responses: {

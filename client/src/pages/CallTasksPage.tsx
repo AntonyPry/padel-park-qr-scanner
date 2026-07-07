@@ -12,6 +12,7 @@ import {
   ArchiveRestore,
   CheckCircle2,
   Clock,
+  Copy,
   Eye,
   ListChecks,
   MessageSquareText,
@@ -126,6 +127,7 @@ interface CallTask {
   metrics?: CallTaskMetrics;
   newInBaseCount?: number | null;
   overdueCount: number;
+  scriptText?: string;
   scopeType: 'snapshot' | 'dynamic';
   snapshotClientCount: number;
   status: CallTaskStatus;
@@ -211,6 +213,7 @@ interface TaskFormState {
   assignedToAccountId: string;
   description: string;
   dueAt: string;
+  scriptText: string;
   scopeType: 'snapshot' | 'dynamic';
   title: string;
 }
@@ -289,6 +292,7 @@ const EMPTY_TASK_FORM: TaskFormState = {
   assignedToAccountId: 'none',
   description: '',
   dueAt: '',
+  scriptText: '',
   scopeType: 'snapshot',
   title: '',
 };
@@ -314,6 +318,7 @@ const taskFormSchema = z.object({
   assignedToAccountId: z.string(),
   description: z.string(),
   dueAt: z.string(),
+  scriptText: z.string(),
   scopeType: z.enum(['snapshot', 'dynamic']),
   title: z.string().trim().min(2, 'Введите название задачи'),
 });
@@ -362,6 +367,23 @@ async function readError(response: Response, fallback: string) {
   } catch {
     return fallback;
   }
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand('copy');
+  textarea.remove();
 }
 
 function getTaskProgress(task: CallTask) {
@@ -554,14 +576,22 @@ export default function CallTasksPage() {
   }, [status]);
 
   const fetchAccounts = useCallback(async () => {
+    if (!canManage) {
+      setAccounts([]);
+      return;
+    }
+
     try {
       const res = await apiFetch('/api/accounts');
-      if (!res.ok) return;
+      if (!res.ok) {
+        setAccounts([]);
+        return;
+      }
       setAccounts((await res.json()) as AccountOption[]);
     } catch {
       setAccounts([]);
     }
-  }, []);
+  }, [canManage]);
 
   const openTask = useCallback(async (task: CallTask) => {
     const requestId = taskDetailsRequestIdRef.current + 1;
@@ -824,6 +854,7 @@ export default function CallTasksPage() {
         : 'none',
       description: task.description || '',
       dueAt: formatForDateTimeInput(task.dueAt),
+      scriptText: task.scriptText || '',
       scopeType: task.scopeType,
       title: task.title,
     });
@@ -843,6 +874,7 @@ export default function CallTasksPage() {
               : Number(values.assignedToAccountId),
           description: values.description.trim(),
           dueAt: values.dueAt || null,
+          scriptText: values.scriptText.trim(),
           scopeType: values.scopeType,
           title: values.title.trim(),
         }),
@@ -872,6 +904,18 @@ export default function CallTasksPage() {
     const firstError = Object.values(errors)[0];
     toast.error(firstError?.message || 'Проверьте поля задачи');
   });
+
+  const copySelectedTaskScript = async () => {
+    const scriptText = selectedTask?.scriptText || '';
+    if (!scriptText) return;
+
+    try {
+      await copyTextToClipboard(scriptText);
+      toast.success('Скрипт скопирован');
+    } catch {
+      toast.error('Не удалось скопировать скрипт');
+    }
+  };
 
   const syncSelectedTask = async () => {
     if (!selectedTask) return;
@@ -1607,6 +1651,28 @@ export default function CallTasksPage() {
                       {selectedTask.membershipDiff.updatedCount}.
                     </div>
                   )}
+                {selectedTask.scriptText && (
+                  <div className="min-w-0 rounded-2xl border bg-muted/20 px-4 py-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="text-sm font-medium">
+                        Скрипт обзвона
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void copySelectedTaskScript()}
+                        className="w-full sm:w-auto"
+                      >
+                        <Copy className="mr-2 h-4 w-4" />
+                        Скопировать
+                      </Button>
+                    </div>
+                    <div className="mt-3 max-h-64 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-6 text-muted-foreground">
+                      {selectedTask.scriptText}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="flex flex-col gap-3 border-b px-5 py-4 md:flex-row md:items-center md:justify-between">
@@ -1942,6 +2008,20 @@ export default function CallTasksPage() {
                   setTaskForm({ ...taskForm, description: event.target.value })
                 }
                 className="min-h-[100px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Скрипт обзвона
+              </label>
+              <textarea
+                value={taskForm.scriptText}
+                onChange={(event) =>
+                  setTaskForm({ ...taskForm, scriptText: event.target.value })
+                }
+                className="min-h-[180px] w-full rounded-md border bg-background px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Вставьте текст скрипта для администратора"
               />
             </div>
 

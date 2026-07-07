@@ -145,6 +145,18 @@ export const apiEndpoints = {
   "telephony.completeCall": { method: "POST", path: "/telephony/calls/{id}/complete", responseType: "json" },
   "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json" },
   "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json" },
+  "telephony.createTranscriptionJob": { method: "POST", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json" },
+  "telephony.callTranscriptionJobs": { method: "GET", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json" },
+  "telephony.transcriptionJobs": { method: "GET", path: "/telephony/transcription-jobs", responseType: "json" },
+  "telephony.transcriptionJobStats": { method: "GET", path: "/telephony/transcription-jobs/stats", responseType: "json" },
+  "telephony.getTranscriptionJob": { method: "GET", path: "/telephony/transcription-jobs/{id}", responseType: "json" },
+  "telephony.workerTranscriptionQueue": { method: "GET", path: "/telephony/transcription-jobs/worker-queue", responseType: "json" },
+  "telephony.claimTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/claim", responseType: "json" },
+  "telephony.transcriptionAudioReference": { method: "POST", path: "/telephony/transcription-jobs/{id}/audio-reference", responseType: "json" },
+  "telephony.completeTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/result", responseType: "json" },
+  "telephony.failTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/fail", responseType: "json" },
+  "telephony.workerRetryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/worker-retry", responseType: "json" },
+  "telephony.retryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/retry", responseType: "json" },
   "telephony.syncStatistics": { method: "POST", path: "/telephony/beeline/sync", responseType: "json" },
   "telephony.syncRecordings": { method: "POST", path: "/telephony/beeline/records/sync", responseType: "json" },
   "telephony.subscribe": { method: "POST", path: "/telephony/beeline/subscribe", responseType: "json" },
@@ -205,6 +217,23 @@ export const apiEndpoints = {
   "shifts.create": { method: "POST", path: "/shifts", responseType: "json" },
   "shifts.update": { method: "PUT", path: "/shifts", responseType: "json" },
   "shifts.archive": { method: "DELETE", path: "/shifts", responseType: "json" },
+  "shiftReportTemplates.list": { method: "GET", path: "/shift-report-templates", responseType: "json" },
+  "shiftReportTemplates.create": { method: "POST", path: "/shift-report-templates", responseType: "json" },
+  "shiftReportTemplates.update": { method: "PUT", path: "/shift-report-templates/{id}", responseType: "json" },
+  "shiftReportTemplates.archive": { method: "POST", path: "/shift-report-templates/{id}/archive", responseType: "json" },
+  "shiftReportTemplates.restore": { method: "POST", path: "/shift-report-templates/{id}/restore", responseType: "json" },
+  "shiftReportTemplateItems.create": { method: "POST", path: "/shift-report-templates/{templateId}/items", responseType: "json" },
+  "shiftReportTemplateItems.update": { method: "PUT", path: "/shift-report-template-items/{id}", responseType: "json" },
+  "shiftReportTemplateItems.archive": { method: "POST", path: "/shift-report-template-items/{id}/archive", responseType: "json" },
+  "shiftReportTemplateItems.restore": { method: "POST", path: "/shift-report-template-items/{id}/restore", responseType: "json" },
+  "shiftReports.activeShift": { method: "GET", path: "/shifts/active/reports", responseType: "json" },
+  "shiftReports.list": { method: "GET", path: "/shift-reports", responseType: "json" },
+  "shiftReports.get": { method: "GET", path: "/shift-reports/{id}", responseType: "json" },
+  "shiftReports.saveDraft": { method: "PUT", path: "/shift-reports/{id}/draft", responseType: "json" },
+  "shiftReports.submit": { method: "POST", path: "/shift-reports/{id}/submit", responseType: "json" },
+  "shiftReports.uploadAttachment": { method: "POST", path: "/shift-reports/{reportId}/answers/{answerId}/attachments", responseType: "json" },
+  "shiftReports.removeAttachment": { method: "DELETE", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "json" },
+  "shiftReports.attachment": { method: "GET", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "blob" },
   "trainingNotes.list": { method: "GET", path: "/clients/{clientId}/training-notes", responseType: "json" },
   "trainingNotes.create": { method: "POST", path: "/clients/{clientId}/training-notes", responseType: "json" },
   "trainingNotes.update": { method: "PUT", path: "/training-notes/{noteId}", responseType: "json" },
@@ -1100,11 +1129,27 @@ export type ClientBasesRestoreParams = {
 export type CallTasksCreateFromBaseParams = {
   baseId: number | string;
 };
-export type CallTasksCreateFromBaseBody = Record<string, unknown>;
+export type CallTasksCreateFromBaseBody = {
+  assignedToAccountId?: number | string | "" | null;
+  description?: string | "" | null;
+  dueAt?: string | "" | null;
+  scriptText?: string | "" | null;
+  scopeType?: "snapshot" | "dynamic";
+  title?: string | "" | null;
+  [key: string]: unknown;
+};
 export type CallTasksCreateForClientParams = {
   clientId: number | string;
 };
-export type CallTasksCreateForClientBody = Record<string, unknown>;
+export type CallTasksCreateForClientBody = {
+  assignedToAccountId?: number | string | "" | null;
+  description?: string | "" | null;
+  dueAt?: string | "" | null;
+  scriptText?: string | "" | null;
+  scopeType?: "snapshot" | "dynamic";
+  title?: string | "" | null;
+  [key: string]: unknown;
+};
 export type CallTasksListQuery = {
   baseId?: number | string | "" | null;
   status?: "active" | "all" | "backlog" | "in_progress" | "done" | "archived";
@@ -1123,7 +1168,16 @@ export type CallTasksGetParams = {
 export type CallTasksUpdateParams = {
   id: number | string;
 };
-export type CallTasksUpdateBody = Record<string, unknown>;
+export type CallTasksUpdateBody = {
+  assignedToAccountId?: number | string | "" | null;
+  description?: string | "" | null;
+  dueAt?: string | "" | null;
+  scriptText?: string | "" | null;
+  scopeType?: "snapshot" | "dynamic";
+  title?: string | "" | null;
+  status?: "backlog" | "in_progress" | "done" | "archived";
+  [key: string]: unknown;
+};
 export type CallTasksDeletePermanentParams = {
   id: number | string;
 };
@@ -1198,6 +1252,92 @@ export type TelephonyIgnoreCallBody = {
   [key: string]: unknown;
 };
 export type TelephonyRecordingReferenceParams = {
+  id: number | string;
+};
+export type TelephonyCreateTranscriptionJobParams = {
+  id: number | string;
+};
+export type TelephonyCallTranscriptionJobsParams = {
+  id: number | string;
+};
+export type TelephonyCallTranscriptionJobsQuery = {
+  page?: number | string | "";
+  pageSize?: number | string | "";
+  callId?: number | string | "";
+  status?: "all" | "queued" | "processing" | "completed" | "failed";
+  [key: string]: unknown;
+};
+export type TelephonyTranscriptionJobsQuery = {
+  page?: number | string | "";
+  pageSize?: number | string | "";
+  callId?: number | string | "";
+  status?: "all" | "queued" | "processing" | "completed" | "failed";
+  [key: string]: unknown;
+};
+export type TelephonyGetTranscriptionJobParams = {
+  id: number | string;
+};
+export type TelephonyWorkerTranscriptionQueueQuery = {
+  page?: number | string | "";
+  pageSize?: number | string | "";
+  callId?: number | string | "";
+  status?: "all" | "queued" | "processing" | "completed" | "failed";
+  [key: string]: unknown;
+};
+export type TelephonyClaimTranscriptionJobBody = {
+  workerId?: string | "" | null;
+  [key: string]: unknown;
+};
+export type TelephonyTranscriptionAudioReferenceParams = {
+  id: number | string;
+};
+export type TelephonyCompleteTranscriptionJobParams = {
+  id: number | string;
+};
+export type TelephonyCompleteTranscriptionJobBody = {
+  language?: string | "" | null;
+  corrections?: Array<Record<string, unknown>> | null;
+  metadata?: Record<string, unknown> | null;
+  raw?: Record<string, unknown> | null;
+  rawAsrJson?: Record<string, unknown> | null;
+  rawAsrResult?: Record<string, unknown> | null;
+  rawText?: string | "" | null;
+  rawTranscript?: string | "" | null;
+  rawTranscriptText?: string | "" | null;
+  segments?: Array<{
+    confidence?: number | string | "" | null;
+    channel?: string | "" | null;
+    end?: number | string | "" | null;
+    endMs?: number | string | "" | null;
+    endSeconds?: number | string | "" | null;
+    phrase?: string | "" | null;
+    role?: string | "" | null;
+    sortOrder?: number | string | "" | null;
+    speaker?: string | "" | null;
+    start?: number | string | "" | null;
+    startMs?: number | string | "" | null;
+    startSeconds?: number | string | "" | null;
+    text?: string | "" | null;
+    transcript?: string | "" | null;
+    [key: string]: unknown;
+  }>;
+  text?: string | "" | null;
+  transcript?: string | "" | null;
+  transcriptText?: string | "" | null;
+  [key: string]: unknown;
+};
+export type TelephonyFailTranscriptionJobParams = {
+  id: number | string;
+};
+export type TelephonyFailTranscriptionJobBody = {
+  error?: string | "" | null;
+  errorMessage?: string | "" | null;
+  [key: string]: unknown;
+};
+export type TelephonyWorkerRetryTranscriptionJobParams = {
+  id: number | string;
+};
+export type TelephonyRetryTranscriptionJobParams = {
   id: number | string;
 };
 export type TelephonySyncStatisticsBody = Record<string, unknown>;
@@ -1570,6 +1710,145 @@ export type ShiftsArchiveBody = {
   id: number | string;
   reason?: string | "" | null;
   [key: string]: unknown;
+};
+export type ShiftReportTemplatesListQuery = {
+  status?: "active" | "archived" | "all";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplatesCreateBody = {
+  appliesToRole?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer" | "" | null;
+  appliesToShiftType?: string | "" | null;
+  description?: string | "" | null;
+  gracePeriodMinutes?: number | string | "" | null;
+  name: string;
+  scheduleConfig?: {
+    endTime?: string;
+    everyHours?: number | string | "" | null;
+    startTime?: string;
+    time?: string;
+    times?: Array<string>;
+    [key: string]: unknown;
+  };
+  scheduleType: "once_daily" | "daily_times" | "interval_hours" | "shift_start" | "shift_end";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplatesUpdateParams = {
+  id: number | string;
+};
+export type ShiftReportTemplatesUpdateBody = {
+  appliesToRole?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer" | "" | null;
+  appliesToShiftType?: string | "" | null;
+  description?: string | "" | null;
+  gracePeriodMinutes?: number | string | "" | null;
+  name?: string;
+  scheduleConfig?: {
+    endTime?: string;
+    everyHours?: number | string | "" | null;
+    startTime?: string;
+    time?: string;
+    times?: Array<string>;
+    [key: string]: unknown;
+  };
+  scheduleType?: "once_daily" | "daily_times" | "interval_hours" | "shift_start" | "shift_end";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplatesArchiveParams = {
+  id: number | string;
+};
+export type ShiftReportTemplatesRestoreParams = {
+  id: number | string;
+};
+export type ShiftReportTemplateItemsCreateParams = {
+  templateId: number | string;
+};
+export type ShiftReportTemplateItemsCreateBody = {
+  itemType: "checkbox" | "text" | "number";
+  label: string;
+  photoRequired?: boolean | "true" | "false" | "1" | "0";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplateItemsUpdateParams = {
+  id: number | string;
+};
+export type ShiftReportTemplateItemsUpdateBody = {
+  itemType?: "checkbox" | "text" | "number";
+  label?: string;
+  photoRequired?: boolean | "true" | "false" | "1" | "0";
+  sortOrder?: number | string | "" | null;
+  status?: "active" | "archived";
+  [key: string]: unknown;
+};
+export type ShiftReportTemplateItemsArchiveParams = {
+  id: number | string;
+};
+export type ShiftReportTemplateItemsRestoreParams = {
+  id: number | string;
+};
+export type ShiftReportsListQuery = {
+  date?: string | "";
+  from?: string | "";
+  shiftId?: number | string | "" | null;
+  status?: "all" | "pending" | "draft" | "submitted" | "overdue";
+  templateId?: number | string | "" | null;
+  to?: string | "";
+  [key: string]: unknown;
+};
+export type ShiftReportsGetParams = {
+  id: number | string;
+};
+export type ShiftReportsSaveDraftParams = {
+  id: number | string;
+};
+export type ShiftReportsSaveDraftBody = {
+  answers?: Array<{
+    booleanValue?: boolean | "true" | "false" | "1" | "0" | null;
+    id: number | string;
+    numberValue?: number | string | "" | null;
+    textValue?: string | "" | null;
+    [key: string]: unknown;
+  }>;
+  comment?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ShiftReportsSubmitParams = {
+  id: number | string;
+};
+export type ShiftReportsSubmitBody = {
+  answers?: Array<{
+    booleanValue?: boolean | "true" | "false" | "1" | "0" | null;
+    id: number | string;
+    numberValue?: number | string | "" | null;
+    textValue?: string | "" | null;
+    [key: string]: unknown;
+  }>;
+  comment?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ShiftReportsUploadAttachmentParams = {
+  answerId: number | string;
+  reportId: number | string;
+};
+export type ShiftReportsUploadAttachmentBody = {
+  data: string;
+  fileName?: string | "" | null;
+  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  [key: string]: unknown;
+};
+export type ShiftReportsRemoveAttachmentParams = {
+  answerId: number | string;
+  attachmentId: string;
+  reportId: number | string;
+};
+export type ShiftReportsAttachmentParams = {
+  answerId: number | string;
+  attachmentId: string;
+  reportId: number | string;
 };
 export type TrainingNotesListParams = {
   clientId: number | string;
@@ -1985,6 +2264,18 @@ export interface ApiEndpointRequestMap {
   "telephony.completeCall": ApiEndpointRequest<TelephonyCompleteCallParams, undefined, TelephonyCompleteCallBody>;
   "telephony.ignoreCall": ApiEndpointRequest<TelephonyIgnoreCallParams, undefined, TelephonyIgnoreCallBody>;
   "telephony.recordingReference": ApiEndpointRequest<TelephonyRecordingReferenceParams, undefined, undefined>;
+  "telephony.createTranscriptionJob": ApiEndpointRequest<TelephonyCreateTranscriptionJobParams, undefined, undefined>;
+  "telephony.callTranscriptionJobs": ApiEndpointRequest<TelephonyCallTranscriptionJobsParams, TelephonyCallTranscriptionJobsQuery, undefined>;
+  "telephony.transcriptionJobs": ApiEndpointRequest<undefined, TelephonyTranscriptionJobsQuery, undefined>;
+  "telephony.transcriptionJobStats": ApiEndpointRequest<undefined, undefined, undefined>;
+  "telephony.getTranscriptionJob": ApiEndpointRequest<TelephonyGetTranscriptionJobParams, undefined, undefined>;
+  "telephony.workerTranscriptionQueue": ApiEndpointRequest<undefined, TelephonyWorkerTranscriptionQueueQuery, undefined>;
+  "telephony.claimTranscriptionJob": ApiEndpointRequest<undefined, undefined, TelephonyClaimTranscriptionJobBody>;
+  "telephony.transcriptionAudioReference": ApiEndpointRequest<TelephonyTranscriptionAudioReferenceParams, undefined, undefined>;
+  "telephony.completeTranscriptionJob": ApiEndpointRequest<TelephonyCompleteTranscriptionJobParams, undefined, TelephonyCompleteTranscriptionJobBody>;
+  "telephony.failTranscriptionJob": ApiEndpointRequest<TelephonyFailTranscriptionJobParams, undefined, TelephonyFailTranscriptionJobBody>;
+  "telephony.workerRetryTranscriptionJob": ApiEndpointRequest<TelephonyWorkerRetryTranscriptionJobParams, undefined, undefined>;
+  "telephony.retryTranscriptionJob": ApiEndpointRequest<TelephonyRetryTranscriptionJobParams, undefined, undefined>;
   "telephony.syncStatistics": ApiEndpointRequest<undefined, undefined, TelephonySyncStatisticsBody>;
   "telephony.syncRecordings": ApiEndpointRequest<undefined, undefined, TelephonySyncRecordingsBody>;
   "telephony.subscribe": ApiEndpointRequest<undefined, undefined, TelephonySubscribeBody>;
@@ -2045,6 +2336,23 @@ export interface ApiEndpointRequestMap {
   "shifts.create": ApiEndpointRequest<undefined, undefined, ShiftsCreateBody>;
   "shifts.update": ApiEndpointRequest<undefined, undefined, ShiftsUpdateBody>;
   "shifts.archive": ApiEndpointRequest<undefined, undefined, ShiftsArchiveBody>;
+  "shiftReportTemplates.list": ApiEndpointRequest<undefined, ShiftReportTemplatesListQuery, undefined>;
+  "shiftReportTemplates.create": ApiEndpointRequest<undefined, undefined, ShiftReportTemplatesCreateBody>;
+  "shiftReportTemplates.update": ApiEndpointRequest<ShiftReportTemplatesUpdateParams, undefined, ShiftReportTemplatesUpdateBody>;
+  "shiftReportTemplates.archive": ApiEndpointRequest<ShiftReportTemplatesArchiveParams, undefined, undefined>;
+  "shiftReportTemplates.restore": ApiEndpointRequest<ShiftReportTemplatesRestoreParams, undefined, undefined>;
+  "shiftReportTemplateItems.create": ApiEndpointRequest<ShiftReportTemplateItemsCreateParams, undefined, ShiftReportTemplateItemsCreateBody>;
+  "shiftReportTemplateItems.update": ApiEndpointRequest<ShiftReportTemplateItemsUpdateParams, undefined, ShiftReportTemplateItemsUpdateBody>;
+  "shiftReportTemplateItems.archive": ApiEndpointRequest<ShiftReportTemplateItemsArchiveParams, undefined, undefined>;
+  "shiftReportTemplateItems.restore": ApiEndpointRequest<ShiftReportTemplateItemsRestoreParams, undefined, undefined>;
+  "shiftReports.activeShift": ApiEndpointRequest<undefined, undefined, undefined>;
+  "shiftReports.list": ApiEndpointRequest<undefined, ShiftReportsListQuery, undefined>;
+  "shiftReports.get": ApiEndpointRequest<ShiftReportsGetParams, undefined, undefined>;
+  "shiftReports.saveDraft": ApiEndpointRequest<ShiftReportsSaveDraftParams, undefined, ShiftReportsSaveDraftBody>;
+  "shiftReports.submit": ApiEndpointRequest<ShiftReportsSubmitParams, undefined, ShiftReportsSubmitBody>;
+  "shiftReports.uploadAttachment": ApiEndpointRequest<ShiftReportsUploadAttachmentParams, undefined, ShiftReportsUploadAttachmentBody>;
+  "shiftReports.removeAttachment": ApiEndpointRequest<ShiftReportsRemoveAttachmentParams, undefined, undefined>;
+  "shiftReports.attachment": ApiEndpointRequest<ShiftReportsAttachmentParams, undefined, undefined>;
   "trainingNotes.list": ApiEndpointRequest<TrainingNotesListParams, undefined, undefined>;
   "trainingNotes.create": ApiEndpointRequest<TrainingNotesCreateParams, undefined, TrainingNotesCreateBody>;
   "trainingNotes.update": ApiEndpointRequest<TrainingNotesUpdateParams, undefined, TrainingNotesUpdateBody>;

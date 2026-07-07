@@ -1,0 +1,12 @@
+node_modules
+npm-debug.log
+.env
+__pycache__
+*.py[cod]
+tmp
+recordings
+models
+*.wav
+*.mp3
+*.m4a
+*.ogg

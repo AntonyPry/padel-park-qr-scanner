@@ -68,6 +68,9 @@
       "name": "Reports"
     },
     {
+      "name": "Shift Reports"
+    },
+    {
       "name": "Shifts"
     },
     {
@@ -23924,8 +23927,97 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "assignedToAccountId": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d*$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dueAt": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scriptText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scopeType": {
+                    "type": "string",
+                    "enum": [
+                      "snapshot",
+                      "dynamic"
+                    ]
+                  },
+                  "title": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
               }
             }
           },
@@ -24086,8 +24178,97 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "assignedToAccountId": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d*$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dueAt": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scriptText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scopeType": {
+                    "type": "string",
+                    "enum": [
+                      "snapshot",
+                      "dynamic"
+                    ]
+                  },
+                  "title": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
               }
             }
           },
@@ -24918,8 +25099,106 @@
           "content": {
             "application/json": {
               "schema": {
-                "additionalProperties": true,
-                "type": "object"
+                "type": "object",
+                "properties": {
+                  "assignedToAccountId": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d*$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "dueAt": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scriptText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "scopeType": {
+                    "type": "string",
+                    "enum": [
+                      "snapshot",
+                      "dynamic"
+                    ]
+                  },
+                  "title": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "backlog",
+                      "in_progress",
+                      "done",
+                      "archived"
+                    ]
+                  }
+                },
+                "additionalProperties": {}
               }
             }
           },
@@ -27666,6 +27945,2524 @@
           }
         ],
         "summary": "Refresh call recording reference",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/calls/{id}/transcription-jobs": {
+      "post": {
+        "operationId": "telephony.createTranscriptionJob",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create call transcription job",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "get": {
+        "operationId": "telephony.callTranscriptionJobs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List call transcription jobs",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "callId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "queued",
+                "processing",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/transcription-jobs": {
+      "get": {
+        "operationId": "telephony.transcriptionJobs",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List transcription jobs",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "callId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "queued",
+                "processing",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/transcription-jobs/stats": {
+      "get": {
+        "operationId": "telephony.transcriptionJobStats",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get transcription job stats",
+        "tags": [
+          "Telephony"
+        ]
+      }
+    },
+    "/telephony/transcription-jobs/{id}": {
+      "get": {
+        "operationId": "telephony.getTranscriptionJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get transcription job",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/transcription-jobs/worker-queue": {
+      "get": {
+        "operationId": "telephony.workerTranscriptionQueue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Get worker transcription queue snapshot",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "callId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "queued",
+                "processing",
+                "completed",
+                "failed"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/transcription-jobs/claim": {
+      "post": {
+        "operationId": "telephony.claimTranscriptionJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Claim queued transcription job",
+        "tags": [
+          "Telephony"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "workerId": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/telephony/transcription-jobs/{id}/audio-reference": {
+      "post": {
+        "operationId": "telephony.transcriptionAudioReference",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Get transcription audio reference",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/transcription-jobs/{id}/result": {
+      "post": {
+        "operationId": "telephony.completeTranscriptionJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Submit transcription result",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "language": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "corrections": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "metadata": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "raw": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rawAsrJson": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rawAsrResult": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rawText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rawTranscript": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "rawTranscriptText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "segments": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "confidence": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "channel": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "end": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "endMs": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "endSeconds": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "phrase": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "role": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "sortOrder": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "speaker": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "start": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "startMs": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "startSeconds": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number",
+                                  "minimum": 0
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "text": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "transcript": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "text": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "transcript": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "transcriptText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/telephony/transcription-jobs/{id}/fail": {
+      "post": {
+        "operationId": "telephony.failTranscriptionJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Fail transcription job",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "error": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "errorMessage": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/telephony/transcription-jobs/{id}/worker-retry": {
+      "post": {
+        "operationId": "telephony.workerRetryTranscriptionJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Retry failed transcription job from worker dashboard",
+        "tags": [
+          "Telephony"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/telephony/transcription-jobs/{id}/retry": {
+      "post": {
+        "operationId": "telephony.retryTranscriptionJob",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Retry failed transcription job",
         "tags": [
           "Telephony"
         ],
@@ -39118,6 +41915,3510 @@
           },
           "required": true
         }
+      }
+    },
+    "/shift-report-templates": {
+      "get": {
+        "operationId": "shiftReportTemplates.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List shift report templates",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "archived",
+                "all"
+              ]
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "shiftReportTemplates.create",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create shift report template",
+        "tags": [
+          "Shift Reports"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "appliesToRole": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "owner",
+                          "manager",
+                          "admin",
+                          "accountant",
+                          "viewer",
+                          "trainer"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "appliesToShiftType": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "gracePeriodMinutes": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^\\d+([.,]\\d+)?$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 160
+                  },
+                  "scheduleConfig": {
+                    "type": "object",
+                    "properties": {
+                      "endTime": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "everyHours": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^[1-9]\\d*$"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "startTime": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "time": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "times": {
+                        "maxItems": 12,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                        }
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "scheduleType": {
+                    "type": "string",
+                    "enum": [
+                      "once_daily",
+                      "daily_times",
+                      "interval_hours",
+                      "shift_start",
+                      "shift_end"
+                    ]
+                  },
+                  "sortOrder": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^-?\\d+([.,]\\d+)?$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "scheduleType"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-report-templates/{id}": {
+      "put": {
+        "operationId": "shiftReportTemplates.update",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update shift report template",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "appliesToRole": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "owner",
+                          "manager",
+                          "admin",
+                          "accountant",
+                          "viewer",
+                          "trainer"
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "appliesToShiftType": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "gracePeriodMinutes": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^\\d+([.,]\\d+)?$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 160
+                  },
+                  "scheduleConfig": {
+                    "type": "object",
+                    "properties": {
+                      "endTime": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "everyHours": {
+                        "anyOf": [
+                          {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "exclusiveMinimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "string",
+                                "pattern": "^[1-9]\\d*$"
+                              }
+                            ]
+                          },
+                          {
+                            "type": "string",
+                            "const": ""
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "startTime": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "time": {
+                        "type": "string",
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                      },
+                      "times": {
+                        "maxItems": 12,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+                        }
+                      }
+                    },
+                    "additionalProperties": {}
+                  },
+                  "scheduleType": {
+                    "type": "string",
+                    "enum": [
+                      "once_daily",
+                      "daily_times",
+                      "interval_hours",
+                      "shift_start",
+                      "shift_end"
+                    ]
+                  },
+                  "sortOrder": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^-?\\d+([.,]\\d+)?$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived"
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-report-templates/{id}/archive": {
+      "post": {
+        "operationId": "shiftReportTemplates.archive",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Archive shift report template",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/shift-report-templates/{id}/restore": {
+      "post": {
+        "operationId": "shiftReportTemplates.restore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Restore shift report template",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/shift-report-templates/{templateId}/items": {
+      "post": {
+        "operationId": "shiftReportTemplateItems.create",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create shift report template item",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "templateId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "itemType": {
+                    "type": "string",
+                    "enum": [
+                      "checkbox",
+                      "text",
+                      "number"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 160
+                  },
+                  "photoRequired": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "const": "true"
+                      },
+                      {
+                        "type": "string",
+                        "const": "false"
+                      },
+                      {
+                        "type": "string",
+                        "const": "1"
+                      },
+                      {
+                        "type": "string",
+                        "const": "0"
+                      }
+                    ]
+                  },
+                  "sortOrder": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^-?\\d+([.,]\\d+)?$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived"
+                    ]
+                  }
+                },
+                "required": [
+                  "itemType",
+                  "label"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-report-template-items/{id}": {
+      "put": {
+        "operationId": "shiftReportTemplateItems.update",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update shift report template item",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "itemType": {
+                    "type": "string",
+                    "enum": [
+                      "checkbox",
+                      "text",
+                      "number"
+                    ]
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 160
+                  },
+                  "photoRequired": {
+                    "anyOf": [
+                      {
+                        "type": "boolean"
+                      },
+                      {
+                        "type": "string",
+                        "const": "true"
+                      },
+                      {
+                        "type": "string",
+                        "const": "false"
+                      },
+                      {
+                        "type": "string",
+                        "const": "1"
+                      },
+                      {
+                        "type": "string",
+                        "const": "0"
+                      }
+                    ]
+                  },
+                  "sortOrder": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^-?\\d+([.,]\\d+)?$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "archived"
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-report-template-items/{id}/archive": {
+      "post": {
+        "operationId": "shiftReportTemplateItems.archive",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Archive shift report template item",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/shift-report-template-items/{id}/restore": {
+      "post": {
+        "operationId": "shiftReportTemplateItems.restore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Restore shift report template item",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/shifts/active/reports": {
+      "get": {
+        "operationId": "shiftReports.activeShift",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List reports for active shift",
+        "tags": [
+          "Shift Reports"
+        ]
+      }
+    },
+    "/shift-reports": {
+      "get": {
+        "operationId": "shiftReports.list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List shift reports",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "shiftId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "all",
+                "pending",
+                "draft",
+                "submitted",
+                "overdue"
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "templateId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "string",
+                      "pattern": "^[1-9]\\d*$"
+                    }
+                  ]
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/shift-reports/{id}": {
+      "get": {
+        "operationId": "shiftReports.get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get shift report",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/shift-reports/{id}/draft": {
+      "put": {
+        "operationId": "shiftReports.saveDraft",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Save shift report draft",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "answers": {
+                    "maxItems": 80,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "booleanValue": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "true"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "false"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "1"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "0"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^[1-9]\\d*$"
+                            }
+                          ]
+                        },
+                        "numberValue": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "textValue": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "comment": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-reports/{id}/submit": {
+      "post": {
+        "operationId": "shiftReports.submit",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Submit shift report",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "answers": {
+                    "maxItems": 80,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "booleanValue": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "boolean"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "true"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "false"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "1"
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "0"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "id": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^[1-9]\\d*$"
+                            }
+                          ]
+                        },
+                        "numberValue": {
+                          "anyOf": [
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^-?\\d+([.,]\\d+)?$"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "textValue": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "string",
+                              "const": ""
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  },
+                  "comment": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-reports/{reportId}/answers/{answerId}/attachments": {
+      "post": {
+        "operationId": "shiftReports.uploadAttachment",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Upload shift report photo",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reportId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "answerId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "data": {
+                    "type": "string",
+                    "minLength": 16,
+                    "maxLength": 8000000
+                  },
+                  "fileName": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "mimeType": {
+                    "type": "string",
+                    "enum": [
+                      "image/jpeg",
+                      "image/png",
+                      "image/webp",
+                      "image/gif"
+                    ]
+                  }
+                },
+                "required": [
+                  "data",
+                  "mimeType"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}": {
+      "delete": {
+        "operationId": "shiftReports.removeAttachment",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Remove shift report photo",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reportId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "answerId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 80
+            }
+          }
+        ]
+      },
+      "get": {
+        "operationId": "shiftReports.attachment",
+        "responses": {
+          "200": {
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Get shift report photo",
+        "tags": [
+          "Shift Reports"
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reportId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "answerId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "attachmentId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 80
+            }
+          }
+        ]
       }
     },
     "/clients/{clientId}/training-notes": {

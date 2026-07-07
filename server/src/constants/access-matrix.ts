@@ -39,6 +39,9 @@ type AccessKey =
   | 'referencesManage'
   | 'referencesView'
   | 'reportsView'
+  | 'shiftReportTemplatesManage'
+  | 'shiftReportsSubmit'
+  | 'shiftReportsView'
   | 'shiftsManage'
   | 'shiftsOperate'
   | 'staffManage'
@@ -96,6 +99,9 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   referencesManage: ['owner', 'manager'],
   referencesView: ['owner', 'manager', 'admin', 'accountant', 'viewer'],
   reportsView: ['owner', 'manager', 'accountant', 'viewer'],
+  shiftReportTemplatesManage: ['owner', 'manager'],
+  shiftReportsSubmit: ['owner', 'manager', 'admin'],
+  shiftReportsView: ['owner', 'manager', 'admin'],
   shiftsManage: ['owner', 'manager'],
   shiftsOperate: ['owner', 'manager', 'admin'],
   staffManage: ['owner', 'manager'],
