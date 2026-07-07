@@ -71,6 +71,44 @@ router.post(
   telephonyController.refreshRecordingReference,
 );
 router.post(
+  '/telephony/calls/:id/transcription-jobs',
+  workTelephony,
+  validate(apiSchemas.telephony.withId),
+  telephonyController.createTranscriptionJob,
+);
+router.get(
+  '/telephony/calls/:id/transcription-jobs',
+  workTelephony,
+  validate({
+    params: apiSchemas.telephony.withId.params,
+    query: apiSchemas.telephony.transcriptionJobsQuery,
+  }),
+  telephonyController.listCallTranscriptionJobs,
+);
+router.get(
+  '/telephony/transcription-jobs/stats',
+  workTelephony,
+  telephonyController.getTranscriptionStats,
+);
+router.get(
+  '/telephony/transcription-jobs',
+  workTelephony,
+  validate({ query: apiSchemas.telephony.transcriptionJobsQuery }),
+  telephonyController.listTranscriptionJobs,
+);
+router.get(
+  '/telephony/transcription-jobs/:id',
+  workTelephony,
+  validate(apiSchemas.telephony.withId),
+  telephonyController.getTranscriptionJob,
+);
+router.post(
+  '/telephony/transcription-jobs/:id/retry',
+  workTelephony,
+  validate(apiSchemas.telephony.withId),
+  telephonyController.retryTranscriptionJob,
+);
+router.post(
   '/telephony/beeline/sync',
   manageTelephony,
   validate({ body: apiSchemas.telephony.syncBody }),

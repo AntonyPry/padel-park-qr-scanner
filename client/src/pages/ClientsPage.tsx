@@ -595,6 +595,7 @@ interface ClientPayload {
 interface ClientCallTaskFormState {
   description: string;
   dueAt: string;
+  scriptText: string;
   title: string;
 }
 
@@ -630,6 +631,7 @@ const EMPTY_TRAINING_FORM: TrainingFormState = {
 const EMPTY_CALL_TASK_FORM: ClientCallTaskFormState = {
   description: '',
   dueAt: '',
+  scriptText: '',
   title: '',
 };
 const clientFormSchema = z.object({
@@ -648,6 +650,7 @@ const clientFormSchema = z.object({
 const clientCallTaskFormSchema = z.object({
   description: z.string(),
   dueAt: z.string(),
+  scriptText: z.string(),
   title: z.string().trim().min(2, 'Введите название задачи'),
 });
 
@@ -1966,6 +1969,7 @@ export default function ClientsPage() {
     clientCallTaskForm.reset({
       description: '',
       dueAt: '',
+      scriptText: '',
       title: `Обзвон: ${details.client.name}`,
     });
     setCallTaskDialogOpen(true);
@@ -2604,6 +2608,7 @@ export default function ClientsPage() {
           body: JSON.stringify({
             description: values.description,
             dueAt: values.dueAt || null,
+            scriptText: values.scriptText,
             title: values.title,
           }),
         },
@@ -4178,6 +4183,22 @@ export default function ClientsPage() {
                 }
                 className="min-h-[110px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="Что нужно выяснить или предложить клиенту"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium">
+                Скрипт обзвона
+              </label>
+              <textarea
+                value={callTaskForm.scriptText}
+                onChange={(event) =>
+                  setCallTaskForm({
+                    ...callTaskForm,
+                    scriptText: event.target.value,
+                  })
+                }
+                className="min-h-[180px] w-full rounded-md border bg-background px-3 py-2 text-sm leading-6 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Вставьте текст скрипта для администратора"
               />
             </div>
             <Button type="submit" className="w-full" disabled={callTaskSaving}>

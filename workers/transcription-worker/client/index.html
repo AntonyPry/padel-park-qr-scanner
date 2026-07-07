@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Transcription Worker</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Padel Park CRM</p>
+          <h1>Transcription Worker</h1>
+        </div>
+        <div class="topbar-actions">
+          <div class="control-group">
+            <button class="button secondary" id="pauseButton" type="button">Автообработка: выключить</button>
+            <span>Worker перестанет сам брать новые задачи из CRM.</span>
+          </div>
+          <div class="control-group">
+            <button class="button secondary" id="startButton" type="button">Автообработка: включить</button>
+            <span>Worker будет регулярно проверять очередь CRM.</span>
+          </div>
+          <div class="control-group">
+            <button class="button primary" id="claimOneButton" type="button">Взять следующую задачу</button>
+            <span>Сразу забрать одну queued задачу и показать этапы обработки.</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="status-grid" aria-label="Состояние worker">
+        <div class="panel status-panel">
+          <div class="panel-head">
+            <h2>Состояние</h2>
+            <span class="pill" id="pollingPill">...</span>
+          </div>
+          <dl class="status-list" id="statusList"></dl>
+        </div>
+
+        <div class="panel counters-panel">
+          <div class="panel-head">
+            <h2>Очередь</h2>
+            <span class="pill muted" id="ssePill">SSE</span>
+          </div>
+          <div class="counter-grid" id="counterGrid"></div>
+        </div>
+      </section>
+
+      <section class="panel current-panel">
+        <div class="panel-head">
+          <h2>Текущая задача</h2>
+          <span class="stage" id="currentStage">Нет активной задачи</span>
+        </div>
+        <div class="current-layout">
+          <dl class="status-list compact" id="currentJob"></dl>
+          <div class="events-box" id="liveEvents"></div>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <div class="panel history-panel">
+          <div class="panel-head">
+            <h2>Задачи транскрибации</h2>
+            <button class="button ghost" id="refreshButton" type="button">Обновить</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>call id / дата</th>
+                  <th>Клиент или номер</th>
+                  <th>Длительность</th>
+                  <th>Статус</th>
+                  <th>Текущий этап</th>
+                  <th>Прогресс</th>
+                  <th>Последняя ошибка</th>
+                  <th>Действия</th>
+                </tr>
+              </thead>
+              <tbody id="jobsTable"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <aside class="panel detail-panel">
+          <div class="panel-head">
+            <h2>Детали</h2>
+            <span class="pill muted" id="detailPill">...</span>
+          </div>
+          <div id="jobDetail" class="detail-body"></div>
+        </aside>
+      </section>
+    </main>
+    <script src="/app.js"></script>
+  </body>
+</html>

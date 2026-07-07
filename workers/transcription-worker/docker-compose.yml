@@ -1,0 +1,47 @@
+services:
+  transcription-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        WHISPER_CPP_REF: ${WHISPER_CPP_REF:-v1.7.6}
+    image: padel-park-transcription-worker:mac-cpu
+    environment:
+      ASR_BACKEND: ${ASR_BACKEND:-http_asr}
+      ASR_BASE_URL: ${ASR_BASE_URL:-http://10.8.0.2:9000}
+      ASR_CHUNK_MAX_SECONDS: ${ASR_CHUNK_MAX_SECONDS:-45}
+      ASR_INITIAL_PROMPT_ENABLED: ${ASR_INITIAL_PROMPT_ENABLED:-true}
+      ASR_PROFILE: ${ASR_PROFILE:-default}
+      ASR_QUALITY_BASE_URL: ${ASR_QUALITY_BASE_URL:-}
+      ASR_QUALITY_FALLBACK_ENABLED: ${ASR_QUALITY_FALLBACK_ENABLED:-true}
+      ASR_SILENCE_DETECTION_ENABLED: ${ASR_SILENCE_DETECTION_ENABLED:-true}
+      ASR_SILENCE_MIN_DURATION_SECONDS: ${ASR_SILENCE_MIN_DURATION_SECONDS:-1.2}
+      ASR_SILENCE_NOISE_DB: ${ASR_SILENCE_NOISE_DB:-45}
+      CHANNEL_ADMIN: ${CHANNEL_ADMIN:-left}
+      CHANNEL_CLIENT: ${CHANNEL_CLIENT:-right}
+      CRM_API_URL: ${CRM_API_URL:-http://host.docker.internal:3005/api}
+      CRM_FRONTEND_URL: ${CRM_FRONTEND_URL:-http://127.0.0.1:5174}
+      CRM_WORKER_TOKEN: ${CRM_WORKER_TOKEN:-}
+      DASHBOARD_BIND_HOST: 0.0.0.0
+      DASHBOARD_HOST: ${DASHBOARD_HOST:-127.0.0.1}
+      DASHBOARD_PORT: ${DASHBOARD_PORT:-8090}
+      DELETE_AUDIO_AFTER: ${DELETE_AUDIO_AFTER:-true}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS:-10}
+      START_PAUSED: ${START_PAUSED:-true}
+      STATE_DB_PATH: /data/transcription-worker.sqlite3
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_MODEL_CACHE_DIR: /models
+      WHISPER_THREADS: ${WHISPER_THREADS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "${DASHBOARD_HOST:-127.0.0.1}:${DASHBOARD_PORT:-8090}:${DASHBOARD_PORT:-8090}"
+    restart: unless-stopped
+    volumes:
+      - whisper-models:/models
+      - worker-data:/data
+
+volumes:
+  whisper-models:
+  worker-data:

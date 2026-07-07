@@ -196,6 +196,14 @@ module.exports = (sequelize, DataTypes) => {
       as: 'rawEvents',
       foreignKey: 'telephonyCallId',
     });
+    TelephonyCall.hasMany(models.TelephonyTranscriptionJob, {
+      as: 'transcriptionJobs',
+      foreignKey: 'telephonyCallId',
+    });
+    TelephonyCall.hasMany(models.TelephonyTranscriptSegment, {
+      as: 'transcriptSegments',
+      foreignKey: 'telephonyCallId',
+    });
   };
 
   return TelephonyCall;

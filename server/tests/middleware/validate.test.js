@@ -177,6 +177,7 @@ test('accepts shift report template and answer payloads', () => {
         name: 'Утренний отчет',
         scheduleConfig: { times: ['09:00', '13:30'] },
         scheduleType: 'daily_times',
+        status: 'active',
       },
       params: {},
       query: {},
@@ -204,13 +205,13 @@ test('accepts shift report template and answer payloads', () => {
     { body: apiSchemas.shiftReports.reportSaveBody },
     {
       body: {
+        comment: 'Комментарий по отчету',
         answers: [
           {
             booleanValue: true,
             id: 1,
           },
         ],
-        comment: 'Комментарий по отчету',
       },
       params: {},
       query: {},
@@ -497,4 +498,59 @@ test('rejects action onboarding events from client payloads', () => {
 
   assert.equal(nextCalled, false);
   assert.equal(res.statusCode, 400);
+});
+
+test('accepts transcription job queue filters', () => {
+  const { nextCalled, res } = runValidation(
+    { query: apiSchemas.telephony.transcriptionJobsQuery },
+    {
+      body: {},
+      params: {},
+      query: {
+        callId: '42',
+        page: '1',
+        pageSize: '20',
+        status: 'processing',
+      },
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('accepts transcription result segments with channel contract fields', () => {
+  const { nextCalled, res } = runValidation(
+    apiSchemas.telephony.transcriptionResult,
+    {
+      body: {
+        corrections: [
+          {
+            original: 'подал теннис',
+            normalized: 'падел-теннис',
+            rule: 'padel_tennis_alias',
+          },
+        ],
+        language: 'ru',
+        rawAsrJson: { channels: [{ channel: 'right' }] },
+        rawTranscriptText: 'Клиент: Хочу записаться на игру.',
+        segments: [
+          {
+            channel: 'right',
+            confidence: 0.87,
+            endMs: 4200,
+            speaker: 'client',
+            startMs: 1200,
+            text: 'Хочу записаться на игру.',
+          },
+        ],
+        transcriptText: 'Хочу записаться на игру.',
+      },
+      params: { id: '12' },
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
 });

@@ -22,14 +22,20 @@ const dateOnly = z
   .trim()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Дата должна быть в формате YYYY-MM-DD');
 const optionalDateOnly = z.union([dateOnly, z.literal('')]).optional();
-const dateTime = z.union([
-  z.string().trim().datetime({ offset: true }),
-  z.string().trim().refine((value: string) => !Number.isNaN(new Date(value).getTime()), {
+const dateTimeString = z.string().trim().refine(
+  (value: string) => !Number.isNaN(new Date(value).getTime()),
+  {
     message: 'Дата и время указаны некорректно',
-  }),
+  },
+);
+const dateTime = z.union([
+  dateTimeString,
   z.date(),
 ]);
 const optionalDateTime = z.union([dateTime, z.literal(''), z.null()]).optional();
+const optionalHttpDateTime = z
+  .union([dateTimeString, z.literal(''), z.null()])
+  .optional();
 const numberValue = z.union([
   z.number().finite(),
   z
@@ -69,6 +75,7 @@ const nameString = z.string().trim().min(2, 'Минимум 2 символа').m
 const optionalString = z.union([z.string().trim(), z.literal(''), z.null()]).optional();
 const jsonObject = z.record(z.string(), z.unknown());
 const optionalJsonObject = z.union([jsonObject, z.null()]).optional();
+const optionalJsonArray = z.union([z.array(jsonObject), z.null()]).optional();
 const accountRoleValue = z.enum(ACCOUNT_ROLE_VALUES);
 const timeOfDay = z
   .string()
@@ -846,7 +853,8 @@ const callTaskBody = z
   .object({
     assignedToAccountId: nullableId,
     description: optionalString,
-    dueAt: optionalDateTime,
+    dueAt: optionalHttpDateTime,
+    scriptText: optionalString,
     scopeType: z.enum(['snapshot', 'dynamic']).optional(),
     title: optionalString,
   })
@@ -1245,6 +1253,14 @@ const apiSchemas = {
           .optional(),
       })
       .passthrough(),
+    transcriptionJobsQuery: paginationQuery
+      .extend({
+        callId: z.union([id, z.literal('')]).optional(),
+        status: z
+          .enum(['all', 'queued', 'processing', 'completed', 'failed'])
+          .optional(),
+      })
+      .passthrough(),
     recordsSyncBody: z
       .object({
         dateFrom: optionalDateTime,
@@ -1261,6 +1277,61 @@ const apiSchemas = {
         url: optionalString,
       })
       .passthrough(),
+    transcriptionClaimBody: z
+      .object({
+        workerId: optionalString,
+      })
+      .passthrough(),
+    transcriptionFail: {
+      body: z
+        .object({
+          error: optionalString,
+          errorMessage: optionalString,
+        })
+        .passthrough(),
+      params: idParams,
+    },
+    transcriptionResult: {
+      body: z
+        .object({
+          language: optionalString,
+          corrections: optionalJsonArray,
+          metadata: optionalJsonObject,
+          raw: optionalJsonObject,
+          rawAsrJson: optionalJsonObject,
+          rawAsrResult: optionalJsonObject,
+          rawText: optionalString,
+          rawTranscript: optionalString,
+          rawTranscriptText: optionalString,
+          segments: z
+            .array(
+              z
+                .object({
+                  confidence: optionalNonNegativeNumberValue,
+                  channel: optionalString,
+                  end: optionalNonNegativeNumberValue,
+                  endMs: optionalNonNegativeNumberValue,
+                  endSeconds: optionalNonNegativeNumberValue,
+                  phrase: optionalString,
+                  role: optionalString,
+                  sortOrder: optionalNonNegativeNumberValue,
+                  speaker: optionalString,
+                  start: optionalNonNegativeNumberValue,
+                  startMs: optionalNonNegativeNumberValue,
+                  startSeconds: optionalNonNegativeNumberValue,
+                  text: optionalString,
+                  transcript: optionalString,
+                })
+                .passthrough(),
+            )
+            .optional(),
+          text: optionalString,
+          transcript: optionalString,
+          transcriptText: optionalString,
+        })
+        .passthrough(),
+      params: idParams,
+    },
     syncBody: z
       .object({
         dateFrom: optionalDateTime,

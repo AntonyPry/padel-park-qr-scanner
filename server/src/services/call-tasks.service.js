@@ -356,6 +356,7 @@ async function mapTask(task, metricsByTask = new Map(), options = {}) {
         ? null
         : Math.max(0, currentBaseClientCount - metrics.total),
     overdueCount: metrics.overdueCount,
+    scriptText: raw.scriptText || '',
     scopeType: raw.scopeType,
     snapshotClientCount: raw.snapshotClientCount,
     status: raw.status,
@@ -646,6 +647,7 @@ async function createTaskForBase({
       createdByAccountId: actor?.id || null,
       description: normalizeText(data.description),
       dueAt,
+      scriptText: normalizeText(data.scriptText),
       scopeType,
       snapshotClientCount: snapshotClients.length,
       status: 'backlog',
@@ -701,6 +703,7 @@ async function createForClient(actor, clientId, data = {}) {
         createdByAccountId: actor?.id || null,
         description: normalizeText(data.description),
         dueAt,
+        scriptText: normalizeText(data.scriptText),
         scopeType: 'snapshot',
         snapshotClientCount: 1,
         status: 'backlog',
@@ -829,6 +832,7 @@ async function update(actor, id, data = {}) {
     'assignedToAccountId',
     'description',
     'dueAt',
+    'scriptText',
     'scopeType',
     'status',
     'title',
@@ -859,6 +863,7 @@ async function update(actor, id, data = {}) {
     payload.title = title;
   }
   if ('description' in data) payload.description = normalizeText(data.description);
+  if ('scriptText' in data) payload.scriptText = normalizeText(data.scriptText);
   if ('status' in data) payload.status = normalizeTaskStatus(data.status);
   if (
     task.status === 'archived' &&

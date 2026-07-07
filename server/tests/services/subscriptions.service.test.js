@@ -12,6 +12,20 @@ const originalModels = {
   User: db.User,
   sequelize: db.sequelize,
 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const STATUS_TEST_NOW = new Date('2026-06-15T00:00:00.000Z');
+
+function dateFromStatusTestNow(days) {
+  return new Date(STATUS_TEST_NOW.getTime() + days * DAY_MS);
+}
+
+function dateFromRealNow(days) {
+  return new Date(Date.now() + days * DAY_MS);
+}
+
+function dateInputFromRealNow(days) {
+  return dateFromRealNow(days).toISOString().slice(0, 10);
+}
 
 afterEach(() => {
   Object.assign(db, originalModels);
@@ -20,12 +34,12 @@ afterEach(() => {
 test('client subscription status and remaining sessions are calculated safely', () => {
   assert.equal(
     subscriptionsService.calculateStatus({
-      expiresAt: new Date('2026-07-01T00:00:00.000Z'),
+      expiresAt: dateFromStatusTestNow(16),
       isUnlimited: false,
       sessionsTotal: 4,
       sessionsUsed: 2,
       status: 'active',
-    }, new Date('2026-06-15T00:00:00.000Z')),
+    }, STATUS_TEST_NOW),
     'active',
   );
   assert.equal(
@@ -46,22 +60,22 @@ test('client subscription status and remaining sessions are calculated safely', 
   );
   assert.equal(
     subscriptionsService.calculateStatus({
-      expiresAt: new Date('2026-06-01T00:00:00.000Z'),
+      expiresAt: dateFromStatusTestNow(-14),
       isUnlimited: false,
       sessionsTotal: 4,
       sessionsUsed: 0,
       status: 'active',
-    }, new Date('2026-06-15T00:00:00.000Z')),
+    }, STATUS_TEST_NOW),
     'expired',
   );
   assert.equal(
     subscriptionsService.calculateStatus({
-      expiresAt: new Date('2026-07-01T00:00:00.000Z'),
+      expiresAt: dateFromStatusTestNow(16),
       isUnlimited: false,
       sessionsTotal: 4,
       sessionsUsed: 4,
       status: 'active',
-    }, new Date('2026-06-15T00:00:00.000Z')),
+    }, STATUS_TEST_NOW),
     'used',
   );
   assert.equal(
@@ -79,7 +93,7 @@ test('redeemClientSubscription creates ledger row and marks final session used',
   const subscription = {
     id: 91,
     clientId: 20,
-    expiresAt: new Date('2026-07-01T00:00:00.000Z'),
+    expiresAt: dateFromRealNow(30),
     isUnlimited: false,
     sessionsTotal: 4,
     sessionsUsed: 3,
@@ -127,7 +141,7 @@ test('redeemClientSubscription creates ledger row and marks final session used',
     subscription.id,
     {
       comment: 'Групповая тренировка',
-      redeemedAt: '2026-06-10',
+      redeemedAt: dateInputFromRealNow(-1),
       trainingKind: 'group',
     },
     { id: 7, role: 'admin' },
@@ -148,7 +162,7 @@ test('redeemClientSubscription blocks used subscriptions before ledger write', a
   const subscription = {
     id: 92,
     clientId: 20,
-    expiresAt: new Date('2026-07-01T00:00:00.000Z'),
+    expiresAt: dateFromRealNow(30),
     isUnlimited: false,
     sessionsTotal: 1,
     sessionsUsed: 1,
@@ -190,7 +204,7 @@ test('reverseClientSubscriptionRedemption restores remaining sessions and audit 
   const subscription = {
     id: 93,
     clientId: 20,
-    expiresAt: new Date('2026-07-01T00:00:00.000Z'),
+    expiresAt: dateFromRealNow(30),
     isUnlimited: false,
     sessionsTotal: 4,
     sessionsUsed: 4,
@@ -211,7 +225,7 @@ test('reverseClientSubscriptionRedemption restores remaining sessions and audit 
     clientId: 20,
     clientSubscriptionId: subscription.id,
     quantity: 1,
-    redeemedAt: new Date('2026-06-10T00:00:00.000Z'),
+    redeemedAt: dateFromRealNow(-1),
     serviceType: 'training',
     status: 'active',
     async update(payload) {
@@ -271,14 +285,14 @@ test('createFromPendingSale creates a snapshot subscription once', async () => {
     id: 10,
     clientId: 20,
     itemName: 'Evotor: групповая 4',
-    linkedAt: new Date('2026-06-05T10:00:00.000Z'),
+    linkedAt: dateFromRealNow(-5),
     linkedByAccountId: 7,
     metadata: {
       amount: 6000,
       saleSettings: { subscriptionTypeId: 30 },
     },
     receipt: {
-      dateTime: new Date('2026-06-05T09:00:00.000Z'),
+      dateTime: dateFromRealNow(-5),
       evotorId: 'receipt-1',
       id: 40,
       type: 'SELL',

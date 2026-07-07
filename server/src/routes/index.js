@@ -35,6 +35,7 @@ const trainingNotesRoutes = require('./training-notes');
 const trainingPlansRoutes = require('./training-plans');
 const trainingMethodologyRoutes = require('./training-methodology');
 const telephonyRoutes = require('./telephony');
+const telephonyTranscriptionWorkerRoutes = require('./telephony-transcription-worker');
 const onboardingRoutes = require('./onboarding');
 
 router.get('/health', async (_req, res) => {
@@ -73,6 +74,7 @@ router.get('/openapi.json', (_req, res) => {
 router.use('/auth', authRoutes);
 router.use(realtimeMutations());
 router.use('/webhooks', webhookRoutes);
+router.use(telephonyTranscriptionWorkerRoutes);
 
 router.use(requireAuth);
 router.use(captureTrainingMode());
