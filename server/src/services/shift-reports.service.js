@@ -43,6 +43,8 @@ const UPLOAD_ROOT = path.resolve(__dirname, '../../var/shift-report-attachments'
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_ANSWER = 10;
 const IMAGE_MIME_EXTENSIONS = new Map([
+  ['image/heic', 'heic'],
+  ['image/heif', 'heif'],
   ['image/jpeg', 'jpg'],
   ['image/png', 'png'],
   ['image/webp', 'webp'],
@@ -779,7 +781,7 @@ async function uploadAttachment(reportId, answerId, payload, account) {
 
   const parsed = parseDataUrl(payload.data, payload.mimeType);
   if (!IMAGE_MIME_EXTENSIONS.has(parsed.mimeType)) {
-    throw makeError('Можно прикреплять только JPEG, PNG, WEBP или GIF');
+    throw makeError('Можно прикреплять только JPEG, PNG, WEBP, GIF или HEIC');
   }
   if (parsed.buffer.length > MAX_ATTACHMENT_BYTES) {
     throw makeError('Фото должно быть не больше 5 МБ');

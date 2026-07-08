@@ -835,7 +835,14 @@ const shiftReportAttachmentBody = z
   .object({
     data: z.string().min(16, 'Фото не передано').max(8_000_000, 'Фото слишком большое'),
     fileName: optionalString,
-    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp', 'image/gif']),
+    mimeType: z.enum([
+      'image/gif',
+      'image/heic',
+      'image/heif',
+      'image/jpeg',
+      'image/png',
+      'image/webp',
+    ]),
   })
   .passthrough();
 

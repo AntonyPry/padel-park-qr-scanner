@@ -239,6 +239,24 @@ test('rejects invalid shift report attachment mime type', () => {
   assert.equal(res.statusCode, 400);
 });
 
+test('accepts HEIC shift report attachment mime type', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.shiftReports.attachmentBody },
+    {
+      body: {
+        data: 'data:image/heic;base64,SGVsbG8sIHdvcmxkIQ==',
+        fileName: 'photo.heic',
+        mimeType: 'image/heic',
+      },
+      params: {},
+      query: {},
+    },
+  );
+
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
 test('accepts scanner diagnostic statuses from the browser scanner', () => {
   const { nextCalled, res } = runValidation(apiSchemas.access.scannerEvent, {
     body: {

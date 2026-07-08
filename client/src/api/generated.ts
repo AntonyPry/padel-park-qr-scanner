@@ -1883,7 +1883,7 @@ export type ShiftReportsUploadAttachmentParams = {
 export type ShiftReportsUploadAttachmentBody = {
   data: string;
   fileName?: string | "" | null;
-  mimeType: "image/jpeg" | "image/png" | "image/webp" | "image/gif";
+  mimeType: "image/gif" | "image/heic" | "image/heif" | "image/jpeg" | "image/png" | "image/webp";
   [key: string]: unknown;
 };
 export type ShiftReportsRemoveAttachmentParams = {

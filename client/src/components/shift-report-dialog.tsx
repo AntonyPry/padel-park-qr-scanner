@@ -50,10 +50,22 @@ const MAX_ATTACHMENTS_PER_ANSWER = 10;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const IMAGE_MIME_TYPES = new Set([
   'image/gif',
+  'image/heic',
+  'image/heif',
   'image/jpeg',
   'image/png',
   'image/webp',
 ]);
+const IMAGE_EXTENSIONS_TO_MIME = new Map([
+  ['gif', 'image/gif'],
+  ['heic', 'image/heic'],
+  ['heif', 'image/heif'],
+  ['jpeg', 'image/jpeg'],
+  ['jpg', 'image/jpeg'],
+  ['png', 'image/png'],
+  ['webp', 'image/webp'],
+]);
+const IMAGE_ACCEPT = 'image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif,.heic,.heif';
 
 function showSuccessToast(title: string) {
   toast.show({ title, variant: 'success' });
@@ -76,6 +88,14 @@ function readFileAsDataUrl(file: File) {
     reader.onerror = () => reject(reader.error || new Error('Не удалось прочитать файл'));
     reader.readAsDataURL(file);
   });
+}
+
+function getImageMimeType(file: File) {
+  const mimeType = file.type.trim().toLowerCase();
+  if (IMAGE_MIME_TYPES.has(mimeType)) return mimeType;
+
+  const extension = file.name.split('.').pop()?.trim().toLowerCase() || '';
+  return IMAGE_EXTENSIONS_TO_MIME.get(extension) || mimeType;
 }
 
 function answerToPayload(answer: ShiftReportAnswer): ShiftReportSaveAnswer {
@@ -344,8 +364,8 @@ export function ShiftReportDialog({
     }
 
     const validFiles = files.filter((file) => {
-      if (!IMAGE_MIME_TYPES.has(file.type)) {
-        errors.push(`${file.name}: только JPEG, PNG, WEBP или GIF`);
+      if (!IMAGE_MIME_TYPES.has(getImageMimeType(file))) {
+        errors.push(`${file.name}: только JPEG, PNG, WEBP, GIF или HEIC`);
         return false;
       }
       if (file.size > MAX_ATTACHMENT_BYTES) {
@@ -374,7 +394,7 @@ export function ShiftReportDialog({
         const updatedAnswer = await uploadShiftReportAttachment(report.id, answer.id, {
           data,
           fileName: file.name,
-          mimeType: file.type,
+          mimeType: getImageMimeType(file),
         });
         replaceAnswer(updatedAnswer);
       }
@@ -573,11 +593,11 @@ export function ShiftReportDialog({
                               : 'Достигнут лимит фото'}
                         </span>
                         <span className="text-xs text-muted-foreground">
-                          JPEG, PNG, WEBP или GIF, до 5 МБ каждое
+                          JPEG, PNG, WEBP, GIF или HEIC, до 5 МБ каждое
                         </span>
                         <input
                           multiple
-                          accept="image/jpeg,image/png,image/webp,image/gif"
+                          accept={IMAGE_ACCEPT}
                           className="sr-only"
                           disabled={isUploading || !canUploadMore}
                           type="file"
