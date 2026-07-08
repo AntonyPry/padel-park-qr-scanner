@@ -26,7 +26,7 @@ const qualityConfig = {
   domainGlossary: normalizeGlossary({
     aliases: [
       {
-        aliases: ['подал парк', 'падал парк', 'падел парк', 'папарк', 'попарк', 'па парк'],
+        aliases: ['подал парк', 'падал парк', 'падел парк', 'петал парк', 'папарк', 'попарк', 'па парк'],
         canonical: 'Падел Парк',
         rule: 'padel_park_alias',
       },
@@ -177,7 +177,7 @@ test('preserves raw transcript while normalized transcript drops outro and corre
       {
         channel: 'left',
         segments: [
-          { endMs: 2000, startMs: 1000, text: 'Добрый день, Папарк, прошу вас, позвонили.' },
+          { endMs: 2000, startMs: 1000, text: 'Добрый день, Папа, слушаю вас.' },
           { endMs: 9000, startMs: 8000, text: 'Продолжение следует.' },
           { endMs: 10400, startMs: 9400, text: 'Редактор суббота Корректор А.Кулакова' },
           { endMs: 11800, startMs: 11200, text: 'Д brц! Диа, диа, вагер на! Ага, имя!' },
@@ -202,7 +202,7 @@ test('preserves raw transcript while normalized transcript drops outro and corre
   );
 
   assert.match(result.rawTranscriptText, /Продолжение следует/);
-  assert.match(result.rawTranscriptText, /Папарк/);
+  assert.match(result.rawTranscriptText, /Папа/);
   assert.match(result.rawTranscriptText, /падлу/);
   assert.match(result.rawTranscriptText, /ЧИ ЧИ НЕ ВА/);
   assert.doesNotMatch(result.transcriptText, /Продолжение следует|Редактор|Корректор|Субтитры создавал|ЧИ ЧИ НЕ ВА|brц/);
@@ -215,7 +215,7 @@ test('preserves raw transcript while normalized transcript drops outro and corre
   assert.deepEqual(
     result.corrections.map((correction) => correction.type),
     [
-      'domain_term',
+      'greeting_normalization',
       'domain_term',
       'subtitle_outro_drop',
       'subtitle_outro_drop',

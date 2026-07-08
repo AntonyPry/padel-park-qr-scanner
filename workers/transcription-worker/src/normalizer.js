@@ -43,6 +43,44 @@ function correctionBase(segment, segmentIndex) {
   };
 }
 
+const ADMIN_GREETING_START_MAX_MS = 7000;
+const ADMIN_GREETING_PATTERN =
+  /^(добрый|доброе)\s+(день|вечер|утро),?\s+(?:(?:(?:падел|петал|подал|падал)\s+парк|папарк|попарк|папа|па\s+парк),?\s+)?(?:прошу|слушаю|слышу|послушаю)\s+вас(?:,?\s+(?:позвонили|звоните))?(?=$|[^\p{L}\p{N}])/iu;
+
+function canNormalizeAdminGreeting(segment) {
+  if (segment?.speaker !== 'administrator') return false;
+  const startMs = Number(segment?.startMs);
+  return !Number.isFinite(startMs) || startMs <= ADMIN_GREETING_START_MAX_MS;
+}
+
+function normalizeAdminGreeting(text, segment, segmentIndex) {
+  if (!canNormalizeAdminGreeting(segment)) {
+    return { corrections: [], text };
+  }
+
+  const normalized = normalizeText(text);
+  const match = normalized.match(ADMIN_GREETING_PATTERN);
+  if (!match) return { corrections: [], text };
+
+  const replacement = `${match[1]} ${match[2]}, Падел Парк, слушаю вас`;
+  const nextText = normalized.replace(ADMIN_GREETING_PATTERN, replacement);
+  if (nextText === normalized) return { corrections: [], text };
+
+  return {
+    corrections: [
+      {
+        ...correctionBase(segment, segmentIndex),
+        original: match[0],
+        normalized: replacement,
+        reason: 'admin_opening_greeting_mishear',
+        rule: 'admin_opening_greeting',
+        type: 'greeting_normalization',
+      },
+    ],
+    text: nextText,
+  };
+}
+
 function applyDomainRules(text, segment, segmentIndex, glossary) {
   let normalized = normalizeText(text);
   const corrections = [];
@@ -236,7 +274,10 @@ function normalizeTranscriptSegments(segments = [], glossary = {}, options = {})
       return;
     }
 
-    const domainResult = applyDomainRules(rawText, segment, segmentIndex, glossary);
+    const greetingResult = normalizeAdminGreeting(rawText, segment, segmentIndex);
+    corrections.push(...greetingResult.corrections);
+
+    const domainResult = applyDomainRules(greetingResult.text, segment, segmentIndex, glossary);
     corrections.push(...domainResult.corrections);
 
     const fillerResult = collapseFillerText(domainResult.text);
@@ -297,5 +338,6 @@ module.exports = {
   isAsrGibberishHallucination,
   isSubtitleOutroHallucination,
   isFillerOnly,
+  normalizeAdminGreeting,
   normalizeTranscriptSegments,
 };

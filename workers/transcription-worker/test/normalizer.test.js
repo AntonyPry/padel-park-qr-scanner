@@ -11,7 +11,7 @@ const {
 const glossary = normalizeGlossary({
   aliases: [
     {
-      aliases: ['подал парк', 'падал парк', 'падел парк', 'папарк', 'попарк', 'па парк'],
+      aliases: ['подал парк', 'падал парк', 'падел парк', 'петал парк', 'папарк', 'попарк', 'па парк'],
       canonical: 'Падел Парк',
       rule: 'padel_park_alias',
     },
@@ -114,15 +114,69 @@ test('normalizes club name greeting mishears', () => {
         speaker: 'administrator',
         text: 'Добрый день, Папарк, прошу вас, позвонили.',
       },
+      {
+        channel: 'left',
+        endMs: 2000,
+        speaker: 'administrator',
+        startMs: 1000,
+        text: 'Доброе утро, послушаю вас. Одиночный с 8 часов.',
+      },
+      {
+        channel: 'left',
+        endMs: 3000,
+        speaker: 'administrator',
+        startMs: 1500,
+        text: 'Добрый день, Петал Парк, слышу вас.',
+      },
     ],
     glossary,
   );
 
   assert.equal(result.segments[0].text, 'Добрый вечер, Падел Парк позвонили.');
-  assert.equal(result.segments[1].text, 'Добрый день, Падел Парк, прошу вас, позвонили.');
-  assert.equal(result.corrections.length, 2);
-  assert.equal(result.corrections[0].rule, 'padel_park_alias');
-  assert.equal(result.corrections[1].rule, 'padel_park_alias');
+  assert.equal(result.segments[1].text, 'Добрый день, Падел Парк, слушаю вас.');
+  assert.equal(result.segments[2].text, 'Доброе утро, Падел Парк, слушаю вас. Одиночный с 8 часов.');
+  assert.equal(result.segments[3].text, 'Добрый день, Падел Парк, слушаю вас.');
+  assert.equal(result.corrections.length, 4);
+  assert.deepEqual(
+    result.corrections.map((correction) => correction.rule),
+    [
+      'padel_park_alias',
+      'admin_opening_greeting',
+      'admin_opening_greeting',
+      'admin_opening_greeting',
+    ],
+  );
+});
+
+test('does not normalize client or late greeting-like phrases', () => {
+  const result = normalizeTranscriptSegments(
+    [
+      {
+        channel: 'right',
+        endMs: 2000,
+        speaker: 'client',
+        startMs: 1000,
+        text: 'Добрый день, папа, слушаю вас.',
+      },
+      {
+        channel: 'left',
+        endMs: 14000,
+        speaker: 'administrator',
+        startMs: 12000,
+        text: 'Добрый день, папа, слушаю вас.',
+      },
+    ],
+    glossary,
+  );
+
+  assert.deepEqual(
+    result.segments.map((segment) => segment.text),
+    [
+      'Добрый день, папа, слушаю вас.',
+      'Добрый день, папа, слушаю вас.',
+    ],
+  );
+  assert.equal(result.corrections.length, 0);
 });
 
 test('drops standalone subtitle outro hallucination segments only', () => {
