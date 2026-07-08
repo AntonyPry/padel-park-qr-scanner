@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { buildInitialPrompt, normalizeGlossary } = require('../src/glossary');
 const {
+  isAsrGibberishHallucination,
   isSubtitleOutroHallucination,
   isFillerOnly,
   normalizeTranscriptSegments,
@@ -10,7 +11,7 @@ const {
 const glossary = normalizeGlossary({
   aliases: [
     {
-      aliases: ['подал парк', 'падал парк', 'падел парк'],
+      aliases: ['подал парк', 'падал парк', 'падел парк', 'папарк', 'попарк', 'па парк'],
       canonical: 'Падел Парк',
       rule: 'padel_park_alias',
     },
@@ -108,13 +109,20 @@ test('normalizes club name greeting mishears', () => {
         speaker: 'administrator',
         text: 'Добрый вечер, подал парк позвонили.',
       },
+      {
+        channel: 'left',
+        speaker: 'administrator',
+        text: 'Добрый день, Папарк, прошу вас, позвонили.',
+      },
     ],
     glossary,
   );
 
   assert.equal(result.segments[0].text, 'Добрый вечер, Падел Парк позвонили.');
-  assert.equal(result.corrections.length, 1);
+  assert.equal(result.segments[1].text, 'Добрый день, Падел Парк, прошу вас, позвонили.');
+  assert.equal(result.corrections.length, 2);
   assert.equal(result.corrections[0].rule, 'padel_park_alias');
+  assert.equal(result.corrections[1].rule, 'padel_park_alias');
 });
 
 test('drops standalone subtitle outro hallucination segments only', () => {
@@ -211,6 +219,41 @@ test('keeps ordinary client phrase that mentions outro words', () => {
     'Корректор нужен для текста договора, это не субтитры.',
   );
   assert.equal(result.corrections.length, 0);
+});
+
+test('drops short low-signal ASR gibberish but keeps normal latin terms', () => {
+  const result = normalizeTranscriptSegments(
+    [
+      {
+        channel: 'right',
+        speaker: 'client',
+        text: 'ЧИ ЧИ НЕ ВА',
+      },
+      {
+        channel: 'left',
+        speaker: 'administrator',
+        text: 'Д brц! Диа, диа, вагер на! Ага, имя!',
+      },
+      {
+        channel: 'left',
+        speaker: 'administrator',
+        text: 'Откройте приложение Lunda или QR-код.',
+      },
+    ],
+    glossary,
+  );
+
+  assert.deepEqual(
+    result.segments.map((segment) => segment.text),
+    ['Откройте приложение Lunda или QR-код.'],
+  );
+  assert.deepEqual(
+    result.corrections.map((correction) => correction.rule),
+    ['spelled_syllable_noise', 'mixed_script_low_signal'],
+  );
+  assert.equal(isAsrGibberishHallucination('ЧИ ЧИ НЕ ВА'), true);
+  assert.equal(isAsrGibberishHallucination('Д brц! Диа, диа, вагер на! Ага, имя!'), true);
+  assert.equal(isAsrGibberishHallucination('Откройте приложение Lunda или QR-код.'), false);
 });
 
 test('corrects padlu and keeps structured correction metadata', () => {

@@ -112,6 +112,7 @@ const SUBTITLE_CONVERSATION_HINTS = [
   'текст',
   'хочу',
 ];
+const ALLOWED_LATIN_TERMS = /\b(lunda|qr|vk|whatsapp|telegram|zoom)\b/giu;
 
 function getSubtitleOutroHallucinationRule(text) {
   const normalized = normalizeForSubtitleMatch(text);
@@ -133,6 +134,38 @@ function getSubtitleOutroHallucinationRule(text) {
 
 function isSubtitleOutroHallucination(text) {
   return Boolean(getSubtitleOutroHallucinationRule(text));
+}
+
+function textWithoutAllowedLatinTerms(text) {
+  return String(text || '').replace(ALLOWED_LATIN_TERMS, ' ');
+}
+
+function getAsrGibberishRule(text) {
+  const normalized = normalizeText(text);
+  if (!normalized || normalized.length > 120) return null;
+
+  const withoutAllowedLatin = textWithoutAllowedLatinTerms(normalized);
+  if (/[A-Za-z]/u.test(withoutAllowedLatin) && /[А-Яа-яЁё]/u.test(withoutAllowedLatin)) {
+    return 'mixed_script_low_signal';
+  }
+
+  const wordTokens = normalized
+    .replace(/[^\p{L}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter(Boolean);
+  if (wordTokens.length >= 4) {
+    const isUpperShortCyrillicSyllable = (token) =>
+      /^[А-ЯЁ]+$/u.test(token) && token.length <= 3;
+    if (wordTokens.every(isUpperShortCyrillicSyllable)) {
+      return 'spelled_syllable_noise';
+    }
+  }
+
+  return null;
+}
+
+function isAsrGibberishHallucination(text) {
+  return Boolean(getAsrGibberishRule(text));
 }
 
 function fillerTokens(text) {
@@ -186,6 +219,19 @@ function normalizeTranscriptSegments(segments = [], glossary = {}, options = {})
         reason: 'standalone_subtitle_outro_hallucination',
         rule: subtitleOutroRule,
         type: 'subtitle_outro_drop',
+      });
+      return;
+    }
+
+    const gibberishRule = getAsrGibberishRule(rawText);
+    if (gibberishRule) {
+      corrections.push({
+        ...correctionBase(segment, segmentIndex),
+        original: rawText,
+        normalized: '',
+        reason: 'low_signal_asr_gibberish',
+        rule: gibberishRule,
+        type: 'asr_gibberish_drop',
       });
       return;
     }
@@ -248,6 +294,7 @@ function normalizeTranscriptSegments(segments = [], glossary = {}, options = {})
 
 module.exports = {
   collapseFillerText,
+  isAsrGibberishHallucination,
   isSubtitleOutroHallucination,
   isFillerOnly,
   normalizeTranscriptSegments,
