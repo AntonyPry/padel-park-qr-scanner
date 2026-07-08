@@ -78,6 +78,41 @@ function formatTranscriptLines(segments) {
     .join('\n');
 }
 
+function buildQualityWarnings(corrections = [], segments = []) {
+  const warnings = [];
+  const countByType = corrections.reduce((acc, correction) => {
+    const type = correction?.type || 'unknown';
+    acc[type] = (acc[type] || 0) + 1;
+    return acc;
+  }, {});
+
+  if (countByType.subtitle_outro_drop) {
+    warnings.push({
+      code: 'subtitle_hallucinations_removed',
+      count: countByType.subtitle_outro_drop,
+      message: 'ASR добавил служебные фразы про субтитры, они удалены из нормализованного текста.',
+      severity: 'info',
+    });
+  }
+  if (countByType.asr_gibberish_drop) {
+    warnings.push({
+      code: 'gibberish_segments_removed',
+      count: countByType.asr_gibberish_drop,
+      message: 'Удалены шумовые фрагменты ASR. Проверьте конец разговора и спорные места в raw-тексте.',
+      severity: 'warning',
+    });
+  }
+  if (countByType.greeting_normalization || countByType.domain_term) {
+    warnings.push({
+      code: 'automatic_domain_normalization',
+      count: (countByType.greeting_normalization || 0) + (countByType.domain_term || 0),
+      message: 'Применены автоматические правки терминов клуба и приветствия администратора.',
+      severity: 'info',
+    });
+  }
+  return warnings;
+}
+
 function mergeAdjacentShortSegments(segments) {
   const merged = [];
   segments.forEach((segment) => {
@@ -161,6 +196,7 @@ function buildTranscriptResult(channelResults, probe, config, extraMetadata = {}
     config.domainGlossary || {},
   );
   const transcriptText = formatTranscriptLines(normalized.segments);
+  const qualityWarnings = buildQualityWarnings(normalized.corrections, normalized.segments);
 
   return {
     corrections: normalized.corrections,
@@ -191,6 +227,7 @@ function buildTranscriptResult(channelResults, probe, config, extraMetadata = {}
         model: config.whisperModel,
         threads: config.whisperThreads,
       },
+      qualityWarnings,
       ...extraMetadata,
     },
     rawAsrJson: {
@@ -208,6 +245,7 @@ function buildTranscriptResult(channelResults, probe, config, extraMetadata = {}
 }
 
 module.exports = {
+  buildQualityWarnings,
   buildTranscriptResult,
   formatTime,
   mergeAdjacentShortSegments,

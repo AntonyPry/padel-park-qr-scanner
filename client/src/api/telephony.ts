@@ -48,6 +48,18 @@ export interface TelephonyTranscriptSegment {
   text: string;
 }
 
+export interface TelephonyTranscriptionQualityWarning {
+  code: string;
+  count?: number;
+  message: string;
+  severity?: 'info' | 'warning' | 'error';
+}
+
+export interface TelephonyTranscriptionMetadata {
+  qualityWarnings?: TelephonyTranscriptionQualityWarning[];
+  [key: string]: unknown;
+}
+
 export interface TelephonyTranscription {
   attemptCount: number;
   claimedAt?: string | null;
@@ -58,6 +70,7 @@ export interface TelephonyTranscription {
   failedAt?: string | null;
   id: number;
   language?: string | null;
+  metadata?: TelephonyTranscriptionMetadata | null;
   rawTranscriptText?: string | null;
   segments?: TelephonyTranscriptSegment[];
   status: TelephonyTranscriptionStatus;

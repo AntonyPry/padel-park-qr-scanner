@@ -835,6 +835,7 @@ function mapTranscriptionJob(row, options = {}) {
     id: raw.id,
     language: raw.language,
     corrections: Array.isArray(raw.corrections) ? raw.corrections : [],
+    metadata: raw.metadata || null,
     rawTranscriptText: raw.rawTranscriptText || null,
     status: raw.status,
     telephonyCallId: raw.telephonyCallId,
@@ -912,6 +913,13 @@ function mapWorkerTranscriptionJob(row, options = {}) {
         durationSeconds: raw.call.durationSeconds,
         id: raw.call.id,
         recordingStatus: raw.call.recordingStatus,
+        staff: raw.call.staff
+          ? {
+              id: raw.call.staff.id,
+              name: raw.call.staff.name,
+              role: raw.call.staff.role,
+            }
+          : null,
         startedAt: raw.call.startedAt,
       }
     : null;
@@ -937,6 +945,11 @@ function workerQueueCallInclude() {
         model: db.User,
         as: 'client',
         attributes: ['id', 'name', 'phone', 'status'],
+      },
+      {
+        model: db.Staff,
+        as: 'staff',
+        attributes: ['id', 'name', 'role'],
       },
     ],
     required: true,
@@ -2809,11 +2822,19 @@ async function getWorkerTranscriptionQueue(query = {}) {
 }
 
 async function getTranscriptionJobOrFail(id, options = {}) {
+  const include = options.includeWorkerCall
+    ? [
+        ...transcriptionJobInclude({
+          includeSegments: options.includeSegments,
+        }),
+        workerQueueCallInclude(),
+      ]
+    : transcriptionJobInclude({
+        includeCall: options.includeCall,
+        includeSegments: options.includeSegments,
+      });
   const job = await db.TelephonyTranscriptionJob.findByPk(id, {
-    include: transcriptionJobInclude({
-      includeCall: options.includeCall,
-      includeSegments: options.includeSegments,
-    }),
+    include,
     lock: options.lock,
     transaction: options.transaction,
   });
@@ -2860,7 +2881,7 @@ async function claimTranscriptionJob(data = {}) {
 
   if (!jobId) return { job: null };
 
-  const job = await getTranscriptionJobOrFail(jobId, { includeCall: true });
+  const job = await getTranscriptionJobOrFail(jobId, { includeWorkerCall: true });
   return { job: mapWorkerTranscriptionJob(job) };
 }
 
@@ -2960,17 +2981,14 @@ async function retryTranscriptionJob(actor, jobId) {
   if (job.status === 'queued' || job.status === 'processing') {
     return getCall(actor, job.telephonyCallId);
   }
-  if (job.status === 'completed') {
-    throw appError('Завершенную транскрибацию нельзя повторить через retry', 409);
-  }
 
   await db.sequelize.transaction(async (transaction) => {
     const lockedJob = await getUserTranscriptionJobOrFail(actor, job.id, {
       lock: transaction.LOCK.UPDATE,
       transaction,
     });
-    if (lockedJob.status !== 'failed') {
-      throw appError('Повторить можно только задачу с ошибкой', 409);
+    if (!['completed', 'failed'].includes(lockedJob.status)) {
+      throw appError('Повторить можно только завершенную или ошибочную задачу', 409);
     }
 
     await db.TelephonyTranscriptSegment.destroy({
@@ -2984,9 +3002,12 @@ async function retryTranscriptionJob(actor, jobId) {
         errorMessage: null,
         failedAt: null,
         corrections: null,
+        language: null,
+        metadata: null,
         rawAsrJson: null,
         rawTranscriptText: null,
         status: 'queued',
+        transcriptText: null,
         workerId: null,
       },
       { transaction },

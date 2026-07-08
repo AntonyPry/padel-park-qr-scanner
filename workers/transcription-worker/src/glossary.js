@@ -39,19 +39,32 @@ async function loadDomainGlossary(glossaryPath = DEFAULT_GLOSSARY_PATH) {
 }
 
 function buildInitialPrompt(glossary, options = {}) {
-  const maxChars = Number(options.maxChars || 420);
+  const maxChars = Number(options.maxChars || 620);
   const terms = [...new Set((glossary?.promptTerms || []).map(normalizeTerm).filter(Boolean))];
-  if (terms.length === 0) return null;
+  const context = normalizeTerm(options.context);
+  if (terms.length === 0 && !context) return null;
 
-  const prefix = 'Термины клуба и CRM: ';
-  let prompt = prefix;
-  for (const term of terms) {
-    const next = prompt === prefix ? term : `, ${term}`;
-    if ((prompt + next + '.').length > maxChars) break;
-    prompt += next;
+  let prompt = '';
+  if (terms.length > 0) {
+    const prefix = 'Термины клуба и CRM: ';
+    prompt = prefix;
+    for (const term of terms) {
+      const next = prompt === prefix ? term : `, ${term}`;
+      if ((prompt + next + '.').length > maxChars) break;
+      prompt += next;
+    }
+    prompt = `${prompt}.`;
   }
 
-  return `${prompt}.`;
+  if (context) {
+    const separator = prompt ? ' ' : '';
+    const addition = `Контекст звонка: ${context}.`;
+    if ((prompt + separator + addition).length <= maxChars) {
+      prompt = `${prompt}${separator}${addition}`;
+    }
+  }
+
+  return prompt || null;
 }
 
 module.exports = {

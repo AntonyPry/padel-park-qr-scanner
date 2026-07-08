@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 const { parseAsrResponse } = require('../src/asr-http');
 const {
+  buildQualityWarnings,
   buildTranscriptResult,
   formatTime,
   parseWhisperOutput,
@@ -102,6 +103,27 @@ test('combines left and right channel transcript by timestamps', () => {
   ].join('\n'));
   assert.equal(result.metadata.channelMapping.administrator, 'left');
   assert.equal(result.metadata.jobId, 17);
+  assert.deepEqual(result.metadata.qualityWarnings, []);
+});
+
+test('builds compact quality warnings from normalization corrections', () => {
+  const warnings = buildQualityWarnings(
+    [
+      { type: 'subtitle_outro_drop' },
+      { type: 'asr_gibberish_drop' },
+      { type: 'domain_term' },
+    ],
+    [{ text: 'Добрый день.' }, { text: 'Здравствуйте.' }, { text: 'Записали.' }],
+  );
+
+  assert.deepEqual(
+    warnings.map((warning) => warning.code),
+    [
+      'subtitle_hallucinations_removed',
+      'gibberish_segments_removed',
+      'automatic_domain_normalization',
+    ],
+  );
 });
 
 test('keeps ASR chunk offsets as absolute timestamps before merge', () => {
@@ -221,6 +243,14 @@ test('preserves raw transcript while normalized transcript drops outro and corre
       'subtitle_outro_drop',
       'asr_gibberish_drop',
       'asr_gibberish_drop',
+    ],
+  );
+  assert.deepEqual(
+    result.metadata.qualityWarnings.map((warning) => warning.code),
+    [
+      'subtitle_hallucinations_removed',
+      'gibberish_segments_removed',
+      'automatic_domain_normalization',
     ],
   );
 });

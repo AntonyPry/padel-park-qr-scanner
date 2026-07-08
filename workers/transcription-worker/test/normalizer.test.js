@@ -39,6 +39,28 @@ const glossary = normalizeGlossary({
       rule: 'court_size_context',
     },
     {
+      aliases: ['аккорд'],
+      canonical: 'за корт',
+      contextAny: ['рублей', 'сколько', 'аренда', 'стоимость'],
+      rule: 'court_price_context',
+    },
+    {
+      aliases: ['спорт на двоих'],
+      canonical: 'корт на двоих',
+      contextAny: ['есть', 'можно', 'забронировать'],
+      rule: 'court_for_two_context',
+    },
+    {
+      aliases: ['запранировала'],
+      canonical: 'забронировала',
+      rule: 'booking_verb_mishear',
+    },
+    {
+      aliases: ['запранировали'],
+      canonical: 'забронировали',
+      rule: 'booking_verb_mishear',
+    },
+    {
       aliases: ['мастеринка', 'материнка'],
       canonical: 'мастер-класс',
       contextAny: ['запись', 'занятие'],
@@ -72,6 +94,18 @@ test('builds short initial prompt from glossary terms', () => {
   assert.ok(prompt.length <= 120);
 });
 
+test('adds call context to ASR initial prompt when there is room', () => {
+  const prompt = buildInitialPrompt(glossary, {
+    context: 'входящий звонок клиента в клуб; клиента зовут Екатерина',
+    maxChars: 220,
+  });
+
+  assert.match(prompt, /Термины клуба/);
+  assert.match(prompt, /Контекст звонка/);
+  assert.match(prompt, /Екатерина/);
+  assert.ok(prompt.length <= 220);
+});
+
 test('normalizes only explicit domain aliases and keeps metadata', () => {
   const result = normalizeTranscriptSegments(
     [
@@ -98,6 +132,37 @@ test('normalizes only explicit domain aliases and keeps metadata', () => {
   assert.deepEqual(
     result.corrections.map((correction) => correction.rule),
     ['padel_tennis_alias', 'lunda_alias', 'court_size_context'],
+  );
+});
+
+test('normalizes safe booking and price mishears', () => {
+  const result = normalizeTranscriptSegments(
+    [
+      {
+        channel: 'left',
+        speaker: 'administrator',
+        text: 'Все хорошо, запранировала.',
+      },
+      {
+        channel: 'left',
+        speaker: 'administrator',
+        text: '3 300 аккорд два на два и плюс 450 рублей с человека.',
+      },
+      {
+        channel: 'right',
+        speaker: 'client',
+        text: 'Есть спорт на двоих завтра вечером?',
+      },
+    ],
+    glossary,
+  );
+
+  assert.equal(result.segments[0].text, 'Все хорошо, забронировала.');
+  assert.equal(result.segments[1].text, '3 300 за корт два на два и плюс 450 рублей с человека.');
+  assert.equal(result.segments[2].text, 'Есть корт на двоих завтра вечером?');
+  assert.deepEqual(
+    result.corrections.map((correction) => correction.rule),
+    ['booking_verb_mishear', 'court_price_context', 'court_for_two_context'],
   );
 });
 

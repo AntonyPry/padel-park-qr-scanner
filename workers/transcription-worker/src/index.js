@@ -18,6 +18,35 @@ function getCallId(job) {
   return job?.call?.id || job?.telephonyCallId || null;
 }
 
+function normalizePromptValue(value) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  return text || null;
+}
+
+function buildCallPromptContext(job) {
+  const call = job?.call || {};
+  const parts = [];
+  const clientName = normalizePromptValue(call.client?.name);
+  const staffName = normalizePromptValue(call.staff?.name);
+
+  if (call.direction === 'inbound') parts.push('входящий звонок клиента в клуб');
+  if (call.direction === 'outbound') parts.push('исходящий звонок администратора клиенту');
+  if (clientName) parts.push(`клиента зовут ${clientName}`);
+  if (staffName) parts.push(`администратора зовут ${staffName}`);
+  if (Number.isFinite(Number(call.durationSeconds))) {
+    parts.push(`длительность ${Math.round(Number(call.durationSeconds))} секунд`);
+  }
+
+  return {
+    prompt: parts.join('; '),
+    metadata: {
+      hasClientName: Boolean(clientName),
+      hasStaffName: Boolean(staffName),
+      direction: normalizePromptValue(call.direction),
+    },
+  };
+}
+
 function truncateErrorMessage(error) {
   const message = error && error.stack ? error.stack : String(error?.message || error);
   return message.slice(0, 4000);
@@ -101,10 +130,17 @@ async function processJob(crmClient, job, config, logger) {
       await ensureWhisperModel(config, runCommand, logger);
     }
 
+    const promptContext = buildCallPromptContext(job);
+    const jobInitialPrompt = buildInitialPrompt(config.domainGlossary, {
+      context: promptContext.prompt,
+    });
+
     const channelResults = [];
     for (const channel of preparedAudio.channels) {
       channelResults.push(
-        await transcribePreparedChannel(channel, probe, tempDir, config, logger),
+        await transcribePreparedChannel(channel, probe, tempDir, config, logger, {
+          initialPrompt: jobInitialPrompt,
+        }),
       );
     }
 
@@ -133,8 +169,9 @@ async function processJob(crmClient, job, config, logger) {
       glossary: {
         aliases: config.domainGlossary?.aliases?.length || 0,
         canonicalTerms: config.domainGlossary?.canonicalTerms?.length || 0,
-        initialPrompt: config.asrInitialPrompt || null,
+        initialPrompt: jobInitialPrompt || null,
       },
+      promptContext: promptContext.metadata,
       whisperDurationsMs: Object.fromEntries(
         channelResults.map((item) => [item.channel, item.durationMs]),
       ),
@@ -161,7 +198,7 @@ async function processJob(crmClient, job, config, logger) {
   }
 }
 
-async function transcribePreparedChannel(channel, probe, tempDir, config, logger) {
+async function transcribePreparedChannel(channel, probe, tempDir, config, logger, options = {}) {
   const chunks = await createSpeechChunks(channel, probe, tempDir, runCommand, config);
   logger.info('Prepared speech chunks for channel', {
     channel: channel.name,
@@ -186,7 +223,7 @@ async function transcribePreparedChannel(channel, probe, tempDir, config, logger
     if (config.asrBackend === 'http_asr') {
       const asr = await transcribeHttpAsr(chunk.filePath, config, logger, {
         durationMs: chunk.durationMs,
-        initialPrompt: config.asrInitialPrompt,
+        initialPrompt: options.initialPrompt || config.asrInitialPrompt,
         offsetMs: chunk.offsetMs,
       });
       segments.push(...asr.parsed.segments);

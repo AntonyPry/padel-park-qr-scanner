@@ -85,6 +85,7 @@ import {
   type TelephonyResult,
   type TelephonyTranscriptSegment,
   type TelephonyTranscriptSpeaker,
+  type TelephonyTranscriptionQualityWarning,
   type TelephonyTranscriptionStatus,
 } from '@/api/telephony';
 import { queryKeys } from '@/api/query-keys';
@@ -294,6 +295,12 @@ function getTranscriptionStatusVariant(status?: TranscriptionViewState) {
 
 function isTranscriptionPending(status?: TelephonyTranscriptionStatus) {
   return status === 'queued' || status === 'processing';
+}
+
+function getTranscriptionQualityWarnings(
+  warnings?: TelephonyTranscriptionQualityWarning[],
+) {
+  return Array.isArray(warnings) ? warnings.filter((warning) => warning?.message) : [];
 }
 
 function formatTranscriptTime(ms?: number | null) {
@@ -859,8 +866,24 @@ export default function TelephonyPage() {
   const renderTranscriptionAction = (call: TelephonyCall, iconOnly = false) => {
     const transcription = call.transcription;
     if (call.recordingStatus !== 'available') return null;
-    if (transcription?.status === 'completed' || isTranscriptionPending(transcription?.status)) {
+    if (isTranscriptionPending(transcription?.status)) {
       return null;
+    }
+
+    if (transcription?.status === 'completed') {
+      return (
+        <Button
+          variant="outline"
+          size={iconOnly ? 'icon-sm' : 'sm'}
+          onClick={() => retryTranscription(call)}
+          disabled={transcriptionActionPending}
+          aria-label="Пересчитать транскрибацию"
+          title="Пересчитать транскрибацию"
+        >
+          <RefreshCw className="h-4 w-4" />
+          {!iconOnly && 'Пересчитать'}
+        </Button>
+      );
     }
 
     if (transcription?.status === 'failed') {
@@ -914,6 +937,9 @@ export default function TelephonyPage() {
     const transcription = call.transcription;
     const segments = sortTranscriptSegments(transcription?.segments);
     const corrections = transcription?.corrections || [];
+    const qualityWarnings = getTranscriptionQualityWarnings(
+      transcription?.metadata?.qualityWarnings,
+    );
     const segmentTranscriptText = segments
       .map((segment) => segment.text.trim())
       .filter(Boolean)
@@ -960,6 +986,27 @@ export default function TelephonyPage() {
 
     return (
       <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {qualityWarnings.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {qualityWarnings.map((warning) => (
+                <Badge
+                  key={`${warning.code}-${warning.message}`}
+                  variant={warning.severity === 'warning' ? 'destructive' : 'secondary'}
+                  className="max-w-full whitespace-normal text-left"
+                >
+                  {warning.message}
+                </Badge>
+              ))}
+            </div>
+          ) : (
+            <span className="text-sm text-muted-foreground">
+              Автоматических предупреждений качества нет.
+            </span>
+          )}
+          {renderTranscriptionAction(call)}
+        </div>
+
         {segments.length > 0 ? (
           <div className="space-y-2">
             {segments.map((segment, index) => {
