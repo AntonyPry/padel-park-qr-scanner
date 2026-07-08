@@ -25,24 +25,17 @@ function normalizePromptValue(value) {
 
 function buildCallPromptContext(job) {
   const call = job?.call || {};
-  const parts = [];
   const clientName = normalizePromptValue(call.client?.name);
   const staffName = normalizePromptValue(call.staff?.name);
 
-  if (call.direction === 'inbound') parts.push('входящий звонок клиента в клуб');
-  if (call.direction === 'outbound') parts.push('исходящий звонок администратора клиенту');
-  if (clientName) parts.push(`клиента зовут ${clientName}`);
-  if (staffName) parts.push(`администратора зовут ${staffName}`);
-  if (Number.isFinite(Number(call.durationSeconds))) {
-    parts.push(`длительность ${Math.round(Number(call.durationSeconds))} секунд`);
-  }
-
   return {
-    prompt: parts.join('; '),
     metadata: {
       hasClientName: Boolean(clientName),
       hasStaffName: Boolean(staffName),
       direction: normalizePromptValue(call.direction),
+      durationSeconds: Number.isFinite(Number(call.durationSeconds))
+        ? Math.round(Number(call.durationSeconds))
+        : null,
     },
   };
 }
@@ -131,9 +124,7 @@ async function processJob(crmClient, job, config, logger) {
     }
 
     const promptContext = buildCallPromptContext(job);
-    const jobInitialPrompt = buildInitialPrompt(config.domainGlossary, {
-      context: promptContext.prompt,
-    });
+    const jobInitialPrompt = config.asrInitialPrompt;
 
     const channelResults = [];
     for (const channel of preparedAudio.channels) {

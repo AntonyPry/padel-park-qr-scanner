@@ -110,6 +110,7 @@ test('builds compact quality warnings from normalization corrections', () => {
   const warnings = buildQualityWarnings(
     [
       { type: 'subtitle_outro_drop' },
+      { type: 'prompt_leak_drop' },
       { type: 'asr_gibberish_drop' },
       { type: 'domain_term' },
     ],
@@ -120,6 +121,7 @@ test('builds compact quality warnings from normalization corrections', () => {
     warnings.map((warning) => warning.code),
     [
       'subtitle_hallucinations_removed',
+      'prompt_leak_removed',
       'gibberish_segments_removed',
       'automatic_domain_normalization',
     ],

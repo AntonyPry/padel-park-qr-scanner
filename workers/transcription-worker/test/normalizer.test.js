@@ -94,18 +94,6 @@ test('builds short initial prompt from glossary terms', () => {
   assert.ok(prompt.length <= 120);
 });
 
-test('adds call context to ASR initial prompt when there is room', () => {
-  const prompt = buildInitialPrompt(glossary, {
-    context: 'входящий звонок клиента в клуб; клиента зовут Екатерина',
-    maxChars: 220,
-  });
-
-  assert.match(prompt, /Термины клуба/);
-  assert.match(prompt, /Контекст звонка/);
-  assert.match(prompt, /Екатерина/);
-  assert.ok(prompt.length <= 220);
-});
-
 test('normalizes only explicit domain aliases and keeps metadata', () => {
   const result = normalizeTranscriptSegments(
     [
@@ -309,6 +297,35 @@ test('drops standalone subtitle outro hallucination segments only', () => {
   );
   assert.equal(isSubtitleOutroHallucination('Субтитры создавал DimaTorzok'), true);
   assert.equal(isSubtitleOutroHallucination('Редактор суббота Корректор А.Кулакова'), true);
+});
+
+test('drops leaked ASR initial prompt context segments', () => {
+  const result = normalizeTranscriptSegments(
+    [
+      {
+        channel: 'left',
+        speaker: 'administrator',
+        startMs: 1000,
+        endMs: 3000,
+        text: 'Добрый вечер, Падел Парк, слушаю вас.',
+      },
+      {
+        channel: 'right',
+        speaker: 'client',
+        startMs: 30000,
+        endMs: 31900,
+        text: 'Контекст звонок клиента в клубах Муркин. Продолжение следует...',
+      },
+    ],
+    glossary,
+  );
+
+  assert.equal(result.segments.length, 1);
+  assert.equal(result.segments[0].text, 'Добрый вечер, Падел Парк, слушаю вас.');
+  assert.deepEqual(
+    result.corrections.map((correction) => correction.type),
+    ['prompt_leak_drop'],
+  );
 });
 
 test('keeps ordinary client phrase that mentions outro words', () => {

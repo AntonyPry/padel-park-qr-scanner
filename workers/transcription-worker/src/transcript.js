@@ -94,6 +94,14 @@ function buildQualityWarnings(corrections = [], segments = []) {
       severity: 'info',
     });
   }
+  if (countByType.prompt_leak_drop) {
+    warnings.push({
+      code: 'prompt_leak_removed',
+      count: countByType.prompt_leak_drop,
+      message: 'ASR повторил технический prompt как речь, этот фрагмент удален.',
+      severity: 'warning',
+    });
+  }
   if (countByType.asr_gibberish_drop) {
     warnings.push({
       code: 'gibberish_segments_removed',

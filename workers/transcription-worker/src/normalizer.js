@@ -152,6 +152,19 @@ const SUBTITLE_CONVERSATION_HINTS = [
 ];
 const ALLOWED_LATIN_TERMS = /\b(lunda|qr|vk|whatsapp|telegram|zoom)\b/giu;
 
+function getPromptLeakHallucinationRule(text) {
+  const normalized = normalizeForSubtitleMatch(text);
+  if (!normalized || normalized.length > 220) return null;
+  if (/^контекст\s+звон(?:ок|к[а-я]*)(?=$|[^\p{L}\p{N}])/u.test(normalized)) {
+    return 'asr_initial_prompt_context_leak';
+  }
+  if (/^клиента\s+зовут(?=$|[^\p{L}\p{N}])/u.test(normalized)) {
+    return 'asr_initial_prompt_context_leak';
+  }
+  if (/^длительность\s+\d+\s+сек/u.test(normalized)) return 'asr_initial_prompt_context_leak';
+  return null;
+}
+
 function getSubtitleOutroHallucinationRule(text) {
   const normalized = normalizeForSubtitleMatch(text);
   if (!normalized) return null;
@@ -247,6 +260,19 @@ function normalizeTranscriptSegments(segments = [], glossary = {}, options = {})
   (segments || []).forEach((segment, segmentIndex) => {
     const rawText = normalizeText(segment?.text);
     if (!rawText) return;
+
+    const promptLeakRule = getPromptLeakHallucinationRule(rawText);
+    if (promptLeakRule) {
+      corrections.push({
+        ...correctionBase(segment, segmentIndex),
+        original: rawText,
+        normalized: '',
+        reason: 'asr_repeated_initial_prompt_context',
+        rule: promptLeakRule,
+        type: 'prompt_leak_drop',
+      });
+      return;
+    }
 
     const subtitleOutroRule = getSubtitleOutroHallucinationRule(rawText);
     if (subtitleOutroRule) {
