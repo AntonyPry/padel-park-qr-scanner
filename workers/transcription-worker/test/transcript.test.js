@@ -8,6 +8,7 @@ const {
   speakerForChannel,
 } = require('../src/transcript');
 const { readConfig } = require('../src/config');
+const { normalizeGlossary } = require('../src/glossary');
 
 const config = readConfig(
   {
@@ -20,6 +21,24 @@ const config = readConfig(
   },
   [],
 );
+const qualityConfig = {
+  ...config,
+  domainGlossary: normalizeGlossary({
+    aliases: [
+      {
+        aliases: ['подал парк', 'падал парк', 'падел парк'],
+        canonical: 'Падел Парк',
+        rule: 'padel_park_alias',
+      },
+      {
+        aliases: ['падлу', 'падла', 'подлу', 'падл'],
+        canonical: 'падел',
+        contextAny: ['записаться', 'корт', 'играть', 'тренировка'],
+        rule: 'padel_alias',
+      },
+    ],
+  }),
+};
 
 test('parses whisper.cpp timestamped output', () => {
   const parsed = parseWhisperOutput(`
@@ -150,6 +169,55 @@ test('keeps zero millisecond stereo segments at the beginning', () => {
   const lines = result.transcriptText.split('\n');
   assert.ok(lines[0].startsWith('[00:00] Администратор:'));
   assert.ok(lines[1].startsWith('[00:00] Клиент:'));
+});
+
+test('preserves raw transcript while normalized transcript drops outro and corrects terms', () => {
+  const result = buildTranscriptResult(
+    [
+      {
+        channel: 'left',
+        segments: [
+          { endMs: 2000, startMs: 1000, text: 'Добрый вечер, подал парк позвонили.' },
+          { endMs: 9000, startMs: 8000, text: 'Продолжение следует.' },
+          { endMs: 10400, startMs: 9400, text: 'Редактор суббота Корректор А.Кулакова' },
+        ],
+      },
+      {
+        channel: 'right',
+        segments: [
+          { endMs: 5200, startMs: 3000, text: 'Хочу записаться на падлу.' },
+          { endMs: 11400, startMs: 10800, text: 'Субтитры создавал DimaTorzok' },
+        ],
+      },
+    ],
+    {
+      channelLayout: 'stereo',
+      channels: 2,
+      codec: 'mp3',
+      durationSeconds: 12,
+    },
+    qualityConfig,
+  );
+
+  assert.match(result.rawTranscriptText, /Продолжение следует/);
+  assert.match(result.rawTranscriptText, /подал парк/);
+  assert.match(result.rawTranscriptText, /падлу/);
+  assert.doesNotMatch(result.transcriptText, /Продолжение следует|Редактор|Корректор|Субтитры создавал/);
+  assert.match(result.transcriptText, /Падел Парк/);
+  assert.match(result.transcriptText, /падел/);
+  assert.equal(result.segments.length, 2);
+  assert.equal(result.segments.every((segment) => segment.speaker && segment.channel), true);
+  assert.equal(result.segments.every((segment) => Number.isFinite(segment.startMs)), true);
+  assert.equal(result.segments.every((segment) => Number.isFinite(segment.endMs)), true);
+  assert.deepEqual(
+    result.corrections.map((correction) => correction.type),
+    [
+      'domain_term',
+      'domain_term',
+      'subtitle_outro_drop',
+      'subtitle_outro_drop',
+    ],
+  );
 });
 
 test('merges adjacent short segments only inside the same channel speaker lane', () => {
