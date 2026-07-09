@@ -100,7 +100,7 @@ curl -sS -X POST \
 4. Открой dashboard и нажми `Взять следующую задачу`.
 5. Следи за этапами `downloading_audio`, `ffmpeg_preprocess`, `transcribing_admin_channel`, `transcribing_client_channel`, `merging_segments`, `uploading_result`.
 6. После success задача появится в completed history, а transcript будет виден в CRM.
-7. В CRM transcript modal normalized text показывается основным, ниже доступен `Raw ASR transcript` и список `Структурные правки`.
+7. В CRM transcript modal normalized text показывается основным, ниже доступны `Raw ASR без правок` и список `Автоматические правки`.
 
 ## Где лежат данные
 

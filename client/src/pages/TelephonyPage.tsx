@@ -308,6 +308,12 @@ function formatTranscriptTime(ms?: number | null) {
   return formatDuration(Math.max(0, Math.round(ms / 1000)));
 }
 
+function formatTranscriptConfidence(value?: number | null) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return null;
+  return `${Math.round(number * 100)}%`;
+}
+
 function sortTranscriptSegments(segments?: TelephonyTranscriptSegment[]) {
   return [...(segments || [])].sort((left, right) => {
     const leftHasStart =
@@ -1013,6 +1019,7 @@ export default function TelephonyPage() {
               const timeLabel = formatTranscriptTime(segment.startMs);
               const endTimeLabel = formatTranscriptTime(segment.endMs);
               const speakerLabel = TRANSCRIPT_SPEAKER_LABELS[segment.speaker];
+              const confidenceLabel = formatTranscriptConfidence(segment.confidence);
 
               return (
                 <div
@@ -1028,9 +1035,7 @@ export default function TelephonyPage() {
                       </span>
                     )}
                     {segment.channel && <span>Канал: {segment.channel}</span>}
-                    {segment.confidence !== null && segment.confidence !== undefined && (
-                      <span>Уверенность: {Math.round(segment.confidence * 100)}%</span>
-                    )}
+                    {confidenceLabel && <span>Оценка ASR: {confidenceLabel}</span>}
                   </div>
                   <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                     {segment.text}
@@ -1051,7 +1056,7 @@ export default function TelephonyPage() {
 
         {segmentTranscriptText && segments.length > 0 && (
           <div className="rounded-md border bg-card p-3">
-            <div className="mb-2 text-sm font-medium">Нормализованный текст</div>
+            <div className="mb-2 text-sm font-medium">Нормализованный текст после правок</div>
             <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
               {segmentTranscriptText}
             </div>
@@ -1060,7 +1065,7 @@ export default function TelephonyPage() {
 
         {transcription?.rawTranscriptText && (
           <div className="rounded-md border bg-muted/30 p-3">
-            <div className="mb-2 text-sm font-medium">Raw ASR transcript</div>
+            <div className="mb-2 text-sm font-medium">Raw ASR без правок</div>
             <div className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
               {transcription.rawTranscriptText}
             </div>
@@ -1069,7 +1074,7 @@ export default function TelephonyPage() {
 
         {corrections.length > 0 && (
           <div className="rounded-md border bg-card p-3">
-            <div className="mb-2 text-sm font-medium">Структурные правки</div>
+            <div className="mb-2 text-sm font-medium">Автоматические правки</div>
             <div className="space-y-1 text-xs text-muted-foreground">
               {corrections.slice(0, 24).map((correction, index) => (
                 <div key={`${formatTranscriptCorrection(correction, index)}-${index}`}>

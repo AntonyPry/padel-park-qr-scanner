@@ -32,7 +32,7 @@ const qualityConfig = {
         rule: 'padel_park_alias',
       },
       {
-        aliases: ['падлу', 'падла', 'подлу', 'падл'],
+        aliases: ['падал-теннис', 'подал-теннис', 'падал теннис', 'падлу', 'падла', 'подлу', 'падл'],
         canonical: 'падел',
         contextAny: ['записаться', 'корт', 'играть', 'тренировка'],
         rule: 'padel_alias',
@@ -161,6 +161,130 @@ test('keeps ASR chunk offsets as absolute timestamps before merge', () => {
   assert.equal(parsed.segments[0].startMs, 62500);
   assert.deepEqual(result.segments.map((segment) => segment.startMs), [60000, 62500]);
   assert.equal(result.segments[1].speaker, 'client');
+});
+
+test('parses ASR word timestamps and enables them by default', () => {
+  const defaultConfig = readConfig(
+    {
+      ASR_BACKEND: 'http_asr',
+      CRM_API_URL: 'http://crm.test/api',
+      CRM_WORKER_TOKEN: 'secret',
+      WHISPER_MODEL: 'small',
+    },
+    [],
+  );
+  const parsed = parseAsrResponse(
+    {
+      segments: [
+        {
+          end: 1.5,
+          start: 0,
+          text: 'Добрый день.',
+          words: [
+            { end: 0.7, probability: 0.93, start: 0.1, word: 'Добрый' },
+            { end: 1.4, probability: 0.95, start: 0.8, word: 'день.' },
+          ],
+        },
+      ],
+    },
+    { offsetMs: 2000 },
+  );
+
+  assert.equal(defaultConfig.asrWordTimestamps, true);
+  assert.deepEqual(parsed.segments[0].words, [
+    { confidence: 0.93, endMs: 2700, startMs: 2100, text: 'Добрый' },
+    { confidence: 0.95, endMs: 3400, startMs: 2800, text: 'день.' },
+  ]);
+});
+
+test('splits long admin segment by word pauses so client question stays chronological', () => {
+  const result = buildTranscriptResult(
+    [
+      {
+        channel: 'left',
+        segments: [
+          {
+            endMs: 9000,
+            startMs: 0,
+            text: 'Добрый день, Парк, слушаю вас. Да, подберу свободное время после вашего вопроса.',
+            words: [
+              { endMs: 300, startMs: 0, text: 'Добрый' },
+              { endMs: 700, startMs: 320, text: 'день,' },
+              { endMs: 1150, startMs: 760, text: 'Парк,' },
+              { endMs: 1600, startMs: 1180, text: 'слушаю' },
+              { endMs: 2050, startMs: 1650, text: 'вас.' },
+              { endMs: 6550, startMs: 6200, text: 'Да,' },
+              { endMs: 7050, startMs: 6600, text: 'подберу' },
+              { endMs: 7600, startMs: 7100, text: 'свободное' },
+              { endMs: 8200, startMs: 7650, text: 'время' },
+              { endMs: 9000, startMs: 8250, text: 'после вашего вопроса.' },
+            ],
+          },
+        ],
+      },
+      {
+        channel: 'right',
+        segments: [
+          {
+            endMs: 5600,
+            startMs: 3600,
+            text: 'Здравствуйте, есть корт на вечер?',
+          },
+        ],
+      },
+    ],
+    {
+      channelLayout: 'stereo',
+      channels: 2,
+      codec: 'mp3',
+      durationSeconds: 10,
+    },
+    qualityConfig,
+  );
+
+  assert.deepEqual(
+    result.segments.map((segment) => segment.speaker),
+    ['administrator', 'client', 'administrator'],
+  );
+  assert.deepEqual(
+    result.segments.map((segment) => segment.startMs),
+    [0, 3600, 6200],
+  );
+  assert.match(result.transcriptText, /Падел Парк/);
+  assert.equal(result.metadata.segmentation.splitSegments, 1);
+  assert.equal(result.rawAsrJson.channels[0].parsedSegments[0].words.length, 10);
+});
+
+test('does not merge same-channel replies when another channel speaks between them', () => {
+  const result = buildTranscriptResult(
+    [
+      {
+        channel: 'left',
+        segments: [
+          { endMs: 1000, startMs: 600, text: 'Да,' },
+          { endMs: 1650, startMs: 1450, text: 'запишу.' },
+        ],
+      },
+      {
+        channel: 'right',
+        segments: [
+          { endMs: 1400, startMs: 1050, text: 'Можно?' },
+        ],
+      },
+    ],
+    {
+      channelLayout: 'stereo',
+      channels: 2,
+      codec: 'mp3',
+      durationSeconds: 2,
+    },
+    config,
+  );
+
+  assert.deepEqual(
+    result.segments.map((segment) => segment.text),
+    ['Да,', 'Можно?', 'запишу.'],
+  );
 });
 
 test('keeps zero millisecond stereo segments at the beginning', () => {

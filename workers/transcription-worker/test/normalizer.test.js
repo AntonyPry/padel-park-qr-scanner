@@ -21,7 +21,7 @@ const glossary = normalizeGlossary({
       rule: 'padel_tennis_alias',
     },
     {
-      aliases: ['падлу', 'падла', 'подлу', 'падл'],
+      aliases: ['падал-теннис', 'подал-теннис', 'падал теннис', 'падлу', 'падла', 'подлу', 'падл'],
       canonical: 'падел',
       contextAny: ['записаться', 'корт', 'играть', 'тренировка', 'ракетки'],
       rule: 'padel_alias',
@@ -181,6 +181,20 @@ test('normalizes club name greeting mishears', () => {
         startMs: 1500,
         text: 'Добрый день, Петал Парк, слышу вас.',
       },
+      {
+        channel: 'left',
+        endMs: 3400,
+        speaker: 'administrator',
+        startMs: 1700,
+        text: 'Добрый вечер, Парк, слушаю вас.',
+      },
+      {
+        channel: 'left',
+        endMs: 3600,
+        speaker: 'administrator',
+        startMs: 1900,
+        text: 'Добрый день, Павел Парк, слушаю вас.',
+      },
     ],
     glossary,
   );
@@ -189,11 +203,15 @@ test('normalizes club name greeting mishears', () => {
   assert.equal(result.segments[1].text, 'Добрый день, Падел Парк, слушаю вас.');
   assert.equal(result.segments[2].text, 'Доброе утро, Падел Парк, слушаю вас. Одиночный с 8 часов.');
   assert.equal(result.segments[3].text, 'Добрый день, Падел Парк, слушаю вас.');
-  assert.equal(result.corrections.length, 4);
+  assert.equal(result.segments[4].text, 'Добрый вечер, Падел Парк, слушаю вас.');
+  assert.equal(result.segments[5].text, 'Добрый день, Падел Парк, слушаю вас.');
+  assert.equal(result.corrections.length, 6);
   assert.deepEqual(
     result.corrections.map((correction) => correction.rule),
     [
       'padel_park_alias',
+      'admin_opening_greeting',
+      'admin_opening_greeting',
       'admin_opening_greeting',
       'admin_opening_greeting',
       'admin_opening_greeting',
@@ -314,7 +332,7 @@ test('drops leaked ASR initial prompt context segments', () => {
         speaker: 'client',
         startMs: 30000,
         endMs: 31900,
-        text: 'Контекст звонок клиента в клубах Муркин. Продолжение следует...',
+        text: 'Контекст: звонок клиента в клуб, длительность 107 секунд.',
       },
     ],
     glossary,
@@ -421,6 +439,25 @@ test('corrects padlu and keeps structured correction metadata', () => {
   assert.equal(result.corrections[0].channel, 'right');
   assert.equal(result.corrections[0].startMs, 1000);
   assert.equal(Number.isInteger(result.corrections[0].charIndex), true);
+});
+
+test('normalizes common padel mishears to padel with context', () => {
+  const result = normalizeTranscriptSegments(
+    [
+      {
+        channel: 'right',
+        speaker: 'client',
+        text: 'Хочу записаться на падал-теннис и подлу тренировку.',
+      },
+    ],
+    glossary,
+  );
+
+  assert.equal(result.segments[0].text, 'Хочу записаться на падел и падел тренировку.');
+  assert.deepEqual(
+    result.corrections.map((correction) => correction.normalized),
+    ['падел', 'падел'],
+  );
 });
 
 test('does not replace contextual aliases without nearby domain context', () => {

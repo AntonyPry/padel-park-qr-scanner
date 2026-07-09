@@ -92,6 +92,57 @@ class PipelineSegmentsTest(unittest.TestCase):
         self.assertEqual(merged[0]["text"], "Да, слушаю вас.")
         self.assertEqual(merged[1]["speaker"], "client")
 
+    def test_long_admin_segment_splits_by_word_pause_around_client_question(self):
+        result = build_transcript(
+            [
+                {
+                    "channel": "left",
+                    "segments": [
+                        {
+                            "startMs": 0,
+                            "endMs": 9000,
+                            "text": "Добрый день, Парк, слушаю вас. Да, подберу свободное время после вопроса.",
+                            "words": [
+                                {"startMs": 0, "endMs": 300, "text": "Добрый"},
+                                {"startMs": 320, "endMs": 700, "text": "день,"},
+                                {"startMs": 760, "endMs": 1150, "text": "Парк,"},
+                                {"startMs": 1180, "endMs": 1600, "text": "слушаю"},
+                                {"startMs": 1650, "endMs": 2050, "text": "вас."},
+                                {"startMs": 6200, "endMs": 6550, "text": "Да,"},
+                                {"startMs": 6600, "endMs": 7050, "text": "подберу"},
+                                {"startMs": 7100, "endMs": 7600, "text": "свободное"},
+                                {"startMs": 7650, "endMs": 8200, "text": "время"},
+                                {"startMs": 8250, "endMs": 9000, "text": "после вопроса."},
+                            ],
+                        }
+                    ],
+                },
+                {
+                    "channel": "right",
+                    "segments": [
+                        {"startMs": 3600, "endMs": 5600, "text": "Здравствуйте, есть корт на вечер?"},
+                    ],
+                },
+            ],
+            {"codec": "mp3", "channels": 2, "durationSeconds": 10, "channelLayout": "stereo"},
+            config(
+                domain_glossary={
+                    "aliases": [],
+                }
+            ),
+            {},
+        )
+
+        self.assertEqual([segment["speaker"] for segment in result["segments"]], [
+            "administrator",
+            "client",
+            "administrator",
+        ])
+        self.assertEqual([segment["startMs"] for segment in result["segments"]], [0, 3600, 6200])
+        self.assertIn("Падел Парк", result["transcriptText"])
+        self.assertEqual(result["metadata"]["segmentation"]["splitSegments"], 1)
+        self.assertEqual(len(result["rawAsrJson"]["channels"][0]["parsedSegments"][0]["words"]), 10)
+
     def test_builds_speech_intervals_around_long_silence(self):
         intervals = build_speech_intervals(
             [
@@ -143,6 +194,39 @@ class PipelineSegmentsTest(unittest.TestCase):
         self.assertEqual(
             [correction["type"] for correction in result["corrections"]],
             ["domain_term", "filler_collapse", "filler_drop"],
+        )
+
+    def test_build_transcript_drops_prompt_and_outro_hallucinations(self):
+        result = build_transcript(
+            [
+                {
+                    "channel": "left",
+                    "segments": [
+                        {"startMs": 1000, "endMs": 2500, "text": "Добрый вечер, Парк, слушаю вас."},
+                        {"startMs": 7000, "endMs": 7800, "text": "Продолжение следует."},
+                    ],
+                },
+                {
+                    "channel": "right",
+                    "segments": [
+                        {"startMs": 3000, "endMs": 4200, "text": "Контекст: звонок клиента в клуб."},
+                        {"startMs": 5000, "endMs": 6100, "text": "Субтитры создавал DimaTorzok"},
+                    ],
+                },
+            ],
+            {"codec": "mp3", "channels": 2, "durationSeconds": 8, "channelLayout": "stereo"},
+            config(),
+            {},
+        )
+
+        self.assertIn("Контекст", result["rawTranscriptText"])
+        self.assertNotIn("Контекст", result["transcriptText"])
+        self.assertNotIn("Продолжение следует", result["transcriptText"])
+        self.assertNotIn("Субтитры", result["transcriptText"])
+        self.assertIn("Падел Парк", result["transcriptText"])
+        self.assertEqual(
+            [correction["type"] for correction in result["corrections"]],
+            ["greeting_normalization", "prompt_leak_drop", "subtitle_outro_drop", "subtitle_outro_drop"],
         )
 
 

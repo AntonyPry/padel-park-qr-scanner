@@ -49,10 +49,47 @@ function normalizeAsrTimeMs(segment, field, offsetMs) {
   return Math.round(relativeMs + offsetMs);
 }
 
+function normalizeAsrConfidence(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) return null;
+  return Math.max(0, Math.min(1, number));
+}
+
 function textFromAsrSegment(segment) {
   return String(segment?.text || segment?.transcript || segment?.phrase || '')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function textFromAsrWord(word) {
+  return String(word?.word || word?.text || word?.token || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeAsrWords(words, offsetMs) {
+  if (!Array.isArray(words)) return [];
+  return words
+    .map((word, index) => {
+      const text = textFromAsrWord(word);
+      if (!text) return null;
+
+      const startMs = normalizeAsrTimeMs(word, 'start', offsetMs);
+      const endMs = normalizeAsrTimeMs(word, 'end', offsetMs);
+      if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+
+      return {
+        confidence: normalizeAsrConfidence(word.confidence ?? word.probability),
+        endMs,
+        index,
+        startMs,
+        text,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.startMs - right.startMs || left.index - right.index)
+    .map(({ index: _index, ...word }) => word);
 }
 
 function parseAsrResponse(payload, options = {}) {
@@ -62,18 +99,29 @@ function parseAsrResponse(payload, options = {}) {
       ? Math.round(offsetMs + Number(options.durationMs))
       : null;
   const rawSegments = Array.isArray(payload?.segments) ? payload.segments : [];
+  const responseWords = normalizeAsrWords(payload?.words, offsetMs);
   const segments = rawSegments
     .map((segment) => {
       const text = textFromAsrSegment(segment);
       if (!text) return null;
-      return {
-        confidence:
-          Number.isFinite(Number(segment.confidence)) && Number(segment.confidence) >= 0
-            ? Math.max(0, Math.min(1, Number(segment.confidence)))
+      const words = normalizeAsrWords(
+        Array.isArray(segment.words)
+          ? segment.words
+          : rawSegments.length === 1
+            ? payload?.words
             : null,
-        endMs: normalizeAsrTimeMs(segment, 'end', offsetMs),
-        startMs: normalizeAsrTimeMs(segment, 'start', offsetMs),
+        offsetMs,
+      );
+      const startMs = normalizeAsrTimeMs(segment, 'start', offsetMs) ??
+        (words.length > 0 ? words[0].startMs : null);
+      const endMs = normalizeAsrTimeMs(segment, 'end', offsetMs) ??
+        (words.length > 0 ? words.at(-1).endMs : null);
+      return {
+        confidence: normalizeAsrConfidence(segment.confidence),
+        endMs,
+        startMs,
         text,
+        words,
       };
     })
     .filter(Boolean);
@@ -81,12 +129,13 @@ function parseAsrResponse(payload, options = {}) {
   const text = String(payload?.text || payload?.transcript || '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (segments.length === 0 && text) {
+  if (segments.length === 0 && (text || responseWords.length > 0)) {
     segments.push({
       confidence: null,
-      endMs: fallbackEndMs,
-      startMs: Math.round(offsetMs),
-      text,
+      endMs: responseWords.length > 0 ? responseWords.at(-1).endMs : fallbackEndMs,
+      startMs: responseWords.length > 0 ? responseWords[0].startMs : Math.round(offsetMs),
+      text: text || responseWords.map((word) => word.text).join(' ').trim(),
+      words: responseWords,
     });
   }
 

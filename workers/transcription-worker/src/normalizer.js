@@ -45,7 +45,7 @@ function correctionBase(segment, segmentIndex) {
 
 const ADMIN_GREETING_START_MAX_MS = 7000;
 const ADMIN_GREETING_PATTERN =
-  /^(добрый|доброе)\s+(день|вечер|утро),?\s+(?:(?:(?:падел|петал|подал|падал)\s+парк|папарк|попарк|папа|па\s+парк),?\s+)?(?:прошу|слушаю|слышу|послушаю)\s+вас(?:,?\s+(?:позвонили|звоните))?(?=$|[^\p{L}\p{N}])/iu;
+  /^(добрый|доброе)\s+(день|вечер|утро),?\s+(?:(?:(?:падел|петал|подал|падал|павел)\s+парк|папарк|попарк|папа|парк|па\s+парк),?\s+)?(?:прошу|слушаю|слышу|послушаю)\s+вас(?:,?\s+(?:позвонили|звоните))?(?=$|[^\p{L}\p{N}])/iu;
 
 function canNormalizeAdminGreeting(segment) {
   if (segment?.speaker !== 'administrator') return false;
@@ -155,6 +155,9 @@ const ALLOWED_LATIN_TERMS = /\b(lunda|qr|vk|whatsapp|telegram|zoom)\b/giu;
 function getPromptLeakHallucinationRule(text) {
   const normalized = normalizeForSubtitleMatch(text);
   if (!normalized || normalized.length > 220) return null;
+  if (/^контекст(?=$|[^\p{L}\p{N}])/u.test(normalized)) {
+    return 'asr_initial_prompt_context_leak';
+  }
   if (/^контекст\s+звон(?:ок|к[а-я]*)(?=$|[^\p{L}\p{N}])/u.test(normalized)) {
     return 'asr_initial_prompt_context_leak';
   }

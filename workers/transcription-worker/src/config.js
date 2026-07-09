@@ -94,7 +94,7 @@ function readConfig(env = process.env, args = process.argv.slice(2)) {
     asrTask: normalizeText(env.ASR_TASK) || 'transcribe',
     asrTimeoutMs: parsePositiveInteger(env.ASR_TIMEOUT_SECONDS, 15 * 60, 10) * 1000,
     asrVadFilter: false,
-    asrWordTimestamps: parseBoolean(env.ASR_WORD_TIMESTAMPS, false),
+    asrWordTimestamps: parseBoolean(env.ASR_WORD_TIMESTAMPS, true),
     channelAdmin,
     channelClient,
     chunkMaxSeconds: parsePositiveNumber(env.ASR_CHUNK_MAX_SECONDS, 45, 5),

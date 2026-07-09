@@ -98,7 +98,7 @@ const transcription = {
     },
     {
       channel: 'left',
-      confidence: 0.77,
+      confidence: 0,
       endMs: 11200,
       id: 3,
       sortOrder: 2,
@@ -434,9 +434,14 @@ async function runScenario(browser, { label, role, viewport, openTranscript }) {
 
       await visibleText(page, 'Администратор');
       await visibleText(page, 'Клиент');
-      await visibleText(page, 'Raw ASR transcript');
-      await visibleText(page, 'Структурные правки');
+      await visibleText(page, 'Raw ASR без правок');
+      await visibleText(page, 'Автоматические правки');
       await visibleText(page, 'Падел-теннис, администратор слушает.');
+      await assertNotVisible(
+        page,
+        page.getByText('Оценка ASR: 0%', { exact: true }),
+        'fake zero confidence',
+      );
     } else {
       await assertNotVisible(
         page,
@@ -450,12 +455,12 @@ async function runScenario(browser, { label, role, viewport, openTranscript }) {
       );
       await assertNotVisible(
         page,
-        page.getByText('Raw ASR transcript', { exact: true }),
+        page.getByText('Raw ASR без правок', { exact: true }),
         'raw transcript',
       );
       await assertNotVisible(
         page,
-        page.getByText('Структурные правки', { exact: true }),
+        page.getByText('Автоматические правки', { exact: true }),
         'corrections',
       );
       await assertNotVisible(
@@ -477,7 +482,7 @@ async function runScenario(browser, { label, role, viewport, openTranscript }) {
 
     if (openTranscript && viewport.width <= 480) {
       const corrections = page
-        .getByText('Структурные правки')
+        .getByText('Автоматические правки')
         .filter({ visible: true })
         .first();
       await corrections.scrollIntoViewIfNeeded();

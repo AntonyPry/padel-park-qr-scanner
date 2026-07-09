@@ -8,6 +8,12 @@ const NOISE_TEXTS = new Set(['', '.', '..', '...', '…', '-', '--', 'шум', '
 const SHORT_SEGMENT_MAX_MS = 1800;
 const MERGE_GAP_MAX_MS = 650;
 const MERGE_TEXT_MAX_CHARS = 260;
+const LONG_SEGMENT_MIN_MS = 5000;
+const REPLY_MAX_DURATION_MS = 6500;
+const REPLY_MAX_CHARS = 180;
+const WORD_PAUSE_SPLIT_MS = 750;
+const INTERRUPTION_GUARD_MS = 120;
+const MIN_SPLIT_PART_MS = 550;
 
 function parseTimestampMs(hours, minutes, seconds, milliseconds) {
   return (
@@ -45,6 +51,317 @@ function isNoiseText(text) {
   const normalized = normalizeText(text).toLowerCase();
   if (NOISE_TEXTS.has(normalized)) return true;
   return normalized.replace(/[.,!?;:—\-–()[\]{} ]/g, '') === '';
+}
+
+function finiteMs(value) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
+}
+
+function segmentDurationMs(segment) {
+  const startMs = finiteMs(segment?.startMs);
+  const endMs = finiteMs(segment?.endMs);
+  if (startMs === null || endMs === null || endMs <= startMs) return null;
+  return endMs - startMs;
+}
+
+function normalizeWordText(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function normalizeWordTimestamps(words = []) {
+  if (!Array.isArray(words)) return [];
+  return words
+    .map((word, index) => {
+      const text = normalizeWordText(word?.text || word?.word || word?.token);
+      const startMs = finiteMs(word?.startMs);
+      const endMs = finiteMs(word?.endMs);
+      if (!text || startMs === null || endMs === null || endMs < startMs) return null;
+      return {
+        confidence: Number.isFinite(Number(word?.confidence)) ? Number(word.confidence) : null,
+        endMs,
+        index,
+        startMs,
+        text,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.startMs - right.startMs || left.index - right.index)
+    .map(({ index: _index, ...word }) => word);
+}
+
+function joinWords(words = []) {
+  return words
+    .map((word) => normalizeWordText(word.text))
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+([,.!?;:])/g, '$1')
+    .replace(/([([{«])\s+/g, '$1')
+    .replace(/\s+([)\]}»])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasHardPunctuation(text) {
+  return /[.!?…;:]$/u.test(normalizeText(text));
+}
+
+function hasSoftPunctuation(text) {
+  return /,$/u.test(normalizeText(text));
+}
+
+function buildSplitGroupId(segment, index) {
+  return `${segment.channel || 'channel'}:${segment.originalOrder ?? index}:${segment.startMs ?? 'x'}:${segment.endMs ?? 'x'}`;
+}
+
+function sameSegmentLane(left, right) {
+  return left?.speaker === right?.speaker && left?.channel === right?.channel;
+}
+
+function getIntersections(segment, allSegments) {
+  const startMs = finiteMs(segment.startMs);
+  const endMs = finiteMs(segment.endMs);
+  if (startMs === null || endMs === null) return [];
+
+  return allSegments
+    .filter((other) => {
+      if (!other || other === segment || sameSegmentLane(segment, other)) return false;
+      const otherStart = finiteMs(other.startMs);
+      const otherEnd = finiteMs(other.endMs);
+      if (otherStart === null || otherEnd === null) return false;
+      return otherStart < endMs - INTERRUPTION_GUARD_MS && otherEnd > startMs + INTERRUPTION_GUARD_MS;
+    })
+    .map((other) => ({
+      endMs: Math.min(endMs, finiteMs(other.endMs)),
+      startMs: Math.max(startMs, finiteMs(other.startMs)),
+    }))
+    .filter((item) => item.startMs !== null && item.endMs !== null && item.endMs > item.startMs)
+    .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs);
+}
+
+function hasInterruptionBetweenWords(leftWord, rightWord, intersections) {
+  return intersections.some(
+    (intersection) =>
+      intersection.startMs >= leftWord.endMs - INTERRUPTION_GUARD_MS &&
+      intersection.endMs <= rightWord.startMs + INTERRUPTION_GUARD_MS,
+  );
+}
+
+function buildWordPart(segment, words, splitGroupId, splitPart) {
+  const text = joinWords(words);
+  if (!text) return null;
+  return {
+    ...segment,
+    endMs: words.at(-1).endMs,
+    splitGroupId,
+    splitPart,
+    startMs: words[0].startMs,
+    text,
+    words,
+  };
+}
+
+function splitSegmentByWords(segment, intersections, segmentIndex) {
+  const words = normalizeWordTimestamps(segment.words);
+  if (words.length < 2) return null;
+
+  const groups = [];
+  let current = [];
+  words.forEach((word, index) => {
+    current.push(word);
+    const next = words[index + 1];
+    if (!next) {
+      groups.push(current);
+      return;
+    }
+
+    const currentText = joinWords(current);
+    const currentDuration = current.at(-1).endMs - current[0].startMs;
+    const gap = next.startMs - word.endMs;
+    const shouldSplit =
+      gap >= WORD_PAUSE_SPLIT_MS ||
+      hasInterruptionBetweenWords(word, next, intersections) ||
+      (hasHardPunctuation(currentText) && currentDuration >= MIN_SPLIT_PART_MS) ||
+      (hasSoftPunctuation(currentText) &&
+        (currentDuration >= 2500 || currentText.length >= REPLY_MAX_CHARS)) ||
+      (currentDuration >= REPLY_MAX_DURATION_MS && current.length >= 3) ||
+      currentText.length >= REPLY_MAX_CHARS;
+
+    if (shouldSplit) {
+      groups.push(current);
+      current = [];
+    }
+  });
+
+  if (groups.length <= 1) return null;
+  const splitGroupId = buildSplitGroupId(segment, segmentIndex);
+  return groups
+    .map((group, index) => buildWordPart(segment, group, splitGroupId, index))
+    .filter(Boolean);
+}
+
+function splitTextByPunctuation(text) {
+  const units = normalizeText(text).match(/[^.!?…;:]+[.!?…;:]?|[^.!?…;:]+$/gu) || [];
+  const parts = [];
+  let current = '';
+
+  units.forEach((unit) => {
+    const next = normalizeText(`${current} ${unit}`);
+    if (current && next.length > REPLY_MAX_CHARS) {
+      parts.push(current);
+      current = normalizeText(unit);
+    } else {
+      current = next;
+    }
+  });
+
+  if (current) parts.push(current);
+  return parts.filter(Boolean);
+}
+
+function splitTextIntoCount(text, count) {
+  const normalized = normalizeText(text);
+  if (count <= 1) return [normalized];
+
+  const punctuationParts = splitTextByPunctuation(normalized);
+  if (punctuationParts.length === count) return punctuationParts;
+  if (punctuationParts.length > count) {
+    const merged = Array.from({ length: count }, () => '');
+    punctuationParts.forEach((part, index) => {
+      const bucket = Math.min(count - 1, Math.floor((index * count) / punctuationParts.length));
+      merged[bucket] = normalizeText(`${merged[bucket]} ${part}`);
+    });
+    return merged.filter(Boolean);
+  }
+
+  const words = normalized.split(/\s+/).filter(Boolean);
+  if (words.length <= count) return words;
+  const parts = [];
+  for (let index = 0; index < count; index += 1) {
+    const from = Math.floor((index * words.length) / count);
+    const to = Math.floor(((index + 1) * words.length) / count);
+    const part = words.slice(from, Math.max(from + 1, to)).join(' ');
+    if (part) parts.push(part);
+  }
+  return parts;
+}
+
+function buildSpeechWindowsAroundIntersections(segment, intersections) {
+  const startMs = finiteMs(segment.startMs);
+  const endMs = finiteMs(segment.endMs);
+  if (startMs === null || endMs === null || intersections.length === 0) return [];
+
+  const windows = [];
+  let cursor = startMs;
+  intersections.forEach((intersection) => {
+    const beforeEnd = Math.max(cursor, intersection.startMs - INTERRUPTION_GUARD_MS);
+    if (beforeEnd - cursor >= MIN_SPLIT_PART_MS) {
+      windows.push({ endMs: beforeEnd, startMs: cursor });
+    }
+    cursor = Math.max(cursor, intersection.endMs + INTERRUPTION_GUARD_MS);
+  });
+  if (endMs - cursor >= MIN_SPLIT_PART_MS) {
+    windows.push({ endMs, startMs: cursor });
+  }
+  return windows;
+}
+
+function buildTimedTextParts(segment, parts, splitGroupId) {
+  const startMs = finiteMs(segment.startMs);
+  const endMs = finiteMs(segment.endMs);
+  if (startMs === null || endMs === null || parts.length <= 1) return null;
+
+  const duration = endMs - startMs;
+  const totalChars = parts.reduce((sum, part) => sum + Math.max(1, part.length), 0);
+  let cursor = startMs;
+  return parts.map((part, index) => {
+    const partEnd =
+      index === parts.length - 1
+        ? endMs
+        : Math.round(cursor + duration * (Math.max(1, part.length) / totalChars));
+    const next = {
+      ...segment,
+      endMs: Math.max(cursor, partEnd),
+      splitGroupId,
+      splitPart: index,
+      startMs: cursor,
+      text: part,
+      words: [],
+    };
+    cursor = next.endMs;
+    return next;
+  });
+}
+
+function splitSegmentByText(segment, intersections, segmentIndex) {
+  const duration = segmentDurationMs(segment);
+  const text = normalizeText(segment.text);
+  if (!duration || !text) return null;
+
+  const splitGroupId = buildSplitGroupId(segment, segmentIndex);
+  const windows = buildSpeechWindowsAroundIntersections(segment, intersections);
+  if (windows.length > 1) {
+    const parts = splitTextIntoCount(text, windows.length);
+    if (parts.length !== windows.length) return null;
+    return parts.map((part, index) => ({
+      ...segment,
+      endMs: windows[index].endMs,
+      splitGroupId,
+      splitPart: index,
+      startMs: windows[index].startMs,
+      text: part,
+      words: [],
+    }));
+  }
+
+  if (duration < LONG_SEGMENT_MIN_MS && text.length < REPLY_MAX_CHARS) return null;
+
+  let parts = splitTextByPunctuation(text);
+  if (parts.length <= 1 && duration >= REPLY_MAX_DURATION_MS) {
+    parts = splitTextIntoCount(text, Math.max(2, Math.ceil(duration / REPLY_MAX_DURATION_MS)));
+  }
+  if (parts.length <= 1) return null;
+  return buildTimedTextParts(segment, parts, splitGroupId);
+}
+
+function splitLongConversationSegments(segments) {
+  const stats = {
+    inputSegments: segments.length,
+    outputSegments: 0,
+    splitSegments: 0,
+    wordTimestampSegments: 0,
+  };
+  const refined = [];
+
+  segments.forEach((segment, index) => {
+    const intersections = getIntersections(segment, segments);
+    const duration = segmentDurationMs(segment);
+    const hasWords = normalizeWordTimestamps(segment.words).length > 1;
+    if (hasWords) stats.wordTimestampSegments += 1;
+
+    const shouldTrySplit =
+      hasWords ||
+      intersections.length > 0 ||
+      (duration !== null && duration >= LONG_SEGMENT_MIN_MS) ||
+      normalizeText(segment.text).length >= REPLY_MAX_CHARS;
+    const split = shouldTrySplit
+      ? splitSegmentByWords(segment, intersections, index) ||
+        splitSegmentByText(segment, intersections, index)
+      : null;
+
+    if (split && split.length > 1) {
+      stats.splitSegments += 1;
+      refined.push(...split);
+    } else {
+      refined.push({
+        ...segment,
+        words: normalizeWordTimestamps(segment.words),
+      });
+    }
+  });
+
+  stats.outputSegments = refined.length;
+  return { segments: refined, stats };
 }
 
 function speakerForChannel(channelName, config) {
@@ -128,6 +445,11 @@ function mergeAdjacentShortSegments(segments) {
     const sameVoice = previous &&
       previous.speaker === segment.speaker &&
       previous.channel === segment.channel;
+    const sameSplitGroup =
+      sameVoice &&
+      previous.splitGroupId &&
+      segment.splitGroupId &&
+      previous.splitGroupId === segment.splitGroupId;
     const gap = sameVoice && Number.isFinite(previous.endMs) && Number.isFinite(segment.startMs)
       ? segment.startMs - previous.endMs
       : null;
@@ -138,6 +460,7 @@ function mergeAdjacentShortSegments(segments) {
 
     if (
       sameVoice &&
+      !sameSplitGroup &&
       gap !== null &&
       gap >= 0 &&
       gap <= MERGE_GAP_MAX_MS &&
@@ -172,18 +495,23 @@ function buildTranscriptResult(channelResults, probe, config, extraMetadata = {}
         speaker,
         startMs: Number.isFinite(segment.startMs) ? segment.startMs : null,
         text,
+        words: normalizeWordTimestamps(segment.words),
       });
     });
   });
 
-  segments.sort((left, right) => {
+  const splitResult = splitLongConversationSegments(segments);
+  const refinedSegments = splitResult.segments;
+
+  refinedSegments.sort((left, right) => {
     const leftStart = Number.isFinite(left.startMs) ? left.startMs : Number.MAX_SAFE_INTEGER;
     const rightStart = Number.isFinite(right.startMs) ? right.startMs : Number.MAX_SAFE_INTEGER;
     if (leftStart !== rightStart) return leftStart - rightStart;
     if (left.channelIndex !== right.channelIndex) return left.channelIndex - right.channelIndex;
-    return left.originalOrder - right.originalOrder;
+    if (left.originalOrder !== right.originalOrder) return left.originalOrder - right.originalOrder;
+    return Number(left.splitPart || 0) - Number(right.splitPart || 0);
   });
-  const mergedSegments = mergeAdjacentShortSegments(segments);
+  const mergedSegments = mergeAdjacentShortSegments(refinedSegments);
 
   if (mergedSegments.length === 0) {
     throw new Error('ASR produced no transcript segments');
@@ -229,6 +557,13 @@ function buildTranscriptResult(channelResults, probe, config, extraMetadata = {}
         audioFilter: 'loudnorm=I=-18:TP=-2:LRA=11',
         sampleRate: 16000,
       },
+      segmentation: {
+        ...splitResult.stats,
+        mergedSegments: mergedSegments.length,
+        replyMaxChars: REPLY_MAX_CHARS,
+        replyMaxDurationMs: REPLY_MAX_DURATION_MS,
+        wordPauseSplitMs: WORD_PAUSE_SPLIT_MS,
+      },
       workerId: config.workerId,
       whisper: {
         language: config.whisperLanguage,
@@ -242,6 +577,12 @@ function buildTranscriptResult(channelResults, probe, config, extraMetadata = {}
       channels: channelResults.map((result) => ({
         channel: result.channel,
         chunks: result.chunks || null,
+        parsedSegments: (result.segments || []).map((segment) => ({
+          endMs: Number.isFinite(Number(segment.endMs)) ? Number(segment.endMs) : null,
+          startMs: Number.isFinite(Number(segment.startMs)) ? Number(segment.startMs) : null,
+          text: normalizeText(segment.text),
+          words: normalizeWordTimestamps(segment.words),
+        })),
         rawResponse: result.rawResponse || null,
         rawResponses: result.rawResponses || null,
       })),

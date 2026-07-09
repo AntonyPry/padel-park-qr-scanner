@@ -40,6 +40,12 @@ NOISE_TEXTS = {
 SHORT_SEGMENT_MAX_MS = 1800
 MERGE_GAP_MAX_MS = 650
 MERGE_TEXT_MAX_CHARS = 260
+LONG_SEGMENT_MIN_MS = 5000
+REPLY_MAX_DURATION_MS = 6500
+REPLY_MAX_CHARS = 180
+WORD_PAUSE_SPLIT_MS = 750
+INTERRUPTION_GUARD_MS = 120
+MIN_SPLIT_PART_MS = 550
 
 
 def run_command(command: list[str], timeout_seconds: int) -> subprocess.CompletedProcess[str]:
@@ -519,9 +525,51 @@ def _asr_time_ms(segment: dict[str, Any], field: str, offset_ms: int) -> int | N
     return int(relative_ms + offset_ms)
 
 
+def _asr_confidence(value: Any) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number < 0:
+        return None
+    return max(0, min(1, number))
+
+
+def _asr_word_text(word: dict[str, Any]) -> str:
+    return " ".join(str(word.get("word") or word.get("text") or word.get("token") or "").split()).strip()
+
+
+def _normalize_asr_words(words: Any, offset_ms: int) -> list[dict[str, Any]]:
+    if not isinstance(words, list):
+        return []
+    normalized = []
+    for index, word in enumerate(words):
+        if not isinstance(word, dict):
+            continue
+        text = _asr_word_text(word)
+        start_ms = _asr_time_ms(word, "start", offset_ms)
+        end_ms = _asr_time_ms(word, "end", offset_ms)
+        if not text or start_ms is None or end_ms is None:
+            continue
+        normalized.append(
+            {
+                "confidence": _asr_confidence(word.get("confidence", word.get("probability"))),
+                "endMs": end_ms,
+                "index": index,
+                "startMs": start_ms,
+                "text": text,
+            }
+        )
+    normalized.sort(key=lambda item: (item["startMs"], item["index"]))
+    for item in normalized:
+        item.pop("index", None)
+    return normalized
+
+
 def _parse_asr_response(payload: Any, offset_ms: int, duration_ms: int | None) -> dict[str, Any]:
     raw_segments = payload.get("segments") if isinstance(payload, dict) else []
     raw_segments = raw_segments if isinstance(raw_segments, list) else []
+    response_words = _normalize_asr_words(payload.get("words") if isinstance(payload, dict) else None, offset_ms)
     segments = []
     for segment in raw_segments:
         if not isinstance(segment, dict):
@@ -529,27 +577,34 @@ def _parse_asr_response(payload: Any, offset_ms: int, duration_ms: int | None) -
         text = " ".join(str(segment.get("text") or segment.get("transcript") or segment.get("phrase") or "").split()).strip()
         if not text:
             continue
-        confidence = segment.get("confidence")
+        words = _normalize_asr_words(
+            segment.get("words") if isinstance(segment.get("words"), list)
+            else payload.get("words") if isinstance(payload, dict) and len(raw_segments) == 1
+            else None,
+            offset_ms,
+        )
+        start_ms = _asr_time_ms(segment, "start", offset_ms)
+        end_ms = _asr_time_ms(segment, "end", offset_ms)
         segments.append(
             {
-                "confidence": max(0, min(1, float(confidence)))
-                if isinstance(confidence, (int, float))
-                else None,
-                "startMs": _asr_time_ms(segment, "start", offset_ms),
-                "endMs": _asr_time_ms(segment, "end", offset_ms),
+                "confidence": _asr_confidence(segment.get("confidence")),
+                "startMs": start_ms if start_ms is not None else words[0]["startMs"] if words else None,
+                "endMs": end_ms if end_ms is not None else words[-1]["endMs"] if words else None,
                 "text": text,
+                "words": words,
             }
         )
     text = ""
     if isinstance(payload, dict):
         text = " ".join(str(payload.get("text") or payload.get("transcript") or "").split()).strip()
-    if not segments and text:
+    if not segments and (text or response_words):
         segments.append(
             {
                 "confidence": None,
-                "startMs": int(offset_ms),
-                "endMs": int(offset_ms + duration_ms) if duration_ms else None,
-                "text": text,
+                "startMs": response_words[0]["startMs"] if response_words else int(offset_ms),
+                "endMs": response_words[-1]["endMs"] if response_words else int(offset_ms + duration_ms) if duration_ms else None,
+                "text": text or " ".join(word["text"] for word in response_words).strip(),
+                "words": response_words,
             }
         )
     return {"segments": segments, "text": text or " ".join(segment["text"] for segment in segments).strip()}
@@ -715,6 +770,289 @@ def _segment_duration_ms(segment: dict[str, Any]) -> int | None:
     return max(0, end_ms - start_ms)
 
 
+def _finite_ms(value: Any) -> int | None:
+    if isinstance(value, (int, float)) and value >= 0:
+        return int(value)
+    return None
+
+
+def _word_text(value: Any) -> str:
+    return " ".join(str(value or "").split()).strip()
+
+
+def _normalize_word_timestamps(words: Any) -> list[dict[str, Any]]:
+    if not isinstance(words, list):
+        return []
+    normalized = []
+    for index, word in enumerate(words):
+        if not isinstance(word, dict):
+            continue
+        text = _word_text(word.get("text") or word.get("word") or word.get("token"))
+        start_ms = _finite_ms(word.get("startMs"))
+        end_ms = _finite_ms(word.get("endMs"))
+        if not text or start_ms is None or end_ms is None or end_ms < start_ms:
+            continue
+        normalized.append(
+            {
+                "confidence": _asr_confidence(word.get("confidence")),
+                "endMs": end_ms,
+                "index": index,
+                "startMs": start_ms,
+                "text": text,
+            }
+        )
+    normalized.sort(key=lambda item: (item["startMs"], item["index"]))
+    for item in normalized:
+        item.pop("index", None)
+    return normalized
+
+
+def _join_words(words: list[dict[str, Any]]) -> str:
+    text = " ".join(_word_text(word.get("text")) for word in words if _word_text(word.get("text")))
+    text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+    text = re.sub(r"([([{«])\s+", r"\1", text)
+    text = re.sub(r"\s+([)\]}»])", r"\1", text)
+    return " ".join(text.split()).strip()
+
+
+def _has_hard_punctuation(text: str) -> bool:
+    return bool(re.search(r"[.!?…;:]$", " ".join(str(text or "").split()).strip()))
+
+
+def _has_soft_punctuation(text: str) -> bool:
+    return " ".join(str(text or "").split()).strip().endswith(",")
+
+
+def _same_segment_lane(left: dict[str, Any], right: dict[str, Any]) -> bool:
+    return left.get("speaker") == right.get("speaker") and left.get("channel") == right.get("channel")
+
+
+def _split_group_id(segment: dict[str, Any], index: int) -> str:
+    return f"{segment.get('channel') or 'channel'}:{segment.get('originalOrder', index)}:{segment.get('startMs', 'x')}:{segment.get('endMs', 'x')}"
+
+
+def _intersections(segment: dict[str, Any], segments: list[dict[str, Any]]) -> list[dict[str, int]]:
+    start_ms = _finite_ms(segment.get("startMs"))
+    end_ms = _finite_ms(segment.get("endMs"))
+    if start_ms is None or end_ms is None:
+        return []
+    items = []
+    for other in segments:
+        if other is segment or _same_segment_lane(segment, other):
+            continue
+        other_start = _finite_ms(other.get("startMs"))
+        other_end = _finite_ms(other.get("endMs"))
+        if other_start is None or other_end is None:
+            continue
+        if other_start < end_ms - INTERRUPTION_GUARD_MS and other_end > start_ms + INTERRUPTION_GUARD_MS:
+            items.append({"startMs": max(start_ms, other_start), "endMs": min(end_ms, other_end)})
+    return sorted(
+        [item for item in items if item["endMs"] > item["startMs"]],
+        key=lambda item: (item["startMs"], item["endMs"]),
+    )
+
+
+def _interruption_between_words(left_word: dict[str, Any], right_word: dict[str, Any], intersections: list[dict[str, int]]) -> bool:
+    return any(
+        item["startMs"] >= left_word["endMs"] - INTERRUPTION_GUARD_MS
+        and item["endMs"] <= right_word["startMs"] + INTERRUPTION_GUARD_MS
+        for item in intersections
+    )
+
+
+def _word_part(segment: dict[str, Any], words: list[dict[str, Any]], group_id: str, part: int) -> dict[str, Any] | None:
+    text = _join_words(words)
+    if not text:
+        return None
+    return {
+        **segment,
+        "endMs": words[-1]["endMs"],
+        "splitGroupId": group_id,
+        "splitPart": part,
+        "startMs": words[0]["startMs"],
+        "text": text,
+        "words": words,
+    }
+
+
+def _split_by_words(segment: dict[str, Any], intersections: list[dict[str, int]], segment_index: int) -> list[dict[str, Any]] | None:
+    words = _normalize_word_timestamps(segment.get("words"))
+    if len(words) < 2:
+        return None
+    groups = []
+    current = []
+    for index, word in enumerate(words):
+        current.append(word)
+        next_word = words[index + 1] if index + 1 < len(words) else None
+        if not next_word:
+            groups.append(current)
+            continue
+        current_text = _join_words(current)
+        current_duration = current[-1]["endMs"] - current[0]["startMs"]
+        gap = next_word["startMs"] - word["endMs"]
+        should_split = (
+            gap >= WORD_PAUSE_SPLIT_MS
+            or _interruption_between_words(word, next_word, intersections)
+            or (_has_hard_punctuation(current_text) and current_duration >= MIN_SPLIT_PART_MS)
+            or (_has_soft_punctuation(current_text) and (current_duration >= 2500 or len(current_text) >= REPLY_MAX_CHARS))
+            or (current_duration >= REPLY_MAX_DURATION_MS and len(current) >= 3)
+            or len(current_text) >= REPLY_MAX_CHARS
+        )
+        if should_split:
+            groups.append(current)
+            current = []
+    if len(groups) <= 1:
+        return None
+    group_id = _split_group_id(segment, segment_index)
+    return [part for index, group in enumerate(groups) if (part := _word_part(segment, group, group_id, index))]
+
+
+def _split_text_by_punctuation(text: str) -> list[str]:
+    units = re.findall(r"[^.!?…;:]+[.!?…;:]?|[^.!?…;:]+$", " ".join(str(text or "").split()).strip())
+    parts = []
+    current = ""
+    for unit in units:
+        next_text = " ".join(f"{current} {unit}".split()).strip()
+        if current and len(next_text) > REPLY_MAX_CHARS:
+            parts.append(current)
+            current = " ".join(unit.split()).strip()
+        else:
+            current = next_text
+    if current:
+        parts.append(current)
+    return [part for part in parts if part]
+
+
+def _split_text_into_count(text: str, count: int) -> list[str]:
+    normalized = " ".join(str(text or "").split()).strip()
+    if count <= 1:
+        return [normalized]
+    punctuation_parts = _split_text_by_punctuation(normalized)
+    if len(punctuation_parts) == count:
+        return punctuation_parts
+    if len(punctuation_parts) > count:
+        merged = ["" for _ in range(count)]
+        for index, part in enumerate(punctuation_parts):
+            bucket = min(count - 1, (index * count) // len(punctuation_parts))
+            merged[bucket] = " ".join(f"{merged[bucket]} {part}".split()).strip()
+        return [part for part in merged if part]
+    words = normalized.split()
+    if len(words) <= count:
+        return words
+    parts = []
+    for index in range(count):
+        start = (index * len(words)) // count
+        end = ((index + 1) * len(words)) // count
+        parts.append(" ".join(words[start:max(start + 1, end)]))
+    return [part for part in parts if part]
+
+
+def _speech_windows(segment: dict[str, Any], intersections: list[dict[str, int]]) -> list[dict[str, int]]:
+    start_ms = _finite_ms(segment.get("startMs"))
+    end_ms = _finite_ms(segment.get("endMs"))
+    if start_ms is None or end_ms is None or not intersections:
+        return []
+    windows = []
+    cursor = start_ms
+    for item in intersections:
+        before_end = max(cursor, item["startMs"] - INTERRUPTION_GUARD_MS)
+        if before_end - cursor >= MIN_SPLIT_PART_MS:
+            windows.append({"startMs": cursor, "endMs": before_end})
+        cursor = max(cursor, item["endMs"] + INTERRUPTION_GUARD_MS)
+    if end_ms - cursor >= MIN_SPLIT_PART_MS:
+        windows.append({"startMs": cursor, "endMs": end_ms})
+    return windows
+
+
+def _timed_text_parts(segment: dict[str, Any], parts: list[str], group_id: str) -> list[dict[str, Any]] | None:
+    start_ms = _finite_ms(segment.get("startMs"))
+    end_ms = _finite_ms(segment.get("endMs"))
+    if start_ms is None or end_ms is None or len(parts) <= 1:
+        return None
+    duration = end_ms - start_ms
+    total_chars = sum(max(1, len(part)) for part in parts)
+    cursor = start_ms
+    output = []
+    for index, part in enumerate(parts):
+        part_end = end_ms if index == len(parts) - 1 else round(cursor + duration * (max(1, len(part)) / total_chars))
+        output.append(
+            {
+                **segment,
+                "endMs": max(cursor, part_end),
+                "splitGroupId": group_id,
+                "splitPart": index,
+                "startMs": cursor,
+                "text": part,
+                "words": [],
+            }
+        )
+        cursor = output[-1]["endMs"]
+    return output
+
+
+def _split_by_text(segment: dict[str, Any], intersections: list[dict[str, int]], segment_index: int) -> list[dict[str, Any]] | None:
+    duration = _segment_duration_ms(segment)
+    text = " ".join(str(segment.get("text") or "").split()).strip()
+    if not duration or not text:
+        return None
+    group_id = _split_group_id(segment, segment_index)
+    windows = _speech_windows(segment, intersections)
+    if len(windows) > 1:
+        parts = _split_text_into_count(text, len(windows))
+        if len(parts) != len(windows):
+            return None
+        return [
+            {
+                **segment,
+                "endMs": windows[index]["endMs"],
+                "splitGroupId": group_id,
+                "splitPart": index,
+                "startMs": windows[index]["startMs"],
+                "text": part,
+                "words": [],
+            }
+            for index, part in enumerate(parts)
+        ]
+    if duration < LONG_SEGMENT_MIN_MS and len(text) < REPLY_MAX_CHARS:
+        return None
+    parts = _split_text_by_punctuation(text)
+    if len(parts) <= 1 and duration >= REPLY_MAX_DURATION_MS:
+        parts = _split_text_into_count(text, max(2, -(-duration // REPLY_MAX_DURATION_MS)))
+    if len(parts) <= 1:
+        return None
+    return _timed_text_parts(segment, parts, group_id)
+
+
+def split_long_conversation_segments(segments: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    stats = {
+        "inputSegments": len(segments),
+        "outputSegments": 0,
+        "splitSegments": 0,
+        "wordTimestampSegments": 0,
+    }
+    refined = []
+    for index, segment in enumerate(segments):
+        intersections = _intersections(segment, segments)
+        duration = _segment_duration_ms(segment)
+        words = _normalize_word_timestamps(segment.get("words"))
+        if len(words) > 1:
+            stats["wordTimestampSegments"] += 1
+        should_split = (
+            len(words) > 1
+            or bool(intersections)
+            or (duration is not None and duration >= LONG_SEGMENT_MIN_MS)
+            or len(str(segment.get("text") or "")) >= REPLY_MAX_CHARS
+        )
+        split = (_split_by_words(segment, intersections, index) or _split_by_text(segment, intersections, index)) if should_split else None
+        if split and len(split) > 1:
+            stats["splitSegments"] += 1
+            refined.extend(split)
+        else:
+            refined.append({**segment, "words": words})
+    stats["outputSegments"] = len(refined)
+    return refined, stats
+
+
 def merge_adjacent_short_segments(segments: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     for segment in segments:
@@ -723,6 +1061,11 @@ def merge_adjacent_short_segments(segments: list[dict[str, Any]]) -> list[dict[s
             same_voice = (
                 previous.get("speaker") == segment.get("speaker")
                 and previous.get("channel") == segment.get("channel")
+            )
+            same_split_group = (
+                same_voice
+                and previous.get("splitGroupId")
+                and previous.get("splitGroupId") == segment.get("splitGroupId")
             )
             previous_end = previous.get("endMs")
             current_start = segment.get("startMs")
@@ -735,6 +1078,7 @@ def merge_adjacent_short_segments(segments: list[dict[str, Any]]) -> list[dict[s
             combined_text = f"{previous['text']} {segment['text']}".strip()
             if (
                 same_voice
+                and not same_split_group
                 and gap is not None
                 and 0 <= gap <= MERGE_GAP_MAX_MS
                 and current_duration is not None
@@ -765,14 +1109,17 @@ def build_transcript(channel_results: list[dict[str, Any]], probe: dict[str, Any
                     "startMs": segment.get("startMs"),
                     "endMs": segment.get("endMs"),
                     "text": segment["text"],
+                    "words": _normalize_word_timestamps(segment.get("words")),
                 }
             )
 
+    merged, split_stats = split_long_conversation_segments(merged)
     merged.sort(
         key=lambda item: (
             item.get("startMs") if item.get("startMs") is not None else 999999999,
             item["channelIndex"],
             item["originalOrder"],
+            item.get("splitPart", 0),
         )
     )
     merged = merge_adjacent_short_segments(merged)
@@ -813,6 +1160,13 @@ def build_transcript(channel_results: list[dict[str, Any]], probe: dict[str, Any
                 "audioFilter": "loudnorm=I=-18:TP=-2:LRA=11",
                 "sampleRate": 16000,
             },
+            "segmentation": {
+                **split_stats,
+                "mergedSegments": len(merged),
+                "replyMaxChars": REPLY_MAX_CHARS,
+                "replyMaxDurationMs": REPLY_MAX_DURATION_MS,
+                "wordPauseSplitMs": WORD_PAUSE_SPLIT_MS,
+            },
             "workerId": config.worker_id,
             "whisper": {
                 "language": config.whisper_language,
@@ -826,6 +1180,15 @@ def build_transcript(channel_results: list[dict[str, Any]], probe: dict[str, Any
                 {
                     "channel": result["channel"],
                     "chunks": result.get("chunks"),
+                    "parsedSegments": [
+                        {
+                            "endMs": segment.get("endMs") if isinstance(segment.get("endMs"), int) else None,
+                            "startMs": segment.get("startMs") if isinstance(segment.get("startMs"), int) else None,
+                            "text": " ".join(str(segment.get("text") or "").split()).strip(),
+                            "words": _normalize_word_timestamps(segment.get("words")),
+                        }
+                        for segment in result.get("segments") or []
+                    ],
                     "rawResponses": result.get("rawResponses"),
                 }
                 for result in channel_results

@@ -153,7 +153,21 @@ test('normalizes transcription result segments for CRM transcript view', () => {
     ],
     language: 'ru',
     rawAsrJson: {
-      channels: [{ channel: 'left', rawResponses: [{ text: 'Добрый день, Падел Парк.' }] }],
+      channels: [
+        {
+          channel: 'left',
+          parsedSegments: [
+            {
+              text: 'Добрый день, Падел Парк.',
+              words: [
+                { endMs: 1500, startMs: 1250, text: 'Добрый' },
+                { endMs: 1900, startMs: 1520, text: 'день,' },
+              ],
+            },
+          ],
+          rawResponses: [{ text: 'Добрый день, Падел Парк.' }],
+        },
+      ],
     },
     rawTranscriptText: 'Администратор: Добрый день, Падел Парк.',
     transcriptText: [
@@ -192,6 +206,7 @@ test('normalizes transcription result segments for CRM transcript view', () => {
   assert.equal(normalized.language, 'ru');
   assert.equal(normalized.rawTranscriptText, 'Администратор: Добрый день, Падел Парк.');
   assert.equal(normalized.rawAsrJson.channels[0].channel, 'left');
+  assert.equal(normalized.rawAsrJson.channels[0].parsedSegments[0].words[0].text, 'Добрый');
   assert.deepEqual(normalized.corrections, [
     {
       original: 'подал теннис',
