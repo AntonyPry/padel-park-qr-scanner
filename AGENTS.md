@@ -50,7 +50,8 @@
 - Инфраструктура локального GPU transcriber-server зафиксирована в `docs/TRANSCRIBER_SERVER.md` и `codex-vault/epics/telephony-transcription.md`.
 - Если задача касается телефонии, записей звонков, транскрибации или ASR-интеграции, сначала прочитай эти два файла вместе с обычным bootstrap-контекстом.
 - Не меняй Ubuntu laptop/VDS/WireGuard/Docker-настройки из CRM feature-чата без явного запроса пользователя; для CRM-интеграции используй documented endpoint.
-- Текущий ASR endpoint: `TRANSCRIBER_BASE_URL=http://10.8.0.2:9000`, endpoint `POST /asr?task=transcribe&language=...&output=json`, multipart field `audio_file`.
+- Текущий ASR endpoint: `TRANSCRIBER_BASE_URL=http://10.8.0.2:9001`, endpoint `POST /asr?task=transcribe&language=...&output=json`, multipart field `audio_file`.
+- Текущий local LLM endpoint для постобработки транскрипций: `LLM_BASE_URL=http://10.8.0.2:11434`, Ollama model `qwen2.5:7b`. Для качества используй segment-level контракт: LLM возвращает только `segmentId`, `editedText`, `confidence`, `changes`, `warnings`; CRM/worker сохраняет исходные speaker/start/end и валидирует JSON.
 - Не сохраняй WireGuard private keys, SSH private keys, API tokens или production passwords в docs/vault/git. Public keys and IPs can be documented only when useful for operations.
 
 ## New chat bootstrap
