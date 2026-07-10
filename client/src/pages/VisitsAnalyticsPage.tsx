@@ -1,5 +1,5 @@
 import { useState, useMemo, type ReactNode } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getVisitsAnalytics,
   type ChartDatum,
@@ -180,9 +180,9 @@ export default function VisitsAnalyticsPage() {
   const analyticsQuery = useQuery({
     queryFn: () => getVisitsAnalytics(analyticsParams),
     queryKey: queryKeys.visitsAnalytics.detail(analyticsParams),
+    placeholderData: keepPreviousData,
   });
   const data = analyticsQuery.data;
-  const loading = analyticsQuery.isLoading || analyticsQuery.isFetching;
   const errorText = analyticsQuery.isError
     ? getApiErrorMessage(analyticsQuery.error, 'Не удалось загрузить аналитику посещений')
     : '';
@@ -334,7 +334,7 @@ export default function VisitsAnalyticsPage() {
           onRetry={() => void analyticsQuery.refetch()}
           title="Аналитика не загрузилась"
         />
-      ) : !data || loading ? (
+      ) : !data ? (
         <ChartLoadingState title="Загрузка аналитики посещений" />
       ) : (
         <>

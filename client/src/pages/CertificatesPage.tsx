@@ -509,7 +509,7 @@ export default function CertificatesPage() {
                 className: 'cursor-pointer',
                 onClick: () => setSelectedCertificateId(row.original.id),
               })}
-              loading={loading}
+              loading={loading && certificates.length === 0}
               minWidthClassName="min-w-[820px]"
               onRetry={() => void loadCertificates()}
               pageSize={10}
@@ -530,12 +530,12 @@ export default function CertificatesPage() {
                 Сертификат не выбран.
               </div>
             )}
-            {detailLoading && (
+            {detailLoading && !selectedCertificate && (
               <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
                 Загрузка...
               </div>
             )}
-            {selectedCertificate && !detailLoading && (
+            {selectedCertificate && (
               <>
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">

@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { type ColumnDef } from '@tanstack/react-table';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import {
@@ -253,10 +258,12 @@ export default function MethodologyPage() {
   const skillsQuery = useQuery({
     queryFn: () => listMethodologySkills(skillFilters),
     queryKey: queryKeys.methodology.skills(skillFilters),
+    placeholderData: keepPreviousData,
   });
   const exercisesQuery = useQuery({
     queryFn: () => listMethodologyExercises(exerciseFilters),
     queryKey: queryKeys.methodology.exercises(exerciseFilters),
+    placeholderData: keepPreviousData,
   });
 
   const activeSkills = activeSkillsQuery.data || [];
@@ -268,9 +275,8 @@ export default function MethodologyPage() {
   const exerciseErrorMessage = exercisesQuery.isError
     ? getApiErrorMessage(exercisesQuery.error, 'Не удалось загрузить упражнения')
     : null;
-  const loadingSkills = skillsQuery.isLoading || skillsQuery.isFetching;
-  const loadingExercises =
-    exercisesQuery.isLoading || exercisesQuery.isFetching;
+  const loadingSkills = skillsQuery.isLoading && skills.length === 0;
+  const loadingExercises = exercisesQuery.isLoading && exercises.length === 0;
   const invalidateMethodology = () =>
     queryClient.invalidateQueries({ queryKey: queryKeys.methodology.all });
 

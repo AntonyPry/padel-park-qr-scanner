@@ -9,7 +9,12 @@ import {
 } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { type ColumnDef } from '@tanstack/react-table';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useForm, useWatch } from 'react-hook-form';
 import { Link, useSearchParams } from 'react-router-dom';
 import { z } from 'zod';
@@ -1204,11 +1209,13 @@ export default function BookingsPage() {
   const scheduleQuery = useQuery({
     queryFn: () => getBookingSchedule(selectedDate),
     queryKey: queryKeys.bookings.schedule(selectedDate),
+    placeholderData: keepPreviousData,
   });
   const analyticsQuery = useQuery({
     enabled: analyticsOpen,
     queryFn: () => getBookingAnalytics({ from: analyticsFrom, to: analyticsTo }),
     queryKey: queryKeys.bookings.analytics({ from: analyticsFrom, to: analyticsTo }),
+    placeholderData: keepPreviousData,
   });
   const responsiblesQuery = useQuery({
     queryFn: listBookingResponsibles,
@@ -1218,6 +1225,7 @@ export default function BookingsPage() {
     enabled: rulesOpen,
     queryFn: () => listBookingResources('all'),
     queryKey: queryKeys.bookings.resources(),
+    placeholderData: keepPreviousData,
   });
   const schedule = scheduleQuery.data;
   const analytics = analyticsQuery.data;
@@ -1398,6 +1406,7 @@ export default function BookingsPage() {
     enabled: seriesOpen,
     queryFn: () => listBookingSeries('active'),
     queryKey: queryKeys.bookings.series(),
+    placeholderData: keepPreviousData,
   });
   const groupParticipantSearchQuery = useQuery({
     enabled:

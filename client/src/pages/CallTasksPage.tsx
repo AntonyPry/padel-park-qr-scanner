@@ -515,7 +515,6 @@ export default function CallTasksPage() {
       if (requestId !== tasksRequestIdRef.current) return;
       if (!res.ok) {
         const message = await readError(res, 'Не удалось загрузить задачи обзвона');
-        setTasks([]);
         setTasksError(message);
         toast.error(message);
         return;
@@ -543,7 +542,6 @@ export default function CallTasksPage() {
     } catch (error) {
       if (requestId !== tasksRequestIdRef.current) return;
       const message = getApiErrorMessage(error, 'Не удалось загрузить задачи обзвона');
-      setTasks([]);
       setTasksError(message);
       toast.error(message);
     }
@@ -560,7 +558,6 @@ export default function CallTasksPage() {
       const res = await apiFetch(`/api/call-tasks/report?status=${status}`);
       if (requestId !== reportRequestIdRef.current) return;
       if (!res.ok) {
-        setReport(null);
         return;
       }
 
@@ -569,9 +566,7 @@ export default function CallTasksPage() {
         setReport(nextReport);
       }
     } catch {
-      if (requestId === reportRequestIdRef.current) {
-        setReport(null);
-      }
+      // Keep the last successful report visible when a background refresh fails.
     }
   }, [status]);
 
@@ -654,8 +649,6 @@ export default function CallTasksPage() {
     }
 
     setClientsLoading(true);
-    setClients([]);
-    setTotalClients(0);
     setClientsError('');
     const params = new URLSearchParams({
       page: String(page),
@@ -1736,7 +1729,7 @@ export default function CallTasksPage() {
                   data={clients}
                   emptyText="Клиенты не найдены."
                   errorText={clientsError}
-                  loading={clientsLoading}
+                  loading={clientsLoading && clients.length === 0}
                   loadingText="Загрузка клиентов..."
                   minWidthClassName="min-w-[980px] table-fixed"
                   onRetry={() => void fetchClients()}

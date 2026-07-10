@@ -446,7 +446,9 @@ export default function TrainerPage() {
 
     setDetailsLoading(true);
     setDetailsError(null);
-    setDetails(null);
+    setDetails((current) =>
+      current?.client.id === clientId ? current : null,
+    );
     try {
       const response = await apiFetch(`/api/clients/${clientId}`);
       if (requestId !== detailsRequestIdRef.current) return;
@@ -1099,7 +1101,7 @@ export default function TrainerPage() {
             data={clients}
             emptyText="Клиентов по текущему фильтру нет."
             errorText={clientsError || undefined}
-            loading={clientsLoading}
+            loading={clientsLoading && clients.length === 0}
             loadingText="Загружаем клиентов..."
             minWidthClassName="min-w-[720px]"
             onRetry={() => void fetchClients()}
@@ -1172,7 +1174,7 @@ export default function TrainerPage() {
                   : 'Откроется дневник тренировок, история уровней и форма новой записи.'}
               </div>
             </div>
-          ) : detailsLoading ? (
+          ) : detailsLoading && !details ? (
             <div className="flex min-h-[360px] items-center justify-center text-sm text-muted-foreground lg:min-h-[620px]">
               Открываем карточку...
             </div>
