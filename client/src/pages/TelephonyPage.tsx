@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import {
   CheckCircle2,
   Clock,
@@ -487,9 +492,11 @@ export default function TelephonyPage() {
   );
 
   const callsQuery = useQuery({
+    placeholderData: keepPreviousData,
     queryKey: queryKeys.telephony.calls(listParams),
     queryFn: () => getTelephonyCalls(listParams),
   });
+  const visibleCalls = callsQuery.isError ? [] : callsQuery.data?.items || [];
   const reportParams = useMemo(
     () => ({
       from: reportRange.from,
@@ -1735,7 +1742,7 @@ export default function TelephonyPage() {
           Array.from({ length: 4 }).map((_, index) => (
             <div key={`mobile-loading-${index}`} className="h-32 animate-pulse rounded-md border bg-muted" />
           ))}
-        {callsQuery.data?.items.map((call) => (
+        {visibleCalls.map((call) => (
           <div key={call.id} className="rounded-md border bg-card p-3">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -1838,7 +1845,7 @@ export default function TelephonyPage() {
             )}
           </div>
         ))}
-        {!callsQuery.isLoading && !callsQuery.isError && callsQuery.data?.items.length === 0 && (
+        {!callsQuery.isLoading && !callsQuery.isError && visibleCalls.length === 0 && (
           <div className="rounded-md border p-8 text-center text-sm text-muted-foreground">
             Звонков по текущему фильтру нет.
           </div>
@@ -1879,7 +1886,7 @@ export default function TelephonyPage() {
                   </TableCell>
                 </TableRow>
               ))}
-            {callsQuery.data?.items.map((call) => (
+            {visibleCalls.map((call) => (
               <TableRow key={call.id}>
                 <TableCell>
                   <div className="font-medium">{formatDateTime(call.startedAt)}</div>
@@ -2023,7 +2030,7 @@ export default function TelephonyPage() {
                 )}
               </TableRow>
             ))}
-            {!callsQuery.isLoading && !callsQuery.isError && callsQuery.data?.items.length === 0 && (
+            {!callsQuery.isLoading && !callsQuery.isError && visibleCalls.length === 0 && (
               <TableRow>
                 <TableCell colSpan={callsTableColumnCount} className="h-28 text-center text-muted-foreground">
                   Звонков по текущему фильтру нет.

@@ -3,6 +3,7 @@ const { afterEach, test } = require('node:test');
 const db = require('../../models');
 const {
   getWorkerTranscriptionQueue,
+  listCalls,
   listTranscriptionJobs,
   mapCall,
   mapTranscriptionJob,
@@ -16,11 +17,13 @@ const {
 const originalTranscriptionJobCount = db.TelephonyTranscriptionJob.count;
 const originalTranscriptionJobFindAndCountAll = db.TelephonyTranscriptionJob.findAndCountAll;
 const originalTranscriptionJobFindAll = db.TelephonyTranscriptionJob.findAll;
+const originalTelephonyCallFindAndCountAll = db.TelephonyCall.findAndCountAll;
 
 afterEach(() => {
   db.TelephonyTranscriptionJob.count = originalTranscriptionJobCount;
   db.TelephonyTranscriptionJob.findAndCountAll = originalTranscriptionJobFindAndCountAll;
   db.TelephonyTranscriptionJob.findAll = originalTranscriptionJobFindAll;
+  db.TelephonyCall.findAndCountAll = originalTelephonyCallFindAndCountAll;
 });
 
 test('normalizes Beeline statistics payload into an inbound call', () => {
@@ -140,6 +143,48 @@ test('normalizes Beeline recording payload', () => {
   assert.equal(normalized.durationSeconds, 6);
   assert.equal(normalized.recordingFileSize, 11808);
   assert.equal(normalized.startedAt.toISOString(), '2026-05-28T05:37:31.443Z');
+});
+
+test('lists telephony calls on later pages without changing total', async () => {
+  let capturedQuery = null;
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    toJSON: () => ({
+      callStatus: 'answered',
+      client: null,
+      clientPhone: `+7 (999) 000-00-${String(index).padStart(2, '0')}`,
+      clientPhoneNormalized: `99900000${String(index).padStart(2, '0')}`,
+      createdAt: new Date('2026-07-09T10:00:00.000Z'),
+      direction: 'inbound',
+      durationSeconds: 30 + index,
+      followUpCallTask: null,
+      id: 100 + index,
+      processingStatus: 'new',
+      processedByAccount: null,
+      recordingStatus: 'available',
+      startedAt: new Date(`2026-07-09T10:${String(index).padStart(2, '0')}:00.000Z`),
+      staff: null,
+      userId: null,
+    }),
+  }));
+
+  db.TelephonyCall.findAndCountAll = async (query) => {
+    capturedQuery = query;
+    return { count: 63, rows };
+  };
+  db.TelephonyTranscriptionJob.findAll = async () => [];
+
+  const result = await listCalls({ role: 'owner' }, {
+    page: '2',
+    pageSize: '20',
+    status: 'active',
+  });
+
+  assert.equal(capturedQuery.limit, 20);
+  assert.equal(capturedQuery.offset, 20);
+  assert.equal(result.page, 2);
+  assert.equal(result.pageSize, 20);
+  assert.equal(result.total, 63);
+  assert.equal(result.items.length, 20);
 });
 
 test('normalizes transcription result segments for CRM transcript view', () => {
