@@ -515,31 +515,6 @@ export default function SystemUsersPage() {
         },
       },
       {
-        accessorKey: 'status',
-        header: 'Статус',
-        size: 120,
-        cell: ({ row }) => {
-          const item = row.original;
-
-          return (
-            <Badge
-              variant="outline"
-              className={
-                item.status === 'active'
-                  ? 'border-transparent bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                  : ''
-              }
-            >
-              {item.status === 'active'
-                ? 'Активен'
-                : item.status === 'archived'
-                  ? 'Архив'
-                  : 'Отключен'}
-            </Badge>
-          );
-        },
-      },
-      {
         id: 'lastLogin',
         header: 'Последний вход',
         size: 140,
@@ -656,7 +631,7 @@ export default function SystemUsersPage() {
         </div>
       </div>
 
-      <div className="border rounded-md bg-card overflow-x-auto">
+      <div className="rounded-md border bg-card">
         <DataTable
           columns={accountColumns}
           data={displayedAccounts}
@@ -664,9 +639,88 @@ export default function SystemUsersPage() {
           errorText={loadError}
           loading={loading && displayedAccounts.length === 0}
           loadingText="Загрузка пользователей..."
-          minWidthClassName="min-w-[760px] table-fixed"
           onRetry={() => void fetchData()}
           pageSize={10}
+          tableClassName="table-fixed"
+          renderMobileCard={(row) => {
+            const item = row.original;
+            const manageable = canManageAccount(item);
+
+            return (
+              <div className="min-w-0 rounded-xl border bg-card p-4 shadow-sm">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-muted">
+                    <UserCog className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="break-all font-semibold">{item.email}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      ID {item.id}
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Роль CRM</div>
+                    <div className="mt-1">{getAccountRoleLabel(item.role)}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">Сотрудник</div>
+                    <div className="mt-1 break-words">
+                      {item.Staff?.name || 'Не привязан'}
+                    </div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-xs text-muted-foreground">Последний вход</div>
+                    <div className="mt-1">{formatDateTime(item.lastLoginAt)}</div>
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap justify-end gap-2 border-t pt-3">
+                  {manageable ? (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openEdit(item)}
+                      >
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Изменить
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => requestArchive(item)}
+                      >
+                        {item.status === 'archived' ? (
+                          <ArchiveRestore className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Archive className="mr-2 h-4 w-4" />
+                        )}
+                        {item.status === 'archived' ? 'Восстановить' : 'В архив'}
+                      </Button>
+                      {item.status === 'archived' && (
+                        <Button
+                          type="button"
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => requestPermanentDelete(item)}
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Удалить
+                        </Button>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">
+                      {permissionMessages.systemUsersRestricted}
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          }}
         />
       </div>
 

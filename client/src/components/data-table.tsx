@@ -8,7 +8,13 @@ import {
   type Row,
 } from '@tanstack/react-table';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { useEffect, useMemo, useState, type HTMLAttributes } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type HTMLAttributes,
+  type ReactNode,
+} from 'react';
 import {
   Table,
   TableBody,
@@ -53,6 +59,7 @@ interface DataTableProps<TData> {
   onRetry?: () => void;
   pageSize?: number;
   retryText?: string;
+  renderMobileCard?: (row: Row<TData>) => ReactNode;
   tableClassName?: string;
 }
 
@@ -92,6 +99,7 @@ export function DataTable<TData>({
   onRetry,
   pageSize,
   retryText = 'Повторить',
+  renderMobileCard,
   tableClassName,
 }: DataTableProps<TData>) {
   const [pagination, setPagination] = useState<PaginationState>({
@@ -169,8 +177,39 @@ export function DataTable<TData>({
           {loadingText}
         </span>
       )}
-      <div className="w-full overflow-x-auto" aria-busy={loading || undefined}>
-        <Table className={cn(minWidthClassName, tableClassName)}>
+      {renderMobileCard && (
+        <div
+          className="grid gap-3 p-3 md:hidden"
+          aria-busy={loading || undefined}
+        >
+          {showSkeletonRows
+            ? skeletonRows.map((_, rowIndex) => (
+                <div
+                  key={`mobile-skeleton-${rowIndex}`}
+                  className="grid gap-3 rounded-xl border bg-card p-4"
+                >
+                  <Skeleton className="h-4 w-2/3 max-w-full" />
+                  <Skeleton className="h-3 w-full" />
+                  <Skeleton className="h-3 w-4/5" />
+                </div>
+              ))
+            : table.getRowModel().rows.map((row) => (
+                <div key={row.id}>{renderMobileCard(row)}</div>
+              ))}
+        </div>
+      )}
+      <div
+        className={cn(
+          renderMobileCard
+            ? 'hidden w-full overflow-visible md:block'
+            : 'w-full overflow-x-auto',
+        )}
+        aria-busy={loading || undefined}
+      >
+        <Table
+          className={cn(minWidthClassName, tableClassName)}
+          containerClassName={renderMobileCard ? 'overflow-visible' : undefined}
+        >
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
