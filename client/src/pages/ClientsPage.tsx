@@ -40,6 +40,7 @@ import {
   Users,
   WalletCards,
   Repeat2,
+  X,
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -447,12 +448,10 @@ interface ClientSavedView {
 }
 
 interface ClientSavedViewFilters {
-  includeMerged?: boolean | string;
   lastVisitDaysFrom?: number;
   lastVisitDaysTo?: number;
   lastVisitFrom?: string;
   lastVisitTo?: string;
-  q?: string;
   segment?: ClientSegment;
   source?: string;
   sourceId?: number | string;
@@ -1210,10 +1209,6 @@ function normalizeSavedFilterValue(value?: string | number) {
   return String(value);
 }
 
-function getSavedFilterBoolean(value: boolean | string | undefined) {
-  return value === true || value === 'true';
-}
-
 function getQueryEnum<T extends string>(
   params: URLSearchParams,
   key: string,
@@ -1245,10 +1240,6 @@ function getQueryText(params: URLSearchParams, key: string) {
   return params.get(key)?.trim() || '';
 }
 
-function getQueryBoolean(params: URLSearchParams, key: string) {
-  return params.get(key) === 'true';
-}
-
 function setNumericSavedFilter(
   filters: ClientSavedViewFilters,
   key: keyof Pick<
@@ -1268,10 +1259,8 @@ function setNumericSavedFilter(
 
 function getComparableSavedFilters(filters: ClientSavedViewFilters) {
   return {
-    includeMerged: getSavedFilterBoolean(filters.includeMerged),
     lastVisitDaysFrom: normalizeNumericFilterInput(filters.lastVisitDaysFrom),
     lastVisitDaysTo: normalizeNumericFilterInput(filters.lastVisitDaysTo),
-    q: filters.q || '',
     segment: filters.segment || 'all',
     sourceId: normalizeSavedFilterValue(filters.sourceId),
     status: filters.status || 'active',
@@ -1367,9 +1356,6 @@ export default function ClientsPage() {
   );
   const [status, setStatus] = useState<'active' | 'archived' | 'all'>(() =>
     getQueryEnum(searchParams, 'status', ['active', 'archived', 'all'], 'active'),
-  );
-  const [includeMerged, setIncludeMerged] = useState(() =>
-    getQueryBoolean(searchParams, 'includeMerged'),
   );
   const [trainingLevel, setTrainingLevel] = useState<TrainingLevel | 'all'>(() =>
     getQueryEnum(
@@ -1544,7 +1530,6 @@ export default function ClientsPage() {
 
   const queryString = useMemo(() => {
     return buildClientsListQueryString({
-      includeMerged,
       lastVisitDaysFrom,
       lastVisitDaysTo,
       page,
@@ -1559,7 +1544,6 @@ export default function ClientsPage() {
       visitCountMin,
     });
   }, [
-    includeMerged,
     lastVisitDaysFrom,
     lastVisitDaysTo,
     page,
@@ -1579,8 +1563,6 @@ export default function ClientsPage() {
       status,
     };
 
-    if (includeMerged) filters.includeMerged = true;
-    if (q.trim()) filters.q = q.trim();
     if (sourceId !== 'all') filters.sourceId = Number(sourceId);
     if (visitCategoryId !== 'all') filters.visitCategoryId = Number(visitCategoryId);
     if (trainingLevel !== 'all') filters.trainingLevel = trainingLevel;
@@ -1591,10 +1573,8 @@ export default function ClientsPage() {
 
     return filters;
   }, [
-    includeMerged,
     lastVisitDaysFrom,
     lastVisitDaysTo,
-    q,
     segment,
     sourceId,
     status,
@@ -1621,10 +1601,8 @@ export default function ClientsPage() {
   const filterResetKey = useMemo(
     () =>
       JSON.stringify({
-        includeMerged,
         lastVisitDaysFrom,
         lastVisitDaysTo,
-        q,
         segment,
         sourceId,
         status,
@@ -1634,10 +1612,8 @@ export default function ClientsPage() {
         visitCountMin,
       }),
     [
-      includeMerged,
       lastVisitDaysFrom,
       lastVisitDaysTo,
-      q,
       segment,
       sourceId,
       status,
@@ -1798,16 +1774,11 @@ export default function ClientsPage() {
 
   const isInitialLoading = loading && clients.length === 0;
   const hasClientSearchQuery = Boolean(q.trim());
-  const canExpandClientSearch =
-    hasClientSearchQuery && (status !== 'all' || !includeMerged);
-  const isExpandedClientSearch = status === 'all' && includeMerged;
   const activeClientFilterCount = useMemo(() => {
     const checks = [
-      Boolean(q.trim()),
       sourceId !== 'all',
       segment !== 'all',
       status !== 'active',
-      includeMerged,
       trainingLevel !== 'all',
       visitCategoryId !== 'all',
       Boolean(visitCountMin),
@@ -1818,10 +1789,8 @@ export default function ClientsPage() {
 
     return checks.filter(Boolean).length;
   }, [
-    includeMerged,
     lastVisitDaysFrom,
     lastVisitDaysTo,
-    q,
     segment,
     sourceId,
     status,
@@ -1915,11 +1884,9 @@ export default function ClientsPage() {
 
   const applySavedView = (view: ClientSavedView) => {
     const filters = view.filters || {};
-    setQ(filters.q || '');
     setSourceId(normalizeSavedFilterValue(filters.sourceId));
     setSegment((filters.segment || 'all') as ClientSegment);
     setStatus((filters.status || 'active') as 'active' | 'archived' | 'all');
-    setIncludeMerged(getSavedFilterBoolean(filters.includeMerged));
     setTrainingLevel((filters.trainingLevel || 'all') as TrainingLevel | 'all');
     setVisitCategoryId(normalizeSavedFilterValue(filters.visitCategoryId));
     setVisitCountMin(normalizeNumericFilterInput(filters.visitCountMin));
@@ -1938,11 +1905,9 @@ export default function ClientsPage() {
   };
 
   const resetClientFilters = () => {
-    setQ('');
     setSourceId('all');
     setSegment('all');
     setStatus('active');
-    setIncludeMerged(false);
     setTrainingLevel('all');
     setVisitCategoryId('all');
     setVisitCountMin('');
@@ -1950,12 +1915,6 @@ export default function ClientsPage() {
     setLastVisitDaysFrom('');
     setLastVisitDaysTo('');
     setSelectedSavedViewId('none');
-    setPage(1);
-  };
-
-  const expandClientRecoverySearch = () => {
-    setStatus('all');
-    setIncludeMerged(true);
     setPage(1);
   };
 
@@ -2640,7 +2599,27 @@ export default function ClientsPage() {
 
   const copyClientPhone = async (phone: string) => {
     try {
-      await navigator.clipboard.writeText(phone);
+      if (navigator.clipboard?.writeText) {
+        try {
+          await navigator.clipboard.writeText(phone);
+          toast.success('Телефон скопирован');
+          return;
+        } catch {
+          // HTTP production deployments may not expose the Clipboard API.
+        }
+      }
+
+      const textarea = document.createElement('textarea');
+      textarea.value = phone;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      const copied = document.execCommand('copy');
+      textarea.remove();
+      if (!copied) throw new Error('copy command failed');
       toast.success('Телефон скопирован');
     } catch {
       toast.error('Не удалось скопировать телефон');
@@ -3037,87 +3016,6 @@ export default function ClientsPage() {
       },
       cell: ({ row }) => formatDate(row.original.stats.lastVisitAt),
     },
-    {
-      id: 'actions',
-      header: '',
-      size: 100,
-      meta: {
-        cellClassName: 'text-right',
-        headerClassName: 'text-right',
-      },
-      cell: ({ row }) => {
-        const client = row.original;
-
-        return (
-          <div className="flex justify-end gap-1">
-            <TooltipIconButton
-              label="Открыть карточку"
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => void loadDetails(client.id)}
-            >
-              <Eye className="h-4 w-4" />
-            </TooltipIconButton>
-            {client.mergedIntoUserId && (
-              <TooltipIconButton
-                label="Открыть основного клиента"
-                variant="ghost"
-                size="icon-sm"
-                onClick={() => void loadDetails(client.mergedIntoUserId!)}
-              >
-                <GitMerge className="h-4 w-4" />
-              </TooltipIconButton>
-            )}
-            {canEdit && !client.mergedIntoUserId && (
-              <>
-                <TooltipIconButton
-                  label="Редактировать клиента"
-                  variant="ghost"
-                  size="icon-sm"
-                  onClick={() => openEdit(client)}
-                >
-                  <Pencil className="h-4 w-4" />
-                </TooltipIconButton>
-                {client.status === 'archived' ? (
-                  <>
-                    <TooltipIconButton
-                      label="Восстановить из архива"
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() =>
-                        requestClientStatusUpdate(client, 'active')
-                      }
-                    >
-                      <ArchiveRestore className="h-4 w-4" />
-                    </TooltipIconButton>
-                    <TooltipIconButton
-                      label="Удалить навсегда"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => requestPermanentDelete(client)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </TooltipIconButton>
-                  </>
-                ) : (
-                  <TooltipIconButton
-                    label="Отправить в архив"
-                    variant="ghost"
-                    size="icon-sm"
-                    onClick={() =>
-                      requestClientStatusUpdate(client, 'archived')
-                    }
-                  >
-                    <Archive className="h-4 w-4" />
-                  </TooltipIconButton>
-                )}
-              </>
-            )}
-          </div>
-        );
-      },
-    },
   ];
 
   return (
@@ -3144,28 +3042,21 @@ export default function ClientsPage() {
             )}
             {viewMode === 'list' && (
               <>
-                <div className="hidden h-8 w-px bg-border sm:block" />
-                <Select
-                  value={selectedSavedViewId}
-                  onValueChange={handleSavedViewChange}
-                >
-                  <SelectTrigger className="h-9 w-full min-w-[200px] sm:w-[220px]">
-                    <SelectValue placeholder="Выберите сохраненный фильтр" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Без сохраненного фильтра</SelectItem>
-                    {savedViews.map((view) => (
-                      <SelectItem key={view.id} value={String(view.id)}>
-                        {view.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {selectedSavedViewDirty && (
-                  <Badge variant="outline" className="h-8 rounded-full px-3">
-                    Изменено
-                  </Badge>
-                )}
+                <div className="relative min-w-[220px] flex-1 sm:w-[320px] sm:flex-none">
+                  <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    aria-label="Поиск клиентов"
+                    value={q}
+                    onChange={(event) => { setQ(event.target.value); setPage(1); }}
+                    placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
+                    className="h-9 pl-9 pr-9"
+                  />
+                  {hasClientSearchQuery && (
+                    <button type="button" aria-label="Очистить поиск" title="Очистить поиск" className="absolute right-2 top-1.5 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => { setQ(''); setPage(1); }}>
+                      <X className="h-4 w-4" />
+                    </button>
+                  )}
+                </div>
                 <Badge variant="secondary" className="h-8 rounded-full px-2.5">
                   {total.toLocaleString('ru-RU')}
                 </Badge>
@@ -3190,47 +3081,10 @@ export default function ClientsPage() {
                     </Badge>
                   )}
                 </Button>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={openSavedViewDialog}
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  Сохранить
-                </Button>
-                {selectedSavedView && (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    onClick={() => requestUpdateSavedView(selectedSavedView)}
-                  >
-                    <Save className="mr-2 h-4 w-4" />
-                    {selectedSavedViewDirty ? 'Сохранить' : 'Синхр.'}
-                  </Button>
-                )}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={resetClientFilters}
-                >
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Сброс
-                </Button>
-                {selectedSavedView && (
-                  <Button
-                    type="button"
-                    size="icon-sm"
-                    variant="outline"
-                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                    onClick={() => requestDeleteSavedView(selectedSavedView)}
-                    aria-label="Удалить сохраненный фильтр"
-                    title="Удалить сохраненный фильтр"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+                {activeClientFilterCount > 0 && (
+                  <TooltipIconButton label="Сбросить фильтры" type="button" size="icon-sm" variant="outline" onClick={resetClientFilters}>
+                    <RotateCcw className="h-4 w-4" />
+                  </TooltipIconButton>
                 )}
               </>
             )}
@@ -3245,27 +3099,6 @@ export default function ClientsPage() {
 
       {viewMode === 'list' ? (
         <>
-          {hasClientSearchQuery && (
-            <div className="flex flex-col gap-2 rounded-xl border bg-muted/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-muted-foreground">
-                  {isExpandedClientSearch
-                    ? 'Поиск включает активных, архивных и объединенных клиентов.'
-                    : 'Обычный поиск показывает активных клиентов без объединенных дублей.'}
-                </div>
-                {canExpandClientSearch && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="w-full sm:w-auto"
-                    onClick={expandClientRecoverySearch}
-                  >
-                    <GitMerge className="mr-2 h-4 w-4" />
-                    Искать в архиве и объединенных
-                  </Button>
-                )}
-              </div>
-          )}
-
           <Dialog open={clientFiltersOpen} onOpenChange={setClientFiltersOpen}>
             <DialogContent className="sm:max-w-4xl">
               <DialogHeader>
@@ -3276,22 +3109,22 @@ export default function ClientsPage() {
               </DialogHeader>
 
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <div className="md:col-span-2">
-                  <label className="mb-1 flex items-center gap-1.5 text-xs font-medium">
-                    Поиск
-                    <HelpTooltip>
-                      Ищет по имени, а для обычных ролей еще по телефону и
-                      нормализованным цифрам номера.
-                    </HelpTooltip>
-                  </label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      value={q}
-                      onChange={(event) => setQ(event.target.value)}
-                      placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
-                      className="pl-9"
-                    />
+                <div className="md:col-span-2 xl:col-span-4 rounded-md border p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <label className="text-xs font-medium">Сохраненный фильтр</label>
+                    {selectedSavedViewDirty && <Badge variant="outline">Изменено</Badge>}
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Select value={selectedSavedViewId} onValueChange={handleSavedViewChange}>
+                      <SelectTrigger className="flex-1"><SelectValue placeholder="Выберите фильтр" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">Без сохраненного фильтра</SelectItem>
+                        {savedViews.map((view) => <SelectItem key={view.id} value={String(view.id)}>{view.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button type="button" variant="outline" onClick={openSavedViewDialog}><Save className="mr-2 h-4 w-4" />Сохранить как</Button>
+                    {selectedSavedView && <Button type="button" variant="outline" onClick={() => requestUpdateSavedView(selectedSavedView)}><Save className="mr-2 h-4 w-4" />Обновить</Button>}
+                    {selectedSavedView && <TooltipIconButton label="Удалить сохраненный фильтр" type="button" variant="outline" size="icon" className="text-destructive" onClick={() => requestDeleteSavedView(selectedSavedView)}><Trash2 className="h-4 w-4" /></TooltipIconButton>}
                   </div>
                 </div>
                 <div>
@@ -3490,10 +3323,7 @@ export default function ClientsPage() {
               </div>
 
               <DialogFooter>
-                <Button type="button" variant="outline" onClick={resetClientFilters}>
-                  <RotateCcw className="mr-2 h-4 w-4" />
-                  Сбросить
-                </Button>
+                {activeClientFilterCount > 0 && <Button type="button" variant="outline" onClick={resetClientFilters}><RotateCcw className="mr-2 h-4 w-4" />Сбросить фильтры</Button>}
                 <Button type="button" onClick={() => setClientFiltersOpen(false)}>
                   Показать клиентов
                 </Button>
@@ -3510,6 +3340,13 @@ export default function ClientsPage() {
               loading={isInitialLoading}
               loadingText="Загрузка клиентов..."
               minWidthClassName="min-w-[960px] table-fixed"
+              getRowProps={(row) => ({
+                className: 'cursor-pointer transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                onClick: () => void loadDetails(row.original.id),
+                onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void loadDetails(row.original.id); } },
+                role: 'button',
+                tabIndex: 0,
+              })}
               onRetry={() => void fetchClients()}
             />
           </div>
@@ -3534,7 +3371,14 @@ export default function ClientsPage() {
               </div>
             )}
             {clients.map((client) => (
-              <div key={client.id} className="rounded-md border bg-card p-4">
+              <div
+                key={client.id}
+                role="button"
+                tabIndex={0}
+                className="cursor-pointer rounded-md border bg-card p-4 transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => void loadDetails(client.id)}
+                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); void loadDetails(client.id); } }}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="flex min-w-0 items-center gap-2">
@@ -3563,78 +3407,6 @@ export default function ClientsPage() {
                           {client.mergedIntoName || `ID ${client.mergedIntoUserId}`}
                         </span>
                       </div>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => void loadDetails(client.id)}
-                      aria-label={`Открыть клиента ${client.name}`}
-                      title="Открыть"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    {client.mergedIntoUserId && (
-                      <Button
-                        variant="ghost"
-                        size="icon-sm"
-                        onClick={() => void loadDetails(client.mergedIntoUserId!)}
-                        aria-label={`Открыть основного клиента ${client.name}`}
-                        title="Открыть основного"
-                      >
-                        <GitMerge className="h-4 w-4" />
-                      </Button>
-                    )}
-                    {canEdit && !client.mergedIntoUserId && (
-                      <>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          onClick={() => openEdit(client)}
-                          aria-label={`Редактировать клиента ${client.name}`}
-                          title="Редактировать"
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        {client.status === 'archived' ? (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              onClick={() =>
-                                requestClientStatusUpdate(client, 'active')
-                              }
-                              aria-label={`Восстановить клиента ${client.name}`}
-                              title="Восстановить"
-                            >
-                              <ArchiveRestore className="h-4 w-4" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                              onClick={() => requestPermanentDelete(client)}
-                              aria-label={`Удалить навсегда клиента ${client.name}`}
-                              title="Удалить навсегда"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            onClick={() =>
-                              requestClientStatusUpdate(client, 'archived')
-                            }
-                            aria-label={`Архивировать клиента ${client.name}`}
-                            title="Архивировать"
-                          >
-                            <Archive className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </>
                     )}
                   </div>
                 </div>
@@ -4096,7 +3868,6 @@ export default function ClientsPage() {
                 : status === 'archived'
                   ? 'архив'
                   : 'все'}
-              {q.trim() ? `, поиск «${q.trim()}»` : ''}
               {sourceId !== 'all'
                 ? `, источник ${
                     sources.find((source) => String(source.id) === sourceId)
@@ -4111,7 +3882,6 @@ export default function ClientsPage() {
                   }`
                 : ''}
               {trainingLevel !== 'all' ? `, уровень ${trainingLevel}` : ''}
-              {includeMerged ? ', включая объединенные дубли' : ''}
               {visitCountMin ? `, визитов от ${visitCountMin}` : ''}
               {visitCountMax ? `, визитов до ${visitCountMax}` : ''}
               {lastVisitDaysFrom ? `, не были от ${lastVisitDaysFrom} дн.` : ''}
