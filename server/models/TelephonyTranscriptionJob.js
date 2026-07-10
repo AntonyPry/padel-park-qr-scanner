@@ -29,6 +29,22 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       allowNull: true,
     },
+    aiTranscriptText: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+    },
+    aiTranscriptSegments: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
+    aiCorrections: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
+    aiMetadata: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     errorMessage: {
       type: DataTypes.TEXT,
       allowNull: true,

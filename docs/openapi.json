@@ -30475,6 +30475,85 @@
               "schema": {
                 "type": "object",
                 "properties": {
+                  "aiCorrections": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "aiMetadata": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "propertyNames": {
+                          "type": "string"
+                        },
+                        "additionalProperties": {}
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "aiSegments": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "aiTranscriptSegments": {
+                    "anyOf": [
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        }
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "aiTranscriptText": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "language": {
                     "anyOf": [
                       {

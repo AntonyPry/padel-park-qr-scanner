@@ -1301,6 +1301,11 @@ const apiSchemas = {
     transcriptionResult: {
       body: z
         .object({
+          aiCorrections: optionalJsonArray,
+          aiMetadata: optionalJsonObject,
+          aiSegments: optionalJsonArray,
+          aiTranscriptSegments: optionalJsonArray,
+          aiTranscriptText: optionalString,
           language: optionalString,
           corrections: optionalJsonArray,
           metadata: optionalJsonObject,

@@ -87,6 +87,13 @@ class Config:
     start_paused: bool
     state_db_path: str
     temp_root: str
+    transcription_ai_postprocessing_enabled: bool
+    transcription_llm_base_url: str
+    transcription_llm_fallback_enabled: bool
+    transcription_llm_model: str
+    transcription_llm_num_ctx: int
+    transcription_llm_retry_count: int
+    transcription_llm_timeout_seconds: int
     whisper_binary: str
     whisper_cpp_dir: str
     whisper_language: str
@@ -138,7 +145,7 @@ def read_config(env: dict[str, str] | None = None) -> Config:
         asr_base_url=(
             _text(env.get("ASR_BASE_URL"))
             or _text(env.get("TRANSCRIBER_BASE_URL"))
-            or "http://10.8.0.2:9000"
+            or "http://10.8.0.2:9001"
         ).rstrip("/"),
         asr_initial_prompt=None,
         asr_initial_prompt_enabled=_bool(env.get("ASR_INITIAL_PROMPT_ENABLED"), True),
@@ -174,6 +181,31 @@ def read_config(env: dict[str, str] | None = None) -> Config:
         start_paused=_bool(env.get("START_PAUSED"), not bool(crm_worker_token)),
         state_db_path=_text(env.get("STATE_DB_PATH")) or "/data/transcription-worker.sqlite3",
         temp_root=_text(env.get("WORKER_TMP_DIR")) or "/tmp",
+        transcription_ai_postprocessing_enabled=_bool(
+            env.get("TRANSCRIPTION_AI_POSTPROCESSING_ENABLED"),
+            False,
+        ),
+        transcription_llm_base_url=(
+            _text(env.get("TRANSCRIPTION_LLM_BASE_URL"))
+            or _text(env.get("LLM_BASE_URL"))
+            or "http://10.8.0.2:11434"
+        ).rstrip("/"),
+        transcription_llm_fallback_enabled=_bool(
+            env.get("TRANSCRIPTION_LLM_FALLBACK_ENABLED"),
+            True,
+        ),
+        transcription_llm_model=(
+            _text(env.get("TRANSCRIPTION_LLM_MODEL"))
+            or _text(env.get("LLM_MODEL"))
+            or "qwen2.5:7b"
+        ),
+        transcription_llm_num_ctx=_int(env.get("TRANSCRIPTION_LLM_NUM_CTX"), 4096, 512),
+        transcription_llm_retry_count=_int(env.get("TRANSCRIPTION_LLM_RETRY_COUNT"), 1, 0),
+        transcription_llm_timeout_seconds=_int(
+            env.get("TRANSCRIPTION_LLM_TIMEOUT_SECONDS"),
+            90,
+            5,
+        ),
         whisper_binary=_text(env.get("WHISPER_CPP_BINARY")) or "whisper-cli",
         whisper_cpp_dir=_text(env.get("WHISPER_CPP_DIR")) or "/opt/whisper.cpp",
         whisper_language=_text(env.get("WHISPER_LANGUAGE")) or "ru",
@@ -205,6 +237,11 @@ def public_config(config: Config) -> dict[str, object]:
         "modelPath": config.whisper_model_path,
         "pollIntervalSeconds": config.poll_interval_seconds,
         "stateDbPath": config.state_db_path,
+        "transcriptionAiPostprocessingEnabled": config.transcription_ai_postprocessing_enabled,
+        "transcriptionLlmBaseUrl": config.transcription_llm_base_url,
+        "transcriptionLlmFallbackEnabled": config.transcription_llm_fallback_enabled,
+        "transcriptionLlmModel": config.transcription_llm_model,
+        "transcriptionLlmTimeoutSeconds": config.transcription_llm_timeout_seconds,
         "tokenConfigured": config.token_configured,
         "workerId": config.worker_id,
     }

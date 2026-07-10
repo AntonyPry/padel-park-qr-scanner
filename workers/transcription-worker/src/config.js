@@ -83,7 +83,7 @@ function readConfig(env = process.env, args = process.argv.slice(2)) {
     asrBaseUrl:
       normalizeText(env.ASR_BASE_URL) ||
       normalizeText(env.TRANSCRIBER_BASE_URL) ||
-      'http://10.8.0.2:9000',
+      'http://10.8.0.2:9001',
     asrInitialPromptEnabled: parseBoolean(env.ASR_INITIAL_PROMPT_ENABLED, true),
     asrOutput: normalizeText(env.ASR_OUTPUT) || 'json',
     asrProfile: normalizeText(env.ASR_PROFILE) || 'default',
@@ -122,6 +122,37 @@ function readConfig(env = process.env, args = process.argv.slice(2)) {
     runOnce,
     sampleAudioPath,
     tempRoot: normalizeText(env.WORKER_TMP_DIR) || os.tmpdir(),
+    transcriptionAiPostprocessingEnabled: parseBoolean(
+      env.TRANSCRIPTION_AI_POSTPROCESSING_ENABLED,
+      false,
+    ),
+    transcriptionLlmBaseUrl:
+      normalizeText(env.TRANSCRIPTION_LLM_BASE_URL) ||
+      normalizeText(env.LLM_BASE_URL) ||
+      'http://10.8.0.2:11434',
+    transcriptionLlmFallbackEnabled: parseBoolean(
+      env.TRANSCRIPTION_LLM_FALLBACK_ENABLED,
+      true,
+    ),
+    transcriptionLlmModel:
+      normalizeText(env.TRANSCRIPTION_LLM_MODEL) ||
+      normalizeText(env.LLM_MODEL) ||
+      'qwen2.5:7b',
+    transcriptionLlmNumCtx: parsePositiveInteger(
+      env.TRANSCRIPTION_LLM_NUM_CTX,
+      4096,
+      512,
+    ),
+    transcriptionLlmRetryCount: parsePositiveInteger(
+      env.TRANSCRIPTION_LLM_RETRY_COUNT,
+      1,
+      0,
+    ),
+    transcriptionLlmTimeoutMs: parsePositiveInteger(
+      env.TRANSCRIPTION_LLM_TIMEOUT_SECONDS,
+      90,
+      5,
+    ) * 1000,
     whisperBinary: normalizeText(env.WHISPER_CPP_BINARY) || 'whisper-cli',
     whisperCppDir: normalizeText(env.WHISPER_CPP_DIR) || '/opt/whisper.cpp',
     whisperLanguage: normalizeText(env.WHISPER_LANGUAGE) || 'ru',

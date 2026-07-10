@@ -834,6 +834,12 @@ function mapTranscriptionJob(row, options = {}) {
     failedAt: raw.failedAt,
     id: raw.id,
     language: raw.language,
+    aiCorrections: Array.isArray(raw.aiCorrections) ? raw.aiCorrections : [],
+    aiMetadata: raw.aiMetadata || null,
+    aiTranscriptSegments: Array.isArray(raw.aiTranscriptSegments)
+      ? raw.aiTranscriptSegments
+      : [],
+    aiTranscriptText: raw.aiTranscriptText || null,
     corrections: Array.isArray(raw.corrections) ? raw.corrections : [],
     metadata: raw.metadata || null,
     rawTranscriptText: raw.rawTranscriptText || null,
@@ -2425,6 +2431,163 @@ function normalizeCorrections(value) {
     .filter((item) => Object.keys(item).length > 0);
 }
 
+function normalizeCollapsedText(value) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return normalized || null;
+}
+
+function transcriptSegmentId(index) {
+  return `s${index + 1}`;
+}
+
+function flattenStringValues(value, output = []) {
+  if (typeof value === 'string') {
+    const text = normalizeCollapsedText(value);
+    if (text) output.push(text);
+  } else if (Array.isArray(value)) {
+    value.forEach((item) => flattenStringValues(item, output));
+  }
+  return output;
+}
+
+function normalizeAiStringList(value, maxItems = 12) {
+  return [...new Set(flattenStringValues(value))].slice(0, maxItems);
+}
+
+function normalizeAiConfidence(value) {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return ['high', 'medium', 'low'].includes(normalized) ? normalized : null;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0 || number > 1) return null;
+  return number;
+}
+
+function hasForbiddenAiArtifact(text) {
+  const normalized = normalizeCollapsedText(text)?.toLowerCase().replace(/ё/g, 'е') || '';
+  if (!normalized) return true;
+  if (normalized.includes('продолжение следует')) return true;
+  if (/^контекст(?=$|[\s:;,.!?-])/u.test(normalized)) return true;
+  if (/^редактор(?=$|[\s:;,.!?-])/u.test(normalized)) return true;
+  if (/^корректор(?=$|[\s:;,.!?-])/u.test(normalized)) return true;
+  return false;
+}
+
+function normalizeAiTranscriptLayer(data = {}, baseSegments = []) {
+  const rawSegments = Array.isArray(data.aiTranscriptSegments)
+    ? data.aiTranscriptSegments
+    : Array.isArray(data.aiSegments)
+      ? data.aiSegments
+      : [];
+  const rawCorrections = Array.isArray(data.aiCorrections) ? data.aiCorrections : [];
+  const rawMetadata = asObject(data.aiMetadata);
+  const overlays = new Map();
+  const ignoredUnknownSegmentIds = [];
+  const rejectedSegmentIds = [];
+  const metadataList = (name) =>
+    Array.isArray(rawMetadata[name]) ? rawMetadata[name].filter(Boolean) : [];
+
+  if (rawSegments.length === 0) {
+    return {
+      aiCorrections: normalizeCorrections(rawCorrections),
+      aiMetadata: Object.keys(rawMetadata).length > 0 ? rawMetadata : null,
+      aiTranscriptSegments: [],
+      aiTranscriptText: normalizeText(data.aiTranscriptText),
+    };
+  }
+
+  rawSegments.forEach((item) => {
+    const payload = asObject(item);
+    const segmentId = normalizeCollapsedText(payload.segmentId);
+    if (!segmentId || !baseSegments.some((_segment, index) => transcriptSegmentId(index) === segmentId)) {
+      if (segmentId) ignoredUnknownSegmentIds.push(segmentId);
+      return;
+    }
+    const text = normalizeCollapsedText(payload.editedText || payload.text);
+    if (!text || hasForbiddenAiArtifact(text)) {
+      rejectedSegmentIds.push(segmentId);
+      return;
+    }
+    overlays.set(segmentId, {
+      changes: normalizeAiStringList(payload.changes),
+      confidence: normalizeAiConfidence(payload.confidence),
+      text,
+      warnings: normalizeAiStringList(payload.warnings),
+    });
+  });
+
+  const aiTranscriptSegments = baseSegments.map((segment, index) => {
+    const segmentId = transcriptSegmentId(index);
+    const sourceText = normalizeCollapsedText(segment.text) || '';
+    const overlay = overlays.get(segmentId) || {};
+    const text = overlay.text || sourceText;
+    return {
+      channel: segment.channel || null,
+      changes: overlay.changes || [],
+      confidence: overlay.confidence || null,
+      editedText: text,
+      endMs: segment.endMs,
+      segmentId,
+      sortOrder: index,
+      sourceText,
+      speaker: segment.speaker,
+      startMs: segment.startMs,
+      text,
+      warnings: overlay.warnings || [],
+    };
+  });
+
+  const derivedCorrections = aiTranscriptSegments
+    .filter((segment) =>
+      segment.sourceText !== segment.text ||
+      segment.changes.length > 0 ||
+      segment.warnings.length > 0)
+    .map((segment) => ({
+      channel: segment.channel,
+      changes: segment.changes,
+      confidence: segment.confidence,
+      endMs: segment.endMs,
+      original: segment.sourceText,
+      normalized: segment.text,
+      segmentId: segment.segmentId,
+      speaker: segment.speaker,
+      startMs: segment.startMs,
+      type: 'llm_edit',
+      warnings: segment.warnings,
+    }));
+  const aiCorrections = derivedCorrections;
+  const acceptedSegmentIds = [...overlays.keys()];
+  const aiMetadata = {
+    ...rawMetadata,
+    acceptedSegmentIds,
+    ignoredUnknownSegmentIds: [
+      ...new Set([
+        ...ignoredUnknownSegmentIds,
+        ...metadataList('ignoredUnknownSegmentIds'),
+      ]),
+    ],
+    missingSegmentIds: baseSegments
+      .map((_segment, index) => transcriptSegmentId(index))
+      .filter((segmentId) => !overlays.has(segmentId)),
+    rejectedSegmentIds: [
+      ...new Set([
+        ...rejectedSegmentIds,
+        ...metadataList('rejectedSegmentIds'),
+      ]),
+    ],
+  };
+
+  return {
+    aiCorrections,
+    aiMetadata,
+    aiTranscriptSegments,
+    aiTranscriptText:
+      buildTranscriptTextFromSegments(aiTranscriptSegments) ||
+      normalizeText(data.aiTranscriptText),
+  };
+}
+
 function normalizeRawAsrJson(data = {}) {
   if (data.rawAsrJson && typeof data.rawAsrJson === 'object') return data.rawAsrJson;
   if (data.rawAsrResult && typeof data.rawAsrResult === 'object') return data.rawAsrResult;
@@ -2483,8 +2646,10 @@ function normalizeTranscriptSegments(data = {}) {
       text: transcriptText,
     });
   }
+  const aiLayer = normalizeAiTranscriptLayer(data, segments);
 
   return {
+    ...aiLayer,
     corrections: normalizeCorrections(data.corrections),
     language: normalizeText(data.language),
     metadata: asObject(data.metadata),
@@ -2868,9 +3033,19 @@ async function claimTranscriptionJob(data = {}) {
       {
         attemptCount: Number(job.attemptCount || 0) + 1,
         claimedAt: new Date(),
+        aiCorrections: null,
+        aiMetadata: null,
+        aiTranscriptSegments: null,
+        aiTranscriptText: null,
+        corrections: null,
         errorMessage: null,
         failedAt: null,
+        language: null,
+        metadata: null,
+        rawAsrJson: null,
+        rawTranscriptText: null,
         status: 'processing',
+        transcriptText: null,
         workerId: normalizeText(data.workerId),
       },
       { transaction },
@@ -2939,6 +3114,10 @@ async function completeTranscriptionJob(jobId, data = {}) {
         completedAt: new Date(),
         errorMessage: null,
         failedAt: null,
+        aiCorrections: normalized.aiCorrections,
+        aiMetadata: normalized.aiMetadata,
+        aiTranscriptSegments: normalized.aiTranscriptSegments,
+        aiTranscriptText: normalized.aiTranscriptText,
         language: normalized.language,
         metadata: normalized.metadata,
         corrections: normalized.corrections,
@@ -3001,6 +3180,10 @@ async function retryTranscriptionJob(actor, jobId) {
         completedAt: null,
         errorMessage: null,
         failedAt: null,
+        aiCorrections: null,
+        aiMetadata: null,
+        aiTranscriptSegments: null,
+        aiTranscriptText: null,
         corrections: null,
         language: null,
         metadata: null,
@@ -3045,11 +3228,18 @@ async function retryTranscriptionJobForWorker(jobId, data = {}) {
         completedAt: null,
         errorMessage: null,
         failedAt: null,
+        aiCorrections: null,
+        aiMetadata: null,
+        aiTranscriptSegments: null,
+        aiTranscriptText: null,
         corrections: null,
+        language: null,
+        metadata: null,
         rawAsrJson: null,
         rawTranscriptText: null,
         claimedAt: new Date(),
         status: 'processing',
+        transcriptText: null,
         workerId: normalizeText(data.workerId),
       },
       { transaction },

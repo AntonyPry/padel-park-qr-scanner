@@ -7,6 +7,7 @@ const { readConfig } = require('./config');
 const { CrmClient } = require('./crm-client');
 const { buildInitialPrompt, loadDomainGlossary } = require('./glossary');
 const { createLogger } = require('./logger');
+const { postprocessTranscriptWithLlm } = require('./llm-postprocess');
 const { buildTranscriptResult } = require('./transcript');
 const { ensureWhisperModel, runWhisper } = require('./whisper');
 
@@ -135,7 +136,7 @@ async function processJob(crmClient, job, config, logger) {
       );
     }
 
-    const result = buildTranscriptResult(channelResults, probe, config, {
+    let result = buildTranscriptResult(channelResults, probe, config, {
       audioDeleted: config.deleteAudioAfter,
       callId: getCallId(job),
       jobId: job.id,
@@ -167,6 +168,7 @@ async function processJob(crmClient, job, config, logger) {
         channelResults.map((item) => [item.channel, item.durationMs]),
       ),
     });
+    result = await postprocessTranscriptWithLlm(result, config, logger);
 
     await crmClient.completeJob(job.id, result);
     logger.info('Submitted transcription result to CRM', {
@@ -323,7 +325,7 @@ async function runSample(config, logger) {
       );
     }
 
-    const result = buildTranscriptResult(channelResults, probe, config, {
+    let result = buildTranscriptResult(channelResults, probe, config, {
       preparedAudioMode: preparedAudio.mode,
       sampleAudioPath: config.sampleAudioPath,
       glossary: {
@@ -332,6 +334,7 @@ async function runSample(config, logger) {
         initialPrompt: config.asrInitialPrompt || null,
       },
     });
+    result = await postprocessTranscriptWithLlm(result, config, logger);
     console.log(JSON.stringify(result, null, 2));
   } finally {
     if (config.deleteAudioAfter) {

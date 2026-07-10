@@ -13,6 +13,7 @@ STAGES = [
     "transcribing_client_channel",
     "transcribing_unknown_channel",
     "merging_segments",
+    "ai_postprocessing",
     "uploading_result",
     "completed",
     "failed",

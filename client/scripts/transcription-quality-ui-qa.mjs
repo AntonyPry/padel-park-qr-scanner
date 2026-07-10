@@ -5,7 +5,7 @@ import { chromium } from '@playwright/test';
 const BASE_URL = process.env.QA_BASE_URL || 'http://127.0.0.1:5174';
 const OUTPUT_DIR =
   process.env.QA_OUTPUT_DIR || '/private/tmp/transcription-quality-live-qa';
-const CALL_ID = 105;
+const CALL_ID = 107;
 
 const now = '2026-07-07T09:15:00.000Z';
 
@@ -42,6 +42,71 @@ const accounts = {
 
 const transcription = {
   attemptCount: 1,
+  aiCorrections: [
+    {
+      changes: ['корт заманировать -> корт забронировать'],
+      confidence: 'high',
+      endMs: 8600,
+      normalized: 'корт забронировать',
+      original: 'корт заманировать',
+      segmentId: 's2',
+      speaker: 'client',
+      startMs: 4200,
+      type: 'llm_edit',
+    },
+  ],
+  aiMetadata: {
+    acceptedSegmentIds: ['s1', 's2', 's3'],
+    model: 'qwen2.5:7b',
+    provider: 'ollama',
+    status: 'completed',
+  },
+  aiTranscriptSegments: [
+    {
+      channel: 'left',
+      changes: [],
+      confidence: 'high',
+      editedText: 'Добрый день, Падел Парк. Падел-теннис, администратор слушает.',
+      endMs: 3200,
+      segmentId: 's1',
+      sortOrder: 0,
+      sourceText: 'Добрый день, Падел Парк. Падел-теннис, администратор слушает.',
+      speaker: 'administrator',
+      startMs: 0,
+      text: 'Добрый день, Падел Парк. Падел-теннис, администратор слушает.',
+    },
+    {
+      channel: 'right',
+      changes: ['корт заманировать -> корт забронировать'],
+      confidence: 'high',
+      editedText: 'Здравствуйте, хочу корт забронировать на вторник.',
+      endMs: 8600,
+      segmentId: 's2',
+      sortOrder: 1,
+      sourceText: 'Здравствуйте, хочу корт заманировать на вторник.',
+      speaker: 'client',
+      startMs: 4200,
+      text: 'Здравствуйте, хочу корт забронировать на вторник.',
+    },
+    {
+      channel: 'left',
+      changes: [],
+      confidence: null,
+      editedText: 'Угу.',
+      endMs: 11200,
+      segmentId: 's3',
+      sortOrder: 2,
+      sourceText: 'Угу.',
+      speaker: 'administrator',
+      startMs: 10900,
+      text: 'Угу.',
+    },
+  ],
+  aiTranscriptText: [
+    'Добрый день, Падел Парк. Падел-теннис, администратор слушает.',
+    'Здравствуйте, хочу корт забронировать на вторник.',
+    'Угу.',
+  ].join('\n'),
   completedAt: now,
   corrections: [
     {
@@ -72,7 +137,7 @@ const transcription = {
   language: 'ru',
   rawTranscriptText: [
     '[00:00.000] left: Добрый день, Падел Парк. Павел Тренисках, администратор слушает.',
-    '[00:04.200] right: Здравствуйте, хочу забронировать маленький код на вторник.',
+    '[00:04.200] right: Здравствуйте, хочу корт заманировать на вторник.',
     '[00:10.900] left: Угу. Угу. Угу. Угу. Угу. Угу. Угу. Угу.',
   ].join('\n'),
   segments: [
@@ -94,7 +159,7 @@ const transcription = {
       sortOrder: 1,
       speaker: 'client',
       startMs: 4200,
-      text: 'Здравствуйте, хочу забронировать маленький корт на вторник.',
+      text: 'Здравствуйте, хочу корт заманировать на вторник.',
     },
     {
       channel: 'left',
@@ -111,7 +176,7 @@ const transcription = {
   telephonyCallId: CALL_ID,
   transcriptText: [
     'Добрый день, Падел Парк. Падел-теннис, администратор слушает.',
-    'Здравствуйте, хочу забронировать маленький корт на вторник.',
+    'Здравствуйте, хочу корт заманировать на вторник.',
     'Угу.',
   ].join('\n'),
   updatedAt: now,
@@ -148,7 +213,7 @@ const privilegedCall = {
   recordingFileType: 'audio/mpeg',
   recordingStatus: 'available',
   recordingSyncedAt: now,
-  recordingUrl: 'https://recording.example/qa-call-105.mp3',
+  recordingUrl: 'https://recording.example/qa-call-107.mp3',
   result: 'booked',
   staff: {
     id: 11,
@@ -376,6 +441,10 @@ async function assertNoPageOverflow(page, label) {
   return overflow;
 }
 
+function isExpectedMockSocketIoFailure(text) {
+  return text.includes('127.0.0.1:3004/socket.io') && text.includes('ERR_CONNECTION_REFUSED');
+}
+
 async function runScenario(browser, { label, role, viewport, openTranscript }) {
   const context = await browser.newContext({
     baseURL: BASE_URL,
@@ -400,15 +469,24 @@ async function runScenario(browser, { label, role, viewport, openTranscript }) {
   const page = await context.newPage();
   page.on('console', (message) => {
     if (message.type() === 'error') {
-      errors.push(`console error: ${message.text()}`);
+      const text = message.text();
+      if (!isExpectedMockSocketIoFailure(text)) {
+        errors.push(`console error: ${text}`);
+      }
     }
   });
   page.on('pageerror', (error) => {
     errors.push(`page error: ${error.message}`);
   });
   page.on('requestfailed', (request) => {
+    const url = request.url();
+    const errorText = request.failure()?.errorText || '';
+    if (isExpectedMockSocketIoFailure(`${url} ${errorText}`)) {
+      return;
+    }
+
     errors.push(
-      `request failed: ${request.method()} ${request.url()} ${request.failure()?.errorText || ''}`,
+      `request failed: ${request.method()} ${url} ${errorText}`,
     );
   });
   page.on('response', (response) => {
@@ -432,16 +510,48 @@ async function runScenario(browser, { label, role, viewport, openTranscript }) {
       await openButton.waitFor({ state: 'visible', timeout: 10000 });
       await openButton.click();
 
+      await visibleText(page, 'AI-редактура');
+      await visibleText(page, 'Очищенная транскрибация');
+      await visibleText(page, 'Raw ASR');
+      await visibleText(page, 'Автоматические правки');
       await visibleText(page, 'Администратор');
       await visibleText(page, 'Клиент');
-      await visibleText(page, 'Raw ASR без правок');
-      await visibleText(page, 'Автоматические правки');
       await visibleText(page, 'Падел-теннис, администратор слушает.');
+      await visibleText(page, 'корт забронировать');
       await assertNotVisible(
         page,
         page.getByText('Оценка ASR: 0%', { exact: true }),
         'fake zero confidence',
       );
+      await assertNotVisible(
+        page,
+        page.getByText('Уверенность: 0%', { exact: true }),
+        'zero confidence',
+      );
+      await assertNotVisible(
+        page,
+        page.getByText('Контекст', { exact: false }),
+        'prompt leak artifact',
+      );
+      await assertNotVisible(
+        page,
+        page.getByText('Продолжение следует', { exact: false }),
+        'subtitle artifact',
+      );
+      await assertNotVisible(
+        page,
+        page.getByText('Редактор', { exact: false }),
+        'editor artifact',
+      );
+      await assertNotVisible(
+        page,
+        page.getByText('Корректор', { exact: false }),
+        'corrector artifact',
+      );
+      await page.getByRole('tab', { name: 'Очищенная транскрибация' }).click();
+      await visibleText(page, 'корт заманировать');
+      await page.getByRole('tab', { name: 'Автоматические правки' }).click();
+      await visibleText(page, 'корт заманировать -> корт забронировать');
     } else {
       await assertNotVisible(
         page,
@@ -455,7 +565,7 @@ async function runScenario(browser, { label, role, viewport, openTranscript }) {
       );
       await assertNotVisible(
         page,
-        page.getByText('Raw ASR без правок', { exact: true }),
+        page.getByText('Raw ASR', { exact: true }),
         'raw transcript',
       );
       await assertNotVisible(

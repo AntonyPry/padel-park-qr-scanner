@@ -15,6 +15,10 @@ class JobStateMachineTest(unittest.TestCase):
         self.assertEqual(state.status, "processing")
         self.assertEqual(state.current_stage, "ffmpeg_preprocess")
 
+        state = machine.apply("ai_postprocessing")
+        self.assertEqual(state.status, "processing")
+        self.assertEqual(state.current_stage, "ai_postprocessing")
+
         state = machine.apply("completed")
         self.assertEqual(state.status, "completed")
         self.assertEqual(state.current_stage, "completed")

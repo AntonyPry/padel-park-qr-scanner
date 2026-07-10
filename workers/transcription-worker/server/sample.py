@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from .config import load_quality_config, read_config
+from .llm_postprocess import postprocess_transcript_with_llm
 from .pipeline import build_transcript, ensure_model, prepare_audio, probe_audio, transcribe_channel
 
 
@@ -47,6 +48,7 @@ def main() -> None:
                 "sampleAudioPath": str(source),
             },
         )
+        result = postprocess_transcript_with_llm(result, config)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         if config.delete_audio_after:

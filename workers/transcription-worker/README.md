@@ -10,10 +10,11 @@ Dashboard: `http://127.0.0.1:8090`
 - Dashboard client: static HTML/CSS/JS, отдается тем же server.
 - Live updates: `GET /api/events` через SSE.
 - Local storage: SQLite `/data/transcription-worker.sqlite3` внутри Docker volume.
-- ASR backend по умолчанию: HTTP endpoint `ASR_BASE_URL=http://10.8.0.2:9000`.
+- ASR backend по умолчанию: HTTP endpoint `ASR_BASE_URL=http://10.8.0.2:9001`.
 - Quality endpoint: `ASR_PROFILE=quality` + `ASR_QUALITY_BASE_URL=http://10.8.0.2:9001`; если quality endpoint недоступен, worker по умолчанию падает обратно на `ASR_BASE_URL`.
 - `whisper.cpp` оставлен как fallback backend через `ASR_BACKEND=whisper_cpp`.
 - Domain glossary: `config/domain-glossary.json`; из него строится короткий `initial_prompt`, а normalized transcript хранит correction metadata.
+- AI postprocessing: включается `TRANSCRIPTION_AI_POSTPROCESSING_ENABLED=true`, ходит в Ollama `TRANSCRIPTION_LLM_BASE_URL=http://10.8.0.2:11434`, сохраняет отдельный AI edited слой and не перезаписывает raw ASR/normalized transcript.
 
 ## Env
 
@@ -22,11 +23,18 @@ CRM_API_URL=http://host.docker.internal:3005/api
 CRM_FRONTEND_URL=http://127.0.0.1:5174
 CRM_WORKER_TOKEN=replace-with-shared-secret
 ASR_BACKEND=http_asr
-ASR_BASE_URL=http://10.8.0.2:9000
+ASR_BASE_URL=http://10.8.0.2:9001
 ASR_PROFILE=default
-ASR_QUALITY_BASE_URL=http://10.8.0.2:9001
+ASR_QUALITY_BASE_URL=
 ASR_QUALITY_FALLBACK_ENABLED=true
 ASR_INITIAL_PROMPT_ENABLED=true
+TRANSCRIPTION_AI_POSTPROCESSING_ENABLED=false
+TRANSCRIPTION_LLM_BASE_URL=http://10.8.0.2:11434
+TRANSCRIPTION_LLM_MODEL=qwen2.5:7b
+TRANSCRIPTION_LLM_TIMEOUT_SECONDS=90
+TRANSCRIPTION_LLM_RETRY_COUNT=1
+TRANSCRIPTION_LLM_FALLBACK_ENABLED=true
+TRANSCRIPTION_LLM_NUM_CTX=4096
 ASR_SILENCE_DETECTION_ENABLED=true
 ASR_CHUNK_MAX_SECONDS=45
 CHANNEL_ADMIN=left
@@ -98,9 +106,11 @@ curl -sS -X POST \
 ```
 
 4. Открой dashboard и нажми `Взять следующую задачу`.
-5. Следи за этапами `downloading_audio`, `ffmpeg_preprocess`, `transcribing_admin_channel`, `transcribing_client_channel`, `merging_segments`, `uploading_result`.
+5. Следи за этапами `downloading_audio`, `ffmpeg_preprocess`, `transcribing_admin_channel`, `transcribing_client_channel`, `merging_segments`, `ai_postprocessing`, `uploading_result`.
 6. После success задача появится в completed history, а transcript будет виден в CRM.
-7. В CRM transcript modal normalized text показывается основным, ниже доступны `Raw ASR без правок` и список `Автоматические правки`.
+7. В CRM transcript modal доступны отдельные вкладки `AI-редактура`, `Очищенная транскрибация`, `Raw ASR` и `Автоматические правки`.
+
+Если LLM endpoint недоступен, worker завершает job с обычной очищенной транскрибацией и сохраняет ошибку в `aiMetadata`; `status=failed` у всей transcription job не ставится.
 
 ## Где лежат данные
 

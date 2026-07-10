@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .glossary import normalize_transcript_segments
+from .llm_postprocess import postprocess_transcript_with_llm
 
 
 class PipelineError(RuntimeError):
@@ -1273,6 +1274,28 @@ class PipelineRunner:
                 },
             )
             emit("merging_segments", "Segments merged by timestamp", {"segments": len(transcript["segments"])})
+            if self.config.transcription_ai_postprocessing_enabled:
+                emit(
+                    "ai_postprocessing",
+                    "Running AI transcript postprocessing",
+                    {
+                        "baseUrl": self.config.transcription_llm_base_url,
+                        "model": self.config.transcription_llm_model,
+                    },
+                )
+            transcript = postprocess_transcript_with_llm(transcript, self.config)
+            if self.config.transcription_ai_postprocessing_enabled:
+                ai_metadata = transcript.get("aiMetadata") or {}
+                emit(
+                    "ai_postprocessing",
+                    "AI transcript postprocessing finished",
+                    {
+                        "acceptedSegments": len(ai_metadata.get("acceptedSegmentIds") or []),
+                        "ignoredUnknownSegmentIds": len(ai_metadata.get("ignoredUnknownSegmentIds") or []),
+                        "missingSegmentIds": len(ai_metadata.get("missingSegmentIds") or []),
+                        "status": ai_metadata.get("status"),
+                    },
+                )
             return {
                 "transcript": transcript,
                 "probe": probe,

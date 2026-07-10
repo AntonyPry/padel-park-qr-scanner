@@ -48,6 +48,21 @@ export interface TelephonyTranscriptSegment {
   text: string;
 }
 
+export interface TelephonyAiTranscriptSegment {
+  channel?: string | null;
+  changes?: string[];
+  confidence?: 'high' | 'medium' | 'low' | number | null;
+  editedText?: string | null;
+  endMs?: number | null;
+  segmentId: string;
+  sortOrder: number;
+  sourceText?: string | null;
+  speaker: TelephonyTranscriptSpeaker;
+  startMs?: number | null;
+  text: string;
+  warnings?: string[];
+}
+
 export interface TelephonyTranscriptionQualityWarning {
   code: string;
   count?: number;
@@ -60,9 +75,26 @@ export interface TelephonyTranscriptionMetadata {
   [key: string]: unknown;
 }
 
+export interface TelephonyAiTranscriptionMetadata {
+  enabled?: boolean;
+  error?: string;
+  ignoredUnknownSegmentIds?: string[];
+  missingSegmentIds?: string[];
+  model?: string;
+  provider?: string;
+  rejectedSegmentIds?: string[];
+  status?: 'completed' | 'disabled' | 'failed' | 'skipped' | string;
+  warnings?: string[];
+  [key: string]: unknown;
+}
+
 export interface TelephonyTranscription {
   attemptCount: number;
   claimedAt?: string | null;
+  aiCorrections?: Record<string, unknown>[];
+  aiMetadata?: TelephonyAiTranscriptionMetadata | null;
+  aiTranscriptSegments?: TelephonyAiTranscriptSegment[];
+  aiTranscriptText?: string | null;
   completedAt?: string | null;
   corrections?: Record<string, unknown>[];
   createdAt?: string;

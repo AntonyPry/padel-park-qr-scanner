@@ -1341,6 +1341,11 @@ export type TelephonyCompleteTranscriptionJobParams = {
   id: number | string;
 };
 export type TelephonyCompleteTranscriptionJobBody = {
+  aiCorrections?: Array<Record<string, unknown>> | null;
+  aiMetadata?: Record<string, unknown> | null;
+  aiSegments?: Array<Record<string, unknown>> | null;
+  aiTranscriptSegments?: Array<Record<string, unknown>> | null;
+  aiTranscriptText?: string | "" | null;
   language?: string | "" | null;
   corrections?: Array<Record<string, unknown>> | null;
   metadata?: Record<string, unknown> | null;

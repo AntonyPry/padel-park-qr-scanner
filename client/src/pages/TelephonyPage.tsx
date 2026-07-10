@@ -44,6 +44,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
+import {
   Table,
   TableBody,
   TableCell,
@@ -78,6 +84,7 @@ import {
   syncBeelineRecordings,
   syncBeelineStatistics,
   type CompleteTelephonyCallPayload,
+  type TelephonyAiTranscriptSegment,
   type TelephonyCall,
   type TelephonyDirection,
   type TelephonyInterest,
@@ -308,12 +315,6 @@ function formatTranscriptTime(ms?: number | null) {
   return formatDuration(Math.max(0, Math.round(ms / 1000)));
 }
 
-function formatTranscriptConfidence(value?: number | null) {
-  const number = Number(value);
-  if (!Number.isFinite(number) || number <= 0) return null;
-  return `${Math.round(number * 100)}%`;
-}
-
 function sortTranscriptSegments(segments?: TelephonyTranscriptSegment[]) {
   return [...(segments || [])].sort((left, right) => {
     const leftHasStart =
@@ -338,6 +339,33 @@ function sortTranscriptSegments(segments?: TelephonyTranscriptSegment[]) {
     if (sortOrderDiff !== 0) return sortOrderDiff;
 
     return Number(left.id || 0) - Number(right.id || 0);
+  });
+}
+
+function sortAiTranscriptSegments(segments?: TelephonyAiTranscriptSegment[]) {
+  return [...(segments || [])].sort((left, right) => {
+    const leftHasStart =
+      left.startMs !== null &&
+      left.startMs !== undefined &&
+      Number.isFinite(Number(left.startMs));
+    const rightHasStart =
+      right.startMs !== null &&
+      right.startMs !== undefined &&
+      Number.isFinite(Number(right.startMs));
+    const leftStart = Number(left.startMs);
+    const rightStart = Number(right.startMs);
+
+    if (leftHasStart && rightHasStart && leftStart !== rightStart) {
+      return leftStart - rightStart;
+    }
+    if (leftHasStart !== rightHasStart) {
+      return leftHasStart ? -1 : 1;
+    }
+
+    const sortOrderDiff = Number(left.sortOrder || 0) - Number(right.sortOrder || 0);
+    if (sortOrderDiff !== 0) return sortOrderDiff;
+
+    return String(left.segmentId || '').localeCompare(String(right.segmentId || ''));
   });
 }
 
@@ -942,7 +970,10 @@ export default function TelephonyPage() {
     const viewState = getTranscriptionViewState(call);
     const transcription = call.transcription;
     const segments = sortTranscriptSegments(transcription?.segments);
+    const aiSegments = sortAiTranscriptSegments(transcription?.aiTranscriptSegments);
     const corrections = transcription?.corrections || [];
+    const aiCorrections = transcription?.aiCorrections || [];
+    const aiMetadata = transcription?.aiMetadata || null;
     const qualityWarnings = getTranscriptionQualityWarnings(
       transcription?.metadata?.qualityWarnings,
     );
@@ -950,6 +981,67 @@ export default function TelephonyPage() {
       .map((segment) => segment.text.trim())
       .filter(Boolean)
       .join('\n');
+    const normalizedText = segmentTranscriptText || transcription?.transcriptText || '';
+    const aiText = aiSegments.length > 0
+      ? aiSegments.map((segment) => segment.text.trim()).filter(Boolean).join('\n')
+      : transcription?.aiTranscriptText || '';
+    const defaultTranscriptTab = aiText ? 'ai' : 'normalized';
+    const renderSegmentCards = (
+      items: Array<TelephonyTranscriptSegment | TelephonyAiTranscriptSegment>,
+    ) => (
+      <div className="space-y-2">
+        {items.map((segment, index) => {
+          const timeLabel = formatTranscriptTime(segment.startMs);
+          const endTimeLabel = formatTranscriptTime(segment.endMs);
+          const speakerLabel = TRANSCRIPT_SPEAKER_LABELS[segment.speaker];
+          const segmentKey =
+            'id' in segment && segment.id
+              ? segment.id
+              : 'segmentId' in segment
+                ? segment.segmentId
+                : `${segment.startMs || 'segment'}-${index}`;
+
+          return (
+            <div
+              key={segmentKey}
+              className={`rounded-md border p-3 ${getTranscriptSegmentTone(segment.speaker)}`}
+            >
+              <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">{speakerLabel}</span>
+                {timeLabel && (
+                  <span>
+                    {timeLabel}
+                    {endTimeLabel ? `-${endTimeLabel}` : ''}
+                  </span>
+                )}
+                {segment.channel && <span>Канал: {segment.channel}</span>}
+              </div>
+              <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                {segment.text}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+    const renderCorrections = (items: Record<string, unknown>[], emptyText: string) => {
+      if (items.length === 0) {
+        return <div className="text-sm text-muted-foreground">{emptyText}</div>;
+      }
+
+      return (
+        <div className="space-y-1 text-xs text-muted-foreground">
+          {items.slice(0, 36).map((correction, index) => (
+            <div key={`${formatTranscriptCorrection(correction, index)}-${index}`}>
+              {formatTranscriptCorrection(correction, index)}
+            </div>
+          ))}
+          {items.length > 36 && (
+            <div>Еще {items.length - 36} правок скрыто в компактном просмотре.</div>
+          )}
+        </div>
+      );
+    };
 
     if (viewState === 'no_recording') {
       return (
@@ -1013,80 +1105,82 @@ export default function TelephonyPage() {
           {renderTranscriptionAction(call)}
         </div>
 
-        {segments.length > 0 ? (
-          <div className="space-y-2">
-            {segments.map((segment, index) => {
-              const timeLabel = formatTranscriptTime(segment.startMs);
-              const endTimeLabel = formatTranscriptTime(segment.endMs);
-              const speakerLabel = TRANSCRIPT_SPEAKER_LABELS[segment.speaker];
-              const confidenceLabel = formatTranscriptConfidence(segment.confidence);
+        <Tabs defaultValue={defaultTranscriptTab} className="gap-3">
+          <TabsList className="grid h-auto w-full grid-cols-2 items-stretch sm:inline-flex sm:w-fit">
+            <TabsTrigger value="ai" className="h-auto min-h-8 w-full whitespace-normal px-2 py-1 text-center text-xs sm:h-8 sm:w-auto sm:text-sm">
+              AI-редактура
+            </TabsTrigger>
+            <TabsTrigger value="normalized" className="h-auto min-h-8 w-full whitespace-normal px-2 py-1 text-center text-xs sm:h-8 sm:w-auto sm:text-sm">
+              Очищенная транскрибация
+            </TabsTrigger>
+            <TabsTrigger value="raw" className="h-auto min-h-8 w-full whitespace-normal px-2 py-1 text-center text-xs sm:h-8 sm:w-auto sm:text-sm">
+              Raw ASR
+            </TabsTrigger>
+            <TabsTrigger value="corrections" className="h-auto min-h-8 w-full whitespace-normal px-2 py-1 text-center text-xs sm:h-8 sm:w-auto sm:text-sm">
+              Автоматические правки
+            </TabsTrigger>
+          </TabsList>
 
-              return (
-                <div
-                  key={segment.id || `${segment.startMs || 'segment'}-${index}`}
-                  className={`rounded-md border p-3 ${getTranscriptSegmentTone(segment.speaker)}`}
-                >
-                  <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">{speakerLabel}</span>
-                    {timeLabel && (
-                      <span>
-                        {timeLabel}
-                        {endTimeLabel ? `-${endTimeLabel}` : ''}
-                      </span>
-                    )}
-                    {segment.channel && <span>Канал: {segment.channel}</span>}
-                    {confidenceLabel && <span>Оценка ASR: {confidenceLabel}</span>}
-                  </div>
-                  <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                    {segment.text}
-                  </div>
+          <TabsContent value="ai" className="space-y-3">
+            {aiText ? (
+              aiSegments.length > 0 ? (
+                renderSegmentCards(aiSegments)
+              ) : (
+                <div className="whitespace-pre-wrap break-words rounded-md border bg-card p-3 text-sm leading-relaxed">
+                  {aiText}
                 </div>
-              );
-            })}
-          </div>
-        ) : transcription?.transcriptText ? (
-          <div className="whitespace-pre-wrap break-words rounded-md border bg-card p-3 text-sm leading-relaxed">
-            {transcription.transcriptText}
-          </div>
-        ) : (
-          <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-            Worker завершил задачу без сегментов.
-          </div>
-        )}
+              )
+            ) : (
+              <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+                {aiMetadata?.status === 'failed'
+                  ? `AI-редактура недоступна: ${aiMetadata.error || 'LLM не ответила.'}`
+                  : 'AI-редактура для этой транскрибации не сохранена.'}
+              </div>
+            )}
+            {aiMetadata?.status === 'completed' && aiMetadata.model && (
+              <div className="text-xs text-muted-foreground">
+                Модель: {aiMetadata.model}
+              </div>
+            )}
+          </TabsContent>
 
-        {segmentTranscriptText && segments.length > 0 && (
-          <div className="rounded-md border bg-card p-3">
-            <div className="mb-2 text-sm font-medium">Нормализованный текст после правок</div>
-            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-              {segmentTranscriptText}
-            </div>
-          </div>
-        )}
+          <TabsContent value="normalized" className="space-y-3">
+            {segments.length > 0 ? (
+              renderSegmentCards(segments)
+            ) : normalizedText ? (
+              <div className="whitespace-pre-wrap break-words rounded-md border bg-card p-3 text-sm leading-relaxed">
+                {normalizedText}
+              </div>
+            ) : (
+              <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+                Worker завершил задачу без сегментов.
+              </div>
+            )}
+          </TabsContent>
 
-        {transcription?.rawTranscriptText && (
-          <div className="rounded-md border bg-muted/30 p-3">
-            <div className="mb-2 text-sm font-medium">Raw ASR без правок</div>
-            <div className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground">
-              {transcription.rawTranscriptText}
-            </div>
-          </div>
-        )}
+          <TabsContent value="raw">
+            {transcription?.rawTranscriptText ? (
+              <div className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md border bg-muted/30 p-3 text-sm leading-relaxed text-muted-foreground">
+                {transcription.rawTranscriptText}
+              </div>
+            ) : (
+              <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+                Raw ASR для этой задачи не сохранен.
+              </div>
+            )}
+          </TabsContent>
 
-        {corrections.length > 0 && (
-          <div className="rounded-md border bg-card p-3">
-            <div className="mb-2 text-sm font-medium">Автоматические правки</div>
-            <div className="space-y-1 text-xs text-muted-foreground">
-              {corrections.slice(0, 24).map((correction, index) => (
-                <div key={`${formatTranscriptCorrection(correction, index)}-${index}`}>
-                  {formatTranscriptCorrection(correction, index)}
-                </div>
-              ))}
-              {corrections.length > 24 && (
-                <div>Еще {corrections.length - 24} правок скрыто в компактном просмотре.</div>
-              )}
+          <TabsContent value="corrections" className="space-y-4">
+            <div className="rounded-md border bg-card p-3">
+              <div className="mb-2 text-sm font-medium">AI-правки</div>
+              {renderCorrections(aiCorrections, 'AI-правок нет.')}
             </div>
-          </div>
-        )}
+            <div className="rounded-md border bg-card p-3">
+              <div className="mb-2 text-sm font-medium">Очищенная транскрибация</div>
+              {renderCorrections(corrections, 'Правок очищающего слоя нет.')}
+            </div>
+          </TabsContent>
+        </Tabs>
 
         {call.summary && (
           <div className="rounded-md border bg-muted/40 p-3">

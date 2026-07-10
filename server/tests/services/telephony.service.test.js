@@ -234,10 +234,115 @@ test('normalizes transcription result segments for CRM transcript view', () => {
   ].join('\n'));
 });
 
+test('normalizes AI transcript layer without trusting LLM roles or timings', () => {
+  const normalized = normalizeTranscriptSegments({
+    aiMetadata: {
+      model: 'qwen2.5:7b',
+      status: 'completed',
+    },
+    aiTranscriptSegments: [
+      {
+        changes: [['корт заманировать -> корт забронировать'], 123],
+        confidence: 'high',
+        editedText: 'Можно корт забронировать на семь?',
+        endMs: 1,
+        segmentId: 's2',
+        speaker: 'administrator',
+        startMs: 999999,
+      },
+      {
+        changes: ['ignored'],
+        editedText: 'Неизвестный сегмент',
+        segmentId: 's404',
+      },
+      {
+        editedText: 'Контекст: звонок клиента.',
+        segmentId: 's1',
+      },
+    ],
+    segments: [
+      {
+        channel: 'left',
+        endMs: 2400,
+        speaker: 'operator',
+        startMs: 0,
+        text: 'Добрый день, Падел Парк.',
+      },
+      {
+        channel: 'right',
+        endMs: 6200,
+        speaker: 'customer',
+        startMs: 3000,
+        text: 'Можно корт заманировать на семь?',
+      },
+    ],
+  });
+
+  assert.equal(normalized.aiTranscriptSegments.length, 2);
+  assert.equal(normalized.aiTranscriptSegments[0].text, 'Добрый день, Падел Парк.');
+  assert.equal(normalized.aiTranscriptSegments[1].text, 'Можно корт забронировать на семь?');
+  assert.equal(normalized.aiTranscriptSegments[1].speaker, 'client');
+  assert.equal(normalized.aiTranscriptSegments[1].channel, 'right');
+  assert.equal(normalized.aiTranscriptSegments[1].startMs, 3000);
+  assert.equal(normalized.aiTranscriptSegments[1].endMs, 6200);
+  assert.deepEqual(normalized.aiTranscriptSegments[1].changes, [
+    'корт заманировать -> корт забронировать',
+  ]);
+  assert.deepEqual(normalized.aiMetadata.ignoredUnknownSegmentIds, ['s404']);
+  assert.deepEqual(normalized.aiMetadata.rejectedSegmentIds, ['s1']);
+  assert.deepEqual(normalized.aiMetadata.missingSegmentIds, ['s1']);
+  assert.equal(normalized.aiCorrections.length, 1);
+  assert.equal(normalized.aiCorrections[0].segmentId, 's2');
+});
+
+test('keeps normalized transcript when AI metadata reports LLM failure', () => {
+  const normalized = normalizeTranscriptSegments({
+    aiMetadata: {
+      error: 'connect ECONNREFUSED',
+      status: 'failed',
+    },
+    segments: [
+      {
+        speaker: 'customer',
+        text: 'Можно корт заманировать на семь?',
+      },
+    ],
+  });
+
+  assert.equal(normalized.transcriptText, 'Можно корт заманировать на семь?');
+  assert.equal(normalized.aiMetadata.status, 'failed');
+  assert.equal(normalized.aiTranscriptText, null);
+  assert.deepEqual(normalized.aiTranscriptSegments, []);
+});
+
 test('serializes chronological transcript text from sorted segments', () => {
   const mapped = mapTranscriptionJob(
     {
       attemptCount: 1,
+      aiCorrections: [
+        {
+          original: 'заманировать',
+          normalized: 'забронировать',
+          segmentId: 's2',
+          type: 'llm_edit',
+        },
+      ],
+      aiMetadata: {
+        model: 'qwen2.5:7b',
+        status: 'completed',
+      },
+      aiTranscriptSegments: [
+        {
+          channel: 'right',
+          endMs: 96000,
+          segmentId: 's3',
+          sortOrder: 2,
+          speaker: 'client',
+          startMs: 90000,
+          text: 'Поздняя AI-реплика клиента.',
+        },
+      ],
+      aiTranscriptText: 'Поздняя AI-реплика клиента.',
       id: 77,
       corrections: [
         {
@@ -293,6 +398,10 @@ test('serializes chronological transcript text from sorted segments', () => {
     ],
   );
   assert.equal(mapped.rawTranscriptText, '[00:00] Администратор: маленький код');
+  assert.equal(mapped.aiTranscriptText, 'Поздняя AI-реплика клиента.');
+  assert.equal(mapped.aiMetadata.model, 'qwen2.5:7b');
+  assert.equal(mapped.aiTranscriptSegments[0].segmentId, 's3');
+  assert.equal(mapped.aiCorrections[0].type, 'llm_edit');
   assert.deepEqual(mapped.corrections, [
     {
       original: 'код',
