@@ -841,11 +841,70 @@ export default function ClientBasesPage() {
     navigate(buildClientsUrl(base.filters || {}));
   };
 
+  const renderBaseActions = (base: ClientBase) => (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Действия с базой ${base.name}`}
+        >
+          <Ellipsis className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuLabel>Действия</DropdownMenuLabel>
+        <DropdownMenuItem onSelect={() => void openPreview(base)}>
+          <Eye className="h-4 w-4" />
+          Открыть базу
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => openBaseInClients(base)}>
+          <Users className="h-4 w-4" />
+          Открыть клиентов
+        </DropdownMenuItem>
+        {base.status === 'active' && (
+          <DropdownMenuItem
+            disabled={Boolean(getCallTaskBlockedReason(base))}
+            onSelect={() => openCreateCallTask(base)}
+          >
+            <PhoneCall className="h-4 w-4" />
+            Создать обзвон
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem onSelect={() => openEdit(base)}>
+          <Pencil className="h-4 w-4" />
+          Редактировать
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        {base.status === 'active' ? (
+          <DropdownMenuItem onSelect={() => requestBaseStatusChange(base)}>
+            <Archive className="h-4 w-4" />
+            Архивировать
+          </DropdownMenuItem>
+        ) : (
+          <>
+            <DropdownMenuItem onSelect={() => requestBaseStatusChange(base)}>
+              <ArchiveRestore className="h-4 w-4" />
+              Восстановить
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={() => requestPermanentDelete(base)}
+            >
+              <Trash2 className="h-4 w-4" />
+              Удалить навсегда
+            </DropdownMenuItem>
+          </>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+
   const baseColumns: ColumnDef<ClientBase>[] = [
     {
       accessorKey: 'name',
       header: 'База',
-      size: 220,
+      size: 170,
       meta: {
         cellClassName: 'whitespace-normal',
       },
@@ -854,7 +913,7 @@ export default function ClientBasesPage() {
 
         return (
           <div className="min-w-0">
-            <div className="truncate font-medium">{base.name}</div>
+            <div className="break-words font-medium">{base.name}</div>
             {base.description && (
               <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
                 {base.description}
@@ -867,7 +926,7 @@ export default function ClientBasesPage() {
     {
       id: 'filters',
       header: 'Фильтр',
-      size: 190,
+      size: 150,
       meta: {
         cellClassName: 'whitespace-normal text-muted-foreground',
       },
@@ -968,68 +1027,7 @@ export default function ClientBasesPage() {
         cellClassName: 'text-right',
         headerClassName: 'text-right',
       },
-      cell: ({ row }) => {
-        const base = row.original;
-
-        return (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                aria-label={`Действия с базой ${base.name}`}
-              >
-                <Ellipsis className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Действия</DropdownMenuLabel>
-              <DropdownMenuItem onSelect={() => void openPreview(base)}>
-                <Eye className="h-4 w-4" />
-                Открыть базу
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => openBaseInClients(base)}>
-                <Users className="h-4 w-4" />
-                Открыть клиентов
-              </DropdownMenuItem>
-              {base.status === 'active' && (
-                <DropdownMenuItem
-                  disabled={Boolean(getCallTaskBlockedReason(base))}
-                  onSelect={() => openCreateCallTask(base)}
-                >
-                  <PhoneCall className="h-4 w-4" />
-                  Создать обзвон
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem onSelect={() => openEdit(base)}>
-                <Pencil className="h-4 w-4" />
-                Редактировать
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              {base.status === 'active' ? (
-                <DropdownMenuItem onSelect={() => requestBaseStatusChange(base)}>
-                  <Archive className="h-4 w-4" />
-                  Архивировать
-                </DropdownMenuItem>
-              ) : (
-                <>
-                  <DropdownMenuItem onSelect={() => requestBaseStatusChange(base)}>
-                    <ArchiveRestore className="h-4 w-4" />
-                    Восстановить
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onSelect={() => requestPermanentDelete(base)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    Удалить навсегда
-                  </DropdownMenuItem>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        );
-      },
+      cell: ({ row }) => renderBaseActions(row.original),
     },
   ];
   const previewColumns: ColumnDef<ClientPreview>[] = [
@@ -1138,18 +1136,69 @@ export default function ClientBasesPage() {
           </div>
           <Badge variant="outline">{bases.length}</Badge>
         </div>
-        <div className="overflow-x-auto">
-          <DataTable
-            columns={baseColumns}
-            data={bases}
-            emptyText="Базы еще не созданы."
-            errorText={basesError}
-            loading={loading && bases.length === 0}
-            loadingText="Загрузка баз..."
-            minWidthClassName="min-w-[920px] table-fixed"
-            onRetry={() => void fetchBases()}
-          />
-        </div>
+        <DataTable
+          columns={baseColumns}
+          data={bases}
+          emptyText="Базы еще не созданы."
+          errorText={basesError}
+          loading={loading && bases.length === 0}
+          loadingText="Загрузка баз..."
+          onRetry={() => void fetchBases()}
+          tableClassName="table-fixed"
+          renderMobileCard={(row) => {
+            const base = row.original;
+
+            return (
+              <div className="min-w-0 rounded-xl border bg-card p-4 shadow-sm">
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="break-words font-semibold">{base.name}</div>
+                    {base.description && (
+                      <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                        {base.description}
+                      </div>
+                    )}
+                  </div>
+                  {renderBaseActions(base)}
+                </div>
+                <div className="mt-4 grid min-w-0 grid-cols-2 gap-3 text-sm">
+                  <div className="col-span-2 min-w-0">
+                    <div className="text-xs text-muted-foreground">Фильтр</div>
+                    <div className="mt-1 break-words">
+                      {describeFilters(base.filters)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Клиентов</div>
+                    <div className="mt-1 font-medium">
+                      {base.currentClientCount.toLocaleString('ru-RU')}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Срок прозвона</div>
+                    <div className="mt-1">{describeCallDeadline(base)}</div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-xs text-muted-foreground">Автозадача</div>
+                    <div className="mt-1">
+                      {base.recurrence?.enabled
+                        ? describeRecurrence(base)
+                        : 'Не настроена'}
+                    </div>
+                  </div>
+                  <div className="col-span-2">
+                    <div className="text-xs text-muted-foreground">Последняя задача</div>
+                    <div className="mt-1">
+                      {base.lastTaskCreatedAt
+                        ? formatDateTime(base.lastTaskCreatedAt)
+                        : 'Задач еще не было'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }}
+        />
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
@@ -1628,7 +1677,7 @@ export default function ClientBasesPage() {
             </div>
           </DialogHeader>
 
-          <div className="overflow-x-auto rounded-md border">
+          <div className="rounded-md border">
             <DataTable
               columns={previewColumns}
               data={previewClients}
@@ -1636,8 +1685,42 @@ export default function ClientBasesPage() {
               errorText={previewError}
               loading={previewLoading}
               loadingText="Загрузка..."
-              minWidthClassName="min-w-[820px] table-fixed"
               onRetry={() => previewBase && void openPreview(previewBase)}
+              tableClassName="table-fixed"
+              renderMobileCard={(row) => {
+                const client = row.original;
+
+                return (
+                  <button
+                    type="button"
+                    className="w-full min-w-0 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => navigate(`/admin/clients?clientId=${client.id}`)}
+                  >
+                    <div className="break-words font-semibold">{client.name}</div>
+                    <div className="mt-1 break-all text-sm text-muted-foreground">
+                      {client.phone}
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                      <div>
+                        <div className="text-xs text-muted-foreground">Источник</div>
+                        <div className="mt-1 break-words">{client.source || '-'}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Сегмент</div>
+                        <div className="mt-1">{client.segment}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Визиты</div>
+                        <div className="mt-1 font-medium">{client.stats.visitCount}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-muted-foreground">Последний визит</div>
+                        <div className="mt-1">{formatDate(client.stats.lastVisitAt)}</div>
+                      </div>
+                    </div>
+                  </button>
+                );
+              }}
             />
           </div>
         </DialogContent>

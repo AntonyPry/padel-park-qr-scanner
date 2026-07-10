@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  type ReactNode,
+} from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useForm } from 'react-hook-form';
@@ -34,8 +40,10 @@ import {
   Percent,
   ArchiveRestore,
   Ban,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Link2,
-  Pencil,
   Search,
   Ticket,
   XCircle,
@@ -47,6 +55,17 @@ import {
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
 import { DataTable } from '@/components/data-table';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import {
   PermissionActionButton,
   PermissionHint,
@@ -183,6 +202,12 @@ interface SubscriptionTypeFormState {
   validityDays: string;
 }
 
+interface UnmappedItemFormState {
+  category: string;
+  saleIntent: SaleIntent;
+  subscriptionTypeId: string;
+}
+
 interface CertificateLinkFormState {
   amountTotal: string;
   certificateType: 'money' | 'service';
@@ -206,6 +231,13 @@ const SALE_INTENT_LABELS: Record<SaleIntent, string> = {
   certificate: 'Сертификат',
   normal: 'Обычная',
   subscription: 'Абонемент',
+};
+const UNMAPPED_PAGE_SIZE = 24;
+
+const EMPTY_UNMAPPED_ITEM_FORM: UnmappedItemFormState = {
+  category: '',
+  saleIntent: 'normal',
+  subscriptionTypeId: 'none',
 };
 
 const PENDING_STATUS_LABELS: Record<PendingSaleStatus, string> = {
@@ -342,8 +374,13 @@ export default function CatalogPage() {
   const [pendingStatus, setPendingStatus] =
     useState<PendingSaleStatus>('pending');
   const [catalogSearch, setCatalogSearch] = useState('');
-  const [selections, setSelections] = useState<Record<string, string>>({});
+  const [unmappedPage, setUnmappedPage] = useState(0);
   const [saleSettingSavingKey, setSaleSettingSavingKey] = useState('');
+  const [unmappedDialogItem, setUnmappedDialogItem] = useState<string | null>(null);
+  const [unmappedItemForm, setUnmappedItemForm] =
+    useState<UnmappedItemFormState>(EMPTY_UNMAPPED_ITEM_FORM);
+  const [unmappedItemSaving, setUnmappedItemSaving] = useState(false);
+  const [mobileCategoryPath, setMobileCategoryPath] = useState<number[]>([]);
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
@@ -571,6 +608,15 @@ export default function CatalogPage() {
     subscriptionTypeById,
     unmapped,
   ]);
+  const unmappedPageCount = Math.max(
+    1,
+    Math.ceil(filteredUnmapped.length / UNMAPPED_PAGE_SIZE),
+  );
+  const effectiveUnmappedPage = Math.min(unmappedPage, unmappedPageCount - 1);
+  const pagedUnmapped = filteredUnmapped.slice(
+    effectiveUnmappedPage * UNMAPPED_PAGE_SIZE,
+    (effectiveUnmappedPage + 1) * UNMAPPED_PAGE_SIZE,
+  );
   const filteredRules = useMemo(() => {
     if (!normalizedCatalogSearch) return rules;
     return rules.filter((rule) =>
@@ -674,33 +720,71 @@ export default function CatalogPage() {
     }
   };
 
-  const handleSaveRule = async (itemName: string) => {
+  const openUnmappedItemDialog = (itemName: string) => {
+    const subscriptionTypeId = getSubscriptionTypeId(itemName);
+    setMobileCategoryPath([]);
+    setUnmappedDialogItem(itemName);
+    setUnmappedItemForm({
+      category: '',
+      saleIntent: getSaleIntent(itemName),
+      subscriptionTypeId: subscriptionTypeId
+        ? String(subscriptionTypeId)
+        : 'none',
+    });
+  };
+
+  const handleSaveUnmappedItem = async () => {
+    if (!unmappedDialogItem || !unmappedItemForm.category) return;
     if (!canEditCatalog) {
       showPermissionDenied(permissionMessages.catalogManage);
       return;
     }
 
-    const category = selections[itemName];
-    if (!category) return;
+    setUnmappedItemSaving(true);
+    try {
+      const saleSettings =
+        unmappedItemForm.saleIntent === 'subscription' &&
+        unmappedItemForm.subscriptionTypeId !== 'none'
+          ? { subscriptionTypeId: Number(unmappedItemForm.subscriptionTypeId) }
+          : null;
+      if (canEditSaleSettings) {
+        const saleSettingRes = await apiFetch('/api/catalog/sale-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            itemName: unmappedDialogItem,
+            saleIntent: unmappedItemForm.saleIntent,
+            saleSettings,
+          }),
+        });
+        if (!saleSettingRes.ok) {
+          toast.error(
+            await readError(saleSettingRes, 'Не удалось сохранить тип продажи'),
+          );
+          return;
+        }
+      }
 
-    const res = await apiFetch('/api/catalog/rules', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ itemName, category }),
-    });
+      const ruleRes = await apiFetch('/api/catalog/rules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          itemName: unmappedDialogItem,
+          category: unmappedItemForm.category,
+        }),
+      });
+      if (!ruleRes.ok) {
+        toast.error(await readError(ruleRes, 'Не удалось сохранить правило товара'));
+        return;
+      }
 
-    if (!res.ok) {
-      toast.error(await readError(res, 'Не удалось сохранить правило товара'));
-      return;
+      setUnmappedDialogItem(null);
+      setUnmappedItemForm(EMPTY_UNMAPPED_ITEM_FORM);
+      await fetchData();
+      toast.success('Позиция распределена');
+    } finally {
+      setUnmappedItemSaving(false);
     }
-
-    setSelections((prev) => {
-      const next = { ...prev };
-      delete next[itemName];
-      return next;
-    });
-    await fetchData();
-    toast.success('Правило товара сохранено');
   };
 
   const openLinkDialog = (sale: PendingSale) => {
@@ -1417,84 +1501,6 @@ export default function CatalogPage() {
     if (type.isUnlimited) return 'Безлимит';
     return `${type.sessionsTotal || 0} занятий`;
   };
-  const unmappedColumns: ColumnDef<string>[] = [
-    {
-      id: 'itemName',
-      header: 'Название в кассе Эвотор',
-      cell: ({ row }) => (
-        <span className="font-medium">{row.original}</span>
-      ),
-    },
-    {
-      id: 'category',
-      header: 'Категория P&L',
-      size: 280,
-      cell: ({ row }) => {
-        const itemName = row.original;
-
-        return (
-          <Select
-            onValueChange={(val) =>
-              setSelections({ ...selections, [itemName]: val })
-            }
-          >
-            <SelectTrigger className="w-[250px]">
-              <SelectValue placeholder="Выберите категорию..." />
-            </SelectTrigger>
-            <SelectContent>
-              {categories.map((category) => (
-                <SelectItem key={category.id} value={category.name}>
-                  {category.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        );
-      },
-    },
-    {
-      id: 'saleIntent',
-      header: 'Тип продажи',
-      size: 210,
-      cell: ({ row }) => renderSaleIntentSelect(row.original),
-    },
-    {
-      id: 'subscriptionType',
-      header: 'Тип абонемента',
-      size: 290,
-      cell: ({ row }) => renderSubscriptionTypeSelect(row.original),
-    },
-    {
-      id: 'actions',
-      header: '',
-      size: 120,
-      meta: {
-        cellClassName: 'text-right',
-        headerClassName: 'text-right',
-      },
-      cell: ({ row }) => {
-        const itemName = row.original;
-        const canSaveRule = canEditCatalog && Boolean(selections[itemName]);
-        const missingCategory = !selections[itemName];
-
-        return (
-          <PermissionActionButton
-            allowed={canEditCatalog}
-            size="sm"
-            variant={canSaveRule ? 'default' : 'outline'}
-            disabled={missingCategory}
-            disabledReason="Сначала выберите категорию"
-            deniedMessage={permissionMessages.catalogManage}
-            aria-label={`Сохранить правило для ${itemName}`}
-            title={missingCategory ? 'Сначала выберите категорию' : 'Сохранить правило'}
-            onClick={() => handleSaveRule(itemName)}
-          >
-            Сохранить
-          </PermissionActionButton>
-        );
-      },
-    },
-  ];
   const ruleColumns: ColumnDef<CatalogRule>[] = [
     {
       accessorKey: 'itemName',
@@ -1774,77 +1780,6 @@ export default function CatalogPage() {
           <span className="text-muted-foreground">-</span>
         ),
     },
-    {
-      accessorKey: 'status',
-      header: 'Статус',
-      size: 120,
-      cell: ({ row }) => (
-        <Badge
-          variant={row.original.status === 'active' ? 'default' : 'outline'}
-        >
-          {SUBSCRIPTION_STATUS_LABELS[row.original.status]}
-        </Badge>
-      ),
-    },
-    {
-      id: 'actions',
-      header: '',
-      size: 130,
-      meta: {
-        cellClassName: 'text-right',
-        headerClassName: 'text-right',
-      },
-      cell: ({ row }) => {
-        const type = row.original;
-        if (!canEditSubscriptionTypes) return null;
-
-        return (
-          <div className="flex justify-end gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => openEditSubscriptionType(type)}
-              aria-label={`Изменить тип абонемента ${type.name}`}
-              title="Изменить"
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            {type.status === 'archived' ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => requestRestoreSubscriptionType(type)}
-                  aria-label={`Восстановить тип абонемента ${type.name}`}
-                  title="Восстановить"
-                >
-                  <ArchiveRestore className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => requestPermanentDeleteSubscriptionType(type)}
-                  aria-label={`Удалить навсегда тип абонемента ${type.name}`}
-                  title="Удалить навсегда"
-                >
-                  <Trash2 className="h-4 w-4 text-destructive" />
-                </Button>
-              </>
-            ) : (
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => requestArchiveSubscriptionType(type)}
-                aria-label={`Архивировать тип абонемента ${type.name}`}
-                title="В архив"
-              >
-                <Trash2 className="h-4 w-4 text-destructive" />
-              </Button>
-            )}
-          </div>
-        );
-      },
-    },
   ];
   const categoryColumns: ColumnDef<Category>[] = [
     {
@@ -2014,6 +1949,85 @@ export default function CatalogPage() {
     },
   ];
 
+  const getCategoryPath = (categoryName: string) => {
+    const category = categories.find((item) => item.name === categoryName);
+    if (!category) return categoryName;
+
+    const path = [category.name];
+    const visited = new Set<number>([category.id]);
+    let parentId = category.parentId;
+    while (parentId) {
+      if (visited.has(parentId)) break;
+      visited.add(parentId);
+      const parent = categories.find((item) => item.id === parentId);
+      if (!parent) break;
+      path.unshift(parent.name);
+      parentId = parent.parentId;
+    }
+    return path.join(' → ');
+  };
+
+  const renderCategoryMenuLevel = (
+    parentId: number | null,
+    ancestors = new Set<number>(),
+  ): ReactNode =>
+    categories
+      .filter((category) => category.parentId === parentId)
+      .toSorted((left, right) => left.name.localeCompare(right.name, 'ru'))
+      .map((category) => {
+        if (ancestors.has(category.id)) return null;
+        const children = categories.filter(
+          (candidate) => candidate.parentId === category.id,
+        );
+        if (children.length === 0) {
+          return (
+            <DropdownMenuItem
+              key={category.id}
+              onSelect={() =>
+                setUnmappedItemForm((current) => ({
+                  ...current,
+                  category: category.name,
+                }))
+              }
+            >
+              {category.name}
+            </DropdownMenuItem>
+          );
+        }
+
+        const nextAncestors = new Set(ancestors);
+        nextAncestors.add(category.id);
+        return (
+          <DropdownMenuSub key={category.id}>
+            <DropdownMenuSubTrigger>{category.name}</DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-w-[min(18rem,calc(100vw-2rem))]">
+              <DropdownMenuLabel className="break-words">
+                {category.name}
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={() =>
+                  setUnmappedItemForm((current) => ({
+                    ...current,
+                    category: category.name,
+                  }))
+                }
+              >
+                Выбрать эту категорию
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {renderCategoryMenuLevel(category.id, nextAncestors)}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        );
+      });
+  const mobileCategoryParentId = mobileCategoryPath.at(-1) ?? null;
+  const mobileCategoryParent = mobileCategoryParentId
+    ? categories.find((category) => category.id === mobileCategoryParentId) || null
+    : null;
+  const mobileCategoryOptions = categories
+    .filter((category) => category.parentId === mobileCategoryParentId)
+    .toSorted((left, right) => left.name.localeCompare(right.name, 'ru'));
+
   const certificateLinkInvalid =
     linkDialogSale?.saleIntent === 'certificate' &&
     (Number(certificateLinkForm.validityDays) <= 0 ||
@@ -2122,7 +2136,10 @@ export default function CatalogPage() {
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               value={catalogSearch}
-              onChange={(event) => setCatalogSearch(event.target.value)}
+              onChange={(event) => {
+                setCatalogSearch(event.target.value);
+                setUnmappedPage(0);
+              }}
               placeholder={`Поиск по ${activeTabLabel}`}
               className="pl-9"
             />
@@ -2185,17 +2202,88 @@ export default function CatalogPage() {
                 {permissionMessages.catalogManage}
               </PermissionHint>
             )}
-            {(catalogLoading && unmapped.length === 0) || unmapped.length > 0 ? (
-              <DataTable
-                columns={unmappedColumns}
-                data={filteredUnmapped}
-                emptyText="По текущему поиску товаров не найдено."
-                loading={catalogLoading && filteredUnmapped.length === 0}
-                loadingText="Загрузка товаров..."
-                minWidthClassName="min-w-[1140px]"
-                pageSize={25}
-              />
+            {catalogLoading && unmapped.length === 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                Загрузка товаров...
+              </div>
+            ) : filteredUnmapped.length > 0 ? (
+              <div className="grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {pagedUnmapped.map((itemName) => {
+                  const saleIntent = getSaleIntent(itemName);
+                  const subscriptionType = subscriptionTypeById.get(
+                    getSubscriptionTypeId(itemName) || 0,
+                  );
+
+                  return (
+                    <button
+                      key={itemName}
+                      type="button"
+                      className="min-w-0 rounded-xl border bg-card p-4 text-left shadow-sm transition enabled:hover:border-primary/40 enabled:hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                      disabled={!canEditCatalog}
+                      onClick={() => openUnmappedItemDialog(itemName)}
+                    >
+                      <div className="break-words font-semibold">{itemName}</div>
+                      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2">
+                        {renderSaleIntentBadge(saleIntent)}
+                        {subscriptionType && (
+                          <span className="min-w-0 break-words text-xs text-muted-foreground">
+                            {subscriptionType.name}
+                          </span>
+                        )}
+                      </div>
+                      {canEditCatalog && (
+                        <div className="mt-3 text-xs font-medium text-primary">
+                          Разобрать позицию
+                        </div>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : unmapped.length > 0 ? (
+              <div className="py-8 text-center text-sm text-muted-foreground">
+                По текущему поиску товаров не найдено.
+              </div>
             ) : null}
+            {filteredUnmapped.length > UNMAPPED_PAGE_SIZE && (
+              <div className="mt-4 flex flex-col gap-3 border-t pt-4 text-sm sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-muted-foreground">
+                  Показано{' '}
+                  {effectiveUnmappedPage * UNMAPPED_PAGE_SIZE + 1}-
+                  {Math.min(
+                    filteredUnmapped.length,
+                    (effectiveUnmappedPage + 1) * UNMAPPED_PAGE_SIZE,
+                  )}{' '}
+                  из {filteredUnmapped.length}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={effectiveUnmappedPage === 0}
+                    onClick={() =>
+                      setUnmappedPage(Math.max(0, effectiveUnmappedPage - 1))
+                    }
+                  >
+                    Назад
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    disabled={effectiveUnmappedPage >= unmappedPageCount - 1}
+                    onClick={() =>
+                      setUnmappedPage(
+                        Math.min(unmappedPageCount - 1, effectiveUnmappedPage + 1),
+                      )
+                    }
+                  >
+                    Далее
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -2291,8 +2379,67 @@ export default function CatalogPage() {
                 emptyText="Типы абонементов не найдены."
                 loading={catalogLoading && filteredSubscriptionTypes.length === 0}
                 loadingText="Загрузка типов абонементов..."
-                minWidthClassName="min-w-[1040px]"
                 pageSize={25}
+                getRowProps={(row) => ({
+                  className:
+                    'cursor-pointer hover:bg-muted/50 focus-within:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
+                  onClick: () => openEditSubscriptionType(row.original),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openEditSubscriptionType(row.original);
+                    }
+                  },
+                  role: 'button',
+                  tabIndex: 0,
+                })}
+                tableClassName="table-fixed"
+                renderMobileCard={(row) => {
+                  const type = row.original;
+
+                  return (
+                    <button
+                      type="button"
+                      className="w-full min-w-0 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                      onClick={() => openEditSubscriptionType(type)}
+                    >
+                      <div className="break-words font-semibold">{type.name}</div>
+                      {type.description && (
+                        <div className="mt-1 break-words text-xs text-muted-foreground">
+                          {type.description}
+                        </div>
+                      )}
+                      <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <div className="text-xs text-muted-foreground">Формат</div>
+                          <div className="mt-1">
+                            {TRAINING_KIND_LABELS[type.trainingKind]}
+                          </div>
+                          <div className="mt-0.5 text-xs text-muted-foreground">
+                            {TIME_SEGMENT_LABELS[type.timeSegment || 'all']}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs text-muted-foreground">Цена</div>
+                          <div className="mt-1 font-semibold">
+                            {formatMoney(type.price)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-muted-foreground">Лимит</div>
+                          <div className="mt-1">{formatSubscriptionSessions(type)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-xs text-muted-foreground">Срок</div>
+                          <div className="mt-1">{type.validityDays} дней</div>
+                        </div>
+                      </div>
+                      <div className="mt-3 text-xs font-medium text-primary">
+                        Открыть настройки и действия
+                      </div>
+                    </button>
+                  );
+                }}
               />
             </CardContent>
           </Card>
@@ -2421,6 +2568,233 @@ export default function CatalogPage() {
           </CardContent>
         </Card>
       )}
+
+      <Dialog
+        open={Boolean(unmappedDialogItem)}
+        onOpenChange={(open) => {
+          if (!open && !unmappedItemSaving) {
+            setUnmappedDialogItem(null);
+            setUnmappedItemForm(EMPTY_UNMAPPED_ITEM_FORM);
+            setMobileCategoryPath([]);
+          }
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-[calc(100vw-1rem)] overflow-y-auto sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Разобрать позицию</DialogTitle>
+            <DialogDescription className="break-words">
+              {unmappedDialogItem || ''}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4">
+            <div className="space-y-2">
+              <Label>Категория P&amp;L</Label>
+              <DropdownMenu
+                onOpenChange={(open) => {
+                  if (!open) setMobileCategoryPath([]);
+                }}
+              >
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-auto min-h-9 w-full min-w-0 justify-between whitespace-normal text-left font-normal"
+                    disabled={unmappedItemSaving}
+                  >
+                    <span className="min-w-0 break-words">
+                      {unmappedItemForm.category
+                        ? getCategoryPath(unmappedItemForm.category)
+                        : 'Выберите категорию'}
+                    </span>
+                    <ChevronDown className="ml-2 h-4 w-4 shrink-0" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="max-h-[min(24rem,70dvh)] w-[min(20rem,calc(100vw-2rem))] overflow-y-auto"
+                >
+                  <div className="md:hidden">
+                    {mobileCategoryParent && (
+                      <>
+                        <DropdownMenuItem
+                          onSelect={(event) => {
+                            event.preventDefault();
+                            setMobileCategoryPath((current) => current.slice(0, -1));
+                          }}
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                          Назад
+                        </DropdownMenuItem>
+                        <DropdownMenuLabel className="break-words">
+                          {getCategoryPath(mobileCategoryParent.name)}
+                        </DropdownMenuLabel>
+                        <DropdownMenuItem
+                          onSelect={() =>
+                            setUnmappedItemForm((current) => ({
+                              ...current,
+                              category: mobileCategoryParent.name,
+                            }))
+                          }
+                        >
+                          Выбрать эту категорию
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {!mobileCategoryParent && (
+                      <>
+                        <DropdownMenuLabel>
+                          Категории верхнего уровня
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator />
+                      </>
+                    )}
+                    {mobileCategoryOptions.map((category) => {
+                      const hasChildren = categories.some(
+                        (candidate) => candidate.parentId === category.id,
+                      );
+
+                      return (
+                        <DropdownMenuItem
+                          key={category.id}
+                          onSelect={(event) => {
+                            if (hasChildren) {
+                              event.preventDefault();
+                              setMobileCategoryPath((current) => [
+                                ...current,
+                                category.id,
+                              ]);
+                              return;
+                            }
+                            setUnmappedItemForm((current) => ({
+                              ...current,
+                              category: category.name,
+                            }));
+                          }}
+                        >
+                          <span className="min-w-0 flex-1 break-words">
+                            {category.name}
+                          </span>
+                          {hasChildren && (
+                            <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
+                          )}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </div>
+                  <div className="hidden md:block">
+                    <DropdownMenuLabel>Категории верхнего уровня</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {renderCategoryMenuLevel(null)}
+                  </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              <p className="text-xs text-muted-foreground">
+                Категории с дочерними пунктами раскрываются во вложенное меню.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Тип продажи</Label>
+              <Select
+                value={unmappedItemForm.saleIntent}
+                disabled={!canEditSaleSettings || unmappedItemSaving}
+                onValueChange={(value) =>
+                  setUnmappedItemForm((current) => ({
+                    ...current,
+                    saleIntent: value as SaleIntent,
+                    subscriptionTypeId:
+                      value === 'subscription'
+                        ? current.subscriptionTypeId
+                        : 'none',
+                  }))
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SALE_INTENT_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!canEditSaleSettings && (
+                <p className="text-xs text-muted-foreground">
+                  Тип продажи доступен только для просмотра по вашей роли.
+                </p>
+              )}
+            </div>
+
+            {unmappedItemForm.saleIntent === 'subscription' && (
+              <div className="space-y-2">
+                <Label>Тип абонемента</Label>
+                <Select
+                  value={unmappedItemForm.subscriptionTypeId}
+                  disabled={
+                    !canEditSaleSettings ||
+                    unmappedItemSaving ||
+                    activeSubscriptionTypes.length === 0
+                  }
+                  onValueChange={(value) =>
+                    setUnmappedItemForm((current) => ({
+                      ...current,
+                      subscriptionTypeId: value,
+                    }))
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue
+                      placeholder={
+                        activeSubscriptionTypes.length === 0
+                          ? 'Нет активных типов'
+                          : 'Выберите тип абонемента'
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Тип не выбран</SelectItem>
+                    {activeSubscriptionTypes.map((type) => (
+                      <SelectItem key={type.id} value={String(type.id)}>
+                        {type.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={unmappedItemSaving}
+              onClick={() => {
+                setUnmappedDialogItem(null);
+                setUnmappedItemForm(EMPTY_UNMAPPED_ITEM_FORM);
+                setMobileCategoryPath([]);
+              }}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              disabled={
+                unmappedItemSaving ||
+                !unmappedItemForm.category ||
+                (canEditSaleSettings &&
+                  unmappedItemForm.saleIntent === 'subscription' &&
+                  unmappedItemForm.subscriptionTypeId === 'none')
+              }
+              onClick={() => void handleSaveUnmappedItem()}
+            >
+              {unmappedItemSaving ? 'Сохраняем...' : 'Сохранить'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={Boolean(linkDialogSale)}
@@ -2660,6 +3034,11 @@ export default function CatalogPage() {
             <DialogDescription>
               Тариф для продаж Эвотора и будущих клиентских абонементов.
             </DialogDescription>
+            {editingSubscriptionType && (
+              <Badge variant="outline">
+                {SUBSCRIPTION_STATUS_LABELS[editingSubscriptionType.status]}
+              </Badge>
+            )}
           </DialogHeader>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2 sm:col-span-2">
@@ -2799,32 +3178,84 @@ export default function CatalogPage() {
               />
             </div>
           </div>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setSubscriptionDialogOpen(false);
-                setEditingSubscriptionType(null);
-              }}
-              disabled={subscriptionSaving}
-            >
-              Отмена
-            </Button>
-            <Button
-              type="button"
-              onClick={() => void handleSaveSubscriptionType()}
-              disabled={
-                subscriptionSaving ||
-                !subscriptionForm.name.trim() ||
-                !subscriptionForm.price ||
-                !subscriptionForm.validityDays ||
-                (subscriptionForm.isUnlimited === 'false' &&
-                  !subscriptionForm.sessionsTotal)
-              }
-            >
-              {subscriptionSaving ? 'Сохраняем...' : 'Сохранить'}
-            </Button>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {editingSubscriptionType?.status === 'active' && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={subscriptionSaving}
+                  onClick={() => {
+                    const target = editingSubscriptionType;
+                    setSubscriptionDialogOpen(false);
+                    setEditingSubscriptionType(null);
+                    requestArchiveSubscriptionType(target);
+                  }}
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  В архив
+                </Button>
+              )}
+              {editingSubscriptionType?.status === 'archived' && (
+                <>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={subscriptionSaving}
+                    onClick={() => {
+                      const target = editingSubscriptionType;
+                      setSubscriptionDialogOpen(false);
+                      setEditingSubscriptionType(null);
+                      requestRestoreSubscriptionType(target);
+                    }}
+                  >
+                    <ArchiveRestore className="mr-2 h-4 w-4" />
+                    Восстановить
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    disabled={subscriptionSaving}
+                    onClick={() => {
+                      const target = editingSubscriptionType;
+                      setSubscriptionDialogOpen(false);
+                      setEditingSubscriptionType(null);
+                      requestPermanentDeleteSubscriptionType(target);
+                    }}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Удалить
+                  </Button>
+                </>
+              )}
+            </div>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setSubscriptionDialogOpen(false);
+                  setEditingSubscriptionType(null);
+                }}
+                disabled={subscriptionSaving}
+              >
+                Отмена
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void handleSaveSubscriptionType()}
+                disabled={
+                  subscriptionSaving ||
+                  !subscriptionForm.name.trim() ||
+                  !subscriptionForm.price ||
+                  !subscriptionForm.validityDays ||
+                  (subscriptionForm.isUnlimited === 'false' &&
+                    !subscriptionForm.sessionsTotal)
+                }
+              >
+                {subscriptionSaving ? 'Сохраняем...' : 'Сохранить'}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

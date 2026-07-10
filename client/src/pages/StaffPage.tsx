@@ -43,7 +43,6 @@ import {
   AlertTriangle,
   Archive,
   ArchiveRestore,
-  CheckCircle2,
   Download,
   Lock,
   Pencil,
@@ -87,6 +86,11 @@ interface AdminStat {
   bonusPay: number;
   totalPay: number;
 }
+
+const formatHours = (value: number) =>
+  value.toLocaleString('ru-RU', {
+    maximumFractionDigits: 2,
+  });
 interface PayrollItem {
   name: string;
   category: string;
@@ -795,85 +799,14 @@ export default function StaffPage() {
       },
       cell: ({ row }) => row.original.phone || '-',
     },
-    {
-      accessorKey: 'status',
-      header: 'Статус',
-      size: 120,
-      cell: ({ row }) => (
-        <Badge variant="outline">
-          {row.original.status === 'active'
-            ? 'Активен'
-            : row.original.status === 'archived'
-              ? 'Архив'
-              : 'Отключен'}
-        </Badge>
-      ),
-    },
-    {
-      id: 'actions',
-      header: '',
-      size: 120,
-      meta: {
-        cellClassName: 'text-right',
-        headerClassName: 'text-right',
-      },
-      cell: ({ row }) => {
-        const item = row.original;
-
-        if (!canEditStaff) return null;
-
-        return (
-          <div className="flex justify-end gap-1">
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => openStaffForm(item)}
-              title="Редактировать сотрудника"
-              aria-label={`Редактировать сотрудника ${item.name}`}
-            >
-              <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-              onClick={() => requestArchiveStaff(item)}
-              title={item.status === 'archived' ? 'Восстановить' : 'В архив'}
-              aria-label={
-                item.status === 'archived'
-                  ? `Восстановить сотрудника ${item.name}`
-                  : `Архивировать сотрудника ${item.name}`
-              }
-            >
-              {item.status === 'archived' ? (
-                <ArchiveRestore className="h-4 w-4" />
-              ) : (
-                <Archive className="h-4 w-4" />
-              )}
-            </Button>
-            {item.status === 'archived' && (
-              <Button
-                variant="ghost"
-                size="icon-sm"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => requestPermanentDeleteStaff(item)}
-                title="Удалить навсегда"
-                aria-label={`Удалить сотрудника ${item.name} навсегда`}
-              >
-                <Trash2 className="h-4 w-4" />
-              </Button>
-            )}
-          </div>
-        );
-      },
-    },
   ];
   const shiftColumns: ColumnDef<ShiftRecord>[] = [
     {
       accessorKey: 'date',
       header: 'Дата',
+      size: 170,
       meta: {
-        cellClassName: 'font-medium',
+        cellClassName: 'whitespace-nowrap font-medium',
       },
       cell: ({ row }) => {
         const shift = row.original;
@@ -894,26 +827,6 @@ export default function StaffPage() {
           </div>
         );
       },
-    },
-    {
-      id: 'status',
-      header: 'Статус',
-      cell: ({ row }) =>
-        row.original.isDraft ? (
-          <Badge
-            variant="outline"
-            className="border-transparent bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-          >
-            <AlertTriangle className="mr-1 h-3 w-3" /> Черновик
-          </Badge>
-        ) : (
-          <Badge
-            variant="outline"
-            className="border-transparent bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-          >
-            <CheckCircle2 className="mr-1 h-3 w-3" /> Заполнено
-          </Badge>
-        ),
     },
     {
       id: 'admin',
@@ -994,56 +907,6 @@ export default function StaffPage() {
           ? `${row.original.total.toLocaleString('ru-RU')} ₽`
           : '—',
     },
-    {
-      id: 'actions',
-      header: '',
-      meta: {
-        cellClassName: 'text-right',
-        headerClassName: 'text-right',
-      },
-      cell: ({ row }) => {
-        const shift = row.original;
-
-        return (
-          <div
-            className="flex justify-end gap-2"
-            onClick={(event) => event.stopPropagation()}
-          >
-            {canEditShifts && (
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!canChangeShifts}
-                title={
-                  canChangeShifts
-                    ? 'Изменить смену'
-                    : 'Payroll-период закрыт, смены менять нельзя'
-                }
-                onClick={() => openForm(shift)}
-              >
-                Изменить
-              </Button>
-            )}
-            {canEditShifts && !shift.isDraft && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                disabled={!canChangeShifts}
-                title={
-                  canChangeShifts
-                    ? 'Архивировать смену'
-                    : 'Payroll-период закрыт, смены менять нельзя'
-                }
-                onClick={() => requestDeleteShift(shift)}
-              >
-                В архив
-              </Button>
-            )}
-          </div>
-        );
-      },
-    },
   ];
   const adminColumns: ColumnDef<AdminStat>[] = [
     {
@@ -1068,6 +931,7 @@ export default function StaffPage() {
         cellClassName: 'text-right',
         headerClassName: 'text-right',
       },
+      cell: ({ row }) => formatHours(row.original.totalHours),
     },
     {
       accessorKey: 'basePay',
@@ -1312,7 +1176,7 @@ export default function StaffPage() {
         />
       </div>
 
-      <div className="border rounded-md bg-card overflow-x-auto">
+      <div className="rounded-md border bg-card">
         <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
           <div>
             <div className="font-semibold">Сотрудники</div>
@@ -1351,12 +1215,59 @@ export default function StaffPage() {
           columns={staffColumns}
           data={displayedStaff}
           emptyText="Сотрудники еще не добавлены"
-          minWidthClassName="min-w-[760px] table-fixed"
+          getRowProps={(row) => ({
+            className: canEditStaff
+              ? 'cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring'
+              : undefined,
+            onClick: canEditStaff
+              ? () => openStaffForm(row.original)
+              : undefined,
+            onKeyDown: canEditStaff
+              ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openStaffForm(row.original);
+                  }
+                }
+              : undefined,
+            role: canEditStaff ? 'button' : undefined,
+            tabIndex: canEditStaff ? 0 : undefined,
+          })}
+          tableClassName="table-fixed"
+          renderMobileCard={(row) => {
+            const item = row.original;
+
+            return (
+              <button
+                type="button"
+                className="w-full min-w-0 rounded-xl border bg-card p-4 text-left shadow-sm transition enabled:hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
+                disabled={!canEditStaff}
+                onClick={() => openStaffForm(item)}
+              >
+                <div className="break-words font-semibold">{item.name}</div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">Должность</div>
+                    <div className="mt-1 break-words">{getStaffPosition(item)}</div>
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">Телефон</div>
+                    <div className="mt-1 break-all">{item.phone || '-'}</div>
+                  </div>
+                </div>
+                {canEditStaff && (
+                  <div className="mt-3 text-xs font-medium text-primary">
+                    Открыть карточку сотрудника
+                  </div>
+                )}
+              </button>
+            );
+          }}
         />
       </div>
 
       {/* ЖУРНАЛ СМЕН */}
-      <div className="border rounded-md bg-card overflow-x-auto">
+      <div className="rounded-md border bg-card">
         <div className="border-b px-4 py-3">
           <div className="font-semibold">Журнал смен</div>
           <div className="text-xs text-muted-foreground">
@@ -1369,34 +1280,111 @@ export default function StaffPage() {
           data={shifts}
           emptyText="Нет данных за этот период"
           getRowProps={(row) => ({
-            className: 'cursor-pointer hover:bg-muted/50',
+            className:
+              'cursor-pointer hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring',
             onClick: () =>
               setDetailModal({ isOpen: true, shift: row.original }),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                setDetailModal({ isOpen: true, shift: row.original });
+              }
+            },
+            role: 'button',
+            tabIndex: 0,
           })}
-          minWidthClassName="min-w-[1120px]"
           pageSize={15}
+          tableClassName="table-fixed"
+          renderMobileCard={(row) => {
+            const shift = row.original;
+            const timeRange = formatShiftTimeRange(shift);
+
+            return (
+              <button
+                type="button"
+                className="w-full min-w-0 rounded-xl border bg-card p-4 text-left shadow-sm transition hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                onClick={() => setDetailModal({ isOpen: true, shift })}
+              >
+                <div className="flex min-w-0 items-start justify-between gap-3">
+                  <div>
+                    <div className="whitespace-nowrap font-semibold">{shift.date}</div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {timeRange || `Смена #${shift.id}`}
+                    </div>
+                  </div>
+                  <div className="min-w-0 text-right text-sm">
+                    <div className="break-words font-medium">
+                      {shift.adminName || 'Администратор не указан'}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {shift.hours || '—'} ч
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Выручка</div>
+                    <div className="mt-1 font-medium">
+                      {shift.dailyRevenue.toLocaleString('ru-RU')} ₽
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Итого</div>
+                    <div className="mt-1 font-semibold">
+                      {shift.total > 0
+                        ? `${shift.total.toLocaleString('ru-RU')} ₽`
+                        : '—'}
+                    </div>
+                  </div>
+                </div>
+              </button>
+            );
+          }}
         />
       </div>
 
-      <div className="text-xs text-muted-foreground">
-        Статус{' '}
-        <Badge
-          variant="outline"
-          className="bg-amber-100 text-amber-800 border-transparent dark:bg-amber-900/30 dark:text-amber-300 scale-75 origin-left"
-        >
-          Черновик
-        </Badge>{' '}
-        — день создан автоматически и ещё не заполнен. Зарплата считается только
-        когда указаны администратор и часы.
-      </div>
-
       {/* ТАБЛИЦА АГРЕГАЦИИ ПО АДМИНАМ */}
-      <div className="border rounded-md bg-card mt-8 overflow-x-auto">
+      <div className="mt-8 rounded-md border bg-card">
         <DataTable
           columns={adminColumns}
           data={sortedAdmins}
           emptyText="Нет заполненных смен за выбранный период"
-          minWidthClassName="min-w-[860px]"
+          tableClassName="table-fixed"
+          renderMobileCard={(row) => {
+            const admin = row.original;
+
+            return (
+              <div className="min-w-0 rounded-xl border bg-card p-4 shadow-sm">
+                <div className="break-words font-semibold">{admin.name}</div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Смены / часы</div>
+                    <div className="mt-1 font-medium">
+                      {admin.totalShifts} / {formatHours(admin.totalHours)}
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">База</div>
+                    <div className="mt-1">{admin.basePay.toLocaleString('ru-RU')} ₽</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Бонусы</div>
+                    <div className="mt-1">
+                      {Number(
+                        admin.calculatedBonusPay ?? admin.bonusPay,
+                      ).toLocaleString('ru-RU')} ₽
+                    </div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-xs text-muted-foreground">Итого</div>
+                    <div className="mt-1 font-semibold">
+                      {admin.totalPay.toLocaleString('ru-RU')} ₽
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          }}
         />
       </div>
 
@@ -1466,9 +1454,45 @@ export default function StaffPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Button type="submit" className="w-full">
-              {editingStaff ? 'Сохранить' : 'Создать'}
-            </Button>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
+              <div className="flex flex-wrap gap-2">
+                {editingStaff && canEditStaff && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const target = editingStaff;
+                      closeStaffForm();
+                      requestArchiveStaff(target);
+                    }}
+                  >
+                    {editingStaff.status === 'archived' ? (
+                      <ArchiveRestore className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Archive className="mr-2 h-4 w-4" />
+                    )}
+                    {editingStaff.status === 'archived' ? 'Восстановить' : 'В архив'}
+                  </Button>
+                )}
+                {editingStaff?.status === 'archived' && canEditStaff && (
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => {
+                      const target = editingStaff;
+                      closeStaffForm();
+                      requestPermanentDeleteStaff(target);
+                    }}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Удалить
+                  </Button>
+                )}
+              </div>
+              <Button type="submit">
+                {editingStaff ? 'Сохранить' : 'Создать'}
+              </Button>
+            </div>
           </form>
         </DialogContent>
       </Dialog>
@@ -1639,8 +1663,52 @@ export default function StaffPage() {
             </Badge>
           </div>
 
-          <div className="flex-1 overflow-auto px-4 py-2 sm:px-6">
-            <Table className="min-w-[560px] table-fixed">
+          <div className="flex-1 overflow-y-auto px-4 py-2 sm:px-6">
+            <div className="grid gap-2 md:hidden">
+              {detailModal.shift?.items?.length === 0 && (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  Нет кассовых операций в этот день
+                </div>
+              )}
+              {detailModal.shift?.items?.map((item, idx) => (
+                <div
+                  key={idx}
+                  className={cn(
+                    'min-w-0 rounded-xl border p-3',
+                    item.bucket ? getBucketStyles(item.bucket) : '',
+                  )}
+                >
+                  <div className="break-words font-medium">{item.name}</div>
+                  <div className="mt-1 break-words text-xs opacity-70">
+                    {item.category}
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
+                    <div>
+                      <div className="text-xs text-muted-foreground">Кол-во</div>
+                      <div className="mt-1">{item.qty}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs text-muted-foreground">Сумма</div>
+                      <div className="mt-1 font-medium">
+                        {item.sum.toLocaleString('ru-RU')} ₽
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-xs text-muted-foreground">Бонус</div>
+                      <div className="mt-1 font-medium">
+                        {Number(item.bonus) > 0
+                          ? `+${Number(item.bonus).toLocaleString('ru-RU')} ₽`
+                          : '-'}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <Table
+              className="hidden table-fixed md:table"
+              containerClassName="hidden overflow-visible md:block"
+            >
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[40%]">Позиция</TableHead>
@@ -1694,7 +1762,48 @@ export default function StaffPage() {
               </TableBody>
             </Table>
           </div>
-          <div className="p-4 border-t flex justify-end bg-card">
+          <div className="flex flex-wrap justify-end gap-2 border-t bg-card p-4">
+            {detailModal.shift && canEditShifts && (
+              <Button
+                type="button"
+                disabled={!canChangeShifts}
+                title={
+                  canChangeShifts
+                    ? 'Изменить смену'
+                    : 'Payroll-период закрыт, смены менять нельзя'
+                }
+                onClick={() => {
+                  const shift = detailModal.shift;
+                  if (!shift) return;
+                  setDetailModal({ isOpen: false, shift: null });
+                  openForm(shift);
+                }}
+              >
+                <Pencil className="mr-2 h-4 w-4" />
+                Изменить
+              </Button>
+            )}
+            {detailModal.shift && canEditShifts && !detailModal.shift.isDraft && (
+              <Button
+                type="button"
+                variant="destructive"
+                disabled={!canChangeShifts}
+                title={
+                  canChangeShifts
+                    ? 'Архивировать смену'
+                    : 'Payroll-период закрыт, смены менять нельзя'
+                }
+                onClick={() => {
+                  const shift = detailModal.shift;
+                  if (!shift) return;
+                  setDetailModal({ isOpen: false, shift: null });
+                  requestDeleteShift(shift);
+                }}
+              >
+                <Archive className="mr-2 h-4 w-4" />
+                В архив
+              </Button>
+            )}
             <Button
               variant="outline"
               onClick={() =>
