@@ -33,13 +33,13 @@ const PROCESSING_STATUSES = new Set([
   'ignored',
 ]);
 const TRANSCRIPTION_STATUSES = new Set(['queued', 'processing', 'completed', 'failed']);
-const TRANSCRIPTION_ACTIVE_STATUSES = new Set(['queued', 'processing']);
 const TRANSCRIPT_SPEAKERS = new Set(['administrator', 'client', 'unknown']);
 const SUBSCRIPTION_TYPES = new Set(['BASIC_CALL', 'ADVANCED_CALL']);
 const DEFAULT_MISSED_CALL_DEADLINE_MINUTES = 15;
 const DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS = 10 * 60;
 const DEFAULT_REPORT_DAYS = 30;
 const SUBSCRIPTION_LOCK_NAME = 'padel_park_beeline_xsi_subscription';
+const DEFAULT_TRANSCRIPTION_BACKFILL_LIMIT = 50;
 
 const RESULT_LABELS = {
   booked: 'Записался',
@@ -1359,6 +1359,7 @@ async function receiveBeelineEvent({
         return processRawEvent(rawEvent, transaction);
       });
 
+      if (result.callId) await autoEnqueueTranscriptionJob(result.callId);
       results.push(result);
     } catch (error) {
       await rawEvent.update({
@@ -1726,6 +1727,21 @@ function scopedTranscriptionJobInclude(actor, options = {}) {
     }),
   ];
 }
+
+const TRANSCRIPTION_JOB_LIST_ATTRIBUTES = [
+  'attemptCount',
+  'claimedAt',
+  'completedAt',
+  'createdAt',
+  'errorMessage',
+  'failedAt',
+  'id',
+  'language',
+  'metadata',
+  'status',
+  'telephonyCallId',
+  'updatedAt',
+];
 
 async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
   const ids = [...new Set(callIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
@@ -2315,10 +2331,12 @@ async function syncRecordings({ dateFrom, dateTo, id, userId } = {}) {
   for (const row of rows) {
     try {
       const recording = normalizeRecordingPayload(row);
-      await db.sequelize.transaction(async (transaction) => {
+      const callId = await db.sequelize.transaction(async (transaction) => {
         const call = await upsertCallFromRecording(recording, transaction);
         if (call) linked += 1;
+        return call?.id || null;
       });
+      if (callId) await autoEnqueueTranscriptionJob(callId);
       imported += 1;
     } catch (error) {
       errors.push({
@@ -2692,6 +2710,7 @@ async function refreshRecordingReferenceForCall(call) {
     recordingSyncedAt: new Date(),
     recordingUrl: reference.recordingUrl,
   });
+  await autoEnqueueTranscriptionJob(call.id);
 
   return {
     downloadUrl: reference.recordingUrl,
@@ -2782,21 +2801,71 @@ async function createTranscriptionJob(actor, callId) {
     throw appError('Транскрибация доступна только для звонков с записью', 409);
   }
 
-  const latestJob = await getLatestTranscriptionJobForCallId(call.id);
-  if (
-    latestJob &&
-    (TRANSCRIPTION_ACTIVE_STATUSES.has(latestJob.status) || latestJob.status === 'completed')
-  ) {
-    return getCall(actor, call.id);
-  }
-
-  await db.TelephonyTranscriptionJob.create({
+  await autoEnqueueTranscriptionJob(call.id, {
+    autoEnqueued: false,
     createdByAccountId: actor?.id || null,
-    status: 'queued',
-    telephonyCallId: call.id,
+    source: 'manual_fallback',
   });
 
   return getCall(actor, call.id);
+}
+
+async function autoEnqueueTranscriptionJob(callId, options = {}) {
+  return db.sequelize.transaction(async (transaction) => {
+    const call = await db.TelephonyCall.findByPk(callId, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (!call || call.recordingStatus !== 'available') return null;
+
+    const latestJob = await db.TelephonyTranscriptionJob.findOne({
+      attributes: ['id', 'status'],
+      order: [['createdAt', 'DESC'], ['id', 'DESC']],
+      transaction,
+      where: { telephonyCallId: call.id },
+    });
+    if (latestJob) return null;
+
+    return db.TelephonyTranscriptionJob.create({
+      createdByAccountId: options.createdByAccountId || null,
+      metadata: {
+        autoEnqueued: options.autoEnqueued !== false,
+        progress: { message: 'Ожидает worker', percent: 0, stage: 'queued', updatedAt: new Date().toISOString() },
+        source: options.source || 'recording_available',
+      },
+      status: 'queued',
+      telephonyCallId: call.id,
+    }, { transaction });
+  });
+}
+
+async function queueMissingTranscriptionJobs(actor, data = {}) {
+  const limit = Math.min(Math.max(Number(data.limit) || DEFAULT_TRANSCRIPTION_BACKFILL_LIMIT, 1), 200);
+  const calls = await db.TelephonyCall.findAll({
+    attributes: ['id'],
+    include: [{
+      as: 'transcriptionJobs',
+      attributes: ['id'],
+      model: db.TelephonyTranscriptionJob,
+      required: false,
+    }],
+    limit,
+    order: [['startedAt', 'DESC'], ['id', 'DESC']],
+    where: {
+      recordingStatus: 'available',
+      '$transcriptionJobs.id$': null,
+    },
+    subQuery: false,
+  });
+  let queued = 0;
+  for (const call of calls) {
+    const job = await autoEnqueueTranscriptionJob(call.id, {
+      createdByAccountId: actor?.id || null,
+      source: 'manual_backfill',
+    });
+    if (job) queued += 1;
+  }
+  return { limit, queued, scanned: calls.length, hasMore: calls.length === limit };
 }
 
 function normalizeTranscriptionJobQuery(query = {}) {
@@ -2825,10 +2894,11 @@ function normalizeTranscriptionJobQuery(query = {}) {
 async function listTranscriptionJobs(actor, query = {}) {
   const { page, pageSize, where } = normalizeTranscriptionJobQuery(query);
   const { count, rows } = await db.TelephonyTranscriptionJob.findAndCountAll({
+    attributes: TRANSCRIPTION_JOB_LIST_ATTRIBUTES,
     distinct: true,
     include: scopedTranscriptionJobInclude(actor, {
       includeCallRelations: true,
-      includeSegments: true,
+      includeSegments: false,
     }),
     limit: pageSize,
     offset: (page - 1) * pageSize,
@@ -2840,7 +2910,7 @@ async function listTranscriptionJobs(actor, query = {}) {
   });
 
   return {
-    items: rows.map((row) => mapUserTranscriptionJob(row, { includeSegments: true })),
+    items: rows.map((row) => mapUserTranscriptionJob(row)),
     page,
     pageSize,
     total: count,
@@ -3041,7 +3111,10 @@ async function claimTranscriptionJob(data = {}) {
         errorMessage: null,
         failedAt: null,
         language: null,
-        metadata: null,
+        metadata: {
+          ...(asObject(job.metadata)),
+          progress: { message: 'Worker начал обработку', percent: 5, stage: 'claimed', updatedAt: new Date().toISOString() },
+        },
         rawAsrJson: null,
         rawTranscriptText: null,
         status: 'processing',
@@ -3058,6 +3131,26 @@ async function claimTranscriptionJob(data = {}) {
 
   const job = await getTranscriptionJobOrFail(jobId, { includeWorkerCall: true });
   return { job: mapWorkerTranscriptionJob(job) };
+}
+
+async function updateTranscriptionJobProgress(jobId, data = {}) {
+  const job = await getTranscriptionJobOrFail(jobId);
+  if (job.status !== 'processing') {
+    throw appError('Прогресс можно обновлять только для задачи в обработке', 409);
+  }
+  const metadata = asObject(job.metadata);
+  await job.update({
+    metadata: {
+      ...metadata,
+      progress: {
+        message: normalizeText(data.message),
+        percent: Number(data.progress),
+        stage: data.stage,
+        updatedAt: new Date().toISOString(),
+      },
+    },
+  });
+  return { job: mapTranscriptionJob(job) };
 }
 
 async function getTranscriptionJobAudioReference(jobId) {
@@ -3535,11 +3628,14 @@ async function listRawEvents(query = {}) {
 module.exports = {
   completeCall,
   completeTranscriptionJob,
+  autoEnqueueTranscriptionJob,
   createClientForCall,
   createTranscriptionJob,
+  queueMissingTranscriptionJobs,
   failTranscriptionJob,
   claimTranscriptionJob,
   getTranscriptionJobAudioReference,
+  updateTranscriptionJobProgress,
   getCall,
   getConfig,
   getReport,

@@ -56,6 +56,9 @@ class MockCrmHandler(BaseHTTPRequestHandler):
         if self.path == "/api/telephony/transcription-jobs/77/audio-reference":
             self._json({"audio": {"downloadUrl": "https://records.test/audio.wav?token=secret"}})
             return
+        if self.path == "/api/telephony/transcription-jobs/77/progress":
+            self._json({"job": {"id": 77, "status": "processing"}})
+            return
         if self.path == "/api/telephony/transcription-jobs/77/result":
             self._json({"job": {"id": 77, "status": "completed"}})
             return
@@ -98,6 +101,7 @@ class MockCrmTest(unittest.TestCase):
         self.assertEqual(self.client.queue()["totals"]["queued"], 0)
         self.assertEqual(self.client.claim_job("test-worker")["job"]["id"], 77)
         self.assertIn("downloadUrl", self.client.audio_reference(77)["audio"])
+        self.assertEqual(self.client.progress_job(77, "ffmpeg_preprocess", 25, "Preparing")["job"]["status"], "processing")
         self.assertEqual(self.client.complete_job(77, {"transcriptText": "ok"})["job"]["status"], "completed")
         self.assertEqual(self.client.retry_job(77, "test-worker")["job"]["status"], "processing")
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { type ColumnDef } from '@tanstack/react-table';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { listAuditLogs, type AuditAction, type AuditLogItem } from '@/api/audit';
 import { queryKeys } from '@/api/query-keys';
@@ -67,11 +67,12 @@ export default function AuditLogPage() {
   const auditQuery = useQuery({
     queryFn: () => listAuditLogs(auditParams),
     queryKey: queryKeys.audit.list(auditParams),
+    placeholderData: keepPreviousData,
   });
   const items = auditQuery.data?.items || [];
   const total = auditQuery.data?.total || 0;
   const totalPages = auditQuery.data?.totalPages || 1;
-  const loading = auditQuery.isLoading || auditQuery.isFetching;
+  const loading = auditQuery.isLoading && items.length === 0;
   const errorText = auditQuery.isError
     ? getApiErrorMessage(auditQuery.error, 'Не удалось загрузить журнал действий')
     : undefined;

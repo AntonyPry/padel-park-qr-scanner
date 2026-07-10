@@ -394,7 +394,6 @@ export default function FinancePage() {
         const data = (await finRes.json().catch(() => ({}))) as {
           error?: string;
         };
-        setReport(null);
         setErrorMessage(data.error || 'Не удалось загрузить финансовый отчет');
       }
       if (catRes.ok) setCategories((await catRes.json()) as CatalogCategory[]);
@@ -407,7 +406,6 @@ export default function FinancePage() {
       }
     } catch (e) {
       console.error(e);
-      setReport(null);
       setErrorMessage('Не удалось загрузить финансовый отчет');
     } finally {
       setLoading(false);

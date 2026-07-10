@@ -7,6 +7,7 @@ import {
 } from '@tanstack/react-query';
 import {
   CheckCircle2,
+  CircleX,
   Clock,
   Copy,
   EyeOff,
@@ -15,6 +16,8 @@ import {
   LinkIcon,
   PhoneCall,
   PhoneIncoming,
+  PhoneMissed,
+  PhoneOutgoing,
   RefreshCw,
   RotateCw,
   Save,
@@ -48,12 +51,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Table,
   TableBody,
@@ -82,6 +80,7 @@ import {
   getTelephonyStats,
   ignoreTelephonyCall,
   linkTelephonyCallClient,
+  queueMissingTelephonyTranscriptionJobs,
   refreshTelephonyRecordingReference,
   reprocessTelephonyRawEvent,
   retryTelephonyTranscriptionJob,
@@ -91,6 +90,7 @@ import {
   type CompleteTelephonyCallPayload,
   type TelephonyAiTranscriptSegment,
   type TelephonyCall,
+  type TelephonyCallStatus,
   type TelephonyDirection,
   type TelephonyInterest,
   type TelephonyProcessingStatus,
@@ -126,6 +126,11 @@ const DIRECTION_LABELS: Record<TelephonyDirection, string> = {
   unknown: 'Неизвестно',
 };
 
+const CALL_STATUS_LABELS: Record<TelephonyCallStatus, string> = {
+  answered: 'Принят', completed: 'Завершён', failed: 'Ошибка', missed: 'Пропущен',
+  new: 'Новый', ringing: 'Звонит', unknown: 'Статус неизвестен',
+};
+
 const RESULT_LABELS: Record<TelephonyResult, string> = {
   booked: 'Записался',
   callback: 'Перезвонить',
@@ -150,7 +155,7 @@ const RECORDING_LABELS: Record<TelephonyCall['recordingStatus'], string> = {
   available: 'Есть',
   missing: 'Нет',
   pending: 'Готовится',
-  unknown: 'Неизвестно',
+  unknown: 'Нет',
 };
 
 const TRANSCRIPTION_LABELS: Record<TelephonyTranscriptionStatus, string> = {
@@ -307,6 +312,44 @@ function getTranscriptionStatusVariant(status?: TranscriptionViewState) {
 
 function isTranscriptionPending(status?: TelephonyTranscriptionStatus) {
   return status === 'queued' || status === 'processing';
+}
+
+const TRANSCRIPTION_STAGE_LABELS: Record<string, string> = {
+  queued: 'Ожидает worker',
+  claimed: 'Worker начал обработку',
+  downloading_audio: 'Скачиваем запись',
+  ffmpeg_preprocess: 'Подготавливаем аудио',
+  transcribing_admin_channel: 'Распознаем администратора',
+  transcribing_client_channel: 'Распознаем клиента',
+  transcribing_unknown_channel: 'Распознаем запись',
+  merging_segments: 'Собираем диалог',
+  ai_postprocessing: 'AI-редактура',
+  uploading_result: 'Сохраняем результат',
+};
+
+function TranscriptionProgress({ transcription }: { transcription?: TelephonyCall['transcription'] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!transcription || !isTranscriptionPending(transcription.status)) return null;
+  const progress = transcription.metadata?.progress;
+  const percent = Math.min(Math.max(Number(progress?.percent) || 0, 0), 100);
+  const updatedAt = progress?.updatedAt ? new Date(progress.updatedAt).getTime() : 0;
+  const stale = transcription.status === 'processing' && (!updatedAt || now - updatedAt > 5 * 60 * 1000);
+  return (
+    <div className="mt-2 min-w-36 space-y-1" data-testid="transcription-progress">
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted-foreground/20">
+        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+      </div>
+      <div className={stale ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+        {stale
+          ? 'Обработка зависла — нет свежего статуса'
+          : `${TRANSCRIPTION_STAGE_LABELS[progress?.stage || 'queued'] || progress?.message || 'Обработка'} · ${percent}%`}
+      </div>
+    </div>
+  );
 }
 
 function getTranscriptionQualityWarnings(
@@ -469,11 +512,12 @@ export default function TelephonyPage() {
   const [clientSearch, setClientSearch] = useState('');
   const [clientSearchInput, setClientSearchInput] = useState('');
   const [clientForm, setClientForm] = useState<ClientCallForm>(EMPTY_CLIENT_FORM);
+  const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
 
   const canManage = canManageTelephony(account?.role);
   const canWork = canWorkTelephony(account?.role);
   const canAccessCallRecordings = canWork;
-  const callsTableColumnCount = canWork ? 10 : 7;
+  const callsTableColumnCount = canWork ? 7 : 5;
 
   const listParams = useMemo(
     () => ({
@@ -496,7 +540,7 @@ export default function TelephonyPage() {
     queryKey: queryKeys.telephony.calls(listParams),
     queryFn: () => getTelephonyCalls(listParams),
   });
-  const visibleCalls = callsQuery.isError ? [] : callsQuery.data?.items || [];
+  const visibleCalls = callsQuery.data?.items || [];
   const reportParams = useMemo(
     () => ({
       from: reportRange.from,
@@ -505,6 +549,7 @@ export default function TelephonyPage() {
     [reportRange.from, reportRange.to],
   );
   const reportQuery = useQuery({
+    placeholderData: keepPreviousData,
     queryKey: queryKeys.telephony.report(reportParams),
     queryFn: () => getTelephonyReport(reportParams),
   });
@@ -518,6 +563,7 @@ export default function TelephonyPage() {
     queryFn: getTelephonyConfig,
   });
   const rawEventsQuery = useQuery({
+    placeholderData: keepPreviousData,
     enabled: canManage,
     queryKey: queryKeys.telephony.rawEvents({ page: 1, pageSize: 5, status: 'all' }),
     queryFn: () => getTelephonyRawEvents({ page: 1, pageSize: 5, status: 'all' }),
@@ -720,6 +766,14 @@ export default function TelephonyPage() {
       invalidate();
     },
   });
+  const queueMissingTranscriptionsMutation = useMutation({
+    mutationFn: () => queueMissingTelephonyTranscriptionJobs(50),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['telephony'] });
+      toast.success(`Поставлено в очередь: ${result.queued}${result.hasMore ? '. Есть еще звонки — повторите батч.' : ''}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const recordingReferenceMutation = useMutation({
     mutationFn: refreshTelephonyRecordingReference,
@@ -812,27 +866,6 @@ export default function TelephonyPage() {
     setClientSearchInput(searchValue);
     setClientSearch(searchValue);
     setClientForm(EMPTY_CLIENT_FORM);
-  };
-
-  const openTranscriptDialog = (call: TelephonyCall) => {
-    if (!canWork) return;
-    setTranscriptDialogCall(call);
-  };
-
-  const openRecording = async (call: TelephonyCall) => {
-    if (call.recordingUrl && !shouldRefreshRecordingLink(call)) {
-      window.open(call.recordingUrl, '_blank', 'noopener,noreferrer');
-      return;
-    }
-
-    try {
-      const updatedCall = await recordingReferenceMutation.mutateAsync(call.id);
-      if (updatedCall.recordingUrl) {
-        window.open(updatedCall.recordingUrl, '_blank', 'noopener,noreferrer');
-      }
-    } catch {
-      // Error is shown by the mutation handler.
-    }
   };
 
   const startTranscription = (call: TelephonyCall) => {
@@ -957,22 +990,6 @@ export default function TelephonyPage() {
       </Button>
     );
   };
-  const renderTranscriptOpenAction = (call: TelephonyCall, iconOnly = false) => {
-    const viewState = getTranscriptionViewState(call);
-
-    return (
-      <Button
-        variant={viewState === 'completed' ? 'default' : 'outline'}
-        size={iconOnly ? 'icon-sm' : 'sm'}
-        onClick={() => openTranscriptDialog(call)}
-        aria-label="Открыть транскрипцию"
-        title="Транскрипция"
-      >
-        <FileText className="h-4 w-4" />
-        {!iconOnly && 'Транскрипция'}
-      </Button>
-    );
-  };
   const renderTranscriptContent = (call: TelephonyCall, isFetching = false) => {
     const viewState = getTranscriptionViewState(call);
     const transcription = call.transcription;
@@ -1070,9 +1087,7 @@ export default function TelephonyPage() {
     if (viewState === 'queued' || viewState === 'processing') {
       return (
         <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-          {viewState === 'queued'
-            ? 'Задача ожидает свободный worker.'
-            : 'Worker обрабатывает запись.'}
+          <TranscriptionProgress transcription={transcription} />
           {isFetching && <span className="ml-2">Обновляем статус...</span>}
         </div>
       );
@@ -1085,6 +1100,56 @@ export default function TelephonyPage() {
             {transcription?.errorMessage || 'Worker вернул ошибку транскрибации.'}
           </div>
           {renderTranscriptionAction(call)}
+        </div>
+      );
+    }
+
+    if (!import.meta.env.DEV) {
+      const conversationSegments = aiSegments.length > 0 ? aiSegments : segments;
+      return (
+        <div className="space-y-4">
+          {conversationSegments.length > 0 ? (
+            <div className="space-y-3 rounded-xl bg-muted/40 p-3 sm:p-4">
+              {conversationSegments.map((segment, index) => {
+                const isAdministrator = segment.speaker === 'administrator';
+                const key = 'id' in segment ? segment.id : segment.segmentId || index;
+                return (
+                  <div
+                    key={key}
+                    className={cn('flex min-w-0', isAdministrator ? 'justify-end' : 'justify-start')}
+                  >
+                    <div
+                      className={cn(
+                        'max-w-[88%] min-w-0 rounded-2xl px-3 py-2 shadow-sm sm:max-w-[76%] sm:px-4',
+                        isAdministrator
+                          ? 'rounded-br-md bg-primary text-primary-foreground'
+                          : 'rounded-bl-md border bg-card text-card-foreground',
+                      )}
+                    >
+                      <div className={cn(
+                        'mb-1 text-xs font-semibold',
+                        isAdministrator ? 'text-primary-foreground/75' : 'text-muted-foreground',
+                      )}>
+                        {isAdministrator ? 'Администратор' : 'Клиент'}
+                      </div>
+                      <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                        {segment.text}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : normalizedText || aiText ? (
+            <div className="whitespace-pre-wrap break-words rounded-xl border bg-card p-4 text-sm leading-relaxed">
+              {aiText || normalizedText}
+            </div>
+          ) : (
+            <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
+              Диалог для этой записи не сохранён.
+            </div>
+          )}
+          <div className="flex justify-end">{renderTranscriptionAction(call)}</div>
         </div>
       );
     }
@@ -1205,64 +1270,16 @@ export default function TelephonyPage() {
     <div className="flex min-w-0 flex-col gap-5">
       <h1 className="sr-only">Телефония</h1>
       {canManage && (
-        <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => syncMutation.mutate({})}
-              disabled={syncMutation.isPending || !beelineApiReady}
-              title={
-                beelineApiReady
-                  ? 'Сверить звонки со статистикой Билайна'
-                  : 'Сначала задайте BEELINE_API_BASE_URL на сервере'
-              }
-            >
-              <RefreshCw className="h-4 w-4" />
-              Сверить статистику
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => syncRecordingsMutation.mutate({})}
-              disabled={syncRecordingsMutation.isPending || !beelineApiReady}
-              title={
-                beelineApiReady
-                  ? 'Сверить список записей разговоров и связать их со звонками'
-                  : 'Сначала задайте BEELINE_API_BASE_URL на сервере'
-              }
-            >
-              <FileAudio className="h-4 w-4" />
-              Сверить записи
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => subscribeMutation.mutate({})}
-              disabled={subscribeMutation.isPending || !beelineXsiReady}
-              title={
-                beelineXsiReady
-                  ? 'Создать или обновить XSI-подписку'
-                  : 'Сначала задайте BEELINE_API_BASE_URL и BEELINE_CALLBACK_URL на сервере'
-              }
-            >
-              <RotateCw className="h-4 w-4" />
-              Подписка XSI
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => checkSubscriptionMutation.mutate()}
-              disabled={checkSubscriptionMutation.isPending || !beelineXsiReady}
-              title={
-                beelineXsiReady
-                  ? 'Проверить текущий статус XSI-подписки в Билайне'
-                  : 'Сначала задайте BEELINE_API_BASE_URL и BEELINE_CALLBACK_URL на сервере'
-              }
-            >
-              <RefreshCw className="h-4 w-4" />
-              Проверить XSI
-            </Button>
-          </div>
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setIntegrationDialogOpen(true)}
+          >
+            <Settings className="h-4 w-4" />
+            Интеграция
+          </Button>
+        </div>
       )}
 
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
@@ -1510,7 +1527,7 @@ export default function TelephonyPage() {
       </div>
 
       {canManage && (
-        <div className="rounded-md border bg-card p-3 text-sm">
+        <div className="hidden">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-medium">
               Интеграция Билайн
@@ -1743,7 +1760,11 @@ export default function TelephonyPage() {
             <div key={`mobile-loading-${index}`} className="h-32 animate-pulse rounded-md border bg-muted" />
           ))}
         {visibleCalls.map((call) => (
-          <div key={call.id} className="rounded-md border bg-card p-3">
+          <div
+            key={call.id}
+            className={cn('rounded-md border bg-card p-3', canWork && 'cursor-pointer active:bg-muted/60')}
+            onClick={() => canWork && void openCompletion(call)}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium">{formatDateTime(call.startedAt)}</div>
@@ -1761,6 +1782,7 @@ export default function TelephonyPage() {
                 {call.client ? (
                   <Link
                     className="hover:underline"
+                    onClick={(event) => event.stopPropagation()}
                     to={`/admin/clients?q=${encodeURIComponent(call.client.phone || call.client.name)}`}
                   >
                     {call.client.name}
@@ -1793,56 +1815,17 @@ export default function TelephonyPage() {
               {canWork && (
                 <div>
                   <div className="text-xs text-muted-foreground">Транскрипт</div>
-                  <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(call))}>
-                    {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}
-                  </Badge>
+                  <TranscriptionProgress transcription={call.transcription} />
+                  {getTranscriptionViewState(call) === 'completed' && <CheckCircle2 className="h-5 w-5 text-emerald-500" />}
+                  {getTranscriptionViewState(call) === 'failed' && <CircleX className="h-5 w-5 text-destructive" />}
+                  {['no_recording', 'not_started'].includes(getTranscriptionViewState(call)) && <span>—</span>}
                 </div>
               )}
               <div>
                 <div className="text-xs text-muted-foreground">Ответственный</div>
                 <div className="truncate">{call.staff?.name || call.processedByAccount?.name || 'Не назначен'}</div>
               </div>
-              <div>
-                <div className="text-xs text-muted-foreground">Следующий шаг</div>
-                <div className="truncate">
-                  {call.followUpCallTask?.title ||
-                    (call.nextActionAt ? formatDateTime(call.nextActionAt) : 'Нет')}
-                </div>
-              </div>
             </div>
-
-            {canWork && (
-              <div className="mt-3 flex flex-wrap justify-end gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => openClientDialog(call)}
-                >
-                  <UserPlus className="h-4 w-4" />
-                  Клиент
-                </Button>
-                {canAccessCallRecordings && call.recordingStatus === 'available' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => void openRecording(call)}
-                    disabled={recordingReferenceMutation.isPending}
-                  >
-                    <LinkIcon className="h-4 w-4" />
-                    Запись
-                  </Button>
-                )}
-                {renderTranscriptOpenAction(call)}
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void openCompletion(call)}
-                >
-                  <PhoneCall className="h-4 w-4" />
-                  Обработать
-                </Button>
-              </div>
-            )}
           </div>
         ))}
         {!callsQuery.isLoading && !callsQuery.isError && visibleCalls.length === 0 && (
@@ -1856,25 +1839,22 @@ export default function TelephonyPage() {
         <Table
           className={cn(
             'table-fixed [&_td]:py-4 [&_th]:py-3',
-            canAccessCallRecordings ? 'min-w-[1390px]' : 'min-w-[1010px]',
+            canAccessCallRecordings ? 'min-w-[920px]' : 'min-w-[650px]',
           )}
         >
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[125px]">
+              <TableHead className="w-[150px]">
                 <MetricLabel tooltip="Дата начала звонка по данным Билайна или статистики.">
-                  Время
+                  Звонок
                 </MetricLabel>
               </TableHead>
               <TableHead className="w-[190px]">Клиент</TableHead>
-              <TableHead className="w-[95px]">Тип</TableHead>
               <TableHead className="w-[95px]">Статус</TableHead>
               <TableHead className="w-[110px]">Итог</TableHead>
               {canAccessCallRecordings && <TableHead className="w-[115px]">Запись</TableHead>}
               {canWork && <TableHead className="w-[145px]">Транскрипт</TableHead>}
               <TableHead className="w-[145px]">Ответственный</TableHead>
-              <TableHead className="w-[135px]">Следующий шаг</TableHead>
-              {canWork && <TableHead className="w-[125px] text-right">Действия</TableHead>}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1887,9 +1867,16 @@ export default function TelephonyPage() {
                 </TableRow>
               ))}
             {visibleCalls.map((call) => (
-              <TableRow key={call.id}>
+              <TableRow
+                key={call.id}
+                className={canWork ? 'cursor-pointer hover:bg-muted/60' : undefined}
+                onClick={() => canWork && void openCompletion(call)}
+              >
                 <TableCell>
-                  <div className="font-medium">{formatDateTime(call.startedAt)}</div>
+                  <div className="flex items-center gap-2 font-medium">
+                    {call.callStatus === 'missed' ? <PhoneMissed className="h-4 w-4 text-destructive" aria-label="Пропущенный" /> : call.direction === 'outbound' ? <PhoneOutgoing className="h-4 w-4" aria-label="Исходящий" /> : <PhoneIncoming className="h-4 w-4" aria-label="Входящий" />}
+                    {formatDateTime(call.startedAt)}
+                  </div>
                   <div className="text-xs text-muted-foreground">
                     {formatDurationCompact(call.durationSeconds)}
                   </div>
@@ -1899,6 +1886,7 @@ export default function TelephonyPage() {
                     {call.client ? (
                       <Link
                         className="hover:underline"
+                        onClick={(event) => event.stopPropagation()}
                         to={`/admin/clients?q=${encodeURIComponent(call.client.phone || call.client.name)}`}
                       >
                         {call.client.name}
@@ -1917,14 +1905,6 @@ export default function TelephonyPage() {
                   )}
                 </TableCell>
                 <TableCell>
-                  <div>{DIRECTION_LABELS[call.direction]}</div>
-                  {call.callStatus === 'missed' && (
-                    <Badge variant="destructive" className="mt-1">
-                      Пропущен
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell>
                   <Badge variant={getStatusVariant(call.processingStatus)}>
                     {PROCESSING_LABELS[call.processingStatus]}
                   </Badge>
@@ -1939,9 +1919,7 @@ export default function TelephonyPage() {
                 </TableCell>
                 {canAccessCallRecordings && (
                   <TableCell>
-                    <Badge variant={call.recordingStatus === 'available' ? 'outline' : 'secondary'}>
-                      {RECORDING_LABELS[call.recordingStatus]}
-                    </Badge>
+                    {call.recordingStatus === 'available' ? 'Есть' : call.recordingStatus === 'pending' ? 'Готовится' : 'Нет'}
                     {call.recordingFileSize && (
                       <div className="mt-1 text-xs text-muted-foreground">
                         {formatFileSize(call.recordingFileSize)}
@@ -1951,15 +1929,11 @@ export default function TelephonyPage() {
                 )}
                 {canWork && (
                   <TableCell>
-                    <div className="space-y-1">
-                      <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(call))}>
-                        {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}
-                      </Badge>
-                      {call.transcription?.status === 'failed' && call.transcription.errorMessage && (
-                        <div className="line-clamp-2 text-xs text-destructive">
-                          {call.transcription.errorMessage}
-                        </div>
-                      )}
+                    <div className="space-y-1" title={TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}>
+                      <TranscriptionProgress transcription={call.transcription} />
+                      {getTranscriptionViewState(call) === 'completed' && <CheckCircle2 className="h-5 w-5 text-emerald-500" aria-label="Транскрипция готова" />}
+                      {getTranscriptionViewState(call) === 'failed' && <CircleX className="h-5 w-5 text-destructive" aria-label="Ошибка транскрибации" />}
+                      {['no_recording', 'not_started'].includes(getTranscriptionViewState(call)) && <span>—</span>}
                     </div>
                   </TableCell>
                 )}
@@ -1968,66 +1942,6 @@ export default function TelephonyPage() {
                     {call.staff?.name || call.processedByAccount?.name || 'Не назначен'}
                   </div>
                 </TableCell>
-                <TableCell className="whitespace-normal">
-                  {call.followUpCallTask ? (
-                    <div className="min-w-0">
-                      <Link
-                        className="block truncate font-medium hover:underline"
-                        to="/admin/call-tasks"
-                      >
-                        {call.followUpCallTask.title}
-                      </Link>
-                      <div className="text-xs text-muted-foreground">
-                        {formatDateTime(call.followUpCallTask.dueAt)}
-                      </div>
-                    </div>
-                  ) : call.nextActionAt ? (
-                    formatDateTime(call.nextActionAt)
-                  ) : (
-                    'Нет'
-                  )}
-                </TableCell>
-                {canWork && (
-                  <TableCell>
-                    <div className="flex justify-end gap-1">
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        onClick={() => openClientDialog(call)}
-                        aria-label="Привязать клиента к звонку"
-                        title={
-                          call.client
-                            ? 'Проверить или сменить клиента звонка'
-                            : 'Найти или создать клиента по номеру звонка'
-                        }
-                      >
-                        <UserPlus className="h-4 w-4" />
-                      </Button>
-                      {canAccessCallRecordings && call.recordingStatus === 'available' && (
-                        <Button
-                          variant="outline"
-                          size="icon-sm"
-                          onClick={() => void openRecording(call)}
-                          disabled={recordingReferenceMutation.isPending}
-                          aria-label="Открыть запись звонка"
-                          title="Открыть временную ссылку на запись из Билайна"
-                        >
-                          <LinkIcon className="h-4 w-4" />
-                        </Button>
-                      )}
-                      {renderTranscriptOpenAction(call, true)}
-                      <Button
-                        variant="outline"
-                        size="icon-sm"
-                        onClick={() => void openCompletion(call)}
-                        aria-label="Обработать звонок"
-                        title="Обработать звонок"
-                      >
-                        <PhoneCall className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                )}
               </TableRow>
             ))}
             {!callsQuery.isLoading && !callsQuery.isError && visibleCalls.length === 0 && (
@@ -2066,7 +1980,7 @@ export default function TelephonyPage() {
       </Pagination>
 
       {canManage && (
-        <div className="rounded-md border bg-card">
+        <div className="hidden">
           <div className="border-b p-3">
             <div className="flex items-center gap-2 font-medium">
               Диагностика webhook
@@ -2136,6 +2050,41 @@ export default function TelephonyPage() {
           </div>
         </div>
       )}
+
+      <Dialog open={integrationDialogOpen} onOpenChange={setIntegrationDialogOpen}>
+        <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Интеграция Билайн</DialogTitle>
+            <DialogDescription>
+              Состояние подключения и ручные технические действия. В обычной работе звонки и записи сверяются в фоне.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 rounded-lg border p-3 text-sm sm:grid-cols-2">
+            <div><span className="text-muted-foreground">Токен:</span> {configQuery.data?.apiTokenConfigured ? 'настроен' : 'не настроен'}</div>
+            <div className="min-w-0"><span className="text-muted-foreground">API URL:</span> <span className="break-all">{configQuery.data?.apiBaseUrl || 'не задан'}</span></div>
+            <div className="min-w-0 sm:col-span-2">
+              <span className="text-muted-foreground">Callback:</span> <span className="break-all">{configQuery.data?.callbackUrl || 'не задан'}</span>
+              {configQuery.data?.callbackUrl && <Button type="button" variant="ghost" size="icon-xs" onClick={copyCallbackUrl} aria-label="Скопировать callback URL"><Copy className="h-3 w-3" /></Button>}
+            </div>
+            <div><span className="text-muted-foreground">Webhook:</span> {configQuery.data?.webhookSecretConfigured ? 'защищён' : 'не настроен'}</div>
+            <div><span className="text-muted-foreground">XSI:</span> {latestSubscription ? SUBSCRIPTION_LABELS[latestSubscription.status] : 'нет данных'}</div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Button variant="outline" onClick={() => syncMutation.mutate({})} disabled={syncMutation.isPending || !beelineApiReady}><RefreshCw className="h-4 w-4" />Сверить статистику</Button>
+            <Button variant="outline" onClick={() => syncRecordingsMutation.mutate({})} disabled={syncRecordingsMutation.isPending || !beelineApiReady}><FileAudio className="h-4 w-4" />Сверить записи</Button>
+            <Button variant="outline" onClick={() => subscribeMutation.mutate({})} disabled={subscribeMutation.isPending || !beelineXsiReady}><RotateCw className="h-4 w-4" />Обновить XSI</Button>
+            <Button variant="outline" onClick={() => checkSubscriptionMutation.mutate()} disabled={checkSubscriptionMutation.isPending || !beelineXsiReady}><RefreshCw className="h-4 w-4" />Проверить XSI</Button>
+            <Button className="sm:col-span-2" variant="outline" onClick={() => queueMissingTranscriptionsMutation.mutate()} disabled={queueMissingTranscriptionsMutation.isPending}><FileText className="h-4 w-4" />Поставить пропущенные записи в очередь</Button>
+          </div>
+          <details className="rounded-lg border p-3 text-sm">
+            <summary className="cursor-pointer font-medium">Последние webhook-события</summary>
+            <div className="mt-3 space-y-2">
+              {rawEventsQuery.data?.items.map((event) => <div key={event.id} className="flex min-w-0 items-center justify-between gap-2 border-t pt-2"><span className="min-w-0 truncate">{formatDateTime(event.receivedAt)} · {event.eventType || 'event'}</span><Badge variant={getRawEventStatusVariant(event.processingStatus)}>{RAW_EVENT_STATUS_LABELS[event.processingStatus]}</Badge></div>)}
+              {!rawEventsQuery.isLoading && !rawEventsQuery.data?.items.length && <div className="text-muted-foreground">Событий нет.</div>}
+            </div>
+          </details>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(clientDialogCall)} onOpenChange={(open) => !open && setClientDialogCall(null)}>
         <DialogContent className="sm:max-w-3xl">
@@ -2427,7 +2376,7 @@ export default function TelephonyPage() {
       </Dialog>
 
       <Dialog open={Boolean(selectedCall)} onOpenChange={(open) => !open && setSelectedCall(null)}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="max-h-[94dvh] w-[calc(100%-1rem)] overflow-y-auto sm:max-w-3xl">
           <DialogHeader>
             <DialogTitle>Обработка звонка</DialogTitle>
             <DialogDescription>
@@ -2450,10 +2399,22 @@ export default function TelephonyPage() {
                       {formatDateTime(selectedCallForView.startedAt)}
                       {' · '}
                       {DIRECTION_LABELS[selectedCallForView.direction]}
+                      {' · '}
+                      {CALL_STATUS_LABELS[selectedCallForView.callStatus]}
                     </div>
                   </div>
-                  {selectedCallForView.recordingStatus === 'available' && (
-                    <div className="flex flex-wrap justify-end gap-2">
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openClientDialog(selectedCallForView)}
+                    >
+                      <UserPlus className="h-4 w-4" />
+                      {selectedCallForView.client ? 'Сменить клиента' : 'Привязать клиента'}
+                    </Button>
+                    {selectedCallForView.recordingStatus === 'available' && (
+                      <>
                       {selectedCallForView.recordingUrl && !shouldRefreshRecordingLink(selectedCallForView) ? (
                         <Button asChild variant="outline" size="sm">
                           <a
@@ -2477,8 +2438,12 @@ export default function TelephonyPage() {
                           Получить запись
                         </Button>
                       )}
-                    </div>
-                  )}
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-2 text-xs text-muted-foreground">
+                  Запись Beeline: {selectedCallForView.recordingStatus === 'available' ? 'доступна' : selectedCallForView.recordingStatus === 'pending' ? 'готовится' : 'нет'}
                 </div>
               </div>
 

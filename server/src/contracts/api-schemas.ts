@@ -1289,6 +1289,26 @@ const apiSchemas = {
         workerId: optionalString,
       })
       .passthrough(),
+    transcriptionProgress: {
+      body: z.object({
+        message: z.string().trim().max(500).optional(),
+        progress: z.number().int().min(0).max(100),
+        stage: z.enum([
+          'downloading_audio',
+          'ffmpeg_preprocess',
+          'transcribing_admin_channel',
+          'transcribing_client_channel',
+          'transcribing_unknown_channel',
+          'merging_segments',
+          'ai_postprocessing',
+          'uploading_result',
+        ]),
+      }).passthrough(),
+      params: idParams,
+    },
+    transcriptionBackfillBody: z.object({
+      limit: z.number().int().min(1).max(200).optional(),
+    }).passthrough(),
     transcriptionFail: {
       body: z
         .object({

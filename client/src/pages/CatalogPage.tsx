@@ -416,28 +416,24 @@ export default function CatalogPage() {
       if (unmappedRes.ok) {
         setUnmapped(await unmappedRes.json());
       } else {
-        setUnmapped([]);
         errors.push(await readError(unmappedRes, 'Не удалось загрузить товары без правил'));
       }
 
       if (rulesRes.ok) {
         setRules(await rulesRes.json());
       } else {
-        setRules([]);
         errors.push(await readError(rulesRes, 'Не удалось загрузить правила товаров'));
       }
 
       if (catRes.ok) {
         setCategories(await catRes.json());
       } else {
-        setCategories([]);
         errors.push(await readError(catRes, 'Не удалось загрузить категории'));
       }
 
       if (bonusRulesRes?.ok) {
         setBonusRules((await bonusRulesRes.json()) as MotivationBonusRule[]);
       } else if (bonusRulesRes) {
-        setBonusRules([]);
         errors.push(await readError(bonusRulesRes, 'Не удалось загрузить мотивации категорий'));
       } else {
         setBonusRules([]);
@@ -446,14 +442,12 @@ export default function CatalogPage() {
       if (saleSettingsRes.ok) {
         setSaleSettings((await saleSettingsRes.json()) as SaleSetting[]);
       } else {
-        setSaleSettings([]);
         errors.push(await readError(saleSettingsRes, 'Не удалось загрузить настройки продаж'));
       }
 
       if (pendingSalesRes?.ok) {
         setPendingSales((await pendingSalesRes.json()) as PendingSale[]);
       } else if (pendingSalesRes) {
-        setPendingSales([]);
         errors.push(await readError(pendingSalesRes, 'Не удалось загрузить очередь продаж'));
       } else {
         setPendingSales([]);
@@ -462,7 +456,6 @@ export default function CatalogPage() {
       if (subscriptionTypesRes?.ok) {
         setSubscriptionTypes((await subscriptionTypesRes.json()) as SubscriptionType[]);
       } else if (subscriptionTypesRes) {
-        setSubscriptionTypes([]);
         errors.push(
           await readError(
             subscriptionTypesRes,
@@ -478,13 +471,6 @@ export default function CatalogPage() {
       }
     } catch (e) {
       console.error('Fetch error:', e);
-      setUnmapped([]);
-      setRules([]);
-      setCategories([]);
-      setBonusRules([]);
-      setSaleSettings([]);
-      setPendingSales([]);
-      setSubscriptionTypes([]);
       setCatalogError(getApiErrorMessage(e, 'Не удалось загрузить справочник товаров'));
     } finally {
       setCatalogLoading(false);
@@ -2204,7 +2190,7 @@ export default function CatalogPage() {
                 columns={unmappedColumns}
                 data={filteredUnmapped}
                 emptyText="По текущему поиску товаров не найдено."
-                loading={catalogLoading}
+                loading={catalogLoading && filteredUnmapped.length === 0}
                 loadingText="Загрузка товаров..."
                 minWidthClassName="min-w-[1140px]"
                 pageSize={25}
@@ -2229,7 +2215,7 @@ export default function CatalogPage() {
               columns={ruleColumns}
               data={filteredRules}
               emptyText="Сохраненных правил пока нет."
-              loading={catalogLoading}
+              loading={catalogLoading && filteredRules.length === 0}
               loadingText="Загрузка правил..."
               minWidthClassName="min-w-[1100px]"
               pageSize={25}
@@ -2273,7 +2259,7 @@ export default function CatalogPage() {
                 columns={pendingSaleColumns}
                 data={filteredPendingSales}
                 emptyText="В очереди нет продаж по текущему фильтру."
-                loading={catalogLoading}
+                loading={catalogLoading && filteredPendingSales.length === 0}
                 loadingText="Загрузка очереди..."
                 minWidthClassName="min-w-[1020px]"
                 pageSize={25}
@@ -2303,7 +2289,7 @@ export default function CatalogPage() {
                 columns={subscriptionTypeColumns}
                 data={filteredSubscriptionTypes}
                 emptyText="Типы абонементов не найдены."
-                loading={catalogLoading}
+                loading={catalogLoading && filteredSubscriptionTypes.length === 0}
                 loadingText="Загрузка типов абонементов..."
                 minWidthClassName="min-w-[1040px]"
                 pageSize={25}
@@ -2426,7 +2412,7 @@ export default function CatalogPage() {
                 columns={categoryColumns}
                 data={filteredCategories}
                 emptyText="Нет созданных категорий"
-                loading={catalogLoading}
+                loading={catalogLoading && filteredCategories.length === 0}
                 loadingText="Загрузка категорий..."
                 minWidthClassName="min-w-[860px] table-fixed"
                 pageSize={25}

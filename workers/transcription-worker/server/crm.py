@@ -81,6 +81,13 @@ class CrmClient:
             method="POST",
         )
 
+    def progress_job(self, job_id: str | int, stage: str, progress: int, message: str | None = None) -> dict[str, Any]:
+        return self._request(
+            f"/telephony/transcription-jobs/{job_id}/progress",
+            method="POST",
+            body={"stage": stage, "progress": progress, "message": message},
+        )
+
     def complete_job(self, job_id: str | int, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request(
             f"/telephony/transcription-jobs/{job_id}/result",

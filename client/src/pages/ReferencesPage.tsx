@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { type ColumnDef } from '@tanstack/react-table';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from '@tanstack/react-query';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import {
@@ -123,9 +128,10 @@ export default function ReferencesPage() {
   const referencesQuery = useQuery({
     queryFn: () => listReferences(activeType, status),
     queryKey: queryKeys.references.list(activeType, status),
+    placeholderData: keepPreviousData,
   });
   const items = referencesQuery.data || [];
-  const loading = referencesQuery.isLoading || referencesQuery.isFetching;
+  const loading = referencesQuery.isLoading && items.length === 0;
   const referenceErrorMessage = referencesQuery.isError
     ? getApiErrorMessage(referencesQuery.error, 'Не удалось загрузить справочник')
     : null;

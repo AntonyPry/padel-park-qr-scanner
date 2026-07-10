@@ -92,6 +92,13 @@ class CrmClient {
     });
   }
 
+  updateProgress(jobId, stage, progress, message) {
+    return this.request(`/telephony/transcription-jobs/${jobId}/progress`, {
+      body: { message, progress, stage },
+      method: 'POST',
+    });
+  }
+
   completeJob(jobId, payload) {
     return this.request(`/telephony/transcription-jobs/${jobId}/result`, {
       body: payload,

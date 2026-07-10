@@ -1237,7 +1237,7 @@ export default function CorporateClientsPage() {
                 className: 'cursor-pointer',
                 onClick: () => setSelectedClientId(row.original.id),
               })}
-              loading={loading}
+              loading={loading && clients.length === 0}
               minWidthClassName="min-w-[700px]"
               onRetry={() => void loadClients()}
               pageSize={10}
@@ -1258,12 +1258,12 @@ export default function CorporateClientsPage() {
                 Компания не выбрана.
               </div>
             )}
-            {detailLoading && (
+            {detailLoading && !selectedClient && (
               <div className="rounded-md border border-dashed p-6 text-sm text-muted-foreground">
                 Загрузка...
               </div>
             )}
-            {selectedClient && !detailLoading && (
+            {selectedClient && (
               <>
                 <div className="space-y-3">
                   <div className="flex items-start justify-between gap-3">

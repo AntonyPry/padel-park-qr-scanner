@@ -213,20 +213,16 @@ export default function SystemUsersPage() {
       if (accountsRes.ok) {
         setAccounts((await accountsRes.json()) as SystemAccount[]);
       } else {
-        setAccounts([]);
         setLoadError(await readError(accountsRes, 'Не удалось загрузить пользователей'));
       }
       if (staffRes.ok) {
         setStaff((await staffRes.json()) as StaffOption[]);
       } else {
-        setStaff([]);
         setLoadError((current) =>
           current || 'Не удалось загрузить сотрудников для привязки',
         );
       }
     } catch (error) {
-      setAccounts([]);
-      setStaff([]);
       setLoadError(getApiErrorMessage(error, 'Не удалось загрузить пользователей'));
     } finally {
       setLoading(false);
@@ -666,7 +662,7 @@ export default function SystemUsersPage() {
           data={displayedAccounts}
           emptyText="Пользователи еще не созданы"
           errorText={loadError}
-          loading={loading}
+          loading={loading && displayedAccounts.length === 0}
           loadingText="Загрузка пользователей..."
           minWidthClassName="min-w-[760px] table-fixed"
           onRetry={() => void fetchData()}

@@ -535,7 +535,6 @@ export default function ClientBasesPage() {
       const res = await apiFetch(`/api/client-bases?status=${baseStatus}`);
       if (!res.ok) {
         const message = await readError(res, 'Не удалось загрузить базы');
-        setBases([]);
         setBasesError(message);
         toast.error(message);
         return;
@@ -544,7 +543,6 @@ export default function ClientBasesPage() {
       setBases((await res.json()) as ClientBase[]);
     } catch (error) {
       const message = getApiErrorMessage(error, 'Не удалось загрузить базы');
-      setBases([]);
       setBasesError(message);
       toast.error(message);
     } finally {
@@ -1146,7 +1144,7 @@ export default function ClientBasesPage() {
             data={bases}
             emptyText="Базы еще не созданы."
             errorText={basesError}
-            loading={loading}
+            loading={loading && bases.length === 0}
             loadingText="Загрузка баз..."
             minWidthClassName="min-w-[920px] table-fixed"
             onRetry={() => void fetchBases()}

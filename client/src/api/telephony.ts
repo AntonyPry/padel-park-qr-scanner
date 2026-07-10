@@ -71,6 +71,12 @@ export interface TelephonyTranscriptionQualityWarning {
 }
 
 export interface TelephonyTranscriptionMetadata {
+  progress?: {
+    message?: string | null;
+    percent: number;
+    stage: string;
+    updatedAt: string;
+  };
   qualityWarnings?: TelephonyTranscriptionQualityWarning[];
   [key: string]: unknown;
 }
@@ -560,6 +566,14 @@ export function createTelephonyTranscriptionJob(callId: number) {
     `/api/telephony/calls/${callId}/transcription-jobs`,
     { method: 'POST' },
     'Не удалось поставить звонок на транскрибацию',
+  );
+}
+
+export function queueMissingTelephonyTranscriptionJobs(limit = 50) {
+  return apiRequest<{ hasMore: boolean; limit: number; queued: number; scanned: number }>(
+    '/api/telephony/transcription-jobs/queue-missing',
+    { body: JSON.stringify({ limit }), method: 'POST' },
+    'Не удалось поставить звонки в очередь',
   );
 }
 

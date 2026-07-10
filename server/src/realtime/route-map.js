@@ -248,7 +248,7 @@ const ROUTE_RULES = [
   { pattern: /^\/training-plans\/(?<planId>\d+)\/quick-complete$/, domain: 'training_plans', entity: 'training_plan', action: 'updated' },
   { pattern: /^\/training-plans(?:\/(?<planId>\d+))?$/, domain: 'training_plans', entity: 'training_plan' },
   { pattern: /^\/telephony\/calls\/(?<id>\d+)\/(?:start|client|client\/create|complete|ignore|recording-reference|transcription-jobs)$/, domain: 'telephony', entity: 'telephony_call', action: 'updated' },
-  { pattern: /^\/telephony\/transcription-jobs\/(?<id>\d+)\/(?:audio-reference|result|fail|retry|worker-retry)$/, domain: 'telephony', entity: 'telephony_transcription_job', action: 'updated' },
+  { pattern: /^\/telephony\/transcription-jobs\/(?<id>\d+)\/(?:audio-reference|progress|result|fail|retry|worker-retry)$/, domain: 'telephony', entity: 'telephony_transcription_job', action: 'updated' },
   { pattern: /^\/telephony\/transcription-jobs\/claim$/, domain: 'telephony', entity: 'telephony_transcription_job', action: 'updated' },
   { pattern: /^\/telephony\/beeline\/(?:sync|records\/sync)$/, domain: 'telephony', entity: 'telephony_call', action: 'synced' },
   { pattern: /^\/telephony\/beeline\/(?:subscribe|subscription\/check)$/, domain: 'telephony', entity: 'telephony_subscription', action: 'synced' },
