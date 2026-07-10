@@ -41,12 +41,10 @@ const SEGMENT_VALUES = new Set([
 ]);
 const TRAINING_LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
 const CLIENT_VIEW_FILTER_KEYS = new Set([
-  'includeMerged',
   'lastVisitDaysFrom',
   'lastVisitDaysTo',
   'lastVisitFrom',
   'lastVisitTo',
-  'q',
   'segment',
   'source',
   'sourceId',
@@ -647,11 +645,6 @@ function normalizeClientViewFilters(filters = {}) {
       return;
     }
 
-    if (key === 'includeMerged') {
-      if (value === true || value === 'true') normalized[key] = 'true';
-      return;
-    }
-
     normalized[key] = String(value).trim();
   });
 
@@ -700,9 +693,8 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
 
   where.push('COALESCE(u.isTraining, 0) = 0');
 
-  if (query.includeMerged !== 'true') {
-    where.push('u.mergedIntoUserId IS NULL');
-  }
+  // Merged rows are technical tombstones. They never represent clients in list/search.
+  where.push('u.mergedIntoUserId IS NULL');
 
   if (status !== 'all') {
     where.push('u.status = :status');
@@ -763,6 +755,17 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
       searchParts.push('u.phoneNormalized LIKE :phoneQ');
       replacements.phoneQ = `%${phoneDigits}%`;
     }
+
+    searchParts.push(`EXISTS (
+      SELECT 1
+      FROM Users merged_alias
+      WHERE merged_alias.mergedIntoUserId = u.id
+        AND (
+          merged_alias.name LIKE :q
+          ${includePhoneSearch ? 'OR merged_alias.phone LIKE :q' : ''}
+          ${includePhoneSearch && phoneDigits.length >= 2 ? 'OR merged_alias.phoneNormalized LIKE :phoneQ' : ''}
+        )
+    )`);
 
     where.push(`(${searchParts.join(' OR ')})`);
   }
@@ -1077,11 +1080,9 @@ async function getClientStats(clientId) {
   };
 }
 
-async function getClientOrFail(id, { includeMerged = false } = {}) {
+async function getClientOrFail(id) {
   const where = { id };
-  if (!includeMerged) {
-    where.mergedIntoUserId = null;
-  }
+  where.mergedIntoUserId = null;
 
   const client = await db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
@@ -1254,7 +1255,7 @@ async function listClientTelephonyCalls(clientId, account, options = {}) {
 }
 
 async function getClientDetails(id, account = null) {
-  const client = await getClientOrFail(id, { includeMerged: true });
+  const client = await getClientOrFail(id);
 
   await onboardingService.recordEventSafe(account, 'client.viewed', {
     entityId: client.id,
@@ -1264,84 +1265,6 @@ async function getClientDetails(id, account = null) {
       isMerged: Boolean(client.mergedIntoUserId),
     },
   });
-
-  if (client.mergedIntoUserId) {
-    const includeOperationalHistory = !isTrainer(account);
-    const [trainingNotes, skillMap] = canViewTrainingNotes(account)
-      ? await Promise.all([
-          listTrainingNotes(client.id),
-          clientSkillMapService.listForClient(client.id, account),
-        ])
-      : [[], []];
-    const [
-      bookings,
-      bookingSeries,
-      bookingStats,
-      telephonyCalls,
-      prepaymentContext,
-    ] = includeOperationalHistory
-      ? await Promise.all([
-          listClientBookings(client.id, { limit: 50 }),
-          listClientBookingSeries(client.id, { limit: 30 }),
-          getClientBookingStats(client.id),
-          listClientTelephonyCalls(client.id, account, { limit: 30 }),
-          getClientPrepaymentContext(client.id, account),
-        ])
-      : [
-          [],
-          [],
-          getEmptyBookingStats(),
-          [],
-          buildEmptyClientPrepaymentContext(),
-        ];
-    const { clientCertificates, clientSubscriptions, prepaymentSummary } =
-      prepaymentContext;
-    const safeClient = sanitizeClientForAccount(mapClient(client), account);
-    const safeMergedInto = sanitizeClientForAccount(
-      mapClient(await db.User.findByPk(client.mergedIntoUserId)),
-      account,
-    );
-
-    if (isTrainer(account)) {
-      return buildTrainerClientDetailsResponse({
-        client: safeClient,
-        mergedInto: safeMergedInto,
-        skillMap,
-        trainingNotes,
-      });
-    }
-
-    return {
-      bookingSeries,
-      bookingStats,
-      bookings,
-      activeCallTasks: includeOperationalHistory
-        ? await listClientActiveCallTasks(client.id, account)
-        : [],
-      client: safeClient,
-      clientCertificates,
-      clientSubscriptions,
-      mergedInto: safeMergedInto,
-      prepaymentSummary,
-      visits: [],
-      duplicateCandidates: [],
-      timeline: includeOperationalHistory
-        ? await listClientTimeline(client.id, {
-            bookingSeries,
-            bookings,
-            account,
-            clientCertificates,
-            clientSubscriptions,
-            trainingNotes,
-            telephonyCalls,
-            visits: [],
-          })
-        : [],
-      telephonyCalls,
-      skillMap,
-      trainingNotes,
-    };
-  }
 
   const includeOperationalHistory = !isTrainer(account);
   const [
@@ -2830,6 +2753,24 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
             where: { userId: duplicate.id },
             transaction,
           },
+        );
+      }
+      const directClientRelations = [
+        ['BookingParticipant', 'userId'],
+        ['Certificate', 'clientId'],
+        ['CertificateRedemption', 'clientId'],
+        ['ClientSubscription', 'clientId'],
+        ['ClientSubscriptionRedemption', 'clientId'],
+        ['ClientTrainingSkillHistory', 'userId'],
+        ['PendingSale', 'clientId'],
+        ['ScannerEvent', 'userId'],
+        ['TrainingPlanParticipant', 'userId'],
+      ];
+      for (const [modelName, foreignKey] of directClientRelations) {
+        if (!db[modelName]) continue;
+        await db[modelName].update(
+          { [foreignKey]: primary.id },
+          { where: { [foreignKey]: duplicate.id }, transaction },
         );
       }
       await mergeSkillMapForDuplicate(primary, duplicate, actor, transaction);

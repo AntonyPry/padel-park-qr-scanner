@@ -248,7 +248,6 @@ const dateRangeQuery = z
 const clientFilters = z
   .object({
     duplicateOnly: optionalBoolValue,
-    includeMerged: optionalBoolValue,
     lastVisitDaysFrom: optionalClientNumericQueryValue,
     lastVisitDaysTo: optionalClientNumericQueryValue,
     lastVisitFrom: optionalDateOnly,

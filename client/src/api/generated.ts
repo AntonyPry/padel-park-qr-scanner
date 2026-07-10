@@ -1066,7 +1066,6 @@ export type ClientBasesCreateBody = {
   description?: string | "" | null;
   filters?: {
     duplicateOnly?: boolean | "true" | "false" | "1" | "0";
-    includeMerged?: boolean | "true" | "false" | "1" | "0";
     lastVisitDaysFrom?: number | string | "" | null;
     lastVisitDaysTo?: number | string | "" | null;
     lastVisitFrom?: string | "";
@@ -1107,7 +1106,6 @@ export type ClientBasesClientsQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
   duplicateOnly?: boolean | "true" | "false" | "1" | "0";
-  includeMerged?: boolean | "true" | "false" | "1" | "0";
   lastVisitDaysFrom?: number | string | "" | null;
   lastVisitDaysTo?: number | string | "" | null;
   lastVisitFrom?: string | "";
@@ -1131,7 +1129,6 @@ export type ClientBasesUpdateBody = {
   description?: string | "" | null;
   filters?: {
     duplicateOnly?: boolean | "true" | "false" | "1" | "0";
-    includeMerged?: boolean | "true" | "false" | "1" | "0";
     lastVisitDaysFrom?: number | string | "" | null;
     lastVisitDaysTo?: number | string | "" | null;
     lastVisitFrom?: string | "";
@@ -1428,7 +1425,6 @@ export type ClientsListQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
   duplicateOnly?: boolean | "true" | "false" | "1" | "0";
-  includeMerged?: boolean | "true" | "false" | "1" | "0";
   lastVisitDaysFrom?: number | string | "" | null;
   lastVisitDaysTo?: number | string | "" | null;
   lastVisitFrom?: string | "";
@@ -1454,7 +1450,6 @@ export type ClientsLookupQuery = {
 export type ClientsViewsCreateBody = {
   filters?: {
     duplicateOnly?: boolean | "true" | "false" | "1" | "0";
-    includeMerged?: boolean | "true" | "false" | "1" | "0";
     lastVisitDaysFrom?: number | string | "" | null;
     lastVisitDaysTo?: number | string | "" | null;
     lastVisitFrom?: string | "";
@@ -1480,7 +1475,6 @@ export type ClientsViewsUpdateParams = {
 export type ClientsViewsUpdateBody = {
   filters?: {
     duplicateOnly?: boolean | "true" | "false" | "1" | "0";
-    includeMerged?: boolean | "true" | "false" | "1" | "0";
     lastVisitDaysFrom?: number | string | "" | null;
     lastVisitDaysTo?: number | string | "" | null;
     lastVisitFrom?: string | "";

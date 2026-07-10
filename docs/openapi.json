@@ -22624,29 +22624,6 @@
                           }
                         ]
                       },
-                      "includeMerged": {
-                        "anyOf": [
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "type": "string",
-                            "const": "true"
-                          },
-                          {
-                            "type": "string",
-                            "const": "false"
-                          },
-                          {
-                            "type": "string",
-                            "const": "1"
-                          },
-                          {
-                            "type": "string",
-                            "const": "0"
-                          }
-                        ]
-                      },
                       "lastVisitDaysFrom": {
                         "anyOf": [
                           {
@@ -23290,34 +23267,6 @@
           },
           {
             "in": "query",
-            "name": "includeMerged",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "string",
-                  "const": "true"
-                },
-                {
-                  "type": "string",
-                  "const": "false"
-                },
-                {
-                  "type": "string",
-                  "const": "1"
-                },
-                {
-                  "type": "string",
-                  "const": "0"
-                }
-              ]
-            }
-          },
-          {
-            "in": "query",
             "name": "lastVisitDaysFrom",
             "required": false,
             "schema": {
@@ -23798,29 +23747,6 @@
                     "type": "object",
                     "properties": {
                       "duplicateOnly": {
-                        "anyOf": [
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "type": "string",
-                            "const": "true"
-                          },
-                          {
-                            "type": "string",
-                            "const": "false"
-                          },
-                          {
-                            "type": "string",
-                            "const": "1"
-                          },
-                          {
-                            "type": "string",
-                            "const": "0"
-                          }
-                        ]
-                      },
-                      "includeMerged": {
                         "anyOf": [
                           {
                             "type": "boolean"
@@ -33138,34 +33064,6 @@
           },
           {
             "in": "query",
-            "name": "includeMerged",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "string",
-                  "const": "true"
-                },
-                {
-                  "type": "string",
-                  "const": "false"
-                },
-                {
-                  "type": "string",
-                  "const": "1"
-                },
-                {
-                  "type": "string",
-                  "const": "0"
-                }
-              ]
-            }
-          },
-          {
-            "in": "query",
             "name": "lastVisitDaysFrom",
             "required": false,
             "schema": {
@@ -34349,29 +34247,6 @@
                           }
                         ]
                       },
-                      "includeMerged": {
-                        "anyOf": [
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "type": "string",
-                            "const": "true"
-                          },
-                          {
-                            "type": "string",
-                            "const": "false"
-                          },
-                          {
-                            "type": "string",
-                            "const": "1"
-                          },
-                          {
-                            "type": "string",
-                            "const": "0"
-                          }
-                        ]
-                      },
                       "lastVisitDaysFrom": {
                         "anyOf": [
                           {
@@ -34787,29 +34662,6 @@
                     "type": "object",
                     "properties": {
                       "duplicateOnly": {
-                        "anyOf": [
-                          {
-                            "type": "boolean"
-                          },
-                          {
-                            "type": "string",
-                            "const": "true"
-                          },
-                          {
-                            "type": "string",
-                            "const": "false"
-                          },
-                          {
-                            "type": "string",
-                            "const": "1"
-                          },
-                          {
-                            "type": "string",
-                            "const": "0"
-                          }
-                        ]
-                      },
-                      "includeMerged": {
                         "anyOf": [
                           {
                             "type": "boolean"

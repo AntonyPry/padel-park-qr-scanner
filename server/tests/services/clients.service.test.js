@@ -54,6 +54,31 @@ test('client list SQL keeps explicit zero visit count max filter', () => {
   assert.equal(query.sql.includes('visitCount <= :visitCountMax'), true);
 });
 
+test('client list always hides merged tombstones and searches their aliases', () => {
+  const query = __testing.buildClientListSql(
+    { q: '+7 999 111-22-33', status: 'all', includeMerged: 'true' },
+    { limit: 10, offset: 0 },
+  );
+
+  assert.equal(query.sql.includes('u.mergedIntoUserId IS NULL'), true);
+  assert.equal(query.sql.includes('merged_alias.mergedIntoUserId = u.id'), true);
+  assert.equal(query.sql.includes('merged_alias.phoneNormalized LIKE :phoneQ'), true);
+  assert.equal(query.replacements.phoneQ, '%9991112233%');
+});
+
+test('trainer alias search stays name-only', () => {
+  const query = __testing.buildClientListSql(
+    { q: 'Иван', status: 'active' },
+    { limit: 10, offset: 0 },
+    false,
+    { includePhoneSearch: false },
+  );
+
+  assert.equal(query.sql.includes('merged_alias.name LIKE :q'), true);
+  assert.equal(query.sql.includes('merged_alias.phone LIKE :q'), false);
+  assert.equal(Object.hasOwn(query.replacements, 'phoneQ'), false);
+});
+
 function clientFixture(overrides = {}) {
   return {
     createdAt: '2026-06-02T10:00:00.000Z',
