@@ -537,6 +537,54 @@ test('accepts transcription job queue filters', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('accepts bounded transcription progress heartbeat', () => {
+  const { nextCalled, res } = runValidation(
+    apiSchemas.telephony.transcriptionProgress,
+    {
+      body: { message: 'Preparing audio', progress: 25, stage: 'ffmpeg_preprocess' },
+      params: { id: '42' },
+      query: {},
+    },
+  );
+  assert.equal(nextCalled, true);
+  assert.equal(res.statusCode, null);
+});
+
+test('rejects unknown transcription progress stage', () => {
+  const { nextCalled, res } = runValidation(
+    apiSchemas.telephony.transcriptionProgress,
+    {
+      body: { progress: 25, stage: 'unexpected_stage' },
+      params: { id: '42' },
+      query: {},
+    },
+  );
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 400);
+});
+
+test('accepts transcription queue-missing limit 1 and default 50 input', () => {
+  const explicit = runValidation(
+    { body: apiSchemas.telephony.transcriptionBackfillBody },
+    { body: { limit: 1 }, params: {}, query: {} },
+  );
+  const defaults = runValidation(
+    { body: apiSchemas.telephony.transcriptionBackfillBody },
+    { body: {}, params: {}, query: {} },
+  );
+  assert.equal(explicit.nextCalled, true);
+  assert.equal(defaults.nextCalled, true);
+});
+
+test('rejects transcription queue-missing limit above 200', () => {
+  const { nextCalled, res } = runValidation(
+    { body: apiSchemas.telephony.transcriptionBackfillBody },
+    { body: { limit: 201 }, params: {}, query: {} },
+  );
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 400);
+});
+
 test('accepts transcription result segments with channel contract fields', () => {
   const { nextCalled, res } = runValidation(
     apiSchemas.telephony.transcriptionResult,

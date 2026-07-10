@@ -12,18 +12,34 @@ const {
   normalizeSubscriptionResponse,
   normalizeTranscriptSegments,
   parseIncomingBeelinePayload,
+  queueMissingTranscriptionJobs,
 } = require('../../src/services/telephony.service');
 
 const originalTranscriptionJobCount = db.TelephonyTranscriptionJob.count;
 const originalTranscriptionJobFindAndCountAll = db.TelephonyTranscriptionJob.findAndCountAll;
 const originalTranscriptionJobFindAll = db.TelephonyTranscriptionJob.findAll;
 const originalTelephonyCallFindAndCountAll = db.TelephonyCall.findAndCountAll;
+const originalTelephonyCallFindAll = db.TelephonyCall.findAll;
 
 afterEach(() => {
   db.TelephonyTranscriptionJob.count = originalTranscriptionJobCount;
   db.TelephonyTranscriptionJob.findAndCountAll = originalTranscriptionJobFindAndCountAll;
   db.TelephonyTranscriptionJob.findAll = originalTranscriptionJobFindAll;
   db.TelephonyCall.findAndCountAll = originalTelephonyCallFindAndCountAll;
+  db.TelephonyCall.findAll = originalTelephonyCallFindAll;
+});
+
+test('queue-missing uses default 50 and respects explicit limit 1', async () => {
+  const seenLimits = [];
+  db.TelephonyCall.findAll = async (options) => {
+    seenLimits.push(options.limit);
+    return [];
+  };
+  const defaults = await queueMissingTranscriptionJobs({ role: 'owner' }, {});
+  const explicit = await queueMissingTranscriptionJobs({ role: 'owner' }, { limit: 1 });
+  assert.deepEqual(seenLimits, [50, 1]);
+  assert.equal(defaults.limit, 50);
+  assert.equal(explicit.limit, 1);
 });
 
 test('normalizes Beeline statistics payload into an inbound call', () => {

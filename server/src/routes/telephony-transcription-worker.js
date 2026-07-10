@@ -25,6 +25,12 @@ router.post(
   telephonyController.getTranscriptionJobAudioReference,
 );
 router.post(
+  '/telephony/transcription-jobs/:id/progress',
+  requireTranscriptionWorkerToken,
+  validate(apiSchemas.telephony.transcriptionProgress),
+  telephonyController.updateTranscriptionJobProgress,
+);
+router.post(
   '/telephony/transcription-jobs/:id/result',
   requireTranscriptionWorkerToken,
   validate(apiSchemas.telephony.transcriptionResult),

@@ -147,6 +147,14 @@ class TelephonyController {
     }
   }
 
+  async queueMissingTranscriptionJobs(req, res) {
+    try {
+      res.json(await telephonyService.queueMissingTranscriptionJobs(req.account, req.body || {}));
+    } catch (error) {
+      handleError(res, error, 'Ошибка массовой постановки транскрибаций');
+    }
+  }
+
   async listTranscriptionJobs(req, res) {
     try {
       res.json(await telephonyService.listTranscriptionJobs(req.account, req.query));
@@ -218,6 +226,14 @@ class TelephonyController {
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения аудио для транскрибации');
+    }
+  }
+
+  async updateTranscriptionJobProgress(req, res) {
+    try {
+      res.json(await telephonyService.updateTranscriptionJobProgress(req.params.id, req.body || {}));
+    } catch (error) {
+      handleError(res, error, 'Ошибка обновления прогресса транскрибации');
     }
   }
 

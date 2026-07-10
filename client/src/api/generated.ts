@@ -151,6 +151,7 @@ export const apiEndpoints = {
   "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json" },
   "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json" },
   "telephony.createTranscriptionJob": { method: "POST", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json" },
+  "telephony.queueMissingTranscriptionJobs": { method: "POST", path: "/telephony/transcription-jobs/queue-missing", responseType: "json" },
   "telephony.callTranscriptionJobs": { method: "GET", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json" },
   "telephony.transcriptionJobs": { method: "GET", path: "/telephony/transcription-jobs", responseType: "json" },
   "telephony.transcriptionJobStats": { method: "GET", path: "/telephony/transcription-jobs/stats", responseType: "json" },
@@ -158,6 +159,7 @@ export const apiEndpoints = {
   "telephony.workerTranscriptionQueue": { method: "GET", path: "/telephony/transcription-jobs/worker-queue", responseType: "json" },
   "telephony.claimTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/claim", responseType: "json" },
   "telephony.transcriptionAudioReference": { method: "POST", path: "/telephony/transcription-jobs/{id}/audio-reference", responseType: "json" },
+  "telephony.updateTranscriptionProgress": { method: "POST", path: "/telephony/transcription-jobs/{id}/progress", responseType: "json" },
   "telephony.completeTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/result", responseType: "json" },
   "telephony.failTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/fail", responseType: "json" },
   "telephony.workerRetryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/worker-retry", responseType: "json" },
@@ -1303,6 +1305,10 @@ export type TelephonyRecordingReferenceParams = {
 export type TelephonyCreateTranscriptionJobParams = {
   id: number | string;
 };
+export type TelephonyQueueMissingTranscriptionJobsBody = {
+  limit?: number;
+  [key: string]: unknown;
+};
 export type TelephonyCallTranscriptionJobsParams = {
   id: number | string;
 };
@@ -1336,6 +1342,15 @@ export type TelephonyClaimTranscriptionJobBody = {
 };
 export type TelephonyTranscriptionAudioReferenceParams = {
   id: number | string;
+};
+export type TelephonyUpdateTranscriptionProgressParams = {
+  id: number | string;
+};
+export type TelephonyUpdateTranscriptionProgressBody = {
+  message?: string;
+  progress: number;
+  stage: "downloading_audio" | "ffmpeg_preprocess" | "transcribing_admin_channel" | "transcribing_client_channel" | "transcribing_unknown_channel" | "merging_segments" | "ai_postprocessing" | "uploading_result";
+  [key: string]: unknown;
 };
 export type TelephonyCompleteTranscriptionJobParams = {
   id: number | string;
@@ -2321,6 +2336,7 @@ export interface ApiEndpointRequestMap {
   "telephony.ignoreCall": ApiEndpointRequest<TelephonyIgnoreCallParams, undefined, TelephonyIgnoreCallBody>;
   "telephony.recordingReference": ApiEndpointRequest<TelephonyRecordingReferenceParams, undefined, undefined>;
   "telephony.createTranscriptionJob": ApiEndpointRequest<TelephonyCreateTranscriptionJobParams, undefined, undefined>;
+  "telephony.queueMissingTranscriptionJobs": ApiEndpointRequest<undefined, undefined, TelephonyQueueMissingTranscriptionJobsBody>;
   "telephony.callTranscriptionJobs": ApiEndpointRequest<TelephonyCallTranscriptionJobsParams, TelephonyCallTranscriptionJobsQuery, undefined>;
   "telephony.transcriptionJobs": ApiEndpointRequest<undefined, TelephonyTranscriptionJobsQuery, undefined>;
   "telephony.transcriptionJobStats": ApiEndpointRequest<undefined, undefined, undefined>;
@@ -2328,6 +2344,7 @@ export interface ApiEndpointRequestMap {
   "telephony.workerTranscriptionQueue": ApiEndpointRequest<undefined, TelephonyWorkerTranscriptionQueueQuery, undefined>;
   "telephony.claimTranscriptionJob": ApiEndpointRequest<undefined, undefined, TelephonyClaimTranscriptionJobBody>;
   "telephony.transcriptionAudioReference": ApiEndpointRequest<TelephonyTranscriptionAudioReferenceParams, undefined, undefined>;
+  "telephony.updateTranscriptionProgress": ApiEndpointRequest<TelephonyUpdateTranscriptionProgressParams, undefined, TelephonyUpdateTranscriptionProgressBody>;
   "telephony.completeTranscriptionJob": ApiEndpointRequest<TelephonyCompleteTranscriptionJobParams, undefined, TelephonyCompleteTranscriptionJobBody>;
   "telephony.failTranscriptionJob": ApiEndpointRequest<TelephonyFailTranscriptionJobParams, undefined, TelephonyFailTranscriptionJobBody>;
   "telephony.workerRetryTranscriptionJob": ApiEndpointRequest<TelephonyWorkerRetryTranscriptionJobParams, undefined, undefined>;

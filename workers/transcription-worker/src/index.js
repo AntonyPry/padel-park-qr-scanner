@@ -46,6 +46,35 @@ function truncateErrorMessage(error) {
   return message.slice(0, 4000);
 }
 
+const PROGRESS_PERCENT = {
+  downloading_audio: 10,
+  ffmpeg_preprocess: 25,
+  transcribing_admin_channel: 45,
+  transcribing_client_channel: 65,
+  transcribing_unknown_channel: 55,
+  merging_segments: 80,
+  ai_postprocessing: 90,
+  uploading_result: 97,
+};
+
+function progressStageForChannel(channelName, config) {
+  if (channelName === config.channelAdmin) return 'transcribing_admin_channel';
+  if (channelName === config.channelClient) return 'transcribing_client_channel';
+  return 'transcribing_unknown_channel';
+}
+
+async function reportProgress(crmClient, job, stage, message, logger) {
+  try {
+    await crmClient.updateProgress(job.id, stage, PROGRESS_PERCENT[stage], message);
+  } catch (error) {
+    logger.warn('CRM progress heartbeat failed', {
+      error: error.message,
+      jobId: job.id,
+      stage,
+    });
+  }
+}
+
 async function loadQualityConfig(config, logger) {
   const glossary = await loadDomainGlossary(config.domainGlossaryPath);
   config.domainGlossary = glossary;
@@ -85,12 +114,24 @@ async function downloadJobAudio(crmClient, job, tempDir, config, logger) {
   }
 }
 
-async function processJob(crmClient, job, config, logger) {
+async function processJob(crmClient, job, config, logger, dependencies = {}) {
+  const deps = {
+    buildTranscriptResult,
+    createTempDir,
+    downloadJobAudio,
+    ensureWhisperModel,
+    postprocessTranscriptWithLlm,
+    prepareAudio,
+    probeAudio,
+    transcribePreparedChannel,
+    ...dependencies,
+  };
   let tempDir = null;
 
   try {
-    tempDir = await createTempDir(config, job);
-    const downloaded = await downloadJobAudio(crmClient, job, tempDir, config, logger);
+    tempDir = await deps.createTempDir(config, job);
+    await reportProgress(crmClient, job, 'downloading_audio', 'Downloading recording', logger);
+    const downloaded = await deps.downloadJobAudio(crmClient, job, tempDir, config, logger);
     logger.info('Downloaded call recording', {
       bytes: downloaded.bytes,
       callId: getCallId(job),
@@ -98,7 +139,8 @@ async function processJob(crmClient, job, config, logger) {
       jobId: job.id,
     });
 
-    const probe = await probeAudio(downloaded.filePath, runCommand, config);
+    await reportProgress(crmClient, job, 'ffmpeg_preprocess', 'Preparing audio', logger);
+    const probe = await deps.probeAudio(downloaded.filePath, runCommand, config);
     logger.info('Audio probe completed', {
       channelLayout: probe.channelLayout,
       channels: probe.channels,
@@ -107,7 +149,7 @@ async function processJob(crmClient, job, config, logger) {
       jobId: job.id,
     });
 
-    const preparedAudio = await prepareAudio(
+    const preparedAudio = await deps.prepareAudio(
       downloaded.filePath,
       probe,
       tempDir,
@@ -121,7 +163,7 @@ async function processJob(crmClient, job, config, logger) {
     }
 
     if (config.asrBackend === 'whisper_cpp') {
-      await ensureWhisperModel(config, runCommand, logger);
+      await deps.ensureWhisperModel(config, runCommand, logger);
     }
 
     const promptContext = buildCallPromptContext(job);
@@ -129,14 +171,17 @@ async function processJob(crmClient, job, config, logger) {
 
     const channelResults = [];
     for (const channel of preparedAudio.channels) {
+      const channelStage = progressStageForChannel(channel.name, config);
+      await reportProgress(crmClient, job, channelStage, 'Transcribing channel', logger);
       channelResults.push(
-        await transcribePreparedChannel(channel, probe, tempDir, config, logger, {
+        await deps.transcribePreparedChannel(channel, probe, tempDir, config, logger, {
           initialPrompt: jobInitialPrompt,
         }),
       );
     }
 
-    let result = buildTranscriptResult(channelResults, probe, config, {
+    await reportProgress(crmClient, job, 'merging_segments', 'Merging transcript segments', logger);
+    let result = deps.buildTranscriptResult(channelResults, probe, config, {
       audioDeleted: config.deleteAudioAfter,
       callId: getCallId(job),
       jobId: job.id,
@@ -168,8 +213,10 @@ async function processJob(crmClient, job, config, logger) {
         channelResults.map((item) => [item.channel, item.durationMs]),
       ),
     });
-    result = await postprocessTranscriptWithLlm(result, config, logger);
+    await reportProgress(crmClient, job, 'ai_postprocessing', 'Running AI postprocessing', logger);
+    result = await deps.postprocessTranscriptWithLlm(result, config, logger);
 
+    await reportProgress(crmClient, job, 'uploading_result', 'Submitting transcript to CRM', logger);
     await crmClient.completeJob(job.id, result);
     logger.info('Submitted transcription result to CRM', {
       callId: getCallId(job),
@@ -398,5 +445,7 @@ if (require.main === module) {
 module.exports = {
   claimAndProcessOne,
   processJob,
+  progressStageForChannel,
+  reportProgress,
   runSample,
 };

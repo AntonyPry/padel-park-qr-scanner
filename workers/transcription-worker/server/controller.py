@@ -31,6 +31,18 @@ def _elapsed_ms(started_at: str | None) -> int | None:
     return int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
 
+CRM_PROGRESS = {
+    "downloading_audio": 10,
+    "ffmpeg_preprocess": 25,
+    "transcribing_admin_channel": 45,
+    "transcribing_client_channel": 65,
+    "transcribing_unknown_channel": 55,
+    "merging_segments": 80,
+    "ai_postprocessing": 90,
+    "uploading_result": 97,
+}
+
+
 class DashboardError(RuntimeError):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
@@ -225,6 +237,14 @@ class WorkerController:
             update["processing_time_ms"] = _elapsed_ms(job.get("startedAt"))
 
         self.store.update_job(local_job_id, **update)
+        if stage in CRM_PROGRESS:
+            job = self.store.get_job(local_job_id) or {}
+            crm_job_id = job.get("crmJobId")
+            if crm_job_id:
+                try:
+                    self.crm.progress_job(crm_job_id, stage, CRM_PROGRESS[stage], message)
+                except (CrmApiError, RuntimeError) as error:
+                    safe_details["crmProgressError"] = str(error)
         payload = self.store.add_event(
             stage=stage,
             message=message,

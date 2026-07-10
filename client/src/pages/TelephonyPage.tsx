@@ -82,6 +82,7 @@ import {
   getTelephonyStats,
   ignoreTelephonyCall,
   linkTelephonyCallClient,
+  queueMissingTelephonyTranscriptionJobs,
   refreshTelephonyRecordingReference,
   reprocessTelephonyRawEvent,
   retryTelephonyTranscriptionJob,
@@ -307,6 +308,44 @@ function getTranscriptionStatusVariant(status?: TranscriptionViewState) {
 
 function isTranscriptionPending(status?: TelephonyTranscriptionStatus) {
   return status === 'queued' || status === 'processing';
+}
+
+const TRANSCRIPTION_STAGE_LABELS: Record<string, string> = {
+  queued: 'Ожидает worker',
+  claimed: 'Worker начал обработку',
+  downloading_audio: 'Скачиваем запись',
+  ffmpeg_preprocess: 'Подготавливаем аудио',
+  transcribing_admin_channel: 'Распознаем администратора',
+  transcribing_client_channel: 'Распознаем клиента',
+  transcribing_unknown_channel: 'Распознаем запись',
+  merging_segments: 'Собираем диалог',
+  ai_postprocessing: 'AI-редактура',
+  uploading_result: 'Сохраняем результат',
+};
+
+function TranscriptionProgress({ transcription }: { transcription?: TelephonyCall['transcription'] }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  if (!transcription || !isTranscriptionPending(transcription.status)) return null;
+  const progress = transcription.metadata?.progress;
+  const percent = Math.min(Math.max(Number(progress?.percent) || 0, 0), 100);
+  const updatedAt = progress?.updatedAt ? new Date(progress.updatedAt).getTime() : 0;
+  const stale = transcription.status === 'processing' && (!updatedAt || now - updatedAt > 5 * 60 * 1000);
+  return (
+    <div className="mt-2 min-w-36 space-y-1" data-testid="transcription-progress">
+      <div className="h-1.5 overflow-hidden rounded-full bg-muted-foreground/20">
+        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
+      </div>
+      <div className={stale ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+        {stale
+          ? 'Обработка зависла — нет свежего статуса'
+          : `${TRANSCRIPTION_STAGE_LABELS[progress?.stage || 'queued'] || progress?.message || 'Обработка'} · ${percent}%`}
+      </div>
+    </div>
+  );
 }
 
 function getTranscriptionQualityWarnings(
@@ -720,6 +759,14 @@ export default function TelephonyPage() {
       invalidate();
     },
   });
+  const queueMissingTranscriptionsMutation = useMutation({
+    mutationFn: () => queueMissingTelephonyTranscriptionJobs(50),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['telephony'] });
+      toast.success(`Поставлено в очередь: ${result.queued}${result.hasMore ? '. Есть еще звонки — повторите батч.' : ''}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
 
   const recordingReferenceMutation = useMutation({
     mutationFn: refreshTelephonyRecordingReference,
@@ -1070,9 +1117,7 @@ export default function TelephonyPage() {
     if (viewState === 'queued' || viewState === 'processing') {
       return (
         <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-          {viewState === 'queued'
-            ? 'Задача ожидает свободный worker.'
-            : 'Worker обрабатывает запись.'}
+          <TranscriptionProgress transcription={transcription} />
           {isFetching && <span className="ml-2">Обновляем статус...</span>}
         </div>
       );
@@ -1263,6 +1308,20 @@ export default function TelephonyPage() {
               Проверить XSI
             </Button>
           </div>
+      )}
+      {canWork && (
+        <div className="flex justify-end">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => queueMissingTranscriptionsMutation.mutate()}
+            disabled={queueMissingTranscriptionsMutation.isPending}
+            title="Поставить ограниченный батч до 50 звонков с записью без задач транскрибации"
+          >
+            <FileText className="h-4 w-4" />
+            В очередь без транскрипции
+          </Button>
+        </div>
       )}
 
       <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
@@ -1955,6 +2014,7 @@ export default function TelephonyPage() {
                       <Badge variant={getTranscriptionStatusVariant(getTranscriptionViewState(call))}>
                         {TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}
                       </Badge>
+                      <TranscriptionProgress transcription={call.transcription} />
                       {call.transcription?.status === 'failed' && call.transcription.errorMessage && (
                         <div className="line-clamp-2 text-xs text-destructive">
                           {call.transcription.errorMessage}

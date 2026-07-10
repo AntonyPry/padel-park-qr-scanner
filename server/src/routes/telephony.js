@@ -76,6 +76,12 @@ router.post(
   validate(apiSchemas.telephony.withId),
   telephonyController.createTranscriptionJob,
 );
+router.post(
+  '/telephony/transcription-jobs/queue-missing',
+  workTelephony,
+  validate({ body: apiSchemas.telephony.transcriptionBackfillBody }),
+  telephonyController.queueMissingTranscriptionJobs,
+);
 router.get(
   '/telephony/calls/:id/transcription-jobs',
   workTelephony,
