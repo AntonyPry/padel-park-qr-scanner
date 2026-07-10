@@ -1728,6 +1728,21 @@ function scopedTranscriptionJobInclude(actor, options = {}) {
   ];
 }
 
+const TRANSCRIPTION_JOB_LIST_ATTRIBUTES = [
+  'attemptCount',
+  'claimedAt',
+  'completedAt',
+  'createdAt',
+  'errorMessage',
+  'failedAt',
+  'id',
+  'language',
+  'metadata',
+  'status',
+  'telephonyCallId',
+  'updatedAt',
+];
+
 async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
   const ids = [...new Set(callIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
   const latest = new Map();
@@ -2879,10 +2894,11 @@ function normalizeTranscriptionJobQuery(query = {}) {
 async function listTranscriptionJobs(actor, query = {}) {
   const { page, pageSize, where } = normalizeTranscriptionJobQuery(query);
   const { count, rows } = await db.TelephonyTranscriptionJob.findAndCountAll({
+    attributes: TRANSCRIPTION_JOB_LIST_ATTRIBUTES,
     distinct: true,
     include: scopedTranscriptionJobInclude(actor, {
       includeCallRelations: true,
-      includeSegments: true,
+      includeSegments: false,
     }),
     limit: pageSize,
     offset: (page - 1) * pageSize,
@@ -2894,7 +2910,7 @@ async function listTranscriptionJobs(actor, query = {}) {
   });
 
   return {
-    items: rows.map((row) => mapUserTranscriptionJob(row, { includeSegments: true })),
+    items: rows.map((row) => mapUserTranscriptionJob(row)),
     page,
     pageSize,
     total: count,

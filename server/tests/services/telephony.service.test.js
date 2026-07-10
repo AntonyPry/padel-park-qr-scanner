@@ -533,7 +533,7 @@ test('hides recording and transcription details from viewer call payloads', () =
   assert.equal(mapped.transcription, undefined);
 });
 
-test('lists transcription jobs with chronological transcript text from included segments', async () => {
+test('lists transcription jobs with a lightweight projection and no transcript payloads', async () => {
   let capturedOptions = null;
   db.TelephonyTranscriptionJob.findAndCountAll = async (options) => {
     capturedOptions = options;
@@ -568,39 +568,9 @@ test('lists transcription jobs with chronological transcript text from included 
               createdAt: '2026-06-30T09:01:00.000Z',
               id: 77,
               language: 'ru',
-              segments: [
-                {
-                  endMs: 96000,
-                  id: 3,
-                  sortOrder: 0,
-                  speaker: 'client',
-                  startMs: 90000,
-                  text: 'Поздняя реплика клиента.',
-                },
-                {
-                  endMs: 12000,
-                  id: 1,
-                  sortOrder: 1,
-                  speaker: 'administrator',
-                  startMs: 0,
-                  text: 'Первая реплика администратора.',
-                },
-                {
-                  endMs: 42000,
-                  id: 2,
-                  sortOrder: 2,
-                  speaker: 'unknown',
-                  startMs: 30000,
-                  text: 'Средняя реплика.',
-                },
-              ],
+              metadata: { progress: { percent: 65, stage: 'asr_left' } },
               status: 'completed',
               telephonyCallId: 12,
-              transcriptText: [
-                'Поздняя реплика клиента.',
-                'Средняя реплика.',
-                'Первая реплика администратора.',
-              ].join('\n'),
               updatedAt: '2026-06-30T09:05:00.000Z',
             };
           },
@@ -612,23 +582,15 @@ test('lists transcription jobs with chronological transcript text from included 
   const result = await listTranscriptionJobs({ role: 'owner' }, { status: 'all' });
 
   assert.ok(capturedOptions);
-  assert.ok(capturedOptions.include.some((include) => include.as === 'segments'));
-  assert.deepEqual(
-    result.items[0].segments.map((segment) => segment.text),
-    [
-      'Первая реплика администратора.',
-      'Средняя реплика.',
-      'Поздняя реплика клиента.',
-    ],
-  );
-  assert.equal(
-    result.items[0].transcriptText,
-    [
-      'Первая реплика администратора.',
-      'Средняя реплика.',
-      'Поздняя реплика клиента.',
-    ].join('\n'),
-  );
+  assert.ok(!capturedOptions.include.some((include) => include.as === 'segments'));
+  assert.ok(!capturedOptions.attributes.includes('rawAsrJson'));
+  assert.ok(!capturedOptions.attributes.includes('rawTranscriptText'));
+  assert.ok(!capturedOptions.attributes.includes('transcriptText'));
+  assert.ok(!capturedOptions.attributes.includes('aiTranscriptSegments'));
+  assert.ok(!capturedOptions.attributes.includes('aiTranscriptText'));
+  assert.equal(result.items[0].metadata.progress.percent, 65);
+  assert.equal(result.items[0].transcriptText, undefined);
+  assert.equal(result.items[0].segments, undefined);
 });
 
 test('serializes worker queue transcript text from included segments', async () => {
