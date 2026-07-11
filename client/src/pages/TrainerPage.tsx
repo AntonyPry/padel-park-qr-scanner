@@ -444,6 +444,7 @@ export default function TrainerPage() {
     const requestId = detailsRequestIdRef.current + 1;
     detailsRequestIdRef.current = requestId;
 
+    const isBackgroundRefresh = details?.client.id === clientId;
     setDetailsLoading(true);
     setDetailsError(null);
     setDetails((current) =>
@@ -463,10 +464,12 @@ export default function TrainerPage() {
         skillMap: data.skillMap || [],
         trainingNotes: data.trainingNotes || [],
       });
-      setActivePlan(null);
-      setEditingNote(null);
-      setForm(getEmptyTrainingForm());
-      if (window.innerWidth < 1024) {
+      if (!isBackgroundRefresh) {
+        setActivePlan(null);
+        setEditingNote(null);
+        setForm(getEmptyTrainingForm());
+      }
+      if (!isBackgroundRefresh && window.innerWidth < 1024) {
         window.setTimeout(() => {
           if (requestId === detailsRequestIdRef.current) {
             detailsPanelRef.current?.scrollIntoView({
@@ -484,7 +487,7 @@ export default function TrainerPage() {
         setDetailsLoading(false);
       }
     }
-  }, [setForm]);
+  }, [details?.client.id, setForm]);
 
   const refreshSkillMap = useCallback(async (clientId: number) => {
     const response = await apiFetch(`/api/clients/${clientId}/skill-map`);
@@ -1188,6 +1191,11 @@ export default function TrainerPage() {
                         {details?.client.name}
                       </h2>
                       {latestNote && <Badge>{latestNote.level}</Badge>}
+                      {detailsLoading && (
+                        <span className="text-xs text-muted-foreground" role="status">
+                          Обновляем...
+                        </span>
+                      )}
                     </div>
                     <div className="mt-2 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
                       <span className="flex items-center gap-1.5">
