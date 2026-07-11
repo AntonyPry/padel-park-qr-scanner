@@ -13,6 +13,7 @@ import {
   ListChecks,
   ClipboardCheck,
   ClipboardList,
+  Boxes,
   LogOut,
   ListTree,
   PhoneCall,
@@ -31,6 +32,7 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
@@ -41,14 +43,19 @@ import { Link, useLocation } from 'react-router-dom';
 import { ROUTE_ACCESS, hasRoleAccess } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 import { getAccountRoleLabel } from '@/lib/roles';
+import type { AccountRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './theme-toggle';
 
 type NavItem = {
   title: string;
-  url: string;
+  url?: string;
   icon: LucideIcon;
   activeUrls?: string[];
+  badge?: string;
+  disabled?: boolean;
+  roles?: AccountRole[];
+  tooltip?: string;
 };
 
 type NavSection = {
@@ -192,6 +199,14 @@ const navigationSections: NavSection[] = [
         icon: Database,
       },
       {
+        title: 'Инвентаризация',
+        icon: Boxes,
+        badge: 'Скоро',
+        disabled: true,
+        roles: ROUTE_ACCESS['/admin/catalog'],
+        tooltip: 'Раздел в разработке',
+      },
+      {
         title: 'Справочники CRM',
         url: '/admin/references',
         icon: ListTree,
@@ -201,6 +216,8 @@ const navigationSections: NavSection[] = [
 ];
 
 function isRouteActive(currentPath: string, item: NavItem) {
+  if (item.disabled || !item.url) return false;
+
   const urls = item.activeUrls || [item.url];
 
   return urls.some(
@@ -224,7 +241,10 @@ export function AppSidebar() {
     .map((section) => ({
       ...section,
       items: section.items.filter((item) =>
-        hasRoleAccess(account?.role, ROUTE_ACCESS[item.url] || []),
+        hasRoleAccess(
+          account?.role,
+          item.roles || (item.url ? ROUTE_ACCESS[item.url] : []) || [],
+        ),
       ),
     }))
     .filter((section) => section.items.length > 0);
@@ -330,6 +350,30 @@ export function AppSidebar() {
                     {section.items.map((item) => {
                       const isActive = isRouteActive(location.pathname, item);
 
+                      if (item.disabled) {
+                        return (
+                          <SidebarMenuItem
+                            key={item.title}
+                            title={item.tooltip}
+                          >
+                            <SidebarMenuButton
+                              aria-disabled="true"
+                              className="cursor-not-allowed pr-14 text-sidebar-foreground/55 hover:bg-transparent hover:text-sidebar-foreground/55 disabled:pointer-events-none disabled:opacity-100"
+                              disabled
+                              tabIndex={-1}
+                            >
+                              <item.icon />
+                              <span>{item.title}</span>
+                            </SidebarMenuButton>
+                            {item.badge ? (
+                              <SidebarMenuBadge className="bg-sidebar-accent/70 text-[10px] text-sidebar-foreground/60">
+                                {item.badge}
+                              </SidebarMenuBadge>
+                            ) : null}
+                          </SidebarMenuItem>
+                        );
+                      }
+
                       return (
                         <SidebarMenuItem key={item.url}>
                           <SidebarMenuButton
@@ -337,7 +381,7 @@ export function AppSidebar() {
                             data-sidebar-nav-item="true"
                             isActive={isActive}
                           >
-                            <Link to={item.url}>
+                            <Link to={item.url!}>
                               <item.icon />
                               <span>{item.title}</span>
                             </Link>
