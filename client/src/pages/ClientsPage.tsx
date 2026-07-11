@@ -1386,6 +1386,7 @@ export default function ClientsPage() {
 
   const [details, setDetails] = useState<ClientDetails | null>(null);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const detailsRef = useRef<ClientDetails | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState<Client | null>(null);
   const [duplicateWarning, setDuplicateWarning] = useState<Client | null>(null);
@@ -1513,6 +1514,9 @@ export default function ClientsPage() {
   });
   const form = clientForm.watch();
   const callTaskForm = clientCallTaskForm.watch();
+  useEffect(() => {
+    detailsRef.current = details;
+  }, [details]);
   const setForm = (nextForm: ClientFormState) => {
     clientForm.reset(nextForm, {
       keepDirty: true,
@@ -2021,6 +2025,11 @@ export default function ClientsPage() {
   const loadDetails = useCallback(async (clientId: number) => {
     const requestId = detailsRequestIdRef.current + 1;
     detailsRequestIdRef.current = requestId;
+    const isBackgroundRefresh = detailsRef.current?.client.id === clientId;
+    if (!isBackgroundRefresh) {
+      detailsRef.current = null;
+      setDetails(null);
+    }
     setDetailsLoading(true);
     try {
       const res = await apiFetch(`/api/clients/${clientId}`);
@@ -2032,7 +2041,7 @@ export default function ClientsPage() {
 
       const data = (await res.json()) as ClientDetails;
       if (requestId !== detailsRequestIdRef.current) return;
-      setDetails({
+      const nextDetails = {
         ...data,
         activeCallTasks: data.activeCallTasks || [],
         bookingSeries: data.bookingSeries || [],
@@ -2062,9 +2071,13 @@ export default function ClientsPage() {
         skillMap: data.skillMap || [],
         trainingNotes: data.trainingNotes || [],
         visits: data.visits || [],
-      });
-      setTrainingForm({ ...EMPTY_TRAINING_FORM, trainedAt: getTodayDate() });
-      setSelectedMergeIds([]);
+      };
+      detailsRef.current = nextDetails;
+      setDetails(nextDetails);
+      if (!isBackgroundRefresh) {
+        setTrainingForm({ ...EMPTY_TRAINING_FORM, trainedAt: getTodayDate() });
+        setSelectedMergeIds([]);
+      }
     } finally {
       if (requestId === detailsRequestIdRef.current) {
         setDetailsLoading(false);
@@ -2075,6 +2088,7 @@ export default function ClientsPage() {
   const closeDetails = () => {
     detailsRequestIdRef.current += 1;
     setDetailsLoading(false);
+    detailsRef.current = null;
     setDetails(null);
     setSelectedMergeIds([]);
     setRedemptionDialogSubscription(null);
@@ -4314,7 +4328,10 @@ export default function ClientsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(details)} onOpenChange={(open) => !open && closeDetails()}>
+      <Dialog
+        open={Boolean(details) || detailsLoading}
+        onOpenChange={(open) => !open && closeDetails()}
+      >
         <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-3 sm:max-w-[980px] sm:p-4">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 pr-8">
@@ -4326,13 +4343,13 @@ export default function ClientsPage() {
             </DialogDescription>
           </DialogHeader>
 
-          {detailsLoading && (
+          {detailsLoading && !details && (
             <div className="py-10 text-center text-sm text-muted-foreground">
               Загрузка...
             </div>
           )}
 
-          {details && !detailsLoading && (
+          {details && (
             <div className="space-y-5">
               <div className="sticky top-0 z-20 -mx-3 flex flex-col gap-2 border-b bg-background/95 px-3 py-2 backdrop-blur sm:-mx-4 sm:flex-row sm:items-center sm:justify-between sm:px-4">
                 <div className="min-w-0">
@@ -4350,6 +4367,11 @@ export default function ClientsPage() {
                       <Badge variant="outline">
                         Уровень {details.client.training.latestLevel}
                       </Badge>
+                    )}
+                    {detailsLoading && (
+                      <span className="text-xs text-muted-foreground" role="status">
+                        Обновляем...
+                      </span>
                     )}
                   </div>
                 </div>
