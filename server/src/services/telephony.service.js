@@ -1749,6 +1749,7 @@ async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
   if (ids.length === 0) return latest;
 
   const jobs = await db.TelephonyTranscriptionJob.findAll({
+    ...(options.includeSegments ? {} : { attributes: TRANSCRIPTION_JOB_LIST_ATTRIBUTES }),
     include: transcriptionJobInclude(options),
     order: [
       ['createdAt', 'DESC'],

@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { afterEach, test } = require('node:test');
 const db = require('../../models');
 const {
+  getCall,
   getWorkerTranscriptionQueue,
   listCalls,
   listTranscriptionJobs,
@@ -161,9 +162,11 @@ test('normalizes Beeline recording payload', () => {
   assert.equal(normalized.startedAt.toISOString(), '2026-05-28T05:37:31.443Z');
 });
 
-test('lists telephony calls on later pages without changing total', async () => {
+test('lists telephony calls on later pages with lightweight transcription jobs', async () => {
   let capturedQuery = null;
+  let capturedTranscriptionQuery = null;
   const rows = Array.from({ length: 20 }, (_, index) => ({
+    id: 100 + index,
     toJSON: () => ({
       callStatus: 'answered',
       client: null,
@@ -187,7 +190,19 @@ test('lists telephony calls on later pages without changing total', async () => 
     capturedQuery = query;
     return { count: 63, rows };
   };
-  db.TelephonyTranscriptionJob.findAll = async () => [];
+  db.TelephonyTranscriptionJob.findAll = async (query) => {
+    capturedTranscriptionQuery = query;
+    return [
+      {
+        attemptCount: 2,
+        errorMessage: 'ASR unavailable',
+        id: 901,
+        metadata: { progress: { percent: 65, stage: 'asr_left' } },
+        status: 'failed',
+        telephonyCallId: 100,
+      },
+    ];
+  };
 
   const result = await listCalls({ role: 'owner' }, {
     page: '2',
@@ -201,6 +216,75 @@ test('lists telephony calls on later pages without changing total', async () => 
   assert.equal(result.pageSize, 20);
   assert.equal(result.total, 63);
   assert.equal(result.items.length, 20);
+  assert.ok(capturedTranscriptionQuery);
+  assert.deepEqual(capturedTranscriptionQuery.attributes, [
+    'attemptCount',
+    'claimedAt',
+    'completedAt',
+    'createdAt',
+    'errorMessage',
+    'failedAt',
+    'id',
+    'language',
+    'metadata',
+    'status',
+    'telephonyCallId',
+    'updatedAt',
+  ]);
+  for (const attribute of [
+    'rawAsrJson',
+    'rawTranscriptText',
+    'transcriptText',
+    'aiTranscriptSegments',
+    'aiTranscriptText',
+  ]) {
+    assert.ok(!capturedTranscriptionQuery.attributes.includes(attribute));
+  }
+  assert.equal(result.items[0].transcription.id, 901);
+  assert.equal(result.items[0].transcription.status, 'failed');
+  assert.equal(result.items[0].transcription.metadata.progress.percent, 65);
+  assert.equal(result.items[0].transcription.errorMessage, 'ASR unavailable');
+});
+
+test('loads full transcription payload and segments for call detail', async () => {
+  let capturedTranscriptionQuery = null;
+  db.TelephonyCall.findAndCountAll = originalTelephonyCallFindAndCountAll;
+  const originalFindOne = db.TelephonyCall.findOne;
+  db.TelephonyCall.findOne = async () => ({
+    id: 105,
+    toJSON() {
+      return { id: 105, callStatus: 'completed', processingStatus: 'processed' };
+    },
+  });
+  db.TelephonyTranscriptionJob.findAll = async (query) => {
+    capturedTranscriptionQuery = query;
+    return [
+      {
+        aiTranscriptSegments: [{ editedText: 'Полный AI-текст', segmentId: 's1' }],
+        aiTranscriptText: 'Полный AI-текст',
+        id: 902,
+        rawTranscriptText: 'Полный raw-текст',
+        segments: [
+          { id: 1, sortOrder: 0, speaker: 'administrator', startMs: 0, text: 'Полный текст' },
+        ],
+        status: 'completed',
+        telephonyCallId: 105,
+        transcriptText: 'Полный текст',
+      },
+    ];
+  };
+
+  try {
+    const result = await getCall({ role: 'owner' }, 105);
+    assert.equal(capturedTranscriptionQuery.attributes, undefined);
+    assert.ok(capturedTranscriptionQuery.include.some((include) => include.as === 'segments'));
+    assert.equal(result.transcription.transcriptText, 'Полный текст');
+    assert.equal(result.transcription.rawTranscriptText, 'Полный raw-текст');
+    assert.equal(result.transcription.aiTranscriptText, 'Полный AI-текст');
+    assert.equal(result.transcription.segments[0].text, 'Полный текст');
+  } finally {
+    db.TelephonyCall.findOne = originalFindOne;
+  }
 });
 
 test('normalizes transcription result segments for CRM transcript view', () => {
