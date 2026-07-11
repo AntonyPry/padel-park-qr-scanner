@@ -66,13 +66,17 @@ function CompactStat({
   icon,
   label,
   value,
+  change,
+  title,
 }: {
   icon: ReactNode;
   label: string;
   value: ReactNode;
+  change?: { absolute: number; percent: number | null };
+  title?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-lg bg-background/70 px-3 py-2">
+    <div className="min-w-0 rounded-lg bg-background/70 px-3 py-2" title={title}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon}
         <span className="truncate">{label}</span>
@@ -80,6 +84,13 @@ function CompactStat({
       <div className="mt-1 truncate text-lg font-semibold">
         <AnimatedMetricValue value={value} />
       </div>
+      {change && (
+        <div className={cn('text-[11px]', change.absolute > 0 ? 'text-emerald-600' : change.absolute < 0 ? 'text-red-600' : 'text-muted-foreground')}>
+          {change.absolute > 0 ? '+' : ''}{change.absolute.toFixed(1).replace('.0', '')}
+          {change.percent !== null ? ` (${change.percent > 0 ? '+' : ''}${change.percent.toFixed(1)}%)` : ' (нет базы)'}
+          {' '}к пред. периоду
+        </div>
+      )}
     </div>
   );
 }
@@ -252,30 +263,29 @@ export default function VisitsAnalyticsPage() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
         {data && (
-          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
             <CompactStat
               icon={<Key className="h-3.5 w-3.5 text-primary" />}
               label="Всего визитов"
               value={data.totalVisits}
+              change={data.changes.totalVisits}
             />
             <CompactStat
               icon={<Users className="h-3.5 w-3.5 text-sky-500" />}
               label="Уникальных гостей"
               value={data.uniqueGuests}
+              change={data.changes.uniqueGuests}
             />
+            <CompactStat icon={<Users className="h-3.5 w-3.5 text-violet-500" />} label="Новые гости" value={data.newGuests} change={data.changes.newGuests} title="Клиенты, чей самый первый визит за всю историю попал в выбранный период" />
+            <CompactStat icon={<Users className="h-3.5 w-3.5 text-cyan-500" />} label="Вернувшиеся гости" value={data.returningGuests} change={data.changes.returningGuests} title="Клиенты с визитом в периоде, чей первый визит был раньше периода" />
+            <CompactStat icon={<TrendingUp className="h-3.5 w-3.5 text-indigo-500" />} label="Повторные визиты" value={data.repeatVisits} change={data.changes.repeatVisits} title="Все визиты периода сверх первого визита каждого уникального гостя в этом периоде" />
+            <CompactStat icon={<Target className="h-3.5 w-3.5 text-orange-500" />} label="Визитов на гостя" value={data.averageVisitsPerGuest.toFixed(2)} change={data.changes.averageVisitsPerGuest} title="Всего визитов / уникальные гости" />
             <CompactStat
               icon={<TrendingUp className="h-3.5 w-3.5 text-emerald-500" />}
-              label="Возвращаемость"
-              value={`${
-                data.uniqueGuests > 0
-                  ? Math.round((data.totalVisits / data.uniqueGuests - 1) * 100)
-                  : 0
-              }%`}
-            />
-            <CompactStat
-              icon={<Target className="h-3.5 w-3.5 text-amber-500" />}
-              label="Топ источник"
-              value={aggregatedSources.length > 0 ? aggregatedSources[0].name : '-'}
+              label="Повтор за 30 дней"
+              value={`${data.repeatRate30.toFixed(1)}%`}
+              change={data.changes.repeatRate30}
+              title={`Клиенты со вторым визитом не позднее 30 дней после первого / клиенты когорты с завершённым 30-дневным окном. Основание: ${data.repeatRate30RepeatedGuests} из ${data.repeatRate30EligibleGuests}.`}
             />
           </div>
         )}
@@ -343,7 +353,7 @@ export default function VisitsAnalyticsPage() {
               colors={SOURCE_CHART_COLORS}
               emptyText="Нет данных"
               items={aggregatedSources}
-              title="Откуда о нас узнают"
+              title="Визиты клиентов по источникам"
             />
 
             <DonutChartCard

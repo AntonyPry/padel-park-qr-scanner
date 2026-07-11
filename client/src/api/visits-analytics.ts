@@ -14,6 +14,19 @@ export interface TopGuest {
 export interface VisitsAnalytics {
   totalVisits: number;
   uniqueGuests: number;
+  newGuests: number;
+  returningGuests: number;
+  repeatVisits: number;
+  averageVisitsPerGuest: number;
+  repeatRate30: number;
+  repeatRate30EligibleGuests: number;
+  repeatRate30RepeatedGuests: number;
+  changes: Record<string, { absolute: number; percent: number | null }>;
+  previousPeriod: {
+    from: string;
+    to: string;
+    metrics: Pick<VisitsAnalytics, 'totalVisits' | 'uniqueGuests' | 'newGuests' | 'returningGuests' | 'repeatVisits' | 'averageVisitsPerGuest' | 'repeatRate30'>;
+  };
   sources: ChartDatum[];
   categories: ChartDatum[];
   topGuests: TopGuest[];
