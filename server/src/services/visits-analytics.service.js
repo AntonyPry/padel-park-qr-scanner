@@ -1,75 +1,84 @@
 const XLSX = require('xlsx');
 const db = require('../../models');
 
+const CLUB_TIME_ZONE = 'Europe/Moscow';
+const CLUB_UTC_OFFSET = '+03:00';
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function endOfDay(value) {
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
-    ? new Date(`${value}T00:00:00`)
-    : new Date(value);
-  date.setHours(23, 59, 59, 999);
-  return date;
+function parseDateOnly(value) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  return match ? { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) } : null;
 }
 
-function startOfDay(value) {
-  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(value))
-    ? new Date(`${value}T00:00:00`)
-    : new Date(value);
-  date.setHours(0, 0, 0, 0);
-  return date;
+function clubDateToUtc(value, end = false) {
+  const parts = parseDateOnly(value);
+  if (!parts) return new Date(value);
+  return new Date(Date.UTC(parts.year, parts.month - 1, parts.day, end ? 20 : -3, end ? 59 : 0, end ? 59 : 0, end ? 999 : 0));
 }
 
-function resolvePeriod(from, to) {
-  const periodEnd = to ? endOfDay(to) : new Date();
-  const periodStart = from ? startOfDay(from) : new Date(0);
-  const durationMs = Math.max(DAY_MS, periodEnd.getTime() - periodStart.getTime() + 1);
+function utcSql(date) {
+  return date.toISOString().slice(0, 23).replace('T', ' ');
+}
+
+function clubDateString(date) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: CLUB_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function resolvePeriod(from, to, now = new Date()) {
+  const currentClubDay = clubDateString(now);
+  const periodStart = clubDateToUtc(from || '1970-01-01');
+  const periodEnd = clubDateToUtc(to || currentClubDay, true);
+  const days = Math.max(1, Math.round((Date.UTC(
+    Number((to || currentClubDay).slice(0, 4)), Number((to || currentClubDay).slice(5, 7)) - 1,
+    Number((to || currentClubDay).slice(8, 10)),
+  ) - Date.UTC(
+    Number((from || '1970-01-01').slice(0, 4)), Number((from || '1970-01-01').slice(5, 7)) - 1,
+    Number((from || '1970-01-01').slice(8, 10)),
+  )) / DAY_MS) + 1);
+  const previousEnd = new Date(periodStart.getTime() - 1);
+  const previousStart = new Date(periodStart.getTime() - days * DAY_MS);
   return {
-    from: periodStart,
-    to: periodEnd,
-    previousFrom: new Date(periodStart.getTime() - durationMs),
-    previousTo: new Date(periodStart.getTime() - 1),
+    from: periodStart, to: periodEnd, previousFrom: previousStart, previousTo: previousEnd,
+    fromSql: utcSql(periodStart), toSql: utcSql(periodEnd),
+    previousFromSql: utcSql(previousStart), previousToSql: utcSql(previousEnd),
   };
 }
 
-const NORMALIZED_VISITS_CTE = `
-  WITH normalized_visits AS (
-    SELECT
-      v.id,
-      COALESCE(u.mergedIntoUserId, v.userId) AS canonicalUserId,
-      COALESCE(v.scannedAt, v.createdAt) AS visitedAt,
-      v.keyNumber,
-      v.category,
-      COALESCE(NULLIF(canonical.source, ''), NULLIF(u.source, ''), 'Не указан') AS source,
-      COALESCE(NULLIF(canonical.name, ''), NULLIF(u.name, ''), 'Неизвестный') AS name,
-      COALESCE(canonical.phone, u.phone, '') AS phone
-    FROM Visits v
-    INNER JOIN Users u ON u.id = v.userId
-    LEFT JOIN Users canonical ON canonical.id = u.mergedIntoUserId
-    WHERE COALESCE(v.isTraining, 0) = 0
-      AND COALESCE(u.isTraining, 0) = 0
-      AND v.duplicateOfVisitId IS NULL
-  ),
-  visit_history AS (
-    SELECT
-      nv.*,
-      ROW_NUMBER() OVER (PARTITION BY canonicalUserId ORDER BY visitedAt, id) AS visitNumber,
-      MIN(visitedAt) OVER (PARTITION BY canonicalUserId) AS firstVisitAt
-    FROM normalized_visits nv
+const CANONICAL_CLIENTS_CTE = `
+  WITH RECURSIVE client_chain AS (
+    SELECT id AS originUserId, id AS currentUserId, mergedIntoUserId,
+      CAST(CONCAT(',', id, ',') AS CHAR(2048)) AS path, 0 AS depth
+    FROM Users
+    UNION ALL
+    SELECT chain.originUserId, parent.id, parent.mergedIntoUserId,
+      CONCAT(chain.path, parent.id, ','), chain.depth + 1
+    FROM client_chain chain
+    JOIN Users parent ON parent.id = chain.mergedIntoUserId
+    WHERE chain.depth < 63
+      AND LOCATE(CONCAT(',', parent.id, ','), chain.path) = 0
+  ), canonical_clients AS (
+    SELECT originUserId,
+      COALESCE(MAX(CASE WHEN mergedIntoUserId IS NULL THEN currentUserId END), MIN(currentUserId)) AS canonicalUserId
+    FROM client_chain
+    GROUP BY originUserId
   )
 `;
 
-function number(value) {
-  return Number(value || 0);
-}
+const VALID_VISIT_SQL = `COALESCE(v.isTraining, 0) = 0
+  AND COALESCE(origin.isTraining, 0) = 0
+  AND v.duplicateOfVisitId IS NULL`;
+
+function number(value) { return Number(value || 0); }
 
 function metricFromRow(row = {}) {
   const totalVisits = number(row.totalVisits);
   const uniqueGuests = number(row.uniqueGuests);
   return {
-    totalVisits,
-    uniqueGuests,
-    newGuests: number(row.newGuests),
-    returningGuests: number(row.returningGuests),
+    totalVisits, uniqueGuests, newGuests: number(row.newGuests), returningGuests: number(row.returningGuests),
     repeatVisits: Math.max(0, totalVisits - uniqueGuests),
     averageVisitsPerGuest: uniqueGuests ? totalVisits / uniqueGuests : 0,
     repeatRate30: number(row.repeatRate30),
@@ -78,143 +87,120 @@ function metricFromRow(row = {}) {
   };
 }
 
-async function queryMetrics(from, to, now) {
-  const [row = {}] = await db.sequelize.query(
-    `${NORMALIZED_VISITS_CTE}
-      , client_history AS (
-        SELECT
-          canonicalUserId,
-          MIN(visitedAt) AS firstVisitAt,
-          MIN(CASE WHEN visitNumber = 2 THEN visitedAt END) AS secondVisitAt
-        FROM visit_history
-        GROUP BY canonicalUserId
-      ), period_visits AS (
-        SELECT * FROM visit_history WHERE visitedAt BETWEEN :from AND :to
-      )
-      SELECT
-        COUNT(pv.id) AS totalVisits,
-        COUNT(DISTINCT pv.canonicalUserId) AS uniqueGuests,
-        COUNT(DISTINCT CASE WHEN ch.firstVisitAt BETWEEN :from AND :to THEN pv.canonicalUserId END) AS newGuests,
-        COUNT(DISTINCT CASE WHEN ch.firstVisitAt < :from THEN pv.canonicalUserId END) AS returningGuests,
-        COUNT(DISTINCT CASE
-          WHEN ch.firstVisitAt BETWEEN :from AND :to
-            AND DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY) <= :now
-          THEN ch.canonicalUserId END) AS repeatRate30EligibleGuests,
-        COUNT(DISTINCT CASE
-          WHEN ch.firstVisitAt BETWEEN :from AND :to
-            AND DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY) <= :now
-            AND ch.secondVisitAt <= DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY)
-          THEN ch.canonicalUserId END) AS repeatRate30RepeatedGuests,
-        CASE WHEN COUNT(DISTINCT CASE
-          WHEN ch.firstVisitAt BETWEEN :from AND :to
-            AND DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY) <= :now
-          THEN ch.canonicalUserId END) = 0 THEN 0 ELSE
-          100 * COUNT(DISTINCT CASE
-            WHEN ch.firstVisitAt BETWEEN :from AND :to
-              AND DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY) <= :now
-              AND ch.secondVisitAt <= DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY)
-            THEN ch.canonicalUserId END)
-          / COUNT(DISTINCT CASE
-            WHEN ch.firstVisitAt BETWEEN :from AND :to
-              AND DATE_ADD(ch.firstVisitAt, INTERVAL 30 DAY) <= :now
-            THEN ch.canonicalUserId END)
-        END AS repeatRate30
-      FROM period_visits pv
-      LEFT JOIN client_history ch ON ch.canonicalUserId = pv.canonicalUserId`,
-    { replacements: { from, to, now }, type: db.Sequelize.QueryTypes.SELECT },
-  );
-  return metricFromRow(row);
-}
-
 function calculateChanges(current, previous) {
-  return Object.fromEntries(
-    ['totalVisits', 'uniqueGuests', 'newGuests', 'returningGuests', 'repeatVisits', 'averageVisitsPerGuest', 'repeatRate30'].map((key) => {
-      const currentValue = current[key];
-      const previousValue = previous[key];
-      return [key, {
-        absolute: currentValue - previousValue,
-        percent: previousValue === 0 ? null : ((currentValue - previousValue) / previousValue) * 100,
-      }];
-    }),
-  );
+  return Object.fromEntries(['totalVisits', 'uniqueGuests', 'newGuests', 'returningGuests', 'repeatVisits', 'averageVisitsPerGuest', 'repeatRate30'].map((key) => [key, {
+    absolute: current[key] - previous[key],
+    percent: previous[key] === 0 ? null : ((current[key] - previous[key]) / previous[key]) * 100,
+  }]));
 }
 
-async function getVisitsAnalytics(from, to, options = {}) {
-  const period = resolvePeriod(from, to);
-  const now = options.now ? new Date(options.now) : new Date();
-  const [metrics, previousMetrics, detailRows] = await Promise.all([
-    queryMetrics(period.from, period.to, now),
-    queryMetrics(period.previousFrom, period.previousTo, now),
-    db.sequelize.query(
-      `${NORMALIZED_VISITS_CTE}
-       SELECT * FROM visit_history WHERE visitedAt BETWEEN :from AND :to ORDER BY visitedAt DESC`,
-      { replacements: period, type: db.Sequelize.QueryTypes.SELECT },
-    ),
-  ]);
-
-  const sources = new Map();
-  const categories = new Map();
-  const guests = new Map();
-  const heatMap = {};
-  detailRows.forEach((visit) => {
-    sources.set(visit.source, (sources.get(visit.source) || 0) + 1);
-    String(visit.category || 'Не указана').split(',').map((item) => item.trim()).filter(Boolean)
-      .forEach((item) => categories.set(item, (categories.get(item) || 0) + 1));
-    const guest = guests.get(visit.canonicalUserId) || { name: visit.name, phone: visit.phone, visits: 0 };
-    guest.visits += 1;
-    guests.set(visit.canonicalUserId, guest);
-    const date = new Date(visit.visitedAt);
-    const day = date.getDay() === 0 ? 7 : date.getDay();
-    const key = `${day}-${date.getHours()}`;
-    heatMap[key] = (heatMap[key] || 0) + 1;
+async function queryMetrics(period, now) {
+  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+    first_visits AS (
+      SELECT cc.canonicalUserId, MIN(v.visitedAt) AS firstVisitAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id = v.userId
+      JOIN canonical_clients cc ON cc.originUserId = v.userId
+      WHERE ${VALID_VISIT_SQL}
+      GROUP BY cc.canonicalUserId
+    ), second_visits AS (
+      SELECT cc.canonicalUserId, MIN(v.visitedAt) AS secondVisitAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id = v.userId
+      JOIN canonical_clients cc ON cc.originUserId = v.userId
+      JOIN first_visits fv ON fv.canonicalUserId = cc.canonicalUserId AND v.visitedAt > fv.firstVisitAt
+      WHERE ${VALID_VISIT_SQL}
+      GROUP BY cc.canonicalUserId
+    ), period_counts AS (
+      SELECT 'current' AS periodKey, cc.canonicalUserId, COUNT(*) AS visits
+      FROM Visits v FORCE INDEX (idx_visits_visited_at)
+      JOIN Users origin ON origin.id = v.userId JOIN canonical_clients cc ON cc.originUserId = v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to GROUP BY cc.canonicalUserId
+      UNION ALL
+      SELECT 'previous', cc.canonicalUserId, COUNT(*)
+      FROM Visits v FORCE INDEX (idx_visits_visited_at)
+      JOIN Users origin ON origin.id = v.userId JOIN canonical_clients cc ON cc.originUserId = v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :previousFrom AND :previousTo GROUP BY cc.canonicalUserId
+    )
+    SELECT pc.periodKey, SUM(pc.visits) totalVisits, COUNT(*) uniqueGuests,
+      SUM(fv.firstVisitAt BETWEEN CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END AND CASE WHEN pc.periodKey='current' THEN :to ELSE :previousTo END) newGuests,
+      SUM(fv.firstVisitAt < CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END) returningGuests,
+      SUM(fv.firstVisitAt BETWEEN CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END AND CASE WHEN pc.periodKey='current' THEN :to ELSE :previousTo END AND DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY) <= :now) repeatRate30EligibleGuests,
+      SUM(fv.firstVisitAt BETWEEN CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END AND CASE WHEN pc.periodKey='current' THEN :to ELSE :previousTo END AND DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY) <= :now AND sv.secondVisitAt <= DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY)) repeatRate30RepeatedGuests
+    FROM period_counts pc JOIN first_visits fv ON fv.canonicalUserId=pc.canonicalUserId
+    LEFT JOIN second_visits sv ON sv.canonicalUserId=pc.canonicalUserId GROUP BY pc.periodKey`, {
+    replacements: { from: period.fromSql, to: period.toSql, previousFrom: period.previousFromSql, previousTo: period.previousToSql, now: utcSql(now) },
+    type: db.Sequelize.QueryTypes.SELECT,
   });
-  const sortMap = (map) => [...map].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value);
+  const byKey = new Map(rows.map((row) => [row.periodKey, row]));
+  const finalize = (key) => {
+    const metric = metricFromRow(byKey.get(key));
+    metric.repeatRate30 = metric.repeatRate30EligibleGuests ? metric.repeatRate30RepeatedGuests / metric.repeatRate30EligibleGuests * 100 : 0;
+    return metric;
+  };
+  return { current: finalize('current'), previous: finalize('previous') };
+}
 
+async function queryDashboardAggregates(period) {
+  const replacements = { from: period.fromSql, to: period.toSql };
+  const base = `${CANONICAL_CLIENTS_CTE}`;
+  const common = `FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to`;
+  const [sources, categories, topGuests, heatRows] = await Promise.all([
+    db.sequelize.query(`${base} SELECT COALESCE(NULLIF(root.source,''),'Не указан') name, COUNT(*) value ${common} GROUP BY root.source ORDER BY value DESC`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
+    db.sequelize.query(`${base} SELECT COALESCE(NULLIF(v.category,''),'Не указана') category, COUNT(*) value ${common} GROUP BY v.category`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
+    db.sequelize.query(`${base} SELECT root.name, root.phone, COUNT(*) visits ${common} GROUP BY cc.canonicalUserId,root.name,root.phone ORDER BY visits DESC LIMIT 10`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
+    db.sequelize.query(`${base} SELECT WEEKDAY(CONVERT_TZ(v.visitedAt,'+00:00','${CLUB_UTC_OFFSET}'))+1 day,HOUR(CONVERT_TZ(v.visitedAt,'+00:00','${CLUB_UTC_OFFSET}')) hour,COUNT(*) value ${common} GROUP BY day,hour`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
+  ]);
+  const categoryMap = new Map();
+  categories.forEach((row) => String(row.category).split(',').map((item) => item.trim()).filter(Boolean).forEach((item) => categoryMap.set(item, (categoryMap.get(item) || 0) + number(row.value))));
+  const heatMap = Object.fromEntries(heatRows.map((row) => [`${row.day}-${row.hour}`, number(row.value)]));
   return {
-    ...metrics,
-    previousPeriod: { from: period.previousFrom, to: period.previousTo, metrics: previousMetrics },
-    changes: calculateChanges(metrics, previousMetrics),
-    sources: sortMap(sources),
-    categories: sortMap(categories),
-    topGuests: [...guests.values()].sort((a, b) => b.visits - a.visits).slice(0, 10),
-    heatMap,
+    sources: sources.map((row) => ({ name: row.name, value: number(row.value) })),
+    categories: [...categoryMap].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value),
+    topGuests: topGuests.map((row) => ({ name: row.name, phone: row.phone, visits: number(row.visits) })), heatMap,
   };
 }
 
-async function createVisitsExportBuffer(from, to) {
-  const analytics = await getVisitsAnalytics(from, to);
-  const period = resolvePeriod(from, to);
-  const visits = await db.sequelize.query(
-    `${NORMALIZED_VISITS_CTE}
-     SELECT id, visitedAt, name, phone, source, category, keyNumber, canonicalUserId
-     FROM visit_history WHERE visitedAt BETWEEN :from AND :to ORDER BY visitedAt DESC`,
-    { replacements: period, type: db.Sequelize.QueryTypes.SELECT },
-  );
+async function getVisitsAnalytics(from, to, options = {}) {
+  const now = options.now ? new Date(options.now) : new Date();
+  const period = resolvePeriod(from, to, now);
+  const [metricSets, aggregates] = await Promise.all([queryMetrics(period, now), queryDashboardAggregates(period)]);
+  return { ...metricSets.current, previousPeriod: { from: period.previousFrom, to: period.previousTo, metrics: metricSets.previous }, changes: calculateChanges(metricSets.current, metricSets.previous), ...aggregates, timeZone: CLUB_TIME_ZONE };
+}
+
+function formatClubDateTime(value) {
+  return new Intl.DateTimeFormat('ru-RU', { timeZone: CLUB_TIME_ZONE, dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value));
+}
+
+async function createVisitsExportBuffer(from, to, options = {}) {
+  const now = options.now ? new Date(options.now) : new Date();
+  const analytics = await getVisitsAnalytics(from, to, { now });
+  const period = resolvePeriod(from, to, now);
+  const visits = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE}
+    SELECT v.id,v.visitedAt,v.keyNumber,v.category,root.name,root.phone,COALESCE(NULLIF(root.source,''),'Не указан') source
+    FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId
+    JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId
+    WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ORDER BY v.visitedAt DESC`, { replacements: { from: period.fromSql, to: period.toSql }, type: db.Sequelize.QueryTypes.SELECT });
   const workbook = XLSX.utils.book_new();
-  const summaryData = [
-    ['Метрика', 'Текущий период', 'Предыдущий период'],
-    ['Всего визитов', analytics.totalVisits, analytics.previousPeriod.metrics.totalVisits],
-    ['Уникальные гости', analytics.uniqueGuests, analytics.previousPeriod.metrics.uniqueGuests],
-    ['Новые гости', analytics.newGuests, analytics.previousPeriod.metrics.newGuests],
-    ['Вернувшиеся гости', analytics.returningGuests, analytics.previousPeriod.metrics.returningGuests],
-    ['Повторные визиты', analytics.repeatVisits, analytics.previousPeriod.metrics.repeatVisits],
-    ['Среднее визитов на гостя', analytics.averageVisitsPerGuest, analytics.previousPeriod.metrics.averageVisitsPerGuest],
-    ['Повторный визит за 30 дней, %', analytics.repeatRate30, analytics.previousPeriod.metrics.repeatRate30],
-  ];
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(summaryData), 'Сводка');
-  const exportData = visits.map((visit) => ({
-    'ID визита': visit.id,
-    'Дата и Время': new Date(visit.visitedAt).toLocaleString('ru-RU'),
-    Гость: visit.name,
-    Телефон: visit.phone,
-    Источник: visit.source,
-    'Цель визита': visit.category || 'Не указана',
-    'Номер ключа': visit.keyNumber || '-',
-  }));
-  const worksheet = XLSX.utils.json_to_sheet(exportData);
-  worksheet['!cols'] = [{ wch: 10 }, { wch: 20 }, { wch: 30 }, { wch: 15 }, { wch: 20 }, { wch: 25 }, { wch: 15 }];
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['Метрика', 'Текущий период', 'Предыдущий период'], ['Всего визитов', analytics.totalVisits, analytics.previousPeriod.metrics.totalVisits],
+    ['Уникальные гости', analytics.uniqueGuests, analytics.previousPeriod.metrics.uniqueGuests], ['Новые гости', analytics.newGuests, analytics.previousPeriod.metrics.newGuests],
+    ['Вернувшиеся гости', analytics.returningGuests, analytics.previousPeriod.metrics.returningGuests], ['Повторные визиты', analytics.repeatVisits, analytics.previousPeriod.metrics.repeatVisits],
+    ['Среднее визитов на гостя', analytics.averageVisitsPerGuest, analytics.previousPeriod.metrics.averageVisitsPerGuest], ['Повторный визит за 30 дней, %', analytics.repeatRate30, analytics.previousPeriod.metrics.repeatRate30],
+    ['Часовой пояс', CLUB_TIME_ZONE, CLUB_TIME_ZONE],
+  ]), 'Сводка');
+  const worksheet = XLSX.utils.json_to_sheet(visits.map((visit) => ({ 'ID визита': visit.id, 'Дата и Время': formatClubDateTime(visit.visitedAt), Гость: visit.name, Телефон: visit.phone, Источник: visit.source, 'Цель визита': visit.category || 'Не указана', 'Номер ключа': visit.keyNumber || '-' })));
+  worksheet['!cols'] = [{ wch: 10 }, { wch: 22 }, { wch: 30 }, { wch: 15 }, { wch: 20 }, { wch: 25 }, { wch: 15 }];
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Визиты');
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-module.exports = { calculateChanges, createVisitsExportBuffer, getVisitsAnalytics, metricFromRow, resolvePeriod };
+async function explainPeriodIndex(from, to, options = {}) {
+  const period = resolvePeriod(from, to, options.now ? new Date(options.now) : new Date());
+  return db.sequelize.query(`EXPLAIN SELECT v.id FROM Visits v FORCE INDEX (idx_visits_visited_at)
+    WHERE v.visitedAt BETWEEN :from AND :to AND COALESCE(v.isTraining,0)=0 AND v.duplicateOfVisitId IS NULL`, {
+    replacements: { from: period.fromSql, to: period.toSql }, type: db.Sequelize.QueryTypes.SELECT,
+  });
+}
+
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, calculateChanges, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getVisitsAnalytics, metricFromRow, resolvePeriod };

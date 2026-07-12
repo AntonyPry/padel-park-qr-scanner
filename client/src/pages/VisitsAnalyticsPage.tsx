@@ -79,7 +79,7 @@ function CompactStat({
     <div className="min-w-0 rounded-lg bg-background/70 px-3 py-2" title={title}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon}
-        <span className="truncate">{label}</span>
+        <span className="leading-tight">{label}</span>
       </div>
       <div className="mt-1 truncate text-lg font-semibold">
         <AnimatedMetricValue value={value} />
@@ -263,7 +263,7 @@ export default function VisitsAnalyticsPage() {
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
         {data && (
-          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-7">
+          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
             <CompactStat
               icon={<Key className="h-3.5 w-3.5 text-primary" />}
               label="Всего визитов"

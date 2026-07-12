@@ -33,6 +33,12 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.DATE,
         defaultValue: DataTypes.NOW,
       },
+      visitedAt: {
+        type: DataTypes.VIRTUAL,
+        get() {
+          return this.getDataValue('scannedAt') || this.getDataValue('createdAt');
+        },
+      },
       keyNumber: {
         type: DataTypes.STRING,
         allowNull: true,
