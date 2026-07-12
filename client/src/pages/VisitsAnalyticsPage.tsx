@@ -1,4 +1,4 @@
-import { useState, useMemo, type ReactNode } from 'react';
+import { lazy, Suspense, useState, useMemo, type ReactNode } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getVisitsAnalytics,
@@ -40,6 +40,8 @@ import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SourceQualityTab } from '@/components/source-quality-tab';
+
+const CohortsLifecycleTab = lazy(() => import('@/components/cohorts-lifecycle-tab'));
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
@@ -181,6 +183,7 @@ function DonutChartCard({
 
 export default function VisitsAnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview');
+  const [lifecycleSourceKeys, setLifecycleSourceKeys] = useState<string[] | undefined>();
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -206,9 +209,11 @@ export default function VisitsAnalyticsPage() {
     const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
     const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
     try {
-      const response = await apiFetch(
-        `/api/export/visits?from=${fromStr}&to=${toStr}`,
-      );
+      const exportQuery = new URLSearchParams({ from: fromStr, to: toStr });
+      if (activeTab === 'cohorts-lifecycle' && lifecycleSourceKeys?.length) {
+        exportQuery.set('sources', lifecycleSourceKeys.join(','));
+      }
+      const response = await apiFetch(`/api/export/visits?${exportQuery}`);
 
       if (!response.ok) {
         const apiError = await readApiError(response, 'Не удалось выгрузить аналитику');
@@ -264,10 +269,42 @@ export default function VisitsAnalyticsPage() {
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-      <TabsList className="grid w-full grid-cols-2 sm:w-auto"><TabsTrigger value="overview">Обзор</TabsTrigger><TabsTrigger value="source-quality">Качество источников</TabsTrigger></TabsList>
+      <TabsList className="grid h-auto w-full grid-cols-1 sm:w-auto sm:grid-cols-3">
+        <TabsTrigger value="overview">Обзор</TabsTrigger>
+        <TabsTrigger value="source-quality">Качество источников</TabsTrigger>
+        <TabsTrigger value="cohorts-lifecycle" className="h-auto min-h-8 whitespace-normal">Когорты и жизненный цикл</TabsTrigger>
+      </TabsList>
+      {activeTab !== 'source-quality' && (
+        <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-end">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn('w-full justify-start bg-card text-left font-normal sm:w-[260px]', !dateRange && 'text-muted-foreground')}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {dateRange?.from ? (
+                  dateRange.to ? <>{format(dateRange.from, 'dd.MM.yyyy')} — {format(dateRange.to, 'dd.MM.yyyy')}</> : format(dateRange.from, 'dd.MM.yyyy')
+                ) : <span>Выберите период</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={setDateRange} numberOfMonths={1} locale={ru} />
+            </PopoverContent>
+          </Popover>
+          <Button onClick={handleExport} variant="default" className="w-full bg-green-600 text-white hover:bg-green-700 sm:w-auto">
+            <Download className="mr-2 h-4 w-4" /> Экспорт в Excel
+          </Button>
+        </div>
+      )}
       <TabsContent value="source-quality"><SourceQualityTab /></TabsContent>
+      <TabsContent value="cohorts-lifecycle">
+        <Suspense fallback={<ChartLoadingState title="Загрузка вкладки когорт" />}>
+          <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} from={analyticsParams.from} to={analyticsParams.to} onSourceKeysChange={setLifecycleSourceKeys} />
+        </Suspense>
+      </TabsContent>
       <TabsContent value="overview"><div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
+      <div className="rounded-xl border bg-card/60 p-3">
         {data && (
           <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
             <CompactStat
@@ -295,53 +332,6 @@ export default function VisitsAnalyticsPage() {
             />
           </div>
         )}
-        <div className="flex w-full flex-wrap gap-3 xl:w-auto xl:justify-end">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant={'outline'}
-                className={cn(
-                  'w-full sm:w-[260px] justify-start text-left font-normal bg-card',
-                  !dateRange && 'text-muted-foreground',
-                )}
-              >
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {dateRange?.from ? (
-                  dateRange.to ? (
-                    <>
-                      {format(dateRange.from, 'dd.MM.yyyy')} —{' '}
-                      {format(dateRange.to, 'dd.MM.yyyy')}
-                    </>
-                  ) : (
-                    format(dateRange.from, 'dd.MM.yyyy')
-                  )
-                ) : (
-                  <span>Выберите период</span>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                initialFocus
-                mode="range"
-                defaultMonth={dateRange?.from}
-                selected={dateRange}
-                onSelect={setDateRange}
-                numberOfMonths={1}
-                locale={ru}
-              />
-            </PopoverContent>
-          </Popover>
-
-          <Button
-            onClick={handleExport}
-            variant="default"
-            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
-          >
-            <Download className="mr-2 h-4 w-4" />
-            Экспорт в Excel
-          </Button>
-        </div>
       </div>
 
       {errorText && !data ? (

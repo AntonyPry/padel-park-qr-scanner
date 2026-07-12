@@ -4,6 +4,14 @@ const db = require('../../models');
 const CLUB_TIME_ZONE = 'Europe/Moscow';
 const CLUB_UTC_OFFSET = '+03:00';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const LIFECYCLE_STATUSES = [
+  { key: 'new', label: 'Новый', formula: '1 визит за всю историю; первый и последний визит были не более 30 дней назад.' },
+  { key: 'developing', label: 'Развивающийся', formula: '2–3 визита за всю историю; последний визит был не более 30 дней назад.' },
+  { key: 'regular', label: 'Постоянный', formula: '4 и более визитов за всю историю; последний визит был не более 30 дней назад.' },
+  { key: 'atRisk', label: 'Под риском', formula: 'Последний визит был более 30, но не более 60 дней назад.' },
+  { key: 'sleeping', label: 'Спящий', formula: 'Последний визит был более 60, но не более 90 дней назад.' },
+  { key: 'lost', label: 'Потерянный', formula: 'Последний визит был более 90 дней назад.' },
+];
 
 function parseDateOnly(value) {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
@@ -26,6 +34,22 @@ function clubDateString(date) {
   }).formatToParts(date);
   const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${value.year}-${value.month}-${value.day}`;
+}
+
+function monthIndex(month) {
+  const [year, value] = String(month).split('-').map(Number);
+  return year * 12 + value - 1;
+}
+
+function monthFromIndex(index) {
+  const year = Math.floor(index / 12);
+  const month = index % 12;
+  return `${year}-${String(month + 1).padStart(2, '0')}`;
+}
+
+function endOfMonthDate(month) {
+  const [year, value] = String(month).split('-').map(Number);
+  return `${year}-${String(value).padStart(2, '0')}-${String(new Date(Date.UTC(year, value, 0)).getUTCDate()).padStart(2, '0')}`;
 }
 
 function resolvePeriod(from, to, now = new Date()) {
@@ -94,14 +118,15 @@ function calculateChanges(current, previous) {
   }]));
 }
 
-async function queryMetrics(period, now) {
+async function queryMetrics(period, now, sourceFilter = { sql: '', replacements: {} }) {
   const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
     first_visits AS (
       SELECT cc.canonicalUserId, MIN(v.visitedAt) AS firstVisitAt
       FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
       JOIN Users origin ON origin.id = v.userId
       JOIN canonical_clients cc ON cc.originUserId = v.userId
-      WHERE ${VALID_VISIT_SQL}
+      JOIN Users root ON root.id=cc.canonicalUserId
+      WHERE ${VALID_VISIT_SQL} ${sourceFilter.sql}
       GROUP BY cc.canonicalUserId
     ), second_visits AS (
       SELECT cc.canonicalUserId, MIN(v.visitedAt) AS secondVisitAt
@@ -129,7 +154,7 @@ async function queryMetrics(period, now) {
       SUM(fv.firstVisitAt BETWEEN CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END AND CASE WHEN pc.periodKey='current' THEN :to ELSE :previousTo END AND DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY) <= :now AND sv.secondVisitAt <= DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY)) repeatRate30RepeatedGuests
     FROM period_counts pc JOIN first_visits fv ON fv.canonicalUserId=pc.canonicalUserId
     LEFT JOIN second_visits sv ON sv.canonicalUserId=pc.canonicalUserId GROUP BY pc.periodKey`, {
-    replacements: { from: period.fromSql, to: period.toSql, previousFrom: period.previousFromSql, previousTo: period.previousToSql, now: utcSql(now) },
+    replacements: { from: period.fromSql, to: period.toSql, previousFrom: period.previousFromSql, previousTo: period.previousToSql, now: utcSql(now), ...sourceFilter.replacements },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   const byKey = new Map(rows.map((row) => [row.periodKey, row]));
@@ -141,10 +166,10 @@ async function queryMetrics(period, now) {
   return { current: finalize('current'), previous: finalize('previous') };
 }
 
-async function queryDashboardAggregates(period) {
-  const replacements = { from: period.fromSql, to: period.toSql };
+async function queryDashboardAggregates(period, sourceFilter = { sql: '', replacements: {} }) {
+  const replacements = { from: period.fromSql, to: period.toSql, ...sourceFilter.replacements };
   const base = `${CANONICAL_CLIENTS_CTE}`;
-  const common = `FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to`;
+  const common = `FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}`;
   const [sources, categories, topGuests, heatRows] = await Promise.all([
     db.sequelize.query(`${base} SELECT COALESCE(NULLIF(root.source,''),'Не указан') name, COUNT(*) value ${common} GROUP BY root.source ORDER BY value DESC`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
     db.sequelize.query(`${base} SELECT COALESCE(NULLIF(v.category,''),'Не указана') category, COUNT(*) value ${common} GROUP BY v.category`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
@@ -164,7 +189,8 @@ async function queryDashboardAggregates(period) {
 async function getVisitsAnalytics(from, to, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
-  const [metricSets, aggregates] = await Promise.all([queryMetrics(period, now), queryDashboardAggregates(period)]);
+  const sourceFilter = buildSourceFilter(options.sourceKeys);
+  const [metricSets, aggregates] = await Promise.all([queryMetrics(period, now, sourceFilter), queryDashboardAggregates(period, sourceFilter)]);
   return { ...metricSets.current, previousPeriod: { from: period.previousFrom, to: period.previousTo, metrics: metricSets.previous }, changes: calculateChanges(metricSets.current, metricSets.previous), ...aggregates, timeZone: CLUB_TIME_ZONE };
 }
 
@@ -190,6 +216,28 @@ function parseSourceKeys(sourceKeys) {
   return parsed;
 }
 
+function buildSourceFilter(sourceKeys, alias = 'root') {
+  const hasSourceFilter = Array.isArray(sourceKeys);
+  const parsedSources = parseSourceKeys(sourceKeys);
+  const predicates = [];
+  const replacements = {};
+  if (parsedSources.sourceIds.length) {
+    predicates.push(`${alias}.sourceId IN (:sourceIds)`);
+    replacements.sourceIds = parsedSources.sourceIds;
+  }
+  if (parsedSources.legacySources.length) {
+    predicates.push(`(${alias}.sourceId IS NULL AND ${alias}.source IN (:legacySources))`);
+    replacements.legacySources = parsedSources.legacySources;
+  }
+  if (parsedSources.includeUnspecified) {
+    predicates.push(`(${alias}.sourceId IS NULL AND (${alias}.source IS NULL OR ${alias}.source=''))`);
+  }
+  return {
+    sql: hasSourceFilter ? `AND (${predicates.join(' OR ') || '1=0'})` : '',
+    replacements,
+  };
+}
+
 function sourceQualityFromRow(row) {
   const eligible90 = number(row.eligible90);
   return {
@@ -212,14 +260,7 @@ function sourceQualityFromRow(row) {
 async function getSourceQuality(from, to, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
-  const hasSourceFilter = Array.isArray(options.sourceKeys);
-  const parsedSources = parseSourceKeys(options.sourceKeys);
-  const sourcePredicates = [];
-  const sourceReplacements = {};
-  if (parsedSources.sourceIds.length) { sourcePredicates.push('root.sourceId IN (:sourceIds)'); sourceReplacements.sourceIds = parsedSources.sourceIds; }
-  if (parsedSources.legacySources.length) { sourcePredicates.push('(root.sourceId IS NULL AND root.source IN (:legacySources))'); sourceReplacements.legacySources = parsedSources.legacySources; }
-  if (parsedSources.includeUnspecified) sourcePredicates.push("(root.sourceId IS NULL AND (root.source IS NULL OR root.source=''))");
-  const sourceFilterSql = hasSourceFilter ? `AND (${sourcePredicates.join(' OR ') || '1=0'})` : '';
+  const sourceFilter = buildSourceFilter(options.sourceKeys);
   const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
     valid_visits AS (
       SELECT cc.canonicalUserId, v.visitedAt
@@ -251,7 +292,7 @@ async function getSourceQuality(from, to, options = {}) {
         TIMESTAMPDIFF(SECOND,c.firstVisitAt,c.secondVisitAt)/86400 daysToSecond
       FROM cohort c JOIN Users root ON root.id=c.canonicalUserId
       LEFT JOIN ClientSources cs ON cs.id=root.sourceId
-      WHERE 1=1 ${sourceFilterSql}
+      WHERE 1=1 ${sourceFilter.sql}
     ), grouped AS (
       SELECT sourceId,sourceName,COUNT(*) newClients,
         SUM(eligible30) eligible30,SUM(eligible60) eligible60,SUM(eligible90) eligible90,
@@ -271,10 +312,220 @@ async function getSourceQuality(from, to, options = {}) {
     )
     SELECT g.*,m.medianDaysToSecondVisit FROM grouped g LEFT JOIN medians m
       ON m.sourceId<=>g.sourceId AND m.sourceName=g.sourceName ORDER BY newClients DESC,sourceName`, {
-    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), ...sourceReplacements },
+    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), ...sourceFilter.replacements },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   return { from: period.from, to: period.to, asOf: now, timeZone: CLUB_TIME_ZONE, sources: rows.map(sourceQualityFromRow) };
+}
+
+function retentionMetric(count, cohortSize, cohortMonth, retentionMonth, asOfDate) {
+  const targetMonth = monthFromIndex(monthIndex(cohortMonth) + retentionMonth);
+  const windowEnd = endOfMonthDate(targetMonth);
+  const isMature = windowEnd <= asOfDate;
+  return {
+    monthIndex: retentionMonth,
+    count: isMature ? number(count) : null,
+    eligibleCount: isMature ? number(cohortSize) : 0,
+    rate: isMature && number(cohortSize) ? number(count) / number(cohortSize) * 100 : null,
+    isMature,
+    windowEnd,
+  };
+}
+
+function cohortFromRows(row, retentionCounts, retentionMonths, asOfDate) {
+  const cohortSize = number(row.cohortSize);
+  return {
+    cohortMonth: row.cohortMonth,
+    cohortSize,
+    repeat30: rateMetric(row.repeat30, row.eligible30),
+    repeat60: rateMetric(row.repeat60, row.eligible60),
+    repeat90: rateMetric(row.repeat90, row.eligible90),
+    retention: retentionMonths.map((index) => retentionMetric(
+      retentionCounts.get(`${row.cohortMonth}:${index}`), cohortSize, row.cohortMonth, index, asOfDate,
+    )),
+  };
+}
+
+function classifyLifecycleFacts({ firstVisitAt, lastVisitAt, visitCount }, asOf) {
+  const first = new Date(firstVisitAt).getTime();
+  const last = new Date(lastVisitAt).getTime();
+  const boundary30 = asOf.getTime() - 30 * DAY_MS;
+  const boundary60 = asOf.getTime() - 60 * DAY_MS;
+  const boundary90 = asOf.getTime() - 90 * DAY_MS;
+  if (last >= boundary30) {
+    if (number(visitCount) === 1 && first >= boundary30) return 'new';
+    if (number(visitCount) <= 3) return 'developing';
+    return 'regular';
+  }
+  if (last >= boundary60) return 'atRisk';
+  if (last >= boundary90) return 'sleeping';
+  return 'lost';
+}
+
+function lifecycleStatusCase() {
+  return `CASE
+    WHEN visitCount=1 AND firstVisitAt>=DATE_SUB(:asOf,INTERVAL 30 DAY) AND lastVisitAt>=DATE_SUB(:asOf,INTERVAL 30 DAY) THEN 'new'
+    WHEN visitCount BETWEEN 2 AND 3 AND lastVisitAt>=DATE_SUB(:asOf,INTERVAL 30 DAY) THEN 'developing'
+    WHEN visitCount>=4 AND lastVisitAt>=DATE_SUB(:asOf,INTERVAL 30 DAY) THEN 'regular'
+    WHEN lastVisitAt>=DATE_SUB(:asOf,INTERVAL 60 DAY) THEN 'atRisk'
+    WHEN lastVisitAt>=DATE_SUB(:asOf,INTERVAL 90 DAY) THEN 'sleeping'
+    ELSE 'lost' END`;
+}
+
+function cohortFactsCte(sourceFilterSql = '') {
+  return `${CANONICAL_CLIENTS_CTE},
+    valid_visits AS (
+      SELECT cc.canonicalUserId,v.visitedAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id=v.userId
+      JOIN canonical_clients cc ON cc.originUserId=v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+    ), ranked_visits AS (
+      SELECT canonicalUserId,visitedAt,
+        ROW_NUMBER() OVER(PARTITION BY canonicalUserId ORDER BY visitedAt,canonicalUserId) visitNumber,
+        MIN(visitedAt) OVER(PARTITION BY canonicalUserId) firstVisitAt
+      FROM valid_visits
+    ), client_facts AS (
+      SELECT canonicalUserId,MIN(firstVisitAt) firstVisitAt,
+        MIN(CASE WHEN visitNumber=2 THEN visitedAt END) secondVisitAt,
+        MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
+      FROM ranked_visits GROUP BY canonicalUserId
+    ), cohort_clients AS (
+      SELECT facts.*,DATE_FORMAT(CONVERT_TZ(facts.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y-%m') cohortMonth
+      FROM client_facts facts JOIN Users root ON root.id=facts.canonicalUserId
+      WHERE facts.firstVisitAt BETWEEN :from AND :to ${sourceFilterSql}
+    )`;
+}
+
+async function queryCohorts(period, sourceFilter) {
+  const replacements = {
+    from: period.fromSql,
+    to: period.toSql,
+    asOf: period.toSql,
+    ...sourceFilter.replacements,
+  };
+  const [summaryRows, retentionRows] = await Promise.all([
+    db.sequelize.query(`${cohortFactsCte(sourceFilter.sql)}
+      SELECT cohortMonth,COUNT(*) cohortSize,
+        SUM(DATE_ADD(firstVisitAt,INTERVAL 30 DAY)<=:asOf) eligible30,
+        SUM(DATE_ADD(firstVisitAt,INTERVAL 60 DAY)<=:asOf) eligible60,
+        SUM(DATE_ADD(firstVisitAt,INTERVAL 90 DAY)<=:asOf) eligible90,
+        SUM(DATE_ADD(firstVisitAt,INTERVAL 30 DAY)<=:asOf AND secondVisitAt<=DATE_ADD(firstVisitAt,INTERVAL 30 DAY)) repeat30,
+        SUM(DATE_ADD(firstVisitAt,INTERVAL 60 DAY)<=:asOf AND secondVisitAt<=DATE_ADD(firstVisitAt,INTERVAL 60 DAY)) repeat60,
+        SUM(DATE_ADD(firstVisitAt,INTERVAL 90 DAY)<=:asOf AND secondVisitAt<=DATE_ADD(firstVisitAt,INTERVAL 90 DAY)) repeat90
+      FROM cohort_clients GROUP BY cohortMonth ORDER BY cohortMonth`, {
+      replacements,
+      type: db.Sequelize.QueryTypes.SELECT,
+    }),
+    db.sequelize.query(`${cohortFactsCte(sourceFilter.sql)}
+      SELECT cohort.cohortMonth,
+        PERIOD_DIFF(DATE_FORMAT(CONVERT_TZ(visits.visitedAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y%m'),DATE_FORMAT(CONVERT_TZ(cohort.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y%m')) retentionMonth,
+        COUNT(DISTINCT cohort.canonicalUserId) retainedClients
+      FROM cohort_clients cohort JOIN valid_visits visits ON visits.canonicalUserId=cohort.canonicalUserId
+      WHERE visits.visitedAt>cohort.firstVisitAt
+      GROUP BY cohort.cohortMonth,retentionMonth HAVING retentionMonth>=1
+      ORDER BY cohort.cohortMonth,retentionMonth`, {
+      replacements,
+      type: db.Sequelize.QueryTypes.SELECT,
+    }),
+  ]);
+  return { summaryRows, retentionRows };
+}
+
+async function queryLifecycle(asOfSql, sourceFilter) {
+  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+    valid_visits AS (
+      SELECT cc.canonicalUserId,v.visitedAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id=v.userId
+      JOIN canonical_clients cc ON cc.originUserId=v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+    ), client_facts AS (
+      SELECT canonicalUserId,MIN(visitedAt) firstVisitAt,MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
+      FROM valid_visits GROUP BY canonicalUserId
+    ), classified AS (
+      SELECT ${lifecycleStatusCase()} statusKey
+      FROM client_facts JOIN Users root ON root.id=client_facts.canonicalUserId
+      WHERE 1=1 ${sourceFilter.sql}
+    )
+    SELECT statusKey,COUNT(*) count FROM classified GROUP BY statusKey`, {
+    replacements: { asOf: asOfSql, ...sourceFilter.replacements },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  return new Map(rows.map((row) => [row.statusKey, number(row.count)]));
+}
+
+async function queryAvailableSources(asOfSql) {
+  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+    visited_clients AS (
+      SELECT DISTINCT cc.canonicalUserId FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+    )
+    SELECT root.sourceId,COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,COUNT(*) clientCount
+    FROM visited_clients clients JOIN Users root ON root.id=clients.canonicalUserId
+    LEFT JOIN ClientSources cs ON cs.id=root.sourceId
+    GROUP BY root.sourceId,sourceName ORDER BY clientCount DESC,sourceName`, {
+    replacements: { asOf: asOfSql },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  return rows.map((row) => ({
+    sourceId: row.sourceId === null || row.sourceId === undefined ? null : number(row.sourceId),
+    sourceKey: sourceKeyFromRow(row),
+    source: row.sourceName || 'Не указан',
+    clientCount: number(row.clientCount),
+  }));
+}
+
+async function getCohortsLifecycle(from, to, options = {}) {
+  const period = resolvePeriod(from, to, new Date());
+  const sourceFilter = buildSourceFilter(options.sourceKeys);
+  const asOfDate = clubDateString(period.to);
+  const [cohortData, currentLifecycle, previousLifecycle, availableSources] = await Promise.all([
+    queryCohorts(period, sourceFilter),
+    queryLifecycle(period.toSql, sourceFilter),
+    queryLifecycle(period.previousToSql, sourceFilter),
+    queryAvailableSources(period.toSql),
+  ]);
+  const retentionCounts = new Map(cohortData.retentionRows.map((row) => [
+    `${row.cohortMonth}:${number(row.retentionMonth)}`, number(row.retainedClients),
+  ]));
+  const oldestCohort = cohortData.summaryRows[0]?.cohortMonth;
+  const lastCompletedMonth = monthIndex(asOfDate.slice(0, 7)) - 1;
+  const retentionMonthCount = oldestCohort ? Math.max(3, lastCompletedMonth - monthIndex(oldestCohort)) : 3;
+  const retentionMonths = Array.from({ length: retentionMonthCount }, (_, index) => index + 1);
+  const currentTotal = [...currentLifecycle.values()].reduce((sum, value) => sum + value, 0);
+  const previousTotal = [...previousLifecycle.values()].reduce((sum, value) => sum + value, 0);
+  const statuses = LIFECYCLE_STATUSES.map((status) => {
+    const count = currentLifecycle.get(status.key) || 0;
+    const previousCount = previousLifecycle.get(status.key) || 0;
+    return {
+      ...status,
+      count,
+      share: currentTotal ? count / currentTotal * 100 : 0,
+      previousCount,
+      change: {
+        absolute: count - previousCount,
+        percent: previousCount ? (count - previousCount) / previousCount * 100 : null,
+      },
+    };
+  });
+  return {
+    from: period.from,
+    to: period.to,
+    asOf: period.to,
+    timeZone: CLUB_TIME_ZONE,
+    appliedSourceKeys: Array.isArray(options.sourceKeys) ? options.sourceKeys : [],
+    availableSources,
+    retentionMonths,
+    cohorts: cohortData.summaryRows.map((row) => cohortFromRows(row, retentionCounts, retentionMonths, asOfDate)),
+    lifecycle: {
+      totalClassified: currentTotal,
+      previousTotalClassified: previousTotal,
+      previousPeriod: { from: period.previousFrom, to: period.previousTo, asOf: period.previousTo },
+      statuses,
+    },
+  };
 }
 
 async function createSourceQualityExportBuffer(from, to, options = {}) {
@@ -302,24 +553,77 @@ function formatClubDateTime(value) {
 
 async function createVisitsExportBuffer(from, to, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
-  const analytics = await getVisitsAnalytics(from, to, { now });
   const period = resolvePeriod(from, to, now);
+  const sourceFilter = buildSourceFilter(options.sourceKeys);
+  const [analytics, cohortsLifecycle] = await Promise.all([
+    getVisitsAnalytics(from, to, { now, sourceKeys: options.sourceKeys }),
+    getCohortsLifecycle(from, to, options),
+  ]);
   const visits = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE}
     SELECT v.id,v.visitedAt,v.keyNumber,v.category,root.name,root.phone,COALESCE(NULLIF(root.source,''),'Не указан') source
     FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId
     JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId
-    WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ORDER BY v.visitedAt DESC`, { replacements: { from: period.fromSql, to: period.toSql }, type: db.Sequelize.QueryTypes.SELECT });
+    WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}
+    ORDER BY v.visitedAt DESC`, {
+    replacements: { from: period.fromSql, to: period.toSql, ...sourceFilter.replacements },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  const appliedSources = Array.isArray(options.sourceKeys)
+    ? cohortsLifecycle.availableSources
+      .filter((source) => options.sourceKeys.includes(source.sourceKey))
+      .map((source) => source.source)
+      .join(', ') || 'Нет совпадений'
+    : 'Все источники';
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([
+    ['Выбранный период', `${from || clubDateString(period.from)} — ${to || clubDateString(period.to)}`, ''],
+    ['Дата среза', clubDateString(period.to), ''],
+    ['Часовой пояс', CLUB_TIME_ZONE, CLUB_TIME_ZONE],
+    ['Примененные источники', appliedSources, ''],
+    [],
     ['Метрика', 'Текущий период', 'Предыдущий период'], ['Всего визитов', analytics.totalVisits, analytics.previousPeriod.metrics.totalVisits],
     ['Уникальные гости', analytics.uniqueGuests, analytics.previousPeriod.metrics.uniqueGuests], ['Новые гости', analytics.newGuests, analytics.previousPeriod.metrics.newGuests],
     ['Вернувшиеся гости', analytics.returningGuests, analytics.previousPeriod.metrics.returningGuests], ['Повторные визиты', analytics.repeatVisits, analytics.previousPeriod.metrics.repeatVisits],
     ['Среднее визитов на гостя', analytics.averageVisitsPerGuest, analytics.previousPeriod.metrics.averageVisitsPerGuest], ['Повторный визит за 30 дней, %', analytics.repeatRate30, analytics.previousPeriod.metrics.repeatRate30],
-    ['Часовой пояс', CLUB_TIME_ZONE, CLUB_TIME_ZONE],
   ]), 'Сводка');
   const worksheet = XLSX.utils.json_to_sheet(visits.map((visit) => ({ 'ID визита': visit.id, 'Дата и Время': formatClubDateTime(visit.visitedAt), Гость: visit.name, Телефон: visit.phone, Источник: visit.source, 'Цель визита': visit.category || 'Не указана', 'Номер ключа': visit.keyNumber || '-' })));
   worksheet['!cols'] = [{ wch: 10 }, { wch: 22 }, { wch: 30 }, { wch: 15 }, { wch: 20 }, { wch: 25 }, { wch: 15 }];
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Визиты');
+  const cohortRows = cohortsLifecycle.cohorts.map((cohort) => {
+    const row = {
+      'Месяц первого визита': cohort.cohortMonth,
+      'Размер когорты': cohort.cohortSize,
+    };
+    for (const [label, metric] of [['30', cohort.repeat30], ['60', cohort.repeat60], ['90', cohort.repeat90]]) {
+      row[`Повтор ${label}, числитель`] = metric.rate === null ? null : metric.count;
+      row[`Повтор ${label}, знаменатель`] = metric.eligibleCount;
+      row[`Повтор ${label}, %`] = metric.rate;
+      row[`Повтор ${label}, окно`] = metric.rate === null ? 'Недостаточно времени' : 'Созрело';
+    }
+    for (const metric of cohort.retention) {
+      row[`M${metric.monthIndex}, числитель`] = metric.count;
+      row[`M${metric.monthIndex}, знаменатель`] = metric.eligibleCount;
+      row[`M${metric.monthIndex}, %`] = metric.rate;
+      row[`M${metric.monthIndex}, окно`] = metric.isMature ? `Созрело ${metric.windowEnd}` : `Недостаточно времени; созреет ${metric.windowEnd}`;
+    }
+    return row;
+  });
+  const cohortsSheet = XLSX.utils.json_to_sheet(cohortRows);
+  cohortsSheet['!cols'] = Object.keys(cohortRows[0] || { 'Месяц первого визита': '' }).map((key) => ({ wch: Math.max(16, Math.min(34, key.length + 2)) }));
+  XLSX.utils.book_append_sheet(workbook, cohortsSheet, 'Когорты');
+  const lifecycleRows = cohortsLifecycle.lifecycle.statuses.map((status) => ({
+    'Статус': status.label,
+    'Количество клиентов': status.count,
+    'Знаменатель (классифицированная база)': cohortsLifecycle.lifecycle.totalClassified,
+    'Доля, %': status.share,
+    'Количество в предыдущем срезе': status.previousCount,
+    'Изменение, клиентов': status.change.absolute,
+    'Изменение, %': status.change.percent,
+    'Формула': status.formula,
+  }));
+  const lifecycleSheet = XLSX.utils.json_to_sheet(lifecycleRows);
+  lifecycleSheet['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 38 }, { wch: 14 }, { wch: 32 }, { wch: 22 }, { wch: 18 }, { wch: 80 }];
+  XLSX.utils.book_append_sheet(workbook, lifecycleSheet, 'Жизненный цикл');
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
@@ -331,4 +635,4 @@ async function explainPeriodIndex(from, to, options = {}) {
   });
 }
 
-module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, calculateChanges, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getSourceQuality, getVisitsAnalytics, metricFromRow, parseSourceKeys, rateMetric, resolvePeriod, sourceKeyFromRow, sourceQualityFromRow };
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, metricFromRow, parseSourceKeys, rateMetric, resolvePeriod, retentionMetric, sourceKeyFromRow, sourceQualityFromRow };

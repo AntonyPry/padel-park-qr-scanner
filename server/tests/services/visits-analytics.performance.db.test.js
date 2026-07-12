@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
-const { getSourceQuality, getVisitsAnalytics } = require('../../src/services/visits-analytics.service');
+const { getCohortsLifecycle, getSourceQuality, getVisitsAnalytics } = require('../../src/services/visits-analytics.service');
 
 test('DB-backed production fixture keeps dashboard aggregated and bounded', async () => {
   await db.sequelize.authenticate();
@@ -30,6 +30,12 @@ test('DB-backed production fixture keeps dashboard aggregated and bounded', asyn
     const qualityElapsedMs = Date.now() - qualityStartedAt;
     assert.equal(quality.sources.reduce((sum, row) => sum + row.newClients, 0), 100);
     assert.ok(qualityElapsedMs < 5000, `source quality query took ${qualityElapsedMs}ms`);
+    const cohortsStartedAt = Date.now();
+    const cohorts = await getCohortsLifecycle('2093-03-01', '2093-03-31');
+    const cohortsElapsedMs = Date.now() - cohortsStartedAt;
+    assert.equal(cohorts.cohorts.reduce((sum, row) => sum + row.cohortSize, 0), 100);
+    assert.equal(cohorts.lifecycle.totalClassified >= 100, true);
+    assert.ok(cohortsElapsedMs < 5000, `cohorts/lifecycle queries took ${cohortsElapsedMs}ms`);
   } finally {
     if (users.length) {
       await db.Visit.destroy({ where: { userId: users.map((user) => user.id) } });

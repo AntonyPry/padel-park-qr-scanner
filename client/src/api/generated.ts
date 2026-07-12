@@ -265,6 +265,7 @@ export const apiEndpoints = {
   "utilization.upsert": { method: "POST", path: "/utilization", responseType: "json" },
   "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json" },
   "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json" },
+  "visitsAnalytics.cohortsLifecycle": { method: "GET", path: "/analytics/visits/cohorts-lifecycle", responseType: "json" },
   "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob" },
   "visitsAnalytics.sourceQualityExport": { method: "GET", path: "/export/visits/source-quality", responseType: "blob" },
 } as const;
@@ -2182,9 +2183,16 @@ export type VisitsAnalyticsSourceQualityQuery = {
   sources?: string;
   [key: string]: unknown;
 };
+export type VisitsAnalyticsCohortsLifecycleQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
 export type VisitsAnalyticsExportQuery = {
   from?: string | "";
   to?: string | "";
+  sources?: string;
   [key: string]: unknown;
 };
 export type VisitsAnalyticsSourceQualityExportQuery = {
@@ -2458,6 +2466,7 @@ export interface ApiEndpointRequestMap {
   "utilization.upsert": ApiEndpointRequest<undefined, undefined, UtilizationUpsertBody>;
   "visitsAnalytics.get": ApiEndpointRequest<undefined, VisitsAnalyticsGetQuery, undefined>;
   "visitsAnalytics.sourceQuality": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityQuery, undefined>;
+  "visitsAnalytics.cohortsLifecycle": ApiEndpointRequest<undefined, VisitsAnalyticsCohortsLifecycleQuery, undefined>;
   "visitsAnalytics.export": ApiEndpointRequest<undefined, VisitsAnalyticsExportQuery, undefined>;
   "visitsAnalytics.sourceQualityExport": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityExportQuery, undefined>;
 }

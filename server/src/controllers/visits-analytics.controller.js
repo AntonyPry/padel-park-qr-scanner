@@ -23,6 +23,17 @@ class VisitsAnalyticsController {
     } catch (error) { sendError(res, error, 'Ошибка аналитики качества источников'); }
   }
 
+  async getCohortsLifecycle(req, res) {
+    try {
+      const { from, to, sources } = req.query;
+      res.json(await visitsAnalyticsService.getCohortsLifecycle(from, to, {
+        sourceKeys: sources ? String(sources).split(',') : undefined,
+      }));
+    } catch (error) {
+      sendError(res, error, 'Ошибка аналитики когорт и жизненного цикла');
+    }
+  }
+
   async exportSourceQuality(req, res) {
     try {
       const { from, to, sources } = req.query;
@@ -35,10 +46,11 @@ class VisitsAnalyticsController {
 
   async exportVisits(req, res) {
     try {
-      const { from, to } = req.query;
+      const { from, to, sources } = req.query;
       const buffer = await visitsAnalyticsService.createVisitsExportBuffer(
         from,
         to,
+        { sourceKeys: sources ? String(sources).split(',') : undefined },
       );
 
       res.setHeader(

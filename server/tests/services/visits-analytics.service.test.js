@@ -106,3 +106,50 @@ test('source-quality SQL uses canonical source, database aggregation and per-win
   assert.match(sql, /GROUP BY sourceId,sourceName/);
   assert.doesNotMatch(sql, /SELECT \* FROM Visits/);
 });
+
+test('retention distinguishes zero retention from an immature calendar month', () => {
+  const immature = service.retentionMetric(0, 8, '2026-01', 1, '2026-02-15');
+  assert.equal(immature.rate, null);
+  assert.equal(immature.count, null);
+  assert.equal(immature.eligibleCount, 0);
+  assert.equal(immature.isMature, false);
+  assert.equal(immature.windowEnd, '2026-02-28');
+
+  const matureZero = service.retentionMetric(0, 8, '2026-01', 1, '2026-02-28');
+  assert.equal(matureZero.rate, 0);
+  assert.equal(matureZero.count, 0);
+  assert.equal(matureZero.eligibleCount, 8);
+  assert.equal(matureZero.isMature, true);
+
+  const leapYear = service.retentionMetric(2, 8, '2028-01', 1, '2028-02-29');
+  assert.equal(leapYear.windowEnd, '2028-02-29');
+  assert.equal(leapYear.rate, 25);
+});
+
+test('lifecycle boundaries are mutually exclusive at 30, 60 and 90 days', () => {
+  const asOf = new Date('2026-05-01T00:00:00.000Z');
+  const daysAgo = (days) => new Date(asOf.getTime() - days * 86400000).toISOString();
+  assert.equal(service.classifyLifecycleFacts({ firstVisitAt: daysAgo(30), lastVisitAt: daysAgo(30), visitCount: 1 }, asOf), 'new');
+  assert.equal(service.classifyLifecycleFacts({ firstVisitAt: daysAgo(120), lastVisitAt: daysAgo(30), visitCount: 3 }, asOf), 'developing');
+  assert.equal(service.classifyLifecycleFacts({ firstVisitAt: daysAgo(120), lastVisitAt: daysAgo(30), visitCount: 4 }, asOf), 'regular');
+  assert.equal(service.classifyLifecycleFacts({ firstVisitAt: daysAgo(120), lastVisitAt: daysAgo(60), visitCount: 2 }, asOf), 'atRisk');
+  assert.equal(service.classifyLifecycleFacts({ firstVisitAt: daysAgo(120), lastVisitAt: daysAgo(90), visitCount: 2 }, asOf), 'sleeping');
+  assert.equal(service.classifyLifecycleFacts({ firstVisitAt: daysAgo(120), lastVisitAt: daysAgo(91), visitCount: 2 }, asOf), 'lost');
+});
+
+test('cohort and lifecycle SQL cap visits at asOf and reuse stable source filters', async () => {
+  const calls = [];
+  db.sequelize.query = async (sql) => {
+    calls.push(sql);
+    return [];
+  };
+  await service.getCohortsLifecycle('2026-01-01', '2026-03-31', { sourceKeys: ['id:7'] });
+  const sql = calls.join('\n');
+  assert.match(sql, /v\.visitedAt<=:asOf/);
+  assert.match(sql, /root\.sourceId IN \(:sourceIds\)/);
+  assert.match(sql, /WITH RECURSIVE client_chain/);
+  assert.match(sql, /LOCATE\(CONCAT\(',', parent\.id, ','\), chain\.path\) = 0/);
+  assert.match(sql, /PERIOD_DIFF/);
+  assert.match(sql, /DATE_SUB\(:asOf,INTERVAL 90 DAY\)/);
+  assert.doesNotMatch(sql, /SELECT \* FROM Visits/);
+});

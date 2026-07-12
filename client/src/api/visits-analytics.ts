@@ -59,3 +59,57 @@ export function getSourceQuality(params: { from: string; to: string; sources?: s
   if (params.sources?.length) query.set('sources', params.sources.join(','));
   return apiRequest<SourceQualityAnalytics>(`/api/analytics/visits/source-quality?${query}`, {}, 'Не удалось загрузить качество источников');
 }
+
+export type CohortMetric = RateMetric;
+export interface RetentionMetric {
+  monthIndex: number;
+  count: number | null;
+  eligibleCount: number;
+  rate: number | null;
+  isMature: boolean;
+  windowEnd: string;
+}
+export interface CohortRow {
+  cohortMonth: string;
+  cohortSize: number;
+  repeat30: CohortMetric;
+  repeat60: CohortMetric;
+  repeat90: CohortMetric;
+  retention: RetentionMetric[];
+}
+export interface LifecycleStatus {
+  key: 'new' | 'developing' | 'regular' | 'atRisk' | 'sleeping' | 'lost';
+  label: string;
+  formula: string;
+  count: number;
+  share: number;
+  previousCount: number;
+  change: { absolute: number; percent: number | null };
+}
+export interface VisitsAnalyticsSourceOption {
+  sourceId: number | null;
+  sourceKey: string;
+  source: string;
+  clientCount: number;
+}
+export interface CohortsLifecycleAnalytics {
+  from: string;
+  to: string;
+  asOf: string;
+  timeZone: string;
+  appliedSourceKeys: string[];
+  availableSources: VisitsAnalyticsSourceOption[];
+  retentionMonths: number[];
+  cohorts: CohortRow[];
+  lifecycle: {
+    totalClassified: number;
+    previousTotalClassified: number;
+    previousPeriod: { from: string; to: string; asOf: string };
+    statuses: LifecycleStatus[];
+  };
+}
+export function getCohortsLifecycle(params: { from: string; to: string; sources?: string[] }) {
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.sources?.length) query.set('sources', params.sources.join(','));
+  return apiRequest<CohortsLifecycleAnalytics>(`/api/analytics/visits/cohorts-lifecycle?${query}`, {}, 'Не удалось загрузить когорты и жизненный цикл');
+}

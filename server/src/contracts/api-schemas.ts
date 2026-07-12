@@ -1793,6 +1793,9 @@ const apiSchemas = {
   },
   visitsAnalytics: {
     dateRangeQuery,
+    filteredDateRangeQuery: dateRangeQuery.extend({
+      sources: z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$/).optional(),
+    }),
     sourceQualityQuery: dateRangeQuery.extend({
       sources: z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$/).optional(),
     }),

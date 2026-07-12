@@ -104,5 +104,7 @@ export const queryKeys = {
       [...queryKeys.visitsAnalytics.all, params] as const,
     sourceQuality: (params: { from: string; to: string; sources?: string[] }) =>
       [...queryKeys.visitsAnalytics.all, 'source-quality', params] as const,
+    cohortsLifecycle: (params: { from: string; to: string; sources?: string[] }) =>
+      [...queryKeys.visitsAnalytics.all, 'cohorts-lifecycle', params] as const,
   },
 };
