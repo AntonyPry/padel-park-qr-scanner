@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
-const { getVisitsAnalytics } = require('../../src/services/visits-analytics.service');
+const { getSourceQuality, getVisitsAnalytics } = require('../../src/services/visits-analytics.service');
 
 test('DB-backed production fixture keeps dashboard aggregated and bounded', async () => {
   await db.sequelize.authenticate();
@@ -25,6 +25,11 @@ test('DB-backed production fixture keeps dashboard aggregated and bounded', asyn
     assert.equal(result.topGuests.length, 10);
     assert.equal(result.sources.length, 5);
     assert.ok(elapsedMs < 5000, `dashboard query took ${elapsedMs}ms`);
+    const qualityStartedAt = Date.now();
+    const quality = await getSourceQuality('2093-03-01', '2093-03-31', { now: '2093-07-01T00:00:00Z' });
+    const qualityElapsedMs = Date.now() - qualityStartedAt;
+    assert.equal(quality.sources.reduce((sum, row) => sum + row.newClients, 0), 100);
+    assert.ok(qualityElapsedMs < 5000, `source quality query took ${qualityElapsedMs}ms`);
   } finally {
     if (users.length) {
       await db.Visit.destroy({ where: { userId: users.map((user) => user.id) } });

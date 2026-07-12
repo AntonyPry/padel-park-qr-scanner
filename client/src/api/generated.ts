@@ -264,7 +264,9 @@ export const apiEndpoints = {
   "utilization.list": { method: "GET", path: "/utilization", responseType: "json" },
   "utilization.upsert": { method: "POST", path: "/utilization", responseType: "json" },
   "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json" },
+  "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json" },
   "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob" },
+  "visitsAnalytics.sourceQualityExport": { method: "GET", path: "/export/visits/source-quality", responseType: "blob" },
 } as const;
 
 export type ApiEndpointId = keyof typeof apiEndpoints;
@@ -2174,9 +2176,21 @@ export type VisitsAnalyticsGetQuery = {
   to?: string | "";
   [key: string]: unknown;
 };
+export type VisitsAnalyticsSourceQualityQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
 export type VisitsAnalyticsExportQuery = {
   from?: string | "";
   to?: string | "";
+  [key: string]: unknown;
+};
+export type VisitsAnalyticsSourceQualityExportQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
   [key: string]: unknown;
 };
 
@@ -2443,5 +2457,7 @@ export interface ApiEndpointRequestMap {
   "utilization.list": ApiEndpointRequest<undefined, undefined, undefined>;
   "utilization.upsert": ApiEndpointRequest<undefined, undefined, UtilizationUpsertBody>;
   "visitsAnalytics.get": ApiEndpointRequest<undefined, VisitsAnalyticsGetQuery, undefined>;
+  "visitsAnalytics.sourceQuality": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityQuery, undefined>;
   "visitsAnalytics.export": ApiEndpointRequest<undefined, VisitsAnalyticsExportQuery, undefined>;
+  "visitsAnalytics.sourceQualityExport": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityExportQuery, undefined>;
 }

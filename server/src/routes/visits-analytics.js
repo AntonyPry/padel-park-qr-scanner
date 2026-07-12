@@ -9,6 +9,8 @@ const router = express.Router();
 const viewReports = requireRole(...ACCESS_MATRIX.reportsView);
 
 router.get('/analytics/visits', viewReports, validate({ query: apiSchemas.visitsAnalytics.dateRangeQuery }), visitsAnalyticsController.getAnalytics);
+router.get('/analytics/visits/source-quality', viewReports, validate({ query: apiSchemas.visitsAnalytics.sourceQualityQuery }), visitsAnalyticsController.getSourceQuality);
 router.get('/export/visits', viewReports, validate({ query: apiSchemas.visitsAnalytics.dateRangeQuery }), visitsAnalyticsController.exportVisits);
+router.get('/export/visits/source-quality', viewReports, validate({ query: apiSchemas.visitsAnalytics.sourceQualityQuery }), visitsAnalyticsController.exportSourceQuality);
 
 module.exports = router;

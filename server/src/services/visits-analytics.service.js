@@ -168,6 +168,108 @@ async function getVisitsAnalytics(from, to, options = {}) {
   return { ...metricSets.current, previousPeriod: { from: period.previousFrom, to: period.previousTo, metrics: metricSets.previous }, changes: calculateChanges(metricSets.current, metricSets.previous), ...aggregates, timeZone: CLUB_TIME_ZONE };
 }
 
+function rateMetric(count, eligibleCount) {
+  return { count: number(count), eligibleCount: number(eligibleCount), rate: number(eligibleCount) ? number(count) / number(eligibleCount) * 100 : null };
+}
+
+function sourceQualityFromRow(row) {
+  const eligible90 = number(row.eligible90);
+  return {
+    sourceId: row.sourceId === null || row.sourceId === undefined ? null : number(row.sourceId),
+    source: row.source || row.sourceName || 'Не указан',
+    newClients: number(row.newClients),
+    oneVisit30: rateMetric(row.oneVisit30, row.eligible30),
+    repeat30: rateMetric(row.repeat30, row.eligible30),
+    repeat60: rateMetric(row.repeat60, row.eligible60),
+    repeat90: rateMetric(row.repeat90, eligible90),
+    threePlus90: rateMetric(row.threePlus90, eligible90),
+    averageVisits90: eligible90 ? number(row.visits90Total) / eligible90 : null,
+    medianDaysToSecondVisit: row.medianDaysToSecondVisit === null || row.medianDaysToSecondVisit === undefined ? null : Number(row.medianDaysToSecondVisit),
+    sampleSize: { eligible30: number(row.eligible30), eligible60: number(row.eligible60), eligible90 },
+    lowSample: Math.max(number(row.eligible30), number(row.eligible60), eligible90) < 10,
+  };
+}
+
+async function getSourceQuality(from, to, options = {}) {
+  const now = options.now ? new Date(options.now) : new Date();
+  const period = resolvePeriod(from, to, now);
+  const sourceIds = (options.sourceIds || []).map(Number).filter(Number.isInteger);
+  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+    valid_visits AS (
+      SELECT cc.canonicalUserId, v.visitedAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id=v.userId
+      JOIN canonical_clients cc ON cc.originUserId=v.userId
+      WHERE ${VALID_VISIT_SQL}
+    ), ranked_visits AS (
+      SELECT canonicalUserId, visitedAt,
+        ROW_NUMBER() OVER (PARTITION BY canonicalUserId ORDER BY visitedAt, canonicalUserId) visitNumber,
+        MIN(visitedAt) OVER (PARTITION BY canonicalUserId) firstVisitAt
+      FROM valid_visits
+    ), cohort AS (
+      SELECT rv.canonicalUserId, MIN(rv.firstVisitAt) firstVisitAt,
+        MIN(CASE WHEN rv.visitNumber=2 THEN rv.visitedAt END) secondVisitAt,
+        SUM(rv.visitedAt <= DATE_ADD(rv.firstVisitAt, INTERVAL 90 DAY)) visits90
+      FROM ranked_visits rv
+      GROUP BY rv.canonicalUserId
+      HAVING firstVisitAt BETWEEN :from AND :to
+    ), cohort_metrics AS (
+      SELECT c.*, root.sourceId,
+        COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,
+        DATE_ADD(c.firstVisitAt,INTERVAL 30 DAY)<=:now eligible30,
+        DATE_ADD(c.firstVisitAt,INTERVAL 60 DAY)<=:now eligible60,
+        DATE_ADD(c.firstVisitAt,INTERVAL 90 DAY)<=:now eligible90,
+        c.secondVisitAt<=DATE_ADD(c.firstVisitAt,INTERVAL 30 DAY) repeated30,
+        c.secondVisitAt<=DATE_ADD(c.firstVisitAt,INTERVAL 60 DAY) repeated60,
+        c.secondVisitAt<=DATE_ADD(c.firstVisitAt,INTERVAL 90 DAY) repeated90,
+        TIMESTAMPDIFF(SECOND,c.firstVisitAt,c.secondVisitAt)/86400 daysToSecond
+      FROM cohort c JOIN Users root ON root.id=c.canonicalUserId
+      LEFT JOIN ClientSources cs ON cs.id=root.sourceId
+      WHERE (:filterSources = 0 OR root.sourceId IN (:sourceIds))
+    ), grouped AS (
+      SELECT sourceId,sourceName,COUNT(*) newClients,
+        SUM(eligible30) eligible30,SUM(eligible60) eligible60,SUM(eligible90) eligible90,
+        SUM(eligible30 AND NOT COALESCE(repeated30,0)) oneVisit30,
+        SUM(eligible30 AND repeated30) repeat30,SUM(eligible60 AND repeated60) repeat60,
+        SUM(eligible90 AND repeated90) repeat90,SUM(eligible90 AND visits90>=3) threePlus90,
+        SUM(CASE WHEN eligible90 THEN visits90 ELSE 0 END) visits90Total
+      FROM cohort_metrics GROUP BY sourceId,sourceName
+    ), second_ranked AS (
+      SELECT sourceId,sourceName,daysToSecond,
+        ROW_NUMBER() OVER(PARTITION BY sourceId,sourceName ORDER BY daysToSecond) rn,
+        COUNT(*) OVER(PARTITION BY sourceId,sourceName) cnt
+      FROM cohort_metrics WHERE secondVisitAt IS NOT NULL
+    ), medians AS (
+      SELECT sourceId,sourceName,AVG(daysToSecond) medianDaysToSecondVisit FROM second_ranked
+      WHERE rn IN (FLOOR((cnt+1)/2),FLOOR((cnt+2)/2)) GROUP BY sourceId,sourceName
+    )
+    SELECT g.*,m.medianDaysToSecondVisit FROM grouped g LEFT JOIN medians m
+      ON m.sourceId<=>g.sourceId AND m.sourceName=g.sourceName ORDER BY newClients DESC,sourceName`, {
+    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), filterSources: sourceIds.length ? 1 : 0, sourceIds: sourceIds.length ? sourceIds : [0] },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  return { from: period.from, to: period.to, asOf: now, timeZone: CLUB_TIME_ZONE, sources: rows.map(sourceQualityFromRow) };
+}
+
+async function createSourceQualityExportBuffer(from, to, options = {}) {
+  const analytics = await getSourceQuality(from, to, options);
+  const rows = analytics.sources.map((item) => ({
+    'Источник': item.source, 'Новых клиентов': item.newClients,
+    'Один визит 30, кол-во': item.oneVisit30.count, 'Один визит 30, eligible': item.oneVisit30.eligibleCount, 'Один визит 30, %': item.oneVisit30.rate,
+    'Вернулись 30, кол-во': item.repeat30.count, 'Вернулись 30, eligible': item.repeat30.eligibleCount, 'Вернулись 30, %': item.repeat30.rate,
+    'Вернулись 60, кол-во': item.repeat60.count, 'Вернулись 60, eligible': item.repeat60.eligibleCount, 'Вернулись 60, %': item.repeat60.rate,
+    'Вернулись 90, кол-во': item.repeat90.count, 'Вернулись 90, eligible': item.repeat90.eligibleCount, 'Вернулись 90, %': item.repeat90.rate,
+    '3+ визита 90, кол-во': item.threePlus90.count, '3+ визита 90, eligible': item.threePlus90.eligibleCount, '3+ визита 90, %': item.threePlus90.rate,
+    'Среднее визитов 90': item.averageVisits90, 'Медиана дней до 2-го': item.medianDaysToSecondVisit,
+    'eligible30': item.sampleSize.eligible30, 'eligible60': item.sampleSize.eligible60, 'eligible90': item.sampleSize.eligible90,
+  }));
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.json_to_sheet(rows);
+  sheet['!cols'] = Object.keys(rows[0] || { 'Источник': '' }).map((key) => ({ wch: Math.max(14, Math.min(32, key.length + 2)) }));
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Качество источников');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
 function formatClubDateTime(value) {
   return new Intl.DateTimeFormat('ru-RU', { timeZone: CLUB_TIME_ZONE, dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value));
 }
@@ -203,4 +305,4 @@ async function explainPeriodIndex(from, to, options = {}) {
   });
 }
 
-module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, calculateChanges, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getVisitsAnalytics, metricFromRow, resolvePeriod };
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, calculateChanges, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getSourceQuality, getVisitsAnalytics, metricFromRow, rateMetric, resolvePeriod, sourceQualityFromRow };

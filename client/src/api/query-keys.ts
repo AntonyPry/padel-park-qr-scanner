@@ -102,5 +102,7 @@ export const queryKeys = {
     all: ['visits-analytics'] as const,
     detail: (params: { from: string; to: string }) =>
       [...queryKeys.visitsAnalytics.all, params] as const,
+    sourceQuality: (params: { from: string; to: string; sources?: number[] }) =>
+      [...queryKeys.visitsAnalytics.all, 'source-quality', params] as const,
   },
 };

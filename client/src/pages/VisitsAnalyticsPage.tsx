@@ -38,6 +38,8 @@ import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SourceQualityTab } from '@/components/source-quality-tab';
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
@@ -178,6 +180,7 @@ function DonutChartCard({
 }
 
 export default function VisitsAnalyticsPage() {
+  const [activeTab, setActiveTab] = useState('overview');
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -260,7 +263,10 @@ export default function VisitsAnalyticsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-5">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
+      <TabsList className="grid w-full grid-cols-2 sm:w-auto"><TabsTrigger value="overview">Обзор</TabsTrigger><TabsTrigger value="source-quality">Качество источников</TabsTrigger></TabsList>
+      <TabsContent value="source-quality"><SourceQualityTab /></TabsContent>
+      <TabsContent value="overview"><div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
         {data && (
           <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
@@ -475,6 +481,7 @@ export default function VisitsAnalyticsPage() {
           </Card>
         </>
       )}
-    </div>
+    </div></TabsContent>
+    </Tabs>
   );
 }

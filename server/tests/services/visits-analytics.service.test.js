@@ -71,3 +71,23 @@ test('metrics combine current and previous aggregates', async () => {
   assert.equal(result.repeatRate30, 50);
   assert.equal(result.changes.totalVisits.absolute, 3);
 });
+
+test('source-quality preserves null for immature cohorts and flags small samples', () => {
+  const row = service.sourceQualityFromRow({ source: 'Radio', newClients: 4, eligible30: 0, repeat30: 0, eligible60: 0, eligible90: 0 });
+  assert.equal(row.repeat30.rate, null);
+  assert.equal(row.averageVisits90, null);
+  assert.equal(row.lowSample, true);
+});
+
+test('source-quality SQL uses canonical source, database aggregation and per-window eligibility', async () => {
+  let sql = '';
+  db.sequelize.query = async (value) => { sql = value; return []; };
+  await service.getSourceQuality('2026-01-01', '2026-01-31', { now: '2026-05-01T00:00:00Z' });
+  assert.match(sql, /canonical_clients/);
+  assert.match(sql, /LEFT JOIN ClientSources cs ON cs.id=root.sourceId/);
+  assert.match(sql, /eligible30/);
+  assert.match(sql, /eligible60/);
+  assert.match(sql, /eligible90/);
+  assert.match(sql, /GROUP BY sourceId,sourceName/);
+  assert.doesNotMatch(sql, /SELECT \* FROM Visits/);
+});
