@@ -392,14 +392,12 @@ async function list(query = {}) {
   return Promise.all(bases.map((base) => mapBase(base)));
 }
 
-async function create(actor, data) {
+async function persistBase(actor, data, provenance = null) {
   const name = String(data.name || '').trim();
   if (name.length < 2) throw appError('Название базы слишком короткое');
 
   const filters = normalizeFilters(data.filters);
-  const origin = data.origin === 'visits_analytics' || isVisitsAnalyticsFilters(filters)
-    ? 'visits_analytics'
-    : null;
+  const origin = provenance?.origin || null;
   if (origin === 'visits_analytics' && !isVisitsAnalyticsFilters(filters)) {
     throw appError('Для базы из аналитики не передан аналитический фильтр');
   }
@@ -418,7 +416,7 @@ async function create(actor, data) {
     description: String(data.description || '').trim() || null,
     filters,
     origin,
-    originMetadata: origin === 'visits_analytics' ? parseFilters(data.originMetadata) : null,
+    originMetadata: origin === 'visits_analytics' ? provenance.originMetadata : null,
     slaDays: normalizeSlaDays(data.slaDays),
     ...recurrencePayload,
     status: normalizeStatus(data.status),
@@ -440,6 +438,38 @@ async function create(actor, data) {
   return mapBase(await getBaseOrFail(base.id));
 }
 
+async function create(actor, data) {
+  const rawFilters = parseFilters(data.filters);
+  if (
+    data.origin === 'visits_analytics'
+    || 'originMetadata' in data
+    || isVisitsAnalyticsFilters(rawFilters)
+  ) {
+    throw appError(
+      'Базы из аналитики посещений создаются только через аналитический сценарий',
+      400,
+    );
+  }
+
+  return persistBase(actor, data);
+}
+
+async function createFromVisitsAnalytics(actor, data) {
+  const preview = await visitsAnalyticsService.previewVisitAnalyticsSegment(data.selection);
+
+  return persistBase(actor, {
+    description: data.description,
+    filters: preview.filters,
+    name: data.name,
+    recurrence: { enabled: false },
+    slaDays: null,
+    status: 'active',
+  }, {
+    origin: preview.origin,
+    originMetadata: preview.originMetadata,
+  });
+}
+
 async function update(id, data) {
   const base = await getBaseOrFail(id);
   const payload = {};
@@ -455,6 +485,12 @@ async function update(id, data) {
   }
 
   if ('filters' in data) {
+    if (base.origin === 'visits_analytics') {
+      throw appError(
+        'Фильтр базы из аналитики посещений нельзя изменить',
+        409,
+      );
+    }
     payload.filters = normalizeFilters(data.filters);
     payload.lastCalculatedAt = new Date();
   }
@@ -542,6 +578,7 @@ module.exports = {
   archive,
   countBaseClients,
   create,
+  createFromVisitsAnalytics,
   getClients,
   list,
   listBaseClientsForSnapshot,

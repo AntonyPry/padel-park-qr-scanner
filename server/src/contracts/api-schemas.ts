@@ -285,6 +285,18 @@ const clientFilters = z
   })
   .passthrough();
 
+const visitsAnalyticsSegmentSelection = z
+  .object({
+    asOf: z.union([dateOnly, z.string().datetime({ offset: true })]).optional(),
+    cohortMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    from: dateOnly,
+    kind: z.enum(['source', 'lifecycle', 'cohort', 'filters']),
+    lifecycleStatus: z.enum(['new', 'developing', 'regular', 'atRisk', 'sleeping', 'lost']).optional(),
+    sourceKeys: z.array(z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)$/)).max(100).optional(),
+    to: dateOnly,
+  })
+  .passthrough();
+
 const recurrence = z
   .object({
     assignedToAccountId: nullableId,
@@ -1448,8 +1460,6 @@ const apiSchemas = {
         description: optionalString,
         filters: clientFilters.optional(),
         name: nameString,
-        origin: z.literal('visits_analytics').optional(),
-        originMetadata: optionalJsonObject,
         recurrence: recurrence.optional(),
         slaDays: optionalNonNegativeNumberValue,
         status: archiveStatus.optional(),
@@ -1814,17 +1824,14 @@ const apiSchemas = {
     ]),
   },
   visitsAnalytics: {
-    clientBasePreviewBody: z
+    clientBaseCreateBody: z
       .object({
-        asOf: z.union([dateOnly, z.string().datetime({ offset: true })]).optional(),
-        cohortMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
-        from: dateOnly,
-        kind: z.enum(['source', 'lifecycle', 'cohort', 'filters']),
-        lifecycleStatus: z.enum(['new', 'developing', 'regular', 'atRisk', 'sleeping', 'lost']).optional(),
-        sourceKeys: z.array(z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)$/)).max(100).optional(),
-        to: dateOnly,
+        description: optionalString,
+        name: nameString,
+        selection: visitsAnalyticsSegmentSelection,
       })
       .passthrough(),
+    clientBasePreviewBody: visitsAnalyticsSegmentSelection,
     dateRangeQuery,
     filteredDateRangeQuery: dateRangeQuery.extend({
       sources: z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$/).optional(),

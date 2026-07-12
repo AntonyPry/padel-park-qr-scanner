@@ -330,6 +330,7 @@ const endpointContracts: EndpointContract[] = [
   { id: 'visitsAnalytics.sourceQuality', method: 'get', path: '/analytics/visits/source-quality', query: apiSchemas.visitsAnalytics.sourceQualityQuery, summary: 'Visits source quality', tags: ['Reports'] },
   { id: 'visitsAnalytics.cohortsLifecycle', method: 'get', path: '/analytics/visits/cohorts-lifecycle', query: apiSchemas.visitsAnalytics.filteredDateRangeQuery, summary: 'Visits cohorts and client lifecycle', tags: ['Reports'] },
   { id: 'visitsAnalytics.clientBasePreview', method: 'post', path: '/analytics/visits/client-base-preview', body: apiSchemas.visitsAnalytics.clientBasePreviewBody, summary: 'Preview a ClientBase from visits analytics filters', tags: ['Reports', 'Client bases'] },
+  { id: 'visitsAnalytics.createClientBase', method: 'post', path: '/analytics/visits/client-bases', body: apiSchemas.visitsAnalytics.clientBaseCreateBody, summary: 'Create a server-owned ClientBase from visits analytics selection', tags: ['Reports', 'Client bases'] },
   { id: 'visitsAnalytics.export', method: 'get', path: '/export/visits', query: apiSchemas.visitsAnalytics.filteredDateRangeQuery, responseType: 'xlsx', summary: 'Export visits analytics', tags: ['Reports'] },
   { id: 'visitsAnalytics.sourceQualityExport', method: 'get', path: '/export/visits/source-quality', query: apiSchemas.visitsAnalytics.sourceQualityQuery, responseType: 'xlsx', summary: 'Export visits source quality', tags: ['Reports'] },
 ];

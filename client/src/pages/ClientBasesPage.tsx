@@ -651,16 +651,16 @@ export default function ClientBasesPage() {
   const handleSave = baseForm.handleSubmit(async (values) => {
     setFormError('');
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       description: values.description.trim(),
-      filters: editingBase?.origin === 'visits_analytics'
-        ? editingBase.filters
-        : buildFilters(values),
       name: values.name.trim(),
       recurrence: buildRecurrence(values),
       slaDays: values.slaDays.trim() ? Number(values.slaDays) : null,
       status: editingBase?.status || 'active',
     };
+    if (editingBase?.origin !== 'visits_analytics') {
+      payload.filters = buildFilters(values);
+    }
     const res = await apiFetch(
       editingBase ? `/api/client-bases/${editingBase.id}` : '/api/client-bases',
       {

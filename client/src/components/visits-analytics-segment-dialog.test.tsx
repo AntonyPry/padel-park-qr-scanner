@@ -35,7 +35,7 @@ afterEach(() => {
 });
 
 describe('VisitsAnalyticsSegmentDialog', () => {
-  it('keeps edited form state across a background parent rerender and creates through ClientBase API', async () => {
+  it('keeps edited form state across a background parent rerender and uses server-owned create', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify(previewResponse()), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 91, name: 'Моя база' }), { status: 201 }));
@@ -62,12 +62,23 @@ describe('VisitsAnalyticsSegmentDialog', () => {
     await screen.findByText('База создана');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const createRequest = fetchMock.mock.calls[1];
-    expect(String(createRequest[0])).toContain('/api/client-bases');
-    expect(JSON.parse(String(createRequest[1]?.body))).toMatchObject({
+    expect(String(createRequest[0])).toContain('/api/analytics/visits/client-bases');
+    const body = JSON.parse(String(createRequest[1]?.body));
+    expect(body).toMatchObject({
       name: 'Моя база',
-      origin: 'visits_analytics',
-      status: 'active',
+      selection: {
+        asOf: selection.asOf,
+        from: selection.from,
+        kind: selection.kind,
+        lifecycleStatus: selection.lifecycleStatus,
+        sourceKeys: selection.sourceKeys,
+        to: selection.to,
+      },
     });
+    expect(body.selection).not.toHaveProperty('expectedCount');
+    expect(body).not.toHaveProperty('filters');
+    expect(body).not.toHaveProperty('origin');
+    expect(body).not.toHaveProperty('originMetadata');
   });
 
   it('does not allow an empty segment to be created', async () => {

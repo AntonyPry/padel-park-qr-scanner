@@ -144,12 +144,34 @@ export interface VisitsAnalyticsSegmentPreview {
 }
 
 export function previewVisitsAnalyticsSegment(selection: VisitsAnalyticsSegmentSelection) {
-  const body = Object.fromEntries(
-    Object.entries(selection).filter(([key]) => key !== 'expectedCount'),
-  );
+  const body = visitsAnalyticsSelectionBody(selection);
   return apiRequest<VisitsAnalyticsSegmentPreview>(
     '/api/analytics/visits/client-base-preview',
     { method: 'POST', body: JSON.stringify(body) },
     'Не удалось рассчитать клиентскую базу',
+  );
+}
+
+function visitsAnalyticsSelectionBody(selection: VisitsAnalyticsSegmentSelection) {
+  return Object.fromEntries(
+    Object.entries(selection).filter(([key]) => key !== 'expectedCount'),
+  );
+}
+
+export function createVisitsAnalyticsClientBase(
+  selection: VisitsAnalyticsSegmentSelection,
+  values: { name: string; description: string },
+) {
+  return apiRequest<{ id: number; name: string }>(
+    '/api/analytics/visits/client-bases',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        description: values.description,
+        name: values.name,
+        selection: visitsAnalyticsSelectionBody(selection),
+      }),
+    },
+    'Не удалось создать клиентскую базу',
   );
 }

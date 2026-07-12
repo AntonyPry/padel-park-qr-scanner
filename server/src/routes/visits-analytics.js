@@ -13,6 +13,7 @@ router.get('/analytics/visits', viewReports, validate({ query: apiSchemas.visits
 router.get('/analytics/visits/source-quality', viewReports, validate({ query: apiSchemas.visitsAnalytics.sourceQualityQuery }), visitsAnalyticsController.getSourceQuality);
 router.get('/analytics/visits/cohorts-lifecycle', viewReports, validate({ query: apiSchemas.visitsAnalytics.filteredDateRangeQuery }), visitsAnalyticsController.getCohortsLifecycle);
 router.post('/analytics/visits/client-base-preview', manageClientBases, validate({ body: apiSchemas.visitsAnalytics.clientBasePreviewBody }), visitsAnalyticsController.previewClientBase);
+router.post('/analytics/visits/client-bases', manageClientBases, validate({ body: apiSchemas.visitsAnalytics.clientBaseCreateBody }), visitsAnalyticsController.createClientBase);
 router.get('/export/visits', viewReports, validate({ query: apiSchemas.visitsAnalytics.filteredDateRangeQuery }), visitsAnalyticsController.exportVisits);
 router.get('/export/visits/source-quality', viewReports, validate({ query: apiSchemas.visitsAnalytics.sourceQualityQuery }), visitsAnalyticsController.exportSourceQuality);
 

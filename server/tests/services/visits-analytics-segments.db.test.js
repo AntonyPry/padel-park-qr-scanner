@@ -4,6 +4,22 @@ const db = require('../../models');
 const analyticsService = require('../../src/services/visits-analytics.service');
 const clientBasesService = require('../../src/services/client-bases.service');
 const callTasksService = require('../../src/services/call-tasks.service');
+const clientBasesController = require('../../src/controllers/client-bases.controller');
+
+function createApiResponse() {
+  return {
+    body: null,
+    statusCode: 200,
+    json(payload) {
+      this.body = payload;
+      return this;
+    },
+    status(code) {
+      this.statusCode = code;
+      return this;
+    },
+  };
+}
 
 test('DB-backed analytics → preview → client base → call task keeps count parity and canonical membership', async () => {
   await db.sequelize.authenticate();
@@ -129,18 +145,103 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     assert.equal(resolved.items.some((item) => Number(item.id) === training.id), false);
     assert.equal(resolved.items.find((item) => Number(item.id) === root.id).stats.visitCount, 3);
 
-    base = await clientBasesService.create(actor, {
+    await assert.rejects(
+      () => clientBasesService.create(actor, {
+        filters: preview.filters,
+        name: preview.name,
+        origin: preview.origin,
+        status: 'active',
+      }),
+      (error) => error.statusCode === 400 && /только через аналитический сценарий/.test(error.message),
+    );
+    const spoofedCreateResponse = createApiResponse();
+    await clientBasesController.create({
+      account: actor,
+      body: {
+        filters: preview.filters,
+        name: preview.name,
+        origin: preview.origin,
+        originMetadata: { algorithmVersion: 'spoofed-version' },
+      },
+    }, spoofedCreateResponse);
+    assert.equal(spoofedCreateResponse.statusCode, 400);
+    assert.match(spoofedCreateResponse.body.error, /только через аналитический сценарий/);
+    await assert.rejects(
+      () => clientBasesService.create(actor, {
+        filters: preview.filters,
+        name: preview.name,
+        origin: preview.origin,
+        originMetadata: {
+          ...preview.originMetadata,
+          algorithmVersion: 'spoofed-version',
+          sourceFilters: { keys: ['id:999999999'], labels: ['Spoofed'] },
+        },
+        status: 'active',
+      }),
+      (error) => error.statusCode === 400 && /только через аналитический сценарий/.test(error.message),
+    );
+
+    const selection = {
+      asOf: '2091-04-30',
+      from: '2091-01-01',
+      kind: 'source',
+      sourceKeys: [sourceRow.sourceKey],
+      to: '2091-01-31',
+    };
+    base = await clientBasesService.createFromVisitsAnalytics(actor, {
       description: preview.description,
-      filters: preview.filters,
       name: preview.name,
-      origin: preview.origin,
-      originMetadata: preview.originMetadata,
-      status: 'active',
+      filters: { visitsAnalytics: { sourceKeys: ['id:999999999'] } },
+      originMetadata: { algorithmVersion: 'spoofed-version' },
+      selection,
     });
     assert.equal(base.origin, 'visits_analytics');
     assert.equal(base.currentClientCount, preview.count);
-    assert.equal(base.filters.visitsAnalytics.sourceKeys[0], sourceRow.sourceKey);
-    assert.equal(base.originMetadata.algorithmVersion, 'visits_analytics_segment_v1');
+    assert.deepEqual(base.filters, { ...preview.filters, segment: 'all' });
+    assert.deepEqual(base.originMetadata, preview.originMetadata);
+
+    const immutableFilters = structuredClone(base.filters);
+    await assert.rejects(
+      () => clientBasesService.update(base.id, {
+        filters: {
+          ...base.filters,
+          visitsAnalytics: {
+            ...base.filters.visitsAnalytics,
+            sourceKeys: ['id:999999999'],
+          },
+        },
+      }),
+      (error) => error.statusCode === 409 && /нельзя изменить/.test(error.message),
+    );
+    const immutableUpdateResponse = createApiResponse();
+    await clientBasesController.update({
+      body: { filters: preview.filters },
+      params: { id: String(base.id) },
+    }, immutableUpdateResponse);
+    assert.equal(immutableUpdateResponse.statusCode, 409);
+    assert.match(immutableUpdateResponse.body.error, /нельзя изменить/);
+    const updatedBase = await clientBasesService.update(base.id, {
+      description: 'Описание можно менять',
+      name: `${preview.name} updated`,
+      recurrence: {
+        dueDays: 2,
+        enabled: true,
+        interval: 'daily',
+        scopeType: 'dynamic',
+        time: '10:30',
+      },
+      slaDays: 4,
+      status: 'archived',
+    });
+    assert.equal(updatedBase.name, `${preview.name} updated`);
+    assert.equal(updatedBase.description, 'Описание можно менять');
+    assert.equal(updatedBase.recurrence.enabled, true);
+    assert.equal(updatedBase.recurrence.scopeType, 'dynamic');
+    assert.equal(updatedBase.slaDays, 4);
+    assert.equal(updatedBase.status, 'archived');
+    assert.deepEqual(updatedBase.filters, immutableFilters);
+    base = await clientBasesService.update(base.id, { status: 'active' });
+    assert.deepEqual(base.filters, immutableFilters);
 
     const baseClients = await clientBasesService.getClients(base.id, { page: 1, pageSize: 20 });
     assert.equal(baseClients.total, preview.count);
@@ -164,18 +265,12 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     assert.equal(await clientBasesService.countBaseClients(base.filters), preview.count + 1);
 
     await assert.rejects(
-      () => clientBasesService.create(actor, {
-        filters: {
-          status: 'active',
-          visitsAnalytics: {
-            ...preview.filters.visitsAnalytics,
-            sourceKeys: ['id:999999999'],
-          },
-        },
+      () => clientBasesService.createFromVisitsAnalytics(actor, {
         name: 'Empty analytics segment',
-        origin: 'visits_analytics',
-        originMetadata: preview.originMetadata,
-        status: 'active',
+        selection: {
+          ...selection,
+          sourceKeys: ['id:999999999'],
+        },
       }),
       /Пустой сегмент/,
     );

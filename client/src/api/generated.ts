@@ -267,6 +267,7 @@ export const apiEndpoints = {
   "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json" },
   "visitsAnalytics.cohortsLifecycle": { method: "GET", path: "/analytics/visits/cohorts-lifecycle", responseType: "json" },
   "visitsAnalytics.clientBasePreview": { method: "POST", path: "/analytics/visits/client-base-preview", responseType: "json" },
+  "visitsAnalytics.createClientBase": { method: "POST", path: "/analytics/visits/client-bases", responseType: "json" },
   "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob" },
   "visitsAnalytics.sourceQualityExport": { method: "GET", path: "/export/visits/source-quality", responseType: "blob" },
 } as const;
@@ -1105,8 +1106,6 @@ export type ClientBasesCreateBody = {
     [key: string]: unknown;
   };
   name: string;
-  origin?: "visits_analytics";
-  originMetadata?: Record<string, unknown> | null;
   recurrence?: {
     assignedToAccountId?: number | string | "" | null;
     description?: string | "" | null;
@@ -2310,6 +2309,21 @@ export type VisitsAnalyticsClientBasePreviewBody = {
   to: string;
   [key: string]: unknown;
 };
+export type VisitsAnalyticsCreateClientBaseBody = {
+  description?: string | "" | null;
+  name: string;
+  selection: {
+    asOf?: string | string;
+    cohortMonth?: string;
+    from: string;
+    kind: "source" | "lifecycle" | "cohort" | "filters";
+    lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+    sourceKeys?: Array<string>;
+    to: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
 export type VisitsAnalyticsExportQuery = {
   from?: string | "";
   to?: string | "";
@@ -2589,6 +2603,7 @@ export interface ApiEndpointRequestMap {
   "visitsAnalytics.sourceQuality": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityQuery, undefined>;
   "visitsAnalytics.cohortsLifecycle": ApiEndpointRequest<undefined, VisitsAnalyticsCohortsLifecycleQuery, undefined>;
   "visitsAnalytics.clientBasePreview": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsClientBasePreviewBody>;
+  "visitsAnalytics.createClientBase": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsCreateClientBaseBody>;
   "visitsAnalytics.export": ApiEndpointRequest<undefined, VisitsAnalyticsExportQuery, undefined>;
   "visitsAnalytics.sourceQualityExport": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityExportQuery, undefined>;
 }

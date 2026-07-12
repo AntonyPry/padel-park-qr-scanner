@@ -1,4 +1,5 @@
 const visitsAnalyticsService = require('../services/visits-analytics.service');
+const clientBasesService = require('../services/client-bases.service');
 const { sendError } = require('../utils/api-error');
 
 class VisitsAnalyticsController {
@@ -39,6 +40,17 @@ class VisitsAnalyticsController {
       res.json(await visitsAnalyticsService.previewVisitAnalyticsSegment(req.body));
     } catch (error) {
       sendError(res, error, 'Ошибка предпросмотра базы из аналитики');
+    }
+  }
+
+  async createClientBase(req, res) {
+    try {
+      res.status(201).json(await clientBasesService.createFromVisitsAnalytics(
+        req.account,
+        req.body,
+      ));
+    } catch (error) {
+      sendError(res, error, 'Ошибка создания базы из аналитики');
     }
   }
 

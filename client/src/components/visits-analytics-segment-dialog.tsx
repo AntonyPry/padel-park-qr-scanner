@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { PhoneCall, Users } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import {
+  createVisitsAnalyticsClientBase,
   previewVisitsAnalyticsSegment,
   type VisitsAnalyticsSegmentPreview,
   type VisitsAnalyticsSegmentSelection,
@@ -17,7 +18,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { toast } from '@/components/ui/toast';
-import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
+import { getApiErrorMessage } from '@/lib/api';
 
 interface CreatedBase {
   id: number;
@@ -74,27 +75,14 @@ export function VisitsAnalyticsSegmentDialog({
   }, [selection]);
 
   const createBase = async () => {
-    if (!preview || preview.count <= 0 || name.trim().length < 2) return;
+    if (!selection || !preview || preview.count <= 0 || name.trim().length < 2) return;
     setSaving(true);
     setError('');
     try {
-      const response = await apiFetch('/api/client-bases', {
-        method: 'POST',
-        body: JSON.stringify({
-          description: description.trim(),
-          filters: preview.filters,
-          name: name.trim(),
-          origin: preview.origin,
-          originMetadata: preview.originMetadata,
-          status: 'active',
-        }),
+      const base = await createVisitsAnalyticsClientBase(selection, {
+        description: description.trim(),
+        name: name.trim(),
       });
-      if (!response.ok) {
-        const apiError = await readApiError(response, 'Не удалось создать базу');
-        setError(apiError.message);
-        return;
-      }
-      const base = (await response.json()) as CreatedBase;
       setCreatedBase(base);
       toast.success('Клиентская база создана');
     } catch (requestError) {
