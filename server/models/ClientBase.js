@@ -12,6 +12,14 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       allowNull: false,
     },
+    origin: {
+      type: DataTypes.STRING,
+      allowNull: true,
+    },
+    originMetadata: {
+      type: DataTypes.JSON,
+      allowNull: true,
+    },
     status: {
       type: DataTypes.ENUM('active', 'archived'),
       allowNull: false,

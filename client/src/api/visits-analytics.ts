@@ -49,6 +49,7 @@ export function getVisitsAnalytics(params: { from: string; to: string }) {
 export interface RateMetric { count: number; eligibleCount: number; rate: number | null; lowSample: boolean }
 export interface SourceQualityRow {
   sourceId: number | null; sourceKey: string; source: string; newClients: number;
+  actionableCount: number;
   oneVisit30: RateMetric; repeat30: RateMetric; repeat60: RateMetric; repeat90: RateMetric; threePlus90: RateMetric;
   averageVisits90: number | null; averageVisits90EligibleCount: number; medianDaysToSecondVisit: number | null;
   sampleSize: { eligible30: number; eligible60: number; eligible90: number };
@@ -72,6 +73,7 @@ export interface RetentionMetric {
 export interface CohortRow {
   cohortMonth: string;
   cohortSize: number;
+  actionableCount: number;
   repeat30: CohortMetric;
   repeat60: CohortMetric;
   repeat90: CohortMetric;
@@ -82,6 +84,7 @@ export interface LifecycleStatus {
   label: string;
   formula: string;
   count: number;
+  actionableCount: number;
   share: number;
   previousCount: number;
   change: { absolute: number; percent: number | null };
@@ -91,6 +94,7 @@ export interface VisitsAnalyticsSourceOption {
   sourceKey: string;
   source: string;
   clientCount: number;
+  actionableCount: number;
 }
 export interface CohortsLifecycleAnalytics {
   from: string;
@@ -103,6 +107,7 @@ export interface CohortsLifecycleAnalytics {
   cohorts: CohortRow[];
   lifecycle: {
     totalClassified: number;
+    actionableTotal: number;
     previousTotalClassified: number;
     previousPeriod: { from: string; to: string; asOf: string };
     statuses: LifecycleStatus[];
@@ -112,4 +117,39 @@ export function getCohortsLifecycle(params: { from: string; to: string; sources?
   const query = new URLSearchParams({ from: params.from, to: params.to });
   if (params.sources?.length) query.set('sources', params.sources.join(','));
   return apiRequest<CohortsLifecycleAnalytics>(`/api/analytics/visits/cohorts-lifecycle?${query}`, {}, 'Не удалось загрузить когорты и жизненный цикл');
+}
+
+export interface VisitsAnalyticsSegmentSelection {
+  asOf?: string;
+  cohortMonth?: string;
+  expectedCount?: number;
+  from: string;
+  kind: 'source' | 'lifecycle' | 'cohort' | 'filters';
+  lifecycleStatus?: LifecycleStatus['key'];
+  sourceKeys?: string[];
+  to: string;
+}
+
+export interface VisitsAnalyticsSegmentPreview {
+  asOf: string;
+  count: number;
+  description: string;
+  filters: Record<string, unknown>;
+  name: string;
+  origin: 'visits_analytics';
+  originMetadata: Record<string, unknown>;
+  period: { from: string; to: string };
+  sourceLabels: string[];
+  timeZone: string;
+}
+
+export function previewVisitsAnalyticsSegment(selection: VisitsAnalyticsSegmentSelection) {
+  const body = Object.fromEntries(
+    Object.entries(selection).filter(([key]) => key !== 'expectedCount'),
+  );
+  return apiRequest<VisitsAnalyticsSegmentPreview>(
+    '/api/analytics/visits/client-base-preview',
+    { method: 'POST', body: JSON.stringify(body) },
+    'Не удалось рассчитать клиентскую базу',
+  );
 }

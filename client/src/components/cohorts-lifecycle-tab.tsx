@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, Users } from 'lucide-react';
 import {
   getCohortsLifecycle,
   type CohortMetric,
   type CohortRow,
   type LifecycleStatus,
   type RetentionMetric,
+  type VisitsAnalyticsSegmentSelection,
 } from '@/api/visits-analytics';
 import { queryKeys } from '@/api/query-keys';
 import { ChartLoadingState } from '@/components/chart-loading-state';
@@ -58,7 +59,7 @@ function RateValue({ metric }: { metric: CohortMetric | RetentionMetric }) {
   );
 }
 
-function CohortMobileCard({ cohort }: { cohort: CohortRow }) {
+function CohortMobileCard({ cohort, onCreate }: { cohort: CohortRow; onCreate?: () => void }) {
   return (
     <Card className="min-w-0">
       <CardHeader className="pb-3">
@@ -68,6 +69,11 @@ function CohortMobileCard({ cohort }: { cohort: CohortRow }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        {onCreate && (
+          <Button variant="outline" size="sm" className="w-full" disabled={cohort.actionableCount === 0} onClick={onCreate}>
+            <Users className="mr-1.5 h-3.5 w-3.5" /> Создать базу · {cohort.actionableCount}
+          </Button>
+        )}
         <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-3">
           {[['30 дней', cohort.repeat30], ['60 дней', cohort.repeat60], ['90 дней', cohort.repeat90]].map(([label, metric]) => (
             <div key={String(label)} className="min-w-0 rounded-lg bg-muted/50 p-2.5">
@@ -93,11 +99,15 @@ function CohortMobileCard({ cohort }: { cohort: CohortRow }) {
 }
 
 export default function CohortsLifecycleTab({
+  canCreateBase = false,
   from,
+  onCreateSegment,
   onSourceFilterChange,
   to,
 }: {
+  canCreateBase?: boolean;
   from: string;
+  onCreateSegment?: (selection: VisitsAnalyticsSegmentSelection) => void;
   onSourceFilterChange?: (filter: LifecycleSourceFilterState) => void;
   to: string;
 }) {
@@ -169,6 +179,24 @@ export default function CohortsLifecycleTab({
             })}
           </div>
         )}
+        {canCreateBase && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-3 w-full sm:w-auto"
+            disabled={allHidden || !data || data.lifecycle.actionableTotal === 0}
+            onClick={() => onCreateSegment?.({
+              asOf: data?.asOf,
+              expectedCount: data?.lifecycle.actionableTotal,
+              from,
+              kind: 'filters',
+              sourceKeys: excludedSources.length > 0 ? selectedSources : undefined,
+              to,
+            })}
+          >
+            <Users className="mr-1.5 h-3.5 w-3.5" /> База по активным фильтрам · {data?.lifecycle.actionableTotal || 0}
+          </Button>
+        )}
       </div>
 
       {allHidden ? (
@@ -196,6 +224,25 @@ export default function CohortsLifecycleTab({
                     </div>
                     <div className="mt-2 text-2xl font-semibold">{status.count}</div>
                     <div className="text-sm text-muted-foreground">{status.share.toFixed(1)}% из {data.lifecycle.totalClassified}</div>
+                    {canCreateBase && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-3 w-full bg-background/70"
+                        disabled={status.actionableCount === 0}
+                        onClick={() => onCreateSegment?.({
+                          asOf: data.asOf,
+                          expectedCount: status.actionableCount,
+                          from,
+                          kind: 'lifecycle',
+                          lifecycleStatus: status.key,
+                          sourceKeys: excludedSources.length > 0 ? selectedSources : undefined,
+                          to,
+                        })}
+                      >
+                        <Users className="mr-1.5 h-3.5 w-3.5" /> Создать базу · {status.actionableCount}
+                      </Button>
+                    )}
                     <div
                       data-testid={`lifecycle-change-${status.key}`}
                       className={cn('mt-2 text-xs', getLifecycleChangeColorClass(status.key, status.change.absolute))}
@@ -227,7 +274,7 @@ export default function CohortsLifecycleTab({
                     </TableRow></TableHeader>
                     <TableBody>{data.cohorts.map((cohort) => (
                       <TableRow key={cohort.cohortMonth}>
-                        <TableCell className="sticky left-0 z-10 bg-card font-medium capitalize">{monthLabel(cohort.cohortMonth)}</TableCell>
+                        <TableCell className="sticky left-0 z-10 bg-card font-medium capitalize"><div>{monthLabel(cohort.cohortMonth)}</div>{canCreateBase&&<Button variant="outline" size="sm" className="mt-2 h-auto whitespace-normal" disabled={cohort.actionableCount===0} onClick={()=>onCreateSegment?.({asOf:data.asOf,cohortMonth:cohort.cohortMonth,expectedCount:cohort.actionableCount,from,kind:'cohort',sourceKeys:excludedSources.length>0?selectedSources:undefined,to})}><Users className="mr-1.5 h-3.5 w-3.5"/>База · {cohort.actionableCount}</Button>}</TableCell>
                         <TableCell>{cohort.cohortSize}</TableCell>
                         <TableCell><RateValue metric={cohort.repeat30} /></TableCell>
                         <TableCell><RateValue metric={cohort.repeat60} /></TableCell>
@@ -238,7 +285,7 @@ export default function CohortsLifecycleTab({
                   </Table>
                 </div>
                 <div className="grid min-w-0 gap-3 lg:hidden">
-                  {data.cohorts.map((cohort) => <CohortMobileCard key={cohort.cohortMonth} cohort={cohort} />)}
+                  {data.cohorts.map((cohort) => <CohortMobileCard key={cohort.cohortMonth} cohort={cohort} onCreate={canCreateBase ? ()=>onCreateSegment?.({asOf:data.asOf,cohortMonth:cohort.cohortMonth,expectedCount:cohort.actionableCount,from,kind:'cohort',sourceKeys:excludedSources.length>0?selectedSources:undefined,to}) : undefined} />)}
                 </div>
               </>
             )}

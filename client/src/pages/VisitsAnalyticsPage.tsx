@@ -3,6 +3,7 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getVisitsAnalytics,
   type ChartDatum,
+  type VisitsAnalyticsSegmentSelection,
 } from '@/api/visits-analytics';
 import { queryKeys } from '@/api/query-keys';
 import { ErrorState } from '@/components/error-state';
@@ -40,11 +41,14 @@ import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SourceQualityTab } from '@/components/source-quality-tab';
+import { VisitsAnalyticsSegmentDialog } from '@/components/visits-analytics-segment-dialog';
 import {
   getVisitsExportRequest,
   requestVisitsExport,
   type LifecycleSourceFilterState,
 } from '@/lib/visits-analytics-export';
+import { canManageClientBases } from '@/lib/permissions';
+import { useAuth } from '@/lib/useAuth';
 
 const CohortsLifecycleTab = lazy(() => import('@/components/cohorts-lifecycle-tab'));
 
@@ -187,7 +191,10 @@ function DonutChartCard({
 }
 
 export default function VisitsAnalyticsPage() {
+  const { account } = useAuth();
+  const canCreateBase = canManageClientBases(account?.role);
   const [activeTab, setActiveTab] = useState('overview');
+  const [segmentSelection, setSegmentSelection] = useState<VisitsAnalyticsSegmentSelection | null>(null);
   const [lifecycleSourceFilter, setLifecycleSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
@@ -308,10 +315,10 @@ export default function VisitsAnalyticsPage() {
           </Button>
         </div>
       )}
-      <TabsContent value="source-quality"><SourceQualityTab /></TabsContent>
+      <TabsContent value="source-quality"><SourceQualityTab canCreateBase={canCreateBase} onCreateSegment={setSegmentSelection} /></TabsContent>
       <TabsContent value="cohorts-lifecycle">
         <Suspense fallback={<ChartLoadingState title="Загрузка вкладки когорт" />}>
-          <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} from={analyticsParams.from} to={analyticsParams.to} onSourceFilterChange={setLifecycleSourceFilter} />
+          <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} canCreateBase={canCreateBase} from={analyticsParams.from} to={analyticsParams.to} onCreateSegment={setSegmentSelection} onSourceFilterChange={setLifecycleSourceFilter} />
         </Suspense>
       </TabsContent>
       <TabsContent value="overview"><div className="flex flex-col gap-5">
@@ -483,6 +490,7 @@ export default function VisitsAnalyticsPage() {
         </>
       )}
     </div></TabsContent>
+      <VisitsAnalyticsSegmentDialog selection={segmentSelection} onOpenChange={(open) => !open && setSegmentSelection(null)} />
     </Tabs>
   );
 }

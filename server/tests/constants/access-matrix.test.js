@@ -121,3 +121,19 @@ test('shift report templates are owner and manager managed while admins submit a
   assert.equal(ACCESS_MATRIX.shiftReportsSubmit.includes('accountant'), false);
   assert.equal(ACCESS_MATRIX.shiftReportsView.includes('trainer'), false);
 });
+
+test('visits analytics actions reuse client-base permissions without widening report access', () => {
+  assert.deepEqual(ACCESS_MATRIX.reportsView, ['owner', 'manager', 'accountant', 'viewer']);
+  assert.deepEqual(ACCESS_MATRIX.clientBasesManage, ['owner', 'manager']);
+  for (const role of ['owner', 'manager']) {
+    assert.equal(ACCESS_MATRIX.reportsView.includes(role), true);
+    assert.equal(ACCESS_MATRIX.clientBasesManage.includes(role), true);
+  }
+  for (const role of ['accountant', 'viewer']) {
+    assert.equal(ACCESS_MATRIX.reportsView.includes(role), true);
+    assert.equal(ACCESS_MATRIX.clientBasesManage.includes(role), false);
+  }
+  for (const role of ['admin', 'trainer']) {
+    assert.equal(ACCESS_MATRIX.clientBasesManage.includes(role), false);
+  }
+});

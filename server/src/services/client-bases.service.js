@@ -1,6 +1,7 @@
 const db = require('../../models');
 const clientsService = require('./clients.service');
 const onboardingService = require('./onboarding.service');
+const visitsAnalyticsService = require('./visits-analytics.service');
 
 const STATUS_VALUES = new Set(['active', 'archived']);
 const RECURRENCE_INTERVALS = new Set(['none', 'daily', 'weekly']);
@@ -220,7 +221,36 @@ function normalizeFilters(filters = {}) {
   if (!normalized.status) normalized.status = 'active';
   if (!normalized.segment) normalized.segment = 'all';
 
+  if (filters.visitsAnalytics) {
+    normalized.visitsAnalytics = visitsAnalyticsService.normalizeVisitAnalyticsSegmentFilters(
+      filters.visitsAnalytics,
+    );
+    normalized.status = 'active';
+    normalized.segment = 'all';
+  }
+
   return normalized;
+}
+
+function isVisitsAnalyticsFilters(filters = {}) {
+  return Boolean(filters?.visitsAnalytics);
+}
+
+async function countBaseClients(filters = {}) {
+  if (isVisitsAnalyticsFilters(filters)) {
+    return visitsAnalyticsService.countVisitAnalyticsSegmentClients(filters.visitsAnalytics);
+  }
+  return clientsService.countClients(filters);
+}
+
+async function listBaseClientsForSnapshot(filters = {}, options = {}) {
+  if (isVisitsAnalyticsFilters(filters)) {
+    return (await visitsAnalyticsService.listVisitAnalyticsSegmentClients(
+      filters.visitsAnalytics,
+      { limit: options.limit || 20000, offset: 0 },
+    )).items;
+  }
+  return clientsService.listClientsForSnapshot(filters, options);
 }
 
 function assertTaskableFilters(filters) {
@@ -249,7 +279,7 @@ async function mapBase(base, { includeCount = true } = {}) {
   const raw = base.toJSON ? base.toJSON() : base;
   const filters = normalizeFilters(parseFilters(raw.filters));
   const currentClientCount = includeCount
-    ? await clientsService.countClients(filters)
+    ? await countBaseClients(filters)
     : null;
   const lastTaskClientCount =
     raw.lastTaskClientCount === null || raw.lastTaskClientCount === undefined
@@ -261,6 +291,8 @@ async function mapBase(base, { includeCount = true } = {}) {
     name: raw.name,
     description: raw.description || '',
     filters,
+    origin: raw.origin || null,
+    originMetadata: parseFilters(raw.originMetadata),
     status: raw.status,
     currentClientCount,
     deltaSinceLastTask:
@@ -365,6 +397,15 @@ async function create(actor, data) {
   if (name.length < 2) throw appError('Название базы слишком короткое');
 
   const filters = normalizeFilters(data.filters);
+  const origin = data.origin === 'visits_analytics' || isVisitsAnalyticsFilters(filters)
+    ? 'visits_analytics'
+    : null;
+  if (origin === 'visits_analytics' && !isVisitsAnalyticsFilters(filters)) {
+    throw appError('Для базы из аналитики не передан аналитический фильтр');
+  }
+  if (origin === 'visits_analytics' && await countBaseClients(filters) === 0) {
+    throw appError('Пустой сегмент нельзя сохранить как клиентскую базу', 409);
+  }
   const recurrencePayload = normalizeRecurrence(data.recurrence || {});
   if (recurrencePayload.recurringEnabled) {
     assertTaskableFilters(filters);
@@ -376,6 +417,8 @@ async function create(actor, data) {
     name,
     description: String(data.description || '').trim() || null,
     filters,
+    origin,
+    originMetadata: origin === 'visits_analytics' ? parseFilters(data.originMetadata) : null,
     slaDays: normalizeSlaDays(data.slaDays),
     ...recurrencePayload,
     status: normalizeStatus(data.status),
@@ -479,14 +522,29 @@ async function getClients(id, query = {}) {
   const filters = normalizeFilters(parseFilters(base.filters));
   const page = query.page || 1;
   const pageSize = query.pageSize || 10;
+  if (isVisitsAnalyticsFilters(filters)) {
+    const result = await visitsAnalyticsService.listVisitAnalyticsSegmentClients(
+      filters.visitsAnalytics,
+      { limit: pageSize, offset: (page - 1) * pageSize },
+    );
+    return {
+      items: result.items,
+      page,
+      pageSize,
+      total: result.total,
+      totalPages: Math.max(1, Math.ceil(result.total / pageSize)),
+    };
+  }
   return clientsService.listClients({ ...filters, page, pageSize });
 }
 
 module.exports = {
   archive,
+  countBaseClients,
   create,
   getClients,
   list,
+  listBaseClientsForSnapshot,
   removeArchived,
   restore,
   update,

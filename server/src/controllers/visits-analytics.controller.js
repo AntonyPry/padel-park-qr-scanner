@@ -34,6 +34,14 @@ class VisitsAnalyticsController {
     }
   }
 
+  async previewClientBase(req, res) {
+    try {
+      res.json(await visitsAnalyticsService.previewVisitAnalyticsSegment(req.body));
+    } catch (error) {
+      sendError(res, error, 'Ошибка предпросмотра базы из аналитики');
+    }
+  }
+
   async exportSourceQuality(req, res) {
     try {
       const { from, to, sources } = req.query;

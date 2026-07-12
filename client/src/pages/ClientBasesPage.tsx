@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -52,7 +52,7 @@ import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 type ClientBaseStatus = 'active' | 'archived';
 type ClientSegment = 'all' | 'new' | 'regular' | 'inactive' | 'no_visits';
@@ -71,6 +71,15 @@ interface ClientBaseFilters {
   visitCountMax?: number;
   lastVisitDaysFrom?: number;
   lastVisitDaysTo?: number;
+  visitsAnalytics?: {
+    asOf: string;
+    firstVisitFrom?: string;
+    firstVisitMonth?: string;
+    firstVisitTo?: string;
+    lifecycleStatus?: 'new' | 'developing' | 'regular' | 'atRisk' | 'sleeping' | 'lost';
+    sourceKeys: string[];
+    timeZone: 'Europe/Moscow';
+  };
 }
 
 interface ClientBase {
@@ -78,6 +87,12 @@ interface ClientBase {
   name: string;
   description: string;
   filters: ClientBaseFilters;
+  origin?: 'visits_analytics' | null;
+  originMetadata?: {
+    criteria?: { kind?: string; lifecycleStatus?: string | null; cohortMonth?: string | null };
+    period?: { from?: string; to?: string };
+    sourceFilters?: { labels?: string[] };
+  } | null;
   status: ClientBaseStatus;
   currentClientCount: number;
   deltaSinceLastTask: number | null;
@@ -388,6 +403,19 @@ function formFromBase(base: ClientBase): BaseFormState {
 function describeFilters(filters: ClientBaseFilters) {
   const parts = [];
 
+  if (filters.visitsAnalytics) {
+    const analytics = filters.visitsAnalytics;
+    if (analytics.lifecycleStatus) {
+      const labels: Record<string, string> = { new: 'Новый', developing: 'Развивающийся', regular: 'Постоянный', atRisk: 'Под риском', sleeping: 'Спящий', lost: 'Потерянный' };
+      parts.push(`жизненный статус: ${labels[analytics.lifecycleStatus] || analytics.lifecycleStatus}`);
+    }
+    if (analytics.firstVisitMonth) parts.push(`когорта: ${analytics.firstVisitMonth}`);
+    if (analytics.firstVisitFrom || analytics.firstVisitTo) parts.push(`первый визит: ${analytics.firstVisitFrom || '…'} — ${analytics.firstVisitTo || '…'}`);
+    parts.push(analytics.sourceKeys.length ? `источников: ${analytics.sourceKeys.length}` : 'все источники');
+    parts.push(`asOf: ${analytics.asOf.slice(0, 10)}`);
+    return parts.join(' · ');
+  }
+
   if (filters.segment && filters.segment !== 'all') {
     parts.push(SEGMENT_LABELS[filters.segment]);
   }
@@ -482,6 +510,8 @@ function getCallTaskBlockedReason(base: ClientBase) {
 
 export default function ClientBasesPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const handledDeepLink = useRef('');
   const [bases, setBases] = useState<ClientBase[]>([]);
   const [loading, setLoading] = useState(true);
   const [basesError, setBasesError] = useState('');
@@ -623,7 +653,9 @@ export default function ClientBasesPage() {
 
     const payload = {
       description: values.description.trim(),
-      filters: buildFilters(values),
+      filters: editingBase?.origin === 'visits_analytics'
+        ? editingBase.filters
+        : buildFilters(values),
       name: values.name.trim(),
       recurrence: buildRecurrence(values),
       slaDays: values.slaDays.trim() ? Number(values.slaDays) : null,
@@ -726,7 +758,7 @@ export default function ClientBasesPage() {
     }
   };
 
-  const openPreview = async (base: ClientBase) => {
+  const openPreview = useCallback(async (base: ClientBase) => {
     setPreviewBase(base);
     setPreviewClients([]);
     setPreviewTotal(0);
@@ -753,9 +785,9 @@ export default function ClientBasesPage() {
     } finally {
       setPreviewLoading(false);
     }
-  };
+  }, []);
 
-  const openCreateCallTask = (base: ClientBase) => {
+  const openCreateCallTask = useCallback((base: ClientBase) => {
     const blockedReason = getCallTaskBlockedReason(base);
     if (blockedReason) {
       setPendingAction({
@@ -775,7 +807,7 @@ export default function ClientBasesPage() {
       title: `${base.name}: обзвон`,
     });
     setCallTaskError('');
-  };
+  }, [callTaskFormControl]);
 
   const runRecurringTasks = async () => {
     setRunningRecurring(true);
@@ -838,8 +870,26 @@ export default function ClientBasesPage() {
   });
 
   const openBaseInClients = (base: ClientBase) => {
+    if (base.origin === 'visits_analytics') {
+      void openPreview(base);
+      return;
+    }
     navigate(buildClientsUrl(base.filters || {}));
   };
+
+  useEffect(() => {
+    const baseId = Number(searchParams.get('baseId'));
+    if (!Number.isInteger(baseId) || loading) return;
+    const action = searchParams.get('createCallTask') === '1' ? 'call-task' : 'preview';
+    const key = `${baseId}:${action}`;
+    if (handledDeepLink.current === key) return;
+    const base = bases.find((item) => item.id === baseId);
+    if (!base) return;
+    handledDeepLink.current = key;
+    if (action === 'call-task') openCreateCallTask(base);
+    else void openPreview(base);
+    setSearchParams({}, { replace: true });
+  }, [bases, loading, openCreateCallTask, openPreview, searchParams, setSearchParams]);
 
   const renderBaseActions = (base: ClientBase) => (
     <DropdownMenu>
@@ -1213,6 +1263,11 @@ export default function ClientBasesPage() {
           </DialogHeader>
 
           <form onSubmit={handleSave} className="space-y-4 pt-2">
+            {editingBase?.origin === 'visits_analytics' && (
+              <div className="rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-sm">
+                Состав этой базы задан аналитикой посещений. Критерии, stable source keys и asOf сохраняются без изменений; здесь можно изменить название, описание, срок и настройки обзвона.
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-medium">Название</label>

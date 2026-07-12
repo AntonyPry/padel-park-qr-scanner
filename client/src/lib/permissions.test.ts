@@ -3,6 +3,8 @@ import {
   canAccessPath,
   canManageBookingResources,
   canManageBookings,
+  canManageClientBases,
+  canManageCallTasks,
   canManageClients,
   canManageCorporateDeposits,
   canManageFinance,
@@ -142,5 +144,18 @@ describe('permissions', () => {
     expect(canManageShiftReportTemplates('owner')).toBe(true);
     expect(canManageShiftReportTemplates('manager')).toBe(true);
     expect(canManageShiftReportTemplates('admin')).toBe(false);
+  });
+
+  it('shows visits analytics actions only to client-base managers', () => {
+    expect(canAccessPath('owner', '/admin/visits-analytics')).toBe(true);
+    expect(canAccessPath('manager', '/admin/visits-analytics')).toBe(true);
+    expect(canManageClientBases('owner')).toBe(true);
+    expect(canManageClientBases('manager')).toBe(true);
+    expect(canManageCallTasks('owner')).toBe(true);
+    expect(canManageCallTasks('manager')).toBe(true);
+    for (const role of ['accountant', 'viewer', 'admin', 'trainer'] as const) {
+      expect(canManageClientBases(role)).toBe(false);
+      expect(canManageCallTasks(role)).toBe(false);
+    }
   });
 });

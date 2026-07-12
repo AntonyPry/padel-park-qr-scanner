@@ -2,8 +2,8 @@ import { useMemo, useState } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { format, subDays } from 'date-fns';
 import type { DateRange } from 'react-day-picker';
-import { ArrowUpDown, Calendar as CalendarIcon, Download, Info } from 'lucide-react';
-import { getSourceQuality, type RateMetric, type SourceQualityRow } from '@/api/visits-analytics';
+import { ArrowUpDown, Calendar as CalendarIcon, Download, Info, Users } from 'lucide-react';
+import { getSourceQuality, type RateMetric, type SourceQualityRow, type VisitsAnalyticsSegmentSelection } from '@/api/visits-analytics';
 import { queryKeys } from '@/api/query-keys';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -46,7 +46,10 @@ function Metric({row,k}:{row:SourceQualityRow;k:SortKey}) {
   if(k==='sampleSize') return <span>{row.sampleSize.eligible30} / {row.sampleSize.eligible60} / {row.sampleSize.eligible90}</span>;
   return <>{String(row[k as 'source'|'newClients'])}</>;
 }
-export function SourceQualityTab() {
+export function SourceQualityTab({ canCreateBase = false, onCreateSegment }: {
+  canCreateBase?: boolean;
+  onCreateSegment?: (selection: VisitsAnalyticsSegmentSelection) => void;
+}) {
   const [range,setRange]=useState<DateRange>({from:subDays(new Date(),180),to:new Date()});
   const [sort,setSort]=useState<{key:SortKey;desc:boolean}>({key:'newClients',desc:true});
   const [excluded,setExcluded]=useState<string[]>([]);
@@ -68,8 +71,8 @@ export function SourceQualityTab() {
     </div>
     {!!catalog.length&&<div className="flex flex-wrap gap-2" aria-label="Фильтр по источникам">{catalog.map(r=><Button key={r.sourceKey} size="sm" variant={excluded.includes(r.sourceKey)?'outline':'secondary'} onClick={()=>setExcluded(current=>current.includes(r.sourceKey)?current.filter(key=>key!==r.sourceKey):[...current,r.sourceKey])}>{r.source}</Button>)}</div>}
     {allHidden?<Card><CardContent className="py-12 text-center text-muted-foreground">Все источники скрыты фильтром</CardContent></Card>:query.isError&&!query.data?<ErrorState title="Качество источников не загрузилось" message={getApiErrorMessage(query.error, 'Не удалось загрузить данные')} onRetry={()=>void query.refetch()}/>:!query.data?<ChartLoadingState title="Загрузка качества источников"/>:rows.length===0?<Card><CardContent className="py-12 text-center text-muted-foreground">Нет новых клиентов за выбранный период</CardContent></Card>:<>
-      <div className="hidden overflow-hidden rounded-xl border lg:block"><Table><TableHeader><TableRow>{columns.map(c=><TableHead key={c.key} className="align-top"><Button variant="ghost" className="h-auto max-w-[150px] whitespace-normal px-1 text-left" title={c.title} onClick={()=>setSort(s=>({key:c.key,desc:s.key===c.key?!s.desc:true}))}>{c.label}<Info className="ml-1 h-3 w-3 shrink-0"/><ArrowUpDown className="ml-1 h-3 w-3 shrink-0"/></Button></TableHead>)}</TableRow></TableHeader><TableBody>{rows.map(r=><TableRow key={r.sourceKey}><TableCell className="max-w-[180px] break-words font-medium">{r.source}</TableCell>{columns.slice(1).map(c=><TableCell key={c.key}><Metric row={r} k={c.key}/></TableCell>)}</TableRow>)}</TableBody></Table></div>
-      <div className="grid gap-3 lg:hidden">{rows.map(r=><Card key={r.sourceKey} className="min-w-0"><CardHeader><CardTitle className="break-words text-base">{r.source}</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-3 text-sm">{columns.slice(1).map(c=><div key={c.key} className={cn('min-w-0',c.key==='sampleSize'&&'col-span-2')} title={c.title}><div className="text-xs text-muted-foreground">{c.label}</div><div className="mt-1 font-medium"><Metric row={r} k={c.key}/></div></div>)}</CardContent></Card>)}</div>
+      <div className="hidden overflow-hidden rounded-xl border lg:block"><Table><TableHeader><TableRow>{columns.map(c=><TableHead key={c.key} className="align-top"><Button variant="ghost" className="h-auto max-w-[150px] whitespace-normal px-1 text-left" title={c.title} onClick={()=>setSort(s=>({key:c.key,desc:s.key===c.key?!s.desc:true}))}>{c.label}<Info className="ml-1 h-3 w-3 shrink-0"/><ArrowUpDown className="ml-1 h-3 w-3 shrink-0"/></Button></TableHead>)}</TableRow></TableHeader><TableBody>{rows.map(r=><TableRow key={r.sourceKey}><TableCell className="max-w-[190px] break-words font-medium"><div>{r.source}</div>{canCreateBase&&<Button size="sm" variant="outline" className="mt-2 h-auto whitespace-normal" disabled={r.actionableCount===0} onClick={()=>onCreateSegment?.({kind:'source',from:params.from,to:params.to,asOf:query.data?.asOf,sourceKeys:[r.sourceKey],expectedCount:r.actionableCount})}><Users className="mr-1.5 h-3.5 w-3.5"/>База · {r.actionableCount}</Button>}</TableCell>{columns.slice(1).map(c=><TableCell key={c.key}><Metric row={r} k={c.key}/></TableCell>)}</TableRow>)}</TableBody></Table></div>
+      <div className="grid gap-3 lg:hidden">{rows.map(r=><Card key={r.sourceKey} className="min-w-0"><CardHeader><CardTitle className="break-words text-base">{r.source}</CardTitle>{canCreateBase&&<Button size="sm" variant="outline" className="mt-2 w-full" disabled={r.actionableCount===0} onClick={()=>onCreateSegment?.({kind:'source',from:params.from,to:params.to,asOf:query.data?.asOf,sourceKeys:[r.sourceKey],expectedCount:r.actionableCount})}><Users className="mr-1.5 h-3.5 w-3.5"/>Создать базу · {r.actionableCount}</Button>}</CardHeader><CardContent className="grid grid-cols-2 gap-3 text-sm">{columns.slice(1).map(c=><div key={c.key} className={cn('min-w-0',c.key==='sampleSize'&&'col-span-2')} title={c.title}><div className="text-xs text-muted-foreground">{c.label}</div><div className="mt-1 font-medium"><Metric row={r} k={c.key}/></div></div>)}</CardContent></Card>)}</div>
     </>}
   </div>;
 }

@@ -4,6 +4,8 @@ const db = require('../../models');
 const CLUB_TIME_ZONE = 'Europe/Moscow';
 const CLUB_UTC_OFFSET = '+03:00';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SEGMENT_ALGORITHM_VERSION = 'visits_analytics_segment_v1';
+const SEGMENT_CANONICAL_RULE = 'recursive_merged_root_v1';
 const LIFECYCLE_STATUSES = [
   { key: 'new', label: 'Новый', formula: '1 визит за всю историю; первый и последний визит были не более 30 дней назад.' },
   { key: 'developing', label: 'Развивающийся', formula: '2–3 визита за всю историю; последний визит был не более 30 дней назад.' },
@@ -26,6 +28,15 @@ function clubDateToUtc(value, end = false) {
 
 function utcSql(date) {
   return date.toISOString().slice(0, 23).replace('T', ' ');
+}
+
+function analyticsDateTimeSql(value, { endOfDate = false } = {}) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) {
+    return utcSql(clubDateToUtc(value, endOfDate));
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return utcSql(date);
 }
 
 function clubDateString(date) {
@@ -223,6 +234,13 @@ function parseSourceKeys(sourceKeys) {
   return parsed;
 }
 
+function normalizeSourceKeys(sourceKeys) {
+  const values = Array.isArray(sourceKeys) ? sourceKeys : [];
+  return Array.from(new Set(values.map((value) => String(value || '').trim()).filter((value) => (
+    /^id:\d+$/.test(value) || /^legacy:[A-Za-z0-9_-]+$/.test(value) || value === 'unspecified'
+  ))));
+}
+
 function buildSourceFilter(sourceKeys, alias = 'root') {
   const hasSourceFilter = Array.isArray(sourceKeys);
   const parsedSources = parseSourceKeys(sourceKeys);
@@ -252,6 +270,7 @@ function sourceQualityFromRow(row) {
     sourceKey: sourceKeyFromRow(row),
     source: row.source || row.sourceName || 'Не указан',
     newClients: number(row.newClients),
+    actionableCount: number(row.actionableCount),
     oneVisit30: rateMetric(row.oneVisit30, row.eligible30),
     repeat30: rateMetric(row.repeat30, row.eligible30),
     repeat60: rateMetric(row.repeat60, row.eligible60),
@@ -288,7 +307,8 @@ async function getSourceQuality(from, to, options = {}) {
       GROUP BY rv.canonicalUserId
       HAVING firstVisitAt BETWEEN :from AND :to
     ), cohort_metrics AS (
-      SELECT c.*, root.sourceId,
+      SELECT c.*, root.sourceId, root.status clientStatus,
+        COALESCE(root.isTraining,0) rootIsTraining,
         COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,
         DATE_ADD(c.firstVisitAt,INTERVAL 30 DAY)<=:now eligible30,
         DATE_ADD(c.firstVisitAt,INTERVAL 60 DAY)<=:now eligible60,
@@ -302,6 +322,7 @@ async function getSourceQuality(from, to, options = {}) {
       WHERE 1=1 ${sourceFilter.sql}
     ), grouped AS (
       SELECT sourceId,sourceName,COUNT(*) newClients,
+        SUM(clientStatus='active' AND NOT rootIsTraining) actionableCount,
         SUM(eligible30) eligible30,SUM(eligible60) eligible60,SUM(eligible90) eligible90,
         SUM(eligible30 AND NOT COALESCE(repeated30,0)) oneVisit30,
         SUM(eligible30 AND repeated30) repeat30,SUM(eligible60 AND repeated60) repeat60,
@@ -344,6 +365,7 @@ function cohortFromRows(row, retentionCounts, retentionMonths, asOfDate) {
   return {
     cohortMonth: row.cohortMonth,
     cohortSize,
+    actionableCount: number(row.actionableCount),
     repeat30: rateMetric(row.repeat30, row.eligible30),
     repeat60: rateMetric(row.repeat60, row.eligible60),
     repeat90: rateMetric(row.repeat90, row.eligible90),
@@ -398,7 +420,8 @@ function cohortFactsCte(sourceFilterSql = '') {
         MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
       FROM ranked_visits GROUP BY canonicalUserId
     ), cohort_clients AS (
-      SELECT facts.*,DATE_FORMAT(CONVERT_TZ(facts.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y-%m') cohortMonth
+      SELECT facts.*,root.status clientStatus,COALESCE(root.isTraining,0) rootIsTraining,
+        DATE_FORMAT(CONVERT_TZ(facts.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y-%m') cohortMonth
       FROM client_facts facts JOIN Users root ON root.id=facts.canonicalUserId
       WHERE facts.firstVisitAt BETWEEN :from AND :to ${sourceFilterSql}
     )`;
@@ -414,6 +437,7 @@ async function queryCohorts(period, sourceFilter) {
   const [summaryRows, retentionRows] = await Promise.all([
     db.sequelize.query(`${cohortFactsCte(sourceFilter.sql)}
       SELECT cohortMonth,COUNT(*) cohortSize,
+        SUM(clientStatus='active' AND NOT rootIsTraining) actionableCount,
         SUM(DATE_ADD(firstVisitAt,INTERVAL 30 DAY)<=:asOf) eligible30,
         SUM(DATE_ADD(firstVisitAt,INTERVAL 60 DAY)<=:asOf) eligible60,
         SUM(DATE_ADD(firstVisitAt,INTERVAL 90 DAY)<=:asOf) eligible90,
@@ -451,15 +475,21 @@ async function queryLifecycle(asOfSql, sourceFilter) {
       SELECT canonicalUserId,MIN(visitedAt) firstVisitAt,MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
       FROM valid_visits GROUP BY canonicalUserId
     ), classified AS (
-      SELECT ${lifecycleStatusCase()} statusKey
+      SELECT ${lifecycleStatusCase()} statusKey,root.status clientStatus,
+        COALESCE(root.isTraining,0) rootIsTraining
       FROM client_facts JOIN Users root ON root.id=client_facts.canonicalUserId
       WHERE 1=1 ${sourceFilter.sql}
     )
-    SELECT statusKey,COUNT(*) count FROM classified GROUP BY statusKey`, {
+    SELECT statusKey,COUNT(*) count,
+      SUM(clientStatus='active' AND NOT rootIsTraining) actionableCount
+    FROM classified GROUP BY statusKey`, {
     replacements: { asOf: asOfSql, ...sourceFilter.replacements },
     type: db.Sequelize.QueryTypes.SELECT,
   });
-  return new Map(rows.map((row) => [row.statusKey, number(row.count)]));
+  return new Map(rows.map((row) => [row.statusKey, {
+    actionableCount: number(row.actionableCount),
+    count: number(row.count),
+  }]));
 }
 
 async function queryAvailableSources(asOfSql) {
@@ -469,7 +499,9 @@ async function queryAvailableSources(asOfSql) {
       JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId
       WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
     )
-    SELECT root.sourceId,COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,COUNT(*) clientCount
+    SELECT root.sourceId,COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,
+      COUNT(*) clientCount,
+      SUM(root.status='active' AND NOT COALESCE(root.isTraining,0)) actionableCount
     FROM visited_clients clients JOIN Users root ON root.id=clients.canonicalUserId
     LEFT JOIN ClientSources cs ON cs.id=root.sourceId
     GROUP BY root.sourceId,sourceName ORDER BY clientCount DESC,sourceName`, {
@@ -481,6 +513,7 @@ async function queryAvailableSources(asOfSql) {
     sourceKey: sourceKeyFromRow(row),
     source: row.sourceName || 'Не указан',
     clientCount: number(row.clientCount),
+    actionableCount: number(row.actionableCount),
   }));
 }
 
@@ -500,14 +533,18 @@ async function getCohortsLifecycle(from, to, options = {}) {
   const oldestCohort = cohortData.summaryRows[0]?.cohortMonth;
   const retentionMonthCount = retentionMonthCountForAsOf(oldestCohort, asOfDate);
   const retentionMonths = Array.from({ length: retentionMonthCount }, (_, index) => index + 1);
-  const currentTotal = [...currentLifecycle.values()].reduce((sum, value) => sum + value, 0);
-  const previousTotal = [...previousLifecycle.values()].reduce((sum, value) => sum + value, 0);
+  const currentTotal = [...currentLifecycle.values()].reduce((sum, value) => sum + value.count, 0);
+  const previousTotal = [...previousLifecycle.values()].reduce((sum, value) => sum + value.count, 0);
+  const currentActionableTotal = [...currentLifecycle.values()].reduce((sum, value) => sum + value.actionableCount, 0);
   const statuses = LIFECYCLE_STATUSES.map((status) => {
-    const count = currentLifecycle.get(status.key) || 0;
-    const previousCount = previousLifecycle.get(status.key) || 0;
+    const currentFacts = currentLifecycle.get(status.key) || { actionableCount: 0, count: 0 };
+    const previousFacts = previousLifecycle.get(status.key) || { actionableCount: 0, count: 0 };
+    const count = currentFacts.count;
+    const previousCount = previousFacts.count;
     return {
       ...status,
       count,
+      actionableCount: currentFacts.actionableCount,
       share: currentTotal ? count / currentTotal * 100 : 0,
       previousCount,
       change: {
@@ -527,10 +564,240 @@ async function getCohortsLifecycle(from, to, options = {}) {
     cohorts: cohortData.summaryRows.map((row) => cohortFromRows(row, retentionCounts, retentionMonths, asOfDate)),
     lifecycle: {
       totalClassified: currentTotal,
+      actionableTotal: currentActionableTotal,
       previousTotalClassified: previousTotal,
       previousPeriod: { from: period.previousFrom, to: period.previousTo, asOf: period.previousTo },
       statuses,
     },
+  };
+}
+
+function normalizeVisitAnalyticsSegmentFilters(input = {}) {
+  const sourceKeys = normalizeSourceKeys(input.sourceKeys);
+  const lifecycleStatus = LIFECYCLE_STATUSES.some((status) => status.key === input.lifecycleStatus)
+    ? input.lifecycleStatus
+    : undefined;
+  const dateOnly = (value) => /^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))
+    ? String(value)
+    : undefined;
+  const month = /^\d{4}-\d{2}$/.test(String(input.firstVisitMonth || ''))
+    ? String(input.firstVisitMonth)
+    : undefined;
+  const numberFilter = (value) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  };
+  const asOfSql = analyticsDateTimeSql(input.asOf, { endOfDate: true });
+  if (!asOfSql) throw Object.assign(new Error('Некорректная дата среза аналитики'), { statusCode: 400 });
+
+  const normalized = {
+    algorithmVersion: SEGMENT_ALGORITHM_VERSION,
+    asOf: new Date(`${asOfSql.replace(' ', 'T')}Z`).toISOString(),
+    canonicalClientRule: SEGMENT_CANONICAL_RULE,
+    clientStatus: 'active',
+    excludeDuplicateVisits: true,
+    excludeTraining: true,
+    sourceKeys,
+    timeZone: CLUB_TIME_ZONE,
+  };
+  const optional = {
+    firstVisitFrom: dateOnly(input.firstVisitFrom),
+    firstVisitMonth: month,
+    firstVisitTo: dateOnly(input.firstVisitTo),
+    lastVisitFrom: dateOnly(input.lastVisitFrom),
+    lastVisitTo: dateOnly(input.lastVisitTo),
+    lifecycleStatus,
+    visitCountMax: numberFilter(input.visitCountMax),
+    visitCountMin: numberFilter(input.visitCountMin),
+  };
+  Object.entries(optional).forEach(([key, value]) => {
+    if (value !== undefined) normalized[key] = value;
+  });
+  if (normalized.visitCountMin !== undefined && normalized.visitCountMax !== undefined && normalized.visitCountMin > normalized.visitCountMax) {
+    throw Object.assign(new Error('Минимальное количество визитов не может быть больше максимального'), { statusCode: 400 });
+  }
+  return normalized;
+}
+
+function buildSegmentCriteria(filters) {
+  const having = [];
+  const replacements = { asOf: analyticsDateTimeSql(filters.asOf) };
+  if (filters.firstVisitMonth) {
+    having.push(`DATE_FORMAT(CONVERT_TZ(firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y-%m')=:firstVisitMonth`);
+    replacements.firstVisitMonth = filters.firstVisitMonth;
+  }
+  if (filters.firstVisitFrom) {
+    having.push('firstVisitAt>=:firstVisitFrom');
+    replacements.firstVisitFrom = analyticsDateTimeSql(filters.firstVisitFrom);
+  }
+  if (filters.firstVisitTo) {
+    having.push('firstVisitAt<=:firstVisitTo');
+    replacements.firstVisitTo = analyticsDateTimeSql(filters.firstVisitTo, { endOfDate: true });
+  }
+  if (filters.lastVisitFrom) {
+    having.push('lastVisitAt>=:lastVisitFrom');
+    replacements.lastVisitFrom = analyticsDateTimeSql(filters.lastVisitFrom);
+  }
+  if (filters.lastVisitTo) {
+    having.push('lastVisitAt<=:lastVisitTo');
+    replacements.lastVisitTo = analyticsDateTimeSql(filters.lastVisitTo, { endOfDate: true });
+  }
+  if (filters.visitCountMin !== undefined) {
+    having.push('visitCount>=:visitCountMin');
+    replacements.visitCountMin = filters.visitCountMin;
+  }
+  if (filters.visitCountMax !== undefined) {
+    having.push('visitCount<=:visitCountMax');
+    replacements.visitCountMax = filters.visitCountMax;
+  }
+  if (filters.lifecycleStatus) {
+    having.push(`${lifecycleStatusCase()}=:lifecycleStatus`);
+    replacements.lifecycleStatus = filters.lifecycleStatus;
+  }
+  return { having, replacements };
+}
+
+function mapSegmentClient(row) {
+  const visitCount = number(row.visitCount);
+  return {
+    ...row,
+    segment: row.lifecycleStatus || (visitCount === 1 ? 'Новый' : visitCount >= 4 ? 'Постоянный' : 'Развивающийся'),
+    stats: {
+      firstVisitAt: row.firstVisitAt || null,
+      lastVisitAt: row.lastVisitAt || null,
+      visitCount,
+    },
+  };
+}
+
+async function queryVisitAnalyticsSegment(filtersInput, options = {}) {
+  const filters = normalizeVisitAnalyticsSegmentFilters(filtersInput);
+  const sourceFilter = buildSourceFilter(filters.sourceKeys.length ? filters.sourceKeys : undefined);
+  const criteria = buildSegmentCriteria(filters);
+  const where = [
+    "root.status='active'",
+    'COALESCE(root.isTraining,0)=0',
+    ...criteria.having,
+  ];
+  const baseSql = `${CANONICAL_CLIENTS_CTE},
+    valid_visits AS (
+      SELECT cc.canonicalUserId,v.visitedAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id=v.userId
+      JOIN canonical_clients cc ON cc.originUserId=v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+    ), client_facts AS (
+      SELECT canonicalUserId,MIN(visitedAt) firstVisitAt,MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
+      FROM valid_visits GROUP BY canonicalUserId
+    ), selected_clients AS (
+      SELECT root.*,facts.firstVisitAt,facts.lastVisitAt,facts.visitCount,
+        ${lifecycleStatusCase()} lifecycleStatus,
+        COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') resolvedSource
+      FROM client_facts facts
+      JOIN Users root ON root.id=facts.canonicalUserId
+      LEFT JOIN ClientSources cs ON cs.id=root.sourceId
+      WHERE ${where.join(' AND ')} ${sourceFilter.sql}
+    )`;
+  const replacements = { ...criteria.replacements, ...sourceFilter.replacements };
+  const countRows = await db.sequelize.query(`${baseSql} SELECT COUNT(*) total FROM selected_clients`, {
+    replacements,
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  const total = number(countRows[0]?.total);
+  if (options.countOnly) return { filters, total };
+  const limit = Math.min(20000, Math.max(1, Number(options.limit) || 20));
+  const offset = Math.max(0, Number(options.offset) || 0);
+  const rows = await db.sequelize.query(`${baseSql}
+    SELECT selected_clients.*,resolvedSource source FROM selected_clients
+    ORDER BY lastVisitAt DESC,id DESC LIMIT :limit OFFSET :offset`, {
+    replacements: { ...replacements, limit, offset },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  return { filters, items: rows.map(mapSegmentClient), total };
+}
+
+async function countVisitAnalyticsSegmentClients(filters) {
+  return (await queryVisitAnalyticsSegment(filters, { countOnly: true })).total;
+}
+
+async function listVisitAnalyticsSegmentClients(filters, options = {}) {
+  return queryVisitAnalyticsSegment(filters, options);
+}
+
+function getLifecycleLabel(key) {
+  return LIFECYCLE_STATUSES.find((status) => status.key === key)?.label || key;
+}
+
+async function previewVisitAnalyticsSegment(selection = {}) {
+  const kind = ['source', 'lifecycle', 'cohort', 'filters'].includes(selection.kind)
+    ? selection.kind
+    : 'filters';
+  const from = String(selection.from || '');
+  const to = String(selection.to || '');
+  if (!parseDateOnly(from) || !parseDateOnly(to)) {
+    throw Object.assign(new Error('Выберите период аналитики'), { statusCode: 400 });
+  }
+  const asOf = selection.asOf || to;
+  const sourceKeys = normalizeSourceKeys(selection.sourceKeys);
+  if (kind === 'source' && sourceKeys.length !== 1) {
+    throw Object.assign(new Error('Выберите один источник'), { statusCode: 400 });
+  }
+  if (kind === 'lifecycle' && !LIFECYCLE_STATUSES.some((status) => status.key === selection.lifecycleStatus)) {
+    throw Object.assign(new Error('Выберите жизненный статус'), { statusCode: 400 });
+  }
+  if (kind === 'cohort' && !/^\d{4}-\d{2}$/.test(String(selection.cohortMonth || ''))) {
+    throw Object.assign(new Error('Выберите когорту первого визита'), { statusCode: 400 });
+  }
+  const filters = normalizeVisitAnalyticsSegmentFilters({
+    asOf,
+    sourceKeys,
+    firstVisitFrom: kind === 'source' ? from : undefined,
+    firstVisitTo: kind === 'source' ? to : undefined,
+    firstVisitMonth: kind === 'cohort' ? selection.cohortMonth : undefined,
+    lifecycleStatus: kind === 'lifecycle' ? selection.lifecycleStatus : undefined,
+  });
+  const period = { from, to };
+  const availableSources = await queryAvailableSources(analyticsDateTimeSql(filters.asOf));
+  const sourceLabels = sourceKeys.map((key) => availableSources.find((source) => source.sourceKey === key)?.source || key);
+  const count = await countVisitAnalyticsSegmentClients(filters);
+  const criterion = kind === 'lifecycle'
+    ? `Жизненный статус «${getLifecycleLabel(filters.lifecycleStatus)}»`
+    : kind === 'cohort'
+      ? `Когорта первого визита ${filters.firstVisitMonth}`
+      : kind === 'source'
+        ? `Первый визит в периоде ${from} — ${to}`
+        : 'Все активные клиенты текущего аналитического среза';
+  const sourceDescription = sourceLabels.length ? `Источники: ${sourceLabels.join(', ')}` : 'Все источники';
+  const name = kind === 'lifecycle'
+    ? `${getLifecycleLabel(filters.lifecycleStatus)} · ${to}`
+    : kind === 'cohort'
+      ? `Когорта ${filters.firstVisitMonth}`
+      : kind === 'source'
+        ? `${sourceLabels[0] || 'Источник'} · новые ${from}—${to}`
+        : `Аналитика посещений · ${to}`;
+  return {
+    count,
+    description: `${criterion}. ${sourceDescription}. Срез на ${to}.`,
+    filters: { status: 'active', visitsAnalytics: filters },
+    name,
+    origin: 'visits_analytics',
+    originMetadata: {
+      algorithmVersion: SEGMENT_ALGORITHM_VERSION,
+      asOf: filters.asOf,
+      criteria: {
+        kind,
+        cohortMonth: filters.firstVisitMonth || null,
+        lifecycleStatus: filters.lifecycleStatus || null,
+      },
+      period,
+      sourceFilters: { keys: sourceKeys, labels: sourceLabels },
+      timeZone: CLUB_TIME_ZONE,
+    },
+    period,
+    sourceLabels,
+    timeZone: CLUB_TIME_ZONE,
+    asOf: filters.asOf,
   };
 }
 
@@ -643,4 +910,4 @@ async function explainPeriodIndex(from, to, options = {}) {
   });
 }
 
-module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, metricFromRow, parseSourceKeys, rateMetric, resolvePeriod, retentionMetric, retentionMonthCountForAsOf, sourceKeyFromRow, sourceQualityFromRow };
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, SEGMENT_ALGORITHM_VERSION, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, countVisitAnalyticsSegmentClients, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, listVisitAnalyticsSegmentClients, metricFromRow, normalizeVisitAnalyticsSegmentFilters, parseSourceKeys, previewVisitAnalyticsSegment, rateMetric, resolvePeriod, retentionMetric, retentionMonthCountForAsOf, sourceKeyFromRow, sourceQualityFromRow };

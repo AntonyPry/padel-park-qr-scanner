@@ -160,3 +160,69 @@ test('cohort and lifecycle SQL cap visits at asOf and reuse stable source filter
   assert.match(sql, /DATE_SUB\(:asOf,INTERVAL 90 DAY\)/);
   assert.doesNotMatch(sql, /SELECT \* FROM Visits/);
 });
+
+test('analytics segment filter is versioned and pins canonical, training and duplicate rules', () => {
+  const filters = service.normalizeVisitAnalyticsSegmentFilters({
+    asOf: '2026-05-31',
+    firstVisitMonth: '2026-01',
+    lifecycleStatus: 'lost',
+    sourceKeys: ['id:7', 'id:7', 'unspecified'],
+    visitCountMin: 2,
+  });
+  assert.deepEqual(filters.sourceKeys, ['id:7', 'unspecified']);
+  assert.equal(filters.algorithmVersion, 'visits_analytics_segment_v1');
+  assert.equal(filters.canonicalClientRule, 'recursive_merged_root_v1');
+  assert.equal(filters.excludeTraining, true);
+  assert.equal(filters.excludeDuplicateVisits, true);
+  assert.equal(filters.clientStatus, 'active');
+  assert.equal(filters.timeZone, 'Europe/Moscow');
+  assert.equal(filters.firstVisitMonth, '2026-01');
+  assert.equal(filters.lifecycleStatus, 'lost');
+});
+
+test('segment resolver reuses canonical SQL and applies source, asOf, lifecycle and active client rules', async () => {
+  const calls = [];
+  db.sequelize.query = async (sql) => {
+    calls.push(sql);
+    if (sql.includes('COUNT(*) total')) return [{ total: 1 }];
+    return [{ id: 7, name: 'Root', phone: '79990000000', source: 'VK', visitCount: 4 }];
+  };
+  const result = await service.listVisitAnalyticsSegmentClients({
+    asOf: '2026-05-31',
+    lifecycleStatus: 'regular',
+    sourceKeys: ['id:7'],
+  });
+  assert.equal(result.total, 1);
+  assert.equal(result.items[0].id, 7);
+  assert.equal(result.items[0].stats.visitCount, 4);
+  const sql = calls.join('\n');
+  assert.match(sql, /WITH RECURSIVE client_chain/);
+  assert.match(sql, /v\.duplicateOfVisitId IS NULL/);
+  assert.match(sql, /COALESCE\(origin\.isTraining, 0\) = 0/);
+  assert.match(sql, /root\.status='active'/);
+  assert.match(sql, /root\.sourceId IN \(:sourceIds\)/);
+  assert.match(sql, /v\.visitedAt<=:asOf/);
+  assert.match(sql, /DATE_SUB\(:asOf,INTERVAL 30 DAY\)/);
+});
+
+test('segment preview stores origin metadata and uses the same count resolver', async () => {
+  db.sequelize.query = async (sql) => {
+    if (sql.includes('sourceName')) return [{ sourceId: 7, sourceName: 'VK', clientCount: 3, actionableCount: 2 }];
+    if (sql.includes('COUNT(*) total')) return [{ total: 2 }];
+    return [];
+  };
+  const preview = await service.previewVisitAnalyticsSegment({
+    asOf: '2026-05-31',
+    from: '2026-01-01',
+    kind: 'lifecycle',
+    lifecycleStatus: 'atRisk',
+    sourceKeys: ['id:7'],
+    to: '2026-05-31',
+  });
+  assert.equal(preview.count, 2);
+  assert.equal(preview.origin, 'visits_analytics');
+  assert.equal(preview.filters.status, 'active');
+  assert.equal(preview.filters.visitsAnalytics.lifecycleStatus, 'atRisk');
+  assert.deepEqual(preview.originMetadata.sourceFilters, { keys: ['id:7'], labels: ['VK'] });
+  assert.equal(preview.originMetadata.algorithmVersion, 'visits_analytics_segment_v1');
+});
