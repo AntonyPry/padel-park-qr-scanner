@@ -52488,7 +52488,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "pattern": "^\\d+(,\\d+)*$"
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
             }
           }
         ]
@@ -52829,7 +52829,7 @@
             "required": false,
             "schema": {
               "type": "string",
-              "pattern": "^\\d+(,\\d+)*$"
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
             }
           }
         ]

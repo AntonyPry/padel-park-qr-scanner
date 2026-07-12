@@ -19,14 +19,14 @@ class VisitsAnalyticsController {
   async getSourceQuality(req, res) {
     try {
       const { from, to, sources } = req.query;
-      res.json(await visitsAnalyticsService.getSourceQuality(from, to, { sourceIds: sources ? String(sources).split(',') : [] }));
+      res.json(await visitsAnalyticsService.getSourceQuality(from, to, { sourceKeys: sources ? String(sources).split(',') : undefined }));
     } catch (error) { sendError(res, error, 'Ошибка аналитики качества источников'); }
   }
 
   async exportSourceQuality(req, res) {
     try {
       const { from, to, sources } = req.query;
-      const buffer = await visitsAnalyticsService.createSourceQualityExportBuffer(from, to, { sourceIds: sources ? String(sources).split(',') : [] });
+      const buffer = await visitsAnalyticsService.createSourceQualityExportBuffer(from, to, { sourceKeys: sources ? String(sources).split(',') : undefined });
       res.setHeader('Content-Disposition', 'attachment; filename="visits_source_quality.xlsx"');
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.send(buffer);

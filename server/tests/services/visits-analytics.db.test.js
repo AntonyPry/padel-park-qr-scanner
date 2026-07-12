@@ -130,11 +130,14 @@ test('DB-backed source quality handles boundaries, maturity, canonical source an
     const fresh=await make('fresh',{sourceId:source.id});
     const root=await make('root',{sourceId:source.id});
     const leaf=await make('leaf',{source:'Wrong',status:'archived',mergedIntoUserId:root.id});
+    const legacy=await make('legacy');
+    const unspecified=await make('unspecified',{source:''});
     await db.Visit.bulkCreate([
       {userId:exact.id,scannedAt:'2090-01-01T10:00:00Z'},{userId:exact.id,scannedAt:'2090-01-31T10:00:00Z'},{userId:exact.id,scannedAt:'2090-03-31T10:00:00Z'},
       {userId:late.id,scannedAt:'2090-01-02T10:00:00Z'},{userId:late.id,scannedAt:'2090-02-01T10:00:01Z'},
       {userId:fresh.id,scannedAt:'2090-01-30T10:00:00Z'},
       {userId:leaf.id,scannedAt:'2090-01-03T10:00:00Z'},{userId:root.id,scannedAt:'2090-01-04T10:00:00Z'},
+      {userId:legacy.id,scannedAt:'2090-01-05T10:00:00Z'},{userId:unspecified.id,scannedAt:'2090-01-06T10:00:00Z'},
     ]);
     const result=await getSourceQuality('2090-01-01','2090-01-31',{now:'2090-05-01T00:00:00Z'});
     const row=result.sources.find(item=>item.source===source.name);
@@ -144,8 +147,15 @@ test('DB-backed source quality handles boundaries, maturity, canonical source an
     assert.equal(row.repeat30.eligibleCount,4);
     assert.equal(row.repeat90.count,3);
     assert.equal(row.threePlus90.count,1);
-    const workbook=XLSX.read(await createSourceQualityExportBuffer('2090-01-01','2090-01-31',{now:'2090-05-01T00:00:00Z'}));
-    const exported=XLSX.utils.sheet_to_json(workbook.Sheets['Качество источников']).find(item=>item.Источник===source.name);
+    assert.equal(result.sources.some(item=>item.source==='Legacy'&&item.sourceKey.startsWith('legacy:')),true);
+    assert.equal(result.sources.some(item=>item.source==='Не указан'&&item.sourceKey==='unspecified'),true);
+    const filterOptions={now:'2090-05-01T00:00:00Z',sourceKeys:[row.sourceKey]};
+    const filtered=await getSourceQuality('2090-01-01','2090-01-31',filterOptions);
+    assert.deepEqual(filtered.sources.map(item=>item.source),[source.name]);
+    const workbook=XLSX.read(await createSourceQualityExportBuffer('2090-01-01','2090-01-31',filterOptions));
+    const exportRows=XLSX.utils.sheet_to_json(workbook.Sheets['Качество источников']);
+    assert.deepEqual(exportRows.map(item=>item.Источник),[source.name]);
+    const exported=exportRows[0];
     assert.equal(exported['Вернулись 30, кол-во'],row.repeat30.count);
     assert.equal(exported['Вернулись 30, eligible'],row.repeat30.eligibleCount);
   } finally {

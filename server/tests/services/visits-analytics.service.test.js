@@ -73,10 +73,25 @@ test('metrics combine current and previous aggregates', async () => {
 });
 
 test('source-quality preserves null for immature cohorts and flags small samples', () => {
-  const row = service.sourceQualityFromRow({ source: 'Radio', newClients: 4, eligible30: 0, repeat30: 0, eligible60: 0, eligible90: 0 });
-  assert.equal(row.repeat30.rate, null);
-  assert.equal(row.averageVisits90, null);
-  assert.equal(row.lowSample, true);
+  const immature = service.sourceQualityFromRow({ source: 'Radio', newClients: 4, eligible30: 0, repeat30: 0, eligible60: 0, eligible90: 0 });
+  assert.equal(immature.repeat30.rate, null);
+  assert.equal(immature.repeat30.lowSample, false);
+  assert.equal(immature.averageVisits90, null);
+
+  const mixed = service.sourceQualityFromRow({ source: 'Radio', eligible30: 20, repeat30: 4, eligible60: 12, repeat60: 3, eligible90: 5, repeat90: 2, visits90Total: 8 });
+  assert.equal(mixed.repeat30.lowSample, false);
+  assert.equal(mixed.repeat60.lowSample, false);
+  assert.equal(mixed.repeat90.lowSample, true);
+  assert.equal(mixed.threePlus90.lowSample, true);
+  assert.equal(mixed.averageVisits90EligibleCount, 5);
+});
+
+test('source keys round-trip dictionary, legacy and unspecified filters', () => {
+  const legacyKey = service.sourceKeyFromRow({ sourceName: 'Радио' });
+  assert.match(legacyKey, /^legacy:/);
+  assert.deepEqual(service.parseSourceKeys(['id:42', legacyKey, 'unspecified']), {
+    sourceIds: [42], legacySources: ['Радио'], includeUnspecified: true,
+  });
 });
 
 test('source-quality SQL uses canonical source, database aggregation and per-window eligibility', async () => {

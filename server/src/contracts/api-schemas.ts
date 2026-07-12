@@ -1794,7 +1794,7 @@ const apiSchemas = {
   visitsAnalytics: {
     dateRangeQuery,
     sourceQualityQuery: dateRangeQuery.extend({
-      sources: z.string().regex(/^\d+(,\d+)*$/).optional(),
+      sources: z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$/).optional(),
     }),
   },
 };

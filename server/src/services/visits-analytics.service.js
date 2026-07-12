@@ -169,13 +169,32 @@ async function getVisitsAnalytics(from, to, options = {}) {
 }
 
 function rateMetric(count, eligibleCount) {
-  return { count: number(count), eligibleCount: number(eligibleCount), rate: number(eligibleCount) ? number(count) / number(eligibleCount) * 100 : null };
+  const eligible = number(eligibleCount);
+  return { count: number(count), eligibleCount: eligible, rate: eligible ? number(count) / eligible * 100 : null, lowSample: eligible > 0 && eligible < 10 };
+}
+
+function sourceKeyFromRow(row) {
+  if (row.sourceId !== null && row.sourceId !== undefined) return `id:${number(row.sourceId)}`;
+  const source = row.source || row.sourceName;
+  if (!source || source === 'Не указан') return 'unspecified';
+  return `legacy:${Buffer.from(String(source)).toString('base64url')}`;
+}
+
+function parseSourceKeys(sourceKeys) {
+  const parsed = { sourceIds: [], legacySources: [], includeUnspecified: false };
+  for (const key of sourceKeys || []) {
+    if (/^id:\d+$/.test(key)) parsed.sourceIds.push(Number(key.slice(3)));
+    else if (key === 'unspecified') parsed.includeUnspecified = true;
+    else if (/^legacy:[A-Za-z0-9_-]+$/.test(key)) parsed.legacySources.push(Buffer.from(key.slice(7), 'base64url').toString());
+  }
+  return parsed;
 }
 
 function sourceQualityFromRow(row) {
   const eligible90 = number(row.eligible90);
   return {
     sourceId: row.sourceId === null || row.sourceId === undefined ? null : number(row.sourceId),
+    sourceKey: sourceKeyFromRow(row),
     source: row.source || row.sourceName || 'Не указан',
     newClients: number(row.newClients),
     oneVisit30: rateMetric(row.oneVisit30, row.eligible30),
@@ -184,16 +203,23 @@ function sourceQualityFromRow(row) {
     repeat90: rateMetric(row.repeat90, eligible90),
     threePlus90: rateMetric(row.threePlus90, eligible90),
     averageVisits90: eligible90 ? number(row.visits90Total) / eligible90 : null,
+    averageVisits90EligibleCount: eligible90,
     medianDaysToSecondVisit: row.medianDaysToSecondVisit === null || row.medianDaysToSecondVisit === undefined ? null : Number(row.medianDaysToSecondVisit),
     sampleSize: { eligible30: number(row.eligible30), eligible60: number(row.eligible60), eligible90 },
-    lowSample: Math.max(number(row.eligible30), number(row.eligible60), eligible90) < 10,
   };
 }
 
 async function getSourceQuality(from, to, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
-  const sourceIds = (options.sourceIds || []).map(Number).filter(Number.isInteger);
+  const hasSourceFilter = Array.isArray(options.sourceKeys);
+  const parsedSources = parseSourceKeys(options.sourceKeys);
+  const sourcePredicates = [];
+  const sourceReplacements = {};
+  if (parsedSources.sourceIds.length) { sourcePredicates.push('root.sourceId IN (:sourceIds)'); sourceReplacements.sourceIds = parsedSources.sourceIds; }
+  if (parsedSources.legacySources.length) { sourcePredicates.push('(root.sourceId IS NULL AND root.source IN (:legacySources))'); sourceReplacements.legacySources = parsedSources.legacySources; }
+  if (parsedSources.includeUnspecified) sourcePredicates.push("(root.sourceId IS NULL AND (root.source IS NULL OR root.source=''))");
+  const sourceFilterSql = hasSourceFilter ? `AND (${sourcePredicates.join(' OR ') || '1=0'})` : '';
   const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
     valid_visits AS (
       SELECT cc.canonicalUserId, v.visitedAt
@@ -225,7 +251,7 @@ async function getSourceQuality(from, to, options = {}) {
         TIMESTAMPDIFF(SECOND,c.firstVisitAt,c.secondVisitAt)/86400 daysToSecond
       FROM cohort c JOIN Users root ON root.id=c.canonicalUserId
       LEFT JOIN ClientSources cs ON cs.id=root.sourceId
-      WHERE (:filterSources = 0 OR root.sourceId IN (:sourceIds))
+      WHERE 1=1 ${sourceFilterSql}
     ), grouped AS (
       SELECT sourceId,sourceName,COUNT(*) newClients,
         SUM(eligible30) eligible30,SUM(eligible60) eligible60,SUM(eligible90) eligible90,
@@ -245,7 +271,7 @@ async function getSourceQuality(from, to, options = {}) {
     )
     SELECT g.*,m.medianDaysToSecondVisit FROM grouped g LEFT JOIN medians m
       ON m.sourceId<=>g.sourceId AND m.sourceName=g.sourceName ORDER BY newClients DESC,sourceName`, {
-    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), filterSources: sourceIds.length ? 1 : 0, sourceIds: sourceIds.length ? sourceIds : [0] },
+    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), ...sourceReplacements },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   return { from: period.from, to: period.to, asOf: now, timeZone: CLUB_TIME_ZONE, sources: rows.map(sourceQualityFromRow) };
@@ -305,4 +331,4 @@ async function explainPeriodIndex(from, to, options = {}) {
   });
 }
 
-module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, calculateChanges, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getSourceQuality, getVisitsAnalytics, metricFromRow, rateMetric, resolvePeriod, sourceQualityFromRow };
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, calculateChanges, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getSourceQuality, getVisitsAnalytics, metricFromRow, parseSourceKeys, rateMetric, resolvePeriod, sourceKeyFromRow, sourceQualityFromRow };
