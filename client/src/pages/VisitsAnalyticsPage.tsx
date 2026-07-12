@@ -40,6 +40,11 @@ import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { SourceQualityTab } from '@/components/source-quality-tab';
+import {
+  getVisitsExportRequest,
+  requestVisitsExport,
+  type LifecycleSourceFilterState,
+} from '@/lib/visits-analytics-export';
 
 const CohortsLifecycleTab = lazy(() => import('@/components/cohorts-lifecycle-tab'));
 
@@ -183,7 +188,7 @@ function DonutChartCard({
 
 export default function VisitsAnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview');
-  const [lifecycleSourceKeys, setLifecycleSourceKeys] = useState<string[] | undefined>();
+  const [lifecycleSourceFilter, setLifecycleSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -203,17 +208,23 @@ export default function VisitsAnalyticsPage() {
   const errorText = analyticsQuery.isError
     ? getApiErrorMessage(analyticsQuery.error, 'Не удалось загрузить аналитику посещений')
     : '';
+  const exportRequest = getVisitsExportRequest({
+    activeTab,
+    from: analyticsParams.from,
+    sourceFilter: lifecycleSourceFilter,
+    to: analyticsParams.to,
+  });
 
   // ЭКСПОРТ В EXCEL
   const handleExport = async () => {
-    const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
-    const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
     try {
-      const exportQuery = new URLSearchParams({ from: fromStr, to: toStr });
-      if (activeTab === 'cohorts-lifecycle' && lifecycleSourceKeys?.length) {
-        exportQuery.set('sources', lifecycleSourceKeys.join(','));
-      }
-      const response = await apiFetch(`/api/export/visits?${exportQuery}`);
+      const response = await requestVisitsExport(apiFetch, {
+        activeTab,
+        from: analyticsParams.from,
+        sourceFilter: lifecycleSourceFilter,
+        to: analyticsParams.to,
+      });
+      if (!response) return;
 
       if (!response.ok) {
         const apiError = await readApiError(response, 'Не удалось выгрузить аналитику');
@@ -225,7 +236,7 @@ export default function VisitsAnalyticsPage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `visits-${fromStr || 'all'}-${toStr || 'all'}.xlsx`;
+      link.download = `visits-${analyticsParams.from || 'all'}-${analyticsParams.to || 'all'}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -292,7 +303,7 @@ export default function VisitsAnalyticsPage() {
               <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={setDateRange} numberOfMonths={1} locale={ru} />
             </PopoverContent>
           </Popover>
-          <Button onClick={handleExport} variant="default" className="w-full bg-green-600 text-white hover:bg-green-700 sm:w-auto">
+          <Button disabled={exportRequest.disabled} onClick={handleExport} variant="default" className="w-full bg-green-600 text-white hover:bg-green-700 sm:w-auto">
             <Download className="mr-2 h-4 w-4" /> Экспорт в Excel
           </Button>
         </div>
@@ -300,7 +311,7 @@ export default function VisitsAnalyticsPage() {
       <TabsContent value="source-quality"><SourceQualityTab /></TabsContent>
       <TabsContent value="cohorts-lifecycle">
         <Suspense fallback={<ChartLoadingState title="Загрузка вкладки когорт" />}>
-          <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} from={analyticsParams.from} to={analyticsParams.to} onSourceKeysChange={setLifecycleSourceKeys} />
+          <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} from={analyticsParams.from} to={analyticsParams.to} onSourceFilterChange={setLifecycleSourceFilter} />
         </Suspense>
       </TabsContent>
       <TabsContent value="overview"><div className="flex flex-col gap-5">

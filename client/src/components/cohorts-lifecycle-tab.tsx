@@ -17,6 +17,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import type { LifecycleSourceFilterState } from '@/lib/visits-analytics-export';
+import { getLifecycleChangeColorClass } from '@/lib/visits-analytics-lifecycle';
 
 const lifecycleStyles: Record<LifecycleStatus['key'], string> = {
   new: 'border-sky-200 bg-sky-50/70 dark:border-sky-900 dark:bg-sky-950/25',
@@ -92,11 +94,11 @@ function CohortMobileCard({ cohort }: { cohort: CohortRow }) {
 
 export default function CohortsLifecycleTab({
   from,
-  onSourceKeysChange,
+  onSourceFilterChange,
   to,
 }: {
   from: string;
-  onSourceKeysChange?: (sourceKeys: string[] | undefined) => void;
+  onSourceFilterChange?: (filter: LifecycleSourceFilterState) => void;
   to: string;
 }) {
   const [excludedSources, setExcludedSources] = useState<string[]>([]);
@@ -123,8 +125,11 @@ export default function CohortsLifecycleTab({
   const data = allHidden ? undefined : query.data;
 
   useEffect(() => {
-    onSourceKeysChange?.(excludedSources.length > 0 && !allHidden ? selectedSources : undefined);
-  }, [allHidden, excludedSources.length, onSourceKeysChange, selectedSources]);
+    onSourceFilterChange?.({
+      allHidden,
+      sourceKeys: excludedSources.length > 0 && !allHidden ? selectedSources : undefined,
+    });
+  }, [allHidden, excludedSources.length, onSourceFilterChange, selectedSources]);
 
   const isBackgroundFetching = Boolean(data && (baseQuery.isFetching || filteredQuery.isFetching));
   const error = query.isError ? getApiErrorMessage(query.error, 'Не удалось загрузить когорты и жизненный цикл') : '';
@@ -191,7 +196,10 @@ export default function CohortsLifecycleTab({
                     </div>
                     <div className="mt-2 text-2xl font-semibold">{status.count}</div>
                     <div className="text-sm text-muted-foreground">{status.share.toFixed(1)}% из {data.lifecycle.totalClassified}</div>
-                    <div className={cn('mt-2 text-xs', status.change.absolute > 0 ? 'text-emerald-700 dark:text-emerald-400' : status.change.absolute < 0 ? 'text-red-700 dark:text-red-400' : 'text-muted-foreground')}>
+                    <div
+                      data-testid={`lifecycle-change-${status.key}`}
+                      className={cn('mt-2 text-xs', getLifecycleChangeColorClass(status.key, status.change.absolute))}
+                    >
                       {changeLabel(status)} к пред. срезу
                     </div>
                   </CardContent>

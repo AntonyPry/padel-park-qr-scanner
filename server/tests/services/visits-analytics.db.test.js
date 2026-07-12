@@ -184,7 +184,10 @@ test('DB-backed source quality handles boundaries, maturity, canonical source an
     assert.ok(fullWorkbook.Sheets['Жизненный цикл']);
     const summaryExport=XLSX.utils.sheet_to_json(fullWorkbook.Sheets['Сводка'],{header:1});
     assert.equal(summaryExport.find(item=>item[0]==='Всего визитов')[1],8);
-    assert.equal(String(summaryExport.find(item=>item[0]==='Примененные источники')[1]).includes(source.name),true);
+    assert.equal(summaryExport.find(item=>item[0]==='Примененные источники')[1],source.name);
+    const visitExport=XLSX.utils.sheet_to_json(fullWorkbook.Sheets['Визиты']);
+    assert.equal(visitExport.length,8);
+    assert.equal(visitExport.every(item=>item.Источник===source.name),true);
     const cohortExport=XLSX.utils.sheet_to_json(fullWorkbook.Sheets['Когорты']);
     assert.equal(cohortExport[0]['Размер когорты'],lifecycle.cohorts[0].cohortSize);
     const lifecycleExport=XLSX.utils.sheet_to_json(fullWorkbook.Sheets['Жизненный цикл']);

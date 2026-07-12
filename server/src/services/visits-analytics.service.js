@@ -52,6 +52,13 @@ function endOfMonthDate(month) {
   return `${year}-${String(value).padStart(2, '0')}-${String(new Date(Date.UTC(year, value, 0)).getUTCDate()).padStart(2, '0')}`;
 }
 
+function retentionMonthCountForAsOf(oldestCohort, asOfDate) {
+  if (!oldestCohort) return 3;
+  const asOfMonth = asOfDate.slice(0, 7);
+  const lastCompletedMonth = monthIndex(asOfMonth) - (asOfDate === endOfMonthDate(asOfMonth) ? 0 : 1);
+  return Math.max(3, lastCompletedMonth - monthIndex(oldestCohort));
+}
+
 function resolvePeriod(from, to, now = new Date()) {
   const currentClubDay = clubDateString(now);
   const periodStart = clubDateToUtc(from || '1970-01-01');
@@ -491,8 +498,7 @@ async function getCohortsLifecycle(from, to, options = {}) {
     `${row.cohortMonth}:${number(row.retentionMonth)}`, number(row.retainedClients),
   ]));
   const oldestCohort = cohortData.summaryRows[0]?.cohortMonth;
-  const lastCompletedMonth = monthIndex(asOfDate.slice(0, 7)) - 1;
-  const retentionMonthCount = oldestCohort ? Math.max(3, lastCompletedMonth - monthIndex(oldestCohort)) : 3;
+  const retentionMonthCount = retentionMonthCountForAsOf(oldestCohort, asOfDate);
   const retentionMonths = Array.from({ length: retentionMonthCount }, (_, index) => index + 1);
   const currentTotal = [...currentLifecycle.values()].reduce((sum, value) => sum + value, 0);
   const previousTotal = [...previousLifecycle.values()].reduce((sum, value) => sum + value, 0);
@@ -560,9 +566,11 @@ async function createVisitsExportBuffer(from, to, options = {}) {
     getCohortsLifecycle(from, to, options),
   ]);
   const visits = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE}
-    SELECT v.id,v.visitedAt,v.keyNumber,v.category,root.name,root.phone,COALESCE(NULLIF(root.source,''),'Не указан') source
+    SELECT v.id,v.visitedAt,v.keyNumber,v.category,root.name,root.phone,
+      COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') source
     FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId
     JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId
+    LEFT JOIN ClientSources cs ON cs.id=root.sourceId
     WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}
     ORDER BY v.visitedAt DESC`, {
     replacements: { from: period.fromSql, to: period.toSql, ...sourceFilter.replacements },
@@ -635,4 +643,4 @@ async function explainPeriodIndex(from, to, options = {}) {
   });
 }
 
-module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, metricFromRow, parseSourceKeys, rateMetric, resolvePeriod, retentionMetric, sourceKeyFromRow, sourceQualityFromRow };
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, metricFromRow, parseSourceKeys, rateMetric, resolvePeriod, retentionMetric, retentionMonthCountForAsOf, sourceKeyFromRow, sourceQualityFromRow };

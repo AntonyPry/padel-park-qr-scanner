@@ -126,6 +126,13 @@ test('retention distinguishes zero retention from an immature calendar month', (
   assert.equal(leapYear.rate, 25);
 });
 
+test('retention horizon includes the asOf month only when its final day is selected', () => {
+  assert.equal(service.retentionMonthCountForAsOf('2026-01', '2026-07-30'), 5);
+  assert.equal(service.retentionMonthCountForAsOf('2026-01', '2026-07-31'), 6);
+  assert.equal(service.retentionMetric(3, 8, '2026-01', 6, '2026-07-30').isMature, false);
+  assert.equal(service.retentionMetric(3, 8, '2026-01', 6, '2026-07-31').isMature, true);
+});
+
 test('lifecycle boundaries are mutually exclusive at 30, 60 and 90 days', () => {
   const asOf = new Date('2026-05-01T00:00:00.000Z');
   const daysAgo = (days) => new Date(asOf.getTime() - days * 86400000).toISOString();
