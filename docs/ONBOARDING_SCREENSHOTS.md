@@ -58,7 +58,8 @@ For instruction cards:
 - form/fill/result cards should have screenshots when the screenshot helps the user recognize the state;
 - do not reuse a screenshot just to fill space;
 - leave click-only, conceptual, summary or decision cards text-only;
-- do not use arrows, frames, numbers, CSS callouts, generated illustrations or crop fragments in release screenshots.
+- do not use CSS callouts, generated illustrations or crop fragments in release screenshots;
+- by default avoid arrows, frames and numbers; for complex analytics/review screens, small embedded numbered arrows are allowed only when the screenshot is a real CRM screenshot, the markers do not cover content, and `lesson.screenshots[].callouts` explains every number.
 - synthetic demo CRM names and phones are allowed only when they are clearly local demo data, not real client data;
 - do not use noisy QA labels such as `QA DND ...`, `[training]`, random IDs or mandatory test names in visible release screenshots;
 - trainer-facing screenshots must not expose phones, external IDs, call history or client-base management fields.
@@ -88,10 +89,10 @@ When a feature changes a screen used in onboarding:
 
 Current release baseline:
 
-- `113/113` onboarding tasks have instruction-card lessons;
+- `114/114` onboarding tasks have instruction-card lessons;
 - `46` owner/manager knowledge guides are text-first deep guides with starting screen screenshots;
-- `98` lessons with screenshots use `section-first-cards`;
+- `99` lessons with screenshots use `section-first-cards`;
 - `15` lessons are text-only until a dedicated screenshot refresh adds real CRM assets;
-- `139/139` screenshot-backed instruction cards resolve to screenshots;
+- `157/157` screenshot-backed instruction cards resolve to screenshots;
 - `698` action, review, final, conceptual or knowledge cards are intentionally text-only;
 - QA screenshots belong in `outputs/qa/...` and must not be wired into the catalog.
