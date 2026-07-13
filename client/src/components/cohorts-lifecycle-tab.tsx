@@ -145,7 +145,7 @@ export default function CohortsLifecycleTab({
   const error = query.isError ? getApiErrorMessage(query.error, 'Не удалось загрузить когорты и жизненный цикл') : '';
 
   return (
-    <div className="min-w-0 space-y-5">
+    <div className="w-full min-w-0 space-y-5">
       <div className="rounded-xl border bg-card/60 p-3">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -264,8 +264,8 @@ export default function CohortsLifecycleTab({
               <Card><CardContent className="py-12 text-center text-muted-foreground">В выбранном периоде нет когорт первого реального визита</CardContent></Card>
             ) : (
               <>
-                <div className="hidden max-w-full overflow-x-auto rounded-xl border lg:block">
-                  <Table className="min-w-max">
+                <div className="hidden w-full min-w-0 max-w-full overflow-hidden rounded-xl border lg:block">
+                  <Table className="min-w-max" containerClassName="max-w-full overscroll-x-contain">
                     <TableHeader><TableRow>
                       <TableHead className="sticky left-0 z-10 min-w-40 bg-card">Когорта</TableHead>
                       <TableHead>Размер</TableHead>

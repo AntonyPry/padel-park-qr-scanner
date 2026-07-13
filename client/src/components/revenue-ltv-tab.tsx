@@ -140,7 +140,7 @@ export default function RevenueLtvTab({
   }, [allHidden, onSourceFilterChange, sources]);
 
   return (
-    <div className="min-w-0 space-y-5">
+    <div className="w-full min-w-0 space-y-5">
       <div className="rounded-xl border bg-card/60 p-3">
         <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
@@ -200,8 +200,8 @@ export default function RevenueLtvTab({
             <div className="mb-3 flex items-center gap-2"><h2 id="revenue-sources-heading" className="text-lg font-semibold">LTV по источникам</h2><HelpTooltip>Источник берется у canonical-клиента по stable source key. «Мало данных» — менее 10 зрелых клиентов в 90-дневном окне.</HelpTooltip></div>
             {data.sources.length === 0 ? <Card><CardContent className="py-12 text-center text-muted-foreground">Нет привлеченных клиентов в выбранном периоде</CardContent></Card> : (
               <>
-                <div className="hidden max-w-full overflow-x-auto rounded-xl border lg:block">
-                  <Table className="min-w-max"><TableHeader><TableRow>
+                <div className="hidden w-full min-w-0 max-w-full overflow-hidden rounded-xl border lg:block">
+                  <Table className="min-w-max" containerClassName="max-w-full overscroll-x-contain"><TableHeader><TableRow>
                     <TableHead>Источник</TableHead><TableHead>Привлечено</TableHead><TableHead>Платящих</TableHead><TableHead>Конверсия</TableHead><TableHead>Выручка</TableHead><TableHead>LTV 30</TableHead><TableHead>LTV 60</TableHead><TableHead>LTV 90</TableHead><TableHead>Lifetime</TableHead><TableHead>Зрелая 30/60/90</TableHead><TableHead>Надежность</TableHead>
                   </TableRow></TableHeader><TableBody>{data.sources.map((row) => (
                     <TableRow key={row.sourceKey}><TableCell className="max-w-52 whitespace-normal font-medium">{row.source}</TableCell><TableCell>{row.acquiredClients}</TableCell><TableCell>{row.payingClients}</TableCell><TableCell>{formatPercent(row.payerConversion)}</TableCell><TableCell>{formatMoney(row.attributedRevenue)}</TableCell><TableCell><MetricState metric={row.ltv30} /></TableCell><TableCell><MetricState metric={row.ltv60} /></TableCell><TableCell><MetricState metric={row.ltv90} /></TableCell><TableCell>{formatMoney(row.lifetimeLtv.value)}</TableCell><TableCell>{row.matureSample.days30} / {row.matureSample.days60} / {row.matureSample.days90}</TableCell><TableCell>{row.reliability.label}</TableCell></TableRow>
@@ -216,7 +216,7 @@ export default function RevenueLtvTab({
             <div className="mb-3 flex items-center gap-2"><h2 id="revenue-cohorts-heading" className="text-lg font-semibold">Накопительный LTV когорт</h2><HelpTooltip>M0, M1 и далее — накопленная надежно атрибутированная выручка / исходный размер когорты. Незавершенные календарные месяцы возвращают null.</HelpTooltip></div>
             {data.cohorts.rows.length === 0 ? <Card><CardContent className="py-12 text-center text-muted-foreground">Нет когорт первого реального визита</CardContent></Card> : (
               <>
-                <div className="hidden max-w-full overflow-x-auto rounded-xl border lg:block"><Table className="min-w-max"><TableHeader><TableRow><TableHead className="sticky left-0 z-10 bg-card">Когорта</TableHead><TableHead>Размер</TableHead>{data.cohorts.months.map((month) => <TableHead key={month}>M{month}</TableHead>)}</TableRow></TableHeader><TableBody>{data.cohorts.rows.map((cohort) => <TableRow key={cohort.cohortMonth}><TableCell className="sticky left-0 z-10 bg-card font-medium">{cohort.cohortMonth}</TableCell><TableCell>{cohort.cohortSize}</TableCell>{cohort.values.map((value) => <TableCell key={value.monthIndex}><CohortValue value={value} /></TableCell>)}</TableRow>)}</TableBody></Table></div>
+                <div className="hidden w-full min-w-0 max-w-full overflow-hidden rounded-xl border lg:block"><Table className="min-w-max" containerClassName="max-w-full overscroll-x-contain"><TableHeader><TableRow><TableHead className="sticky left-0 z-10 bg-card">Когорта</TableHead><TableHead>Размер</TableHead>{data.cohorts.months.map((month) => <TableHead key={month}>M{month}</TableHead>)}</TableRow></TableHeader><TableBody>{data.cohorts.rows.map((cohort) => <TableRow key={cohort.cohortMonth}><TableCell className="sticky left-0 z-10 bg-card font-medium">{cohort.cohortMonth}</TableCell><TableCell>{cohort.cohortSize}</TableCell>{cohort.values.map((value) => <TableCell key={value.monthIndex}><CohortValue value={value} /></TableCell>)}</TableRow>)}</TableBody></Table></div>
                 <div className="grid min-w-0 gap-3 lg:hidden">{data.cohorts.rows.map((cohort) => <Card key={cohort.cohortMonth} className="min-w-0"><CardHeader className="pb-3"><CardTitle className="text-base">{cohort.cohortMonth} · {cohort.cohortSize} клиентов</CardTitle></CardHeader><CardContent className="grid grid-cols-2 gap-2 min-[360px]:grid-cols-3">{cohort.values.map((value) => <div key={value.monthIndex} className="min-w-0 rounded-lg border p-2.5"><div className="text-xs text-muted-foreground">M{value.monthIndex}</div><div className="mt-1 break-words"><CohortValue value={value} /></div></div>)}</CardContent></Card>)}</div>
               </>
             )}

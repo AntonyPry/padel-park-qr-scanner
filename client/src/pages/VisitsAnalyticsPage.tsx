@@ -288,15 +288,15 @@ export default function VisitsAnalyticsPage() {
   };
 
   return (
-    <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-      <TabsList className="grid h-auto w-full grid-cols-1 sm:w-auto sm:grid-cols-2 lg:grid-cols-4">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
+      <TabsList className="grid h-auto w-full min-w-0 max-w-full grid-cols-1 sm:w-auto sm:grid-cols-2 lg:grid-cols-4">
         <TabsTrigger value="overview">Обзор</TabsTrigger>
         <TabsTrigger value="source-quality">Качество источников</TabsTrigger>
         <TabsTrigger value="cohorts-lifecycle" className="h-auto min-h-8 whitespace-normal">Когорты и жизненный цикл</TabsTrigger>
         <TabsTrigger value="revenue-ltv" className="h-auto min-h-8 whitespace-normal">Выручка и LTV</TabsTrigger>
       </TabsList>
       {activeTab !== 'source-quality' && (
-        <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-end">
+        <div className="flex w-full min-w-0 flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-end">
           <Popover>
             <PopoverTrigger asChild>
               <Button
@@ -318,13 +318,13 @@ export default function VisitsAnalyticsPage() {
           </Button>
         </div>
       )}
-      <TabsContent value="source-quality"><SourceQualityTab canCreateBase={canCreateBase} onCreateSegment={setSegmentSelection} /></TabsContent>
-      <TabsContent value="cohorts-lifecycle">
+      <TabsContent value="source-quality" className="w-full min-w-0"><SourceQualityTab canCreateBase={canCreateBase} onCreateSegment={setSegmentSelection} /></TabsContent>
+      <TabsContent value="cohorts-lifecycle" className="w-full min-w-0">
         <Suspense fallback={<ChartLoadingState title="Загрузка вкладки когорт" />}>
           <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} canCreateBase={canCreateBase} from={analyticsParams.from} to={analyticsParams.to} onCreateSegment={setSegmentSelection} onSourceFilterChange={setLifecycleSourceFilter} />
         </Suspense>
       </TabsContent>
-      <TabsContent value="revenue-ltv">
+      <TabsContent value="revenue-ltv" className="w-full min-w-0">
         {activeTab === 'revenue-ltv' && (
           <Suspense fallback={<ChartLoadingState title="Загрузка вкладки выручки и LTV" />}>
             <RevenueLtvTab
@@ -336,7 +336,7 @@ export default function VisitsAnalyticsPage() {
           </Suspense>
         )}
       </TabsContent>
-      <TabsContent value="overview"><div className="flex flex-col gap-5">
+      <TabsContent value="overview" className="w-full min-w-0"><div className="flex w-full min-w-0 flex-col gap-5">
       <div className="rounded-xl border bg-card/60 p-3">
         {data && (
           <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
