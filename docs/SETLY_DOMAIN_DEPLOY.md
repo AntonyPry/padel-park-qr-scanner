@@ -15,7 +15,7 @@ The wildcard DNS record does not automatically create a wildcard TLS certificate
 
 The frontend is served from `/opt/padel-park-qr-scanner/client/dist`. API and Socket.IO are proxied to the Node process on `127.0.0.1:3000`.
 
-The deployable source of truth is `deploy/nginx/setly.tech.conf`. Install it on the server with:
+The initial HTTP bootstrap configuration is `deploy/nginx/setly.tech.conf`. Install it once before the first Certbot run with:
 
 ```bash
 install -m 0644 deploy/nginx/setly.tech.conf /etc/nginx/sites-available/setly.tech
@@ -23,6 +23,8 @@ ln -sfn /etc/nginx/sites-available/setly.tech /etc/nginx/sites-enabled/setly.tec
 nginx -t
 systemctl reload nginx
 ```
+
+Certbot modifies the installed runtime file when it enables TLS. Do not copy the HTTP bootstrap file over `/etc/nginx/sites-available/setly.tech` after certificate issuance. After the first successful HTTPS setup, capture a sanitized final TLS configuration in infrastructure code without certificate private keys or other secrets.
 
 The installed file contains:
 
