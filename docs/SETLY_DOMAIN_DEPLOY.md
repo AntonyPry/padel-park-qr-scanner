@@ -69,8 +69,8 @@ server {
 Set these values in the production server environment without committing secrets:
 
 ```dotenv
-CLIENT_ORIGIN=https://setly.tech
-CORS_ORIGIN=https://setly.tech
+CLIENT_ORIGIN=https://setly.tech,https://www.setly.tech
+CORS_ORIGIN=https://setly.tech,https://www.setly.tech
 BEELINE_CALLBACK_URL=https://setly.tech/api/integrations/beeline/events
 ```
 
