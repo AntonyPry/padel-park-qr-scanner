@@ -20,6 +20,7 @@
 - For prepayments training safety, verify corporate clients and ledger entries are training-cleanup safe, linked corporate finance records stay training-marked, and subscriptions/certificates/pending sales are either training-safe or kept out of action training tasks.
 - For Manager Control releases, verify owner/manager onboarding covers `/admin/manager-control`, the daily control queue, filters, pending sales, overdue/missed calls, problem bookings, expiring subscriptions, expiring certificates and low corporate balances.
 - For booking cleanup releases, verify onboarding covers schedule quick actions, payment/conflict/active-prepayment warnings, group participants and the client-card link from a booking.
+- For Visits Analytics releases, verify onboarding covers the four tabs of `/admin/visits-analytics`: overview, source quality, cohorts/lifecycle and revenue/LTV; owner/manager segment-to-client-base-to-call-task handoff; accountant/viewer read-only filters and exports; canonical clients, mature windows, Europe/Moscow timezone, LTV coverage and no extra checkpoint events beyond `report.viewed`.
 - Verify trainer-facing instructions and screens do not expose phones, external IDs, CRM sales notes, call history or full client-base management context.
 - Create and verify a database backup before switching traffic.
 
@@ -32,6 +33,7 @@
 - Verify login, client creation, duplicate restore, bases, call tasks, payroll, motivation, catalog, references and access monitor.
 - Verify Manager Control Dashboard `/admin/manager-control` for owner/manager: daily queue loads, filters apply, links open the source screens and route-view onboarding checkpoint is recorded only with active task context.
 - Verify booking cleanup in `/admin/bookings`: quick status/payment/cancel/edit actions, payment/conflict/active-prepayment warnings, group participants and client-card link.
+- Verify Visits Analytics `/admin/visits-analytics` for owner/manager/accountant/viewer: four tabs load, source/cohort/lifecycle filters apply, exports work for read-only roles, owner/manager can create a client base from a segment and hand it off to the existing call-task flow, and onboarding checkpoint remains `report.viewed`.
 - Verify methodology, methodology analytics, trainer cabinet, client skill map, training recommendations, training plan lifecycle and training booking plan link.
 - Verify prepayments dashboard, catalog sale settings, pending sale binding, client subscriptions, certificate search/redemption and corporate client ledger/export.
 - Verify onboarding opens for the changed roles and owner role override can view the affected role path.

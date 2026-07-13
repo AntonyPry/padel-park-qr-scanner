@@ -1,7 +1,7 @@
 # Статус спринтов CRM
 
 Дата фиксации: 2026-05-28.
-Последнее обновление: 2026-06-20.
+Последнее обновление: 2026-07-13.
 
 Этот файл - единый источник правды по спринтам. Перед началом нового спринта сначала обновляем этот документ: что уже сделано, что частично, что осталось, какие критерии приемки.
 
@@ -2175,6 +2175,51 @@
 - предоплаты остаются training-safe: unsafe action-сценарии не рекомендуют training mode, пока feature-код не подтвердит marker/cleanup;
 - screenshot-backed baseline обновлен без fake/generated assets и без noisy QA labels;
 - release gate на merged-ветке проходит без onboarding warnings.
+
+## Sprint 49 - Visits Analytics onboarding sync
+
+Цель: обновить onboarding после эпика «Глубокая аналитика посещений» до feature freeze, не мержить и не деплоить продуктовую ветку.
+
+Общий статус: `done`.
+
+Product source:
+
+- branch `codex/visits-analytics-epic`;
+- HEAD `06808b8c31d77b14d71df675f2d571daddbc8513`;
+- статус product handoff: ready for onboarding, not merged to main, not deployed.
+
+Сделано:
+
+- обновлены задачи `manager.visits-analytics.review`, `owner.operations.review-visits`, `viewer.visits-analytics.review`;
+- добавлена read-only задача `accountant.visits-analytics.review`;
+- owner/manager сценарий описывает путь: source/cohort/lifecycle filter → preview/count/provenance → клиентская база → существующая задача обзвона;
+- accountant/viewer сценарии ограничены чтением, фильтрами и экспортом без действий создания базы или задачи обзвона;
+- knowledge-раздел `visits-analytics` переписан под четыре вкладки:
+  - «Обзор»: canonical clients, scannedAt fallback createdAt, исключение training/duplicates, new/returning/repeat visits, mature repeatRate30, предыдущий равный период, timezone Europe/Moscow;
+  - «Качество источников»: stable source keys, eligible 30/60/90, «Недостаточно времени», «Мало данных», один визит, 3+, среднее и медиана второго визита;
+  - «Когорты и жизненный цикл»: M0+, зрелые календарные месяцы, active/risk/sleeping/lost, polarity динамики по статусам;
+  - «Выручка и LTV»: revenue attribution, PAYBACK как возвратный чек, LTV 30/60/90/lifetime, source/cohort LTV, coverage ограничений данных;
+- обновлены реальные CRM screenshots в dark/light наборах:
+  - `/onboarding/knowledge/visits-analytics/overview.png`;
+  - `/onboarding/knowledge/visits-analytics/source-quality.png`;
+  - `/onboarding/knowledge/visits-analytics/source-quality-readonly.png`;
+  - `/onboarding/knowledge/visits-analytics/cohorts-lifecycle.png`;
+  - `/onboarding/knowledge/visits-analytics/cohorts-lifecycle-readonly.png`;
+  - `/onboarding/knowledge/visits-analytics/revenue-ltv.png`;
+  - `/onboarding/knowledge/visits-analytics/segment-base-create.png`;
+  - `/onboarding/knowledge/visits-analytics/segment-base-handoff.png`;
+- light-варианты сохранены в `client/public/onboarding-light/knowledge/visits-analytics/`;
+- checkpoint сохранен прежний: `report.viewed` с `report: visits_analytics`; новые checkpoint events не добавлялись;
+- catalog regression покрывает owner/manager operational flow, accountant/viewer read-only flow и отсутствие новых checkpoint events;
+- release baseline после обновления: `114/114` onboarding tasks имеют lesson, `99` screenshot-backed lessons, `15` text-only lessons, `153` instruction screenshots, `157/157` screenshot-backed cards, `698` text-only cards.
+
+Критерии приемки:
+
+- owner/manager понимают четыре вкладки отчета и могут передать выбранный сегмент в существующий обзвон через клиентскую базу;
+- accountant/viewer видят только чтение, фильтры и экспорт;
+- owner role override открывает обновленный manager/accountant/viewer path без расширения реальных прав;
+- screenshots являются реальными CRM screenshots из feature UI, без generated assets;
+- `server npm run onboarding:audit:strict` проходит без warnings.
 
 ## Backlog - SaaS-фундамент
 
