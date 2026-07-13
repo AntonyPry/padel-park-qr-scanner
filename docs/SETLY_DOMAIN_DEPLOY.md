@@ -15,7 +15,16 @@ The wildcard DNS record does not automatically create a wildcard TLS certificate
 
 The frontend is served from `/opt/padel-park-qr-scanner/client/dist`. API and Socket.IO are proxied to the Node process on `127.0.0.1:3000`.
 
-Use `/etc/nginx/sites-available/setly.tech`:
+The deployable source of truth is `deploy/nginx/setly.tech.conf`. Install it on the server with:
+
+```bash
+install -m 0644 deploy/nginx/setly.tech.conf /etc/nginx/sites-available/setly.tech
+ln -sfn /etc/nginx/sites-available/setly.tech /etc/nginx/sites-enabled/setly.tech
+nginx -t
+systemctl reload nginx
+```
+
+The installed file contains:
 
 ```nginx
 server {
