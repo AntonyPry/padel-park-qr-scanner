@@ -206,11 +206,14 @@ The current Guided Onboarding card-reader baseline is release-ready when:
 - owner and manager knowledge guides cover every CRM section they can use;
 - every screenshot-backed lesson starts with a real section screenshot;
 - form/result cards have real screenshots when they directly illustrate the taught state;
+- complex analytics/review screenshots may use small embedded numbered arrows only when they are real CRM screenshots and every number has a caption in the lesson;
 - click-only, conceptual and formula cards are intentionally text-only;
 - every lesson has `updatedAt`, and completed lessons updated afterwards are visibly marked until acknowledged again;
 - `server npm run onboarding:audit:strict` reports screenshot coverage with no warnings;
 - all backend and frontend release gate commands pass;
 - browser QA verifies card navigation, image loading and no return of `Попробовать`, `Практика` or `Мини-тест`.
+
+For Visits Analytics releases, the handoff must also verify owner/manager segment-to-client-base-to-call-task flow, accountant/viewer read-only filters and exports, the four tabs of `/admin/visits-analytics`, and no new checkpoint event beyond the existing `report.viewed` route-review event.
 
 ## Handoff text for another Codex chat
 

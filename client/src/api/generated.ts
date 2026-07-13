@@ -264,7 +264,13 @@ export const apiEndpoints = {
   "utilization.list": { method: "GET", path: "/utilization", responseType: "json" },
   "utilization.upsert": { method: "POST", path: "/utilization", responseType: "json" },
   "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json" },
+  "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json" },
+  "visitsAnalytics.cohortsLifecycle": { method: "GET", path: "/analytics/visits/cohorts-lifecycle", responseType: "json" },
+  "visitsAnalytics.revenueLtv": { method: "GET", path: "/analytics/visits/revenue-ltv", responseType: "json" },
+  "visitsAnalytics.clientBasePreview": { method: "POST", path: "/analytics/visits/client-base-preview", responseType: "json" },
+  "visitsAnalytics.createClientBase": { method: "POST", path: "/analytics/visits/client-bases", responseType: "json" },
   "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob" },
+  "visitsAnalytics.sourceQualityExport": { method: "GET", path: "/export/visits/source-quality", responseType: "blob" },
 } as const;
 
 export type ApiEndpointId = keyof typeof apiEndpoints;
@@ -1080,6 +1086,24 @@ export type ClientBasesCreateBody = {
     visitCategoryId?: number | string | "" | null;
     visitCountMax?: number | string | "" | null;
     visitCountMin?: number | string | "" | null;
+    visitsAnalytics?: {
+      algorithmVersion: "visits_analytics_segment_v1";
+      asOf: string;
+      canonicalClientRule: "recursive_merged_root_v1";
+      clientStatus: "active";
+      excludeDuplicateVisits: true;
+      excludeTraining: true;
+      firstVisitFrom?: string | "";
+      firstVisitMonth?: string;
+      firstVisitTo?: string | "";
+      lastVisitFrom?: string | "";
+      lastVisitTo?: string | "";
+      lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+      sourceKeys: Array<string>;
+      timeZone: "Europe/Moscow";
+      visitCountMax?: number | string | "" | null;
+      visitCountMin?: number | string | "" | null;
+    };
     [key: string]: unknown;
   };
   name: string;
@@ -1120,6 +1144,24 @@ export type ClientBasesClientsQuery = {
   visitCategoryId?: number | string | "" | null;
   visitCountMax?: number | string | "" | null;
   visitCountMin?: number | string | "" | null;
+  visitsAnalytics?: {
+    algorithmVersion: "visits_analytics_segment_v1";
+    asOf: string;
+    canonicalClientRule: "recursive_merged_root_v1";
+    clientStatus: "active";
+    excludeDuplicateVisits: true;
+    excludeTraining: true;
+    firstVisitFrom?: string | "";
+    firstVisitMonth?: string;
+    firstVisitTo?: string | "";
+    lastVisitFrom?: string | "";
+    lastVisitTo?: string | "";
+    lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+    sourceKeys: Array<string>;
+    timeZone: "Europe/Moscow";
+    visitCountMax?: number | string | "" | null;
+    visitCountMin?: number | string | "" | null;
+  };
   [key: string]: unknown;
 };
 export type ClientBasesUpdateParams = {
@@ -1143,6 +1185,24 @@ export type ClientBasesUpdateBody = {
     visitCategoryId?: number | string | "" | null;
     visitCountMax?: number | string | "" | null;
     visitCountMin?: number | string | "" | null;
+    visitsAnalytics?: {
+      algorithmVersion: "visits_analytics_segment_v1";
+      asOf: string;
+      canonicalClientRule: "recursive_merged_root_v1";
+      clientStatus: "active";
+      excludeDuplicateVisits: true;
+      excludeTraining: true;
+      firstVisitFrom?: string | "";
+      firstVisitMonth?: string;
+      firstVisitTo?: string | "";
+      lastVisitFrom?: string | "";
+      lastVisitTo?: string | "";
+      lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+      sourceKeys: Array<string>;
+      timeZone: "Europe/Moscow";
+      visitCountMax?: number | string | "" | null;
+      visitCountMin?: number | string | "" | null;
+    };
     [key: string]: unknown;
   };
   name?: string;
@@ -1439,6 +1499,24 @@ export type ClientsListQuery = {
   visitCategoryId?: number | string | "" | null;
   visitCountMax?: number | string | "" | null;
   visitCountMin?: number | string | "" | null;
+  visitsAnalytics?: {
+    algorithmVersion: "visits_analytics_segment_v1";
+    asOf: string;
+    canonicalClientRule: "recursive_merged_root_v1";
+    clientStatus: "active";
+    excludeDuplicateVisits: true;
+    excludeTraining: true;
+    firstVisitFrom?: string | "";
+    firstVisitMonth?: string;
+    firstVisitTo?: string | "";
+    lastVisitFrom?: string | "";
+    lastVisitTo?: string | "";
+    lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+    sourceKeys: Array<string>;
+    timeZone: "Europe/Moscow";
+    visitCountMax?: number | string | "" | null;
+    visitCountMin?: number | string | "" | null;
+  };
   [key: string]: unknown;
 };
 export type ClientsLookupQuery = {
@@ -1464,6 +1542,24 @@ export type ClientsViewsCreateBody = {
     visitCategoryId?: number | string | "" | null;
     visitCountMax?: number | string | "" | null;
     visitCountMin?: number | string | "" | null;
+    visitsAnalytics?: {
+      algorithmVersion: "visits_analytics_segment_v1";
+      asOf: string;
+      canonicalClientRule: "recursive_merged_root_v1";
+      clientStatus: "active";
+      excludeDuplicateVisits: true;
+      excludeTraining: true;
+      firstVisitFrom?: string | "";
+      firstVisitMonth?: string;
+      firstVisitTo?: string | "";
+      lastVisitFrom?: string | "";
+      lastVisitTo?: string | "";
+      lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+      sourceKeys: Array<string>;
+      timeZone: "Europe/Moscow";
+      visitCountMax?: number | string | "" | null;
+      visitCountMin?: number | string | "" | null;
+    };
     [key: string]: unknown;
   };
   name: string;
@@ -1489,6 +1585,24 @@ export type ClientsViewsUpdateBody = {
     visitCategoryId?: number | string | "" | null;
     visitCountMax?: number | string | "" | null;
     visitCountMin?: number | string | "" | null;
+    visitsAnalytics?: {
+      algorithmVersion: "visits_analytics_segment_v1";
+      asOf: string;
+      canonicalClientRule: "recursive_merged_root_v1";
+      clientStatus: "active";
+      excludeDuplicateVisits: true;
+      excludeTraining: true;
+      firstVisitFrom?: string | "";
+      firstVisitMonth?: string;
+      firstVisitTo?: string | "";
+      lastVisitFrom?: string | "";
+      lastVisitTo?: string | "";
+      lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+      sourceKeys: Array<string>;
+      timeZone: "Europe/Moscow";
+      visitCountMax?: number | string | "" | null;
+      visitCountMin?: number | string | "" | null;
+    };
     [key: string]: unknown;
   };
   name?: string;
@@ -2174,9 +2288,59 @@ export type VisitsAnalyticsGetQuery = {
   to?: string | "";
   [key: string]: unknown;
 };
+export type VisitsAnalyticsSourceQualityQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
+export type VisitsAnalyticsCohortsLifecycleQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
+export type VisitsAnalyticsRevenueLtvQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
+export type VisitsAnalyticsClientBasePreviewBody = {
+  asOf?: string | string;
+  cohortMonth?: string;
+  from: string;
+  kind: "source" | "lifecycle" | "cohort" | "filters";
+  lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+  sourceKeys?: Array<string>;
+  to: string;
+  [key: string]: unknown;
+};
+export type VisitsAnalyticsCreateClientBaseBody = {
+  description?: string | "" | null;
+  name: string;
+  selection: {
+    asOf?: string | string;
+    cohortMonth?: string;
+    from: string;
+    kind: "source" | "lifecycle" | "cohort" | "filters";
+    lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+    sourceKeys?: Array<string>;
+    to: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
 export type VisitsAnalyticsExportQuery = {
   from?: string | "";
   to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
+export type VisitsAnalyticsSourceQualityExportQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
   [key: string]: unknown;
 };
 
@@ -2443,5 +2607,11 @@ export interface ApiEndpointRequestMap {
   "utilization.list": ApiEndpointRequest<undefined, undefined, undefined>;
   "utilization.upsert": ApiEndpointRequest<undefined, undefined, UtilizationUpsertBody>;
   "visitsAnalytics.get": ApiEndpointRequest<undefined, VisitsAnalyticsGetQuery, undefined>;
+  "visitsAnalytics.sourceQuality": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityQuery, undefined>;
+  "visitsAnalytics.cohortsLifecycle": ApiEndpointRequest<undefined, VisitsAnalyticsCohortsLifecycleQuery, undefined>;
+  "visitsAnalytics.revenueLtv": ApiEndpointRequest<undefined, VisitsAnalyticsRevenueLtvQuery, undefined>;
+  "visitsAnalytics.clientBasePreview": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsClientBasePreviewBody>;
+  "visitsAnalytics.createClientBase": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsCreateClientBaseBody>;
   "visitsAnalytics.export": ApiEndpointRequest<undefined, VisitsAnalyticsExportQuery, undefined>;
+  "visitsAnalytics.sourceQualityExport": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityExportQuery, undefined>;
 }

@@ -262,6 +262,38 @@ const clientFilters = z
     visitCategoryId: nullableId,
     visitCountMax: optionalClientNumericQueryValue,
     visitCountMin: optionalClientNumericQueryValue,
+    visitsAnalytics: z
+      .object({
+        algorithmVersion: z.literal('visits_analytics_segment_v1'),
+        asOf: z.string().datetime({ offset: true }),
+        canonicalClientRule: z.literal('recursive_merged_root_v1'),
+        clientStatus: z.literal('active'),
+        excludeDuplicateVisits: z.literal(true),
+        excludeTraining: z.literal(true),
+        firstVisitFrom: optionalDateOnly,
+        firstVisitMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+        firstVisitTo: optionalDateOnly,
+        lastVisitFrom: optionalDateOnly,
+        lastVisitTo: optionalDateOnly,
+        lifecycleStatus: z.enum(['new', 'developing', 'regular', 'atRisk', 'sleeping', 'lost']).optional(),
+        sourceKeys: z.array(z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)$/)).max(100),
+        timeZone: z.literal('Europe/Moscow'),
+        visitCountMax: optionalClientNumericQueryValue,
+        visitCountMin: optionalClientNumericQueryValue,
+      })
+      .optional(),
+  })
+  .passthrough();
+
+const visitsAnalyticsSegmentSelection = z
+  .object({
+    asOf: z.union([dateOnly, z.string().datetime({ offset: true })]).optional(),
+    cohortMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    from: dateOnly,
+    kind: z.enum(['source', 'lifecycle', 'cohort', 'filters']),
+    lifecycleStatus: z.enum(['new', 'developing', 'regular', 'atRisk', 'sleeping', 'lost']).optional(),
+    sourceKeys: z.array(z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)$/)).max(100).optional(),
+    to: dateOnly,
   })
   .passthrough();
 
@@ -1792,7 +1824,21 @@ const apiSchemas = {
     ]),
   },
   visitsAnalytics: {
+    clientBaseCreateBody: z
+      .object({
+        description: optionalString,
+        name: nameString,
+        selection: visitsAnalyticsSegmentSelection,
+      })
+      .passthrough(),
+    clientBasePreviewBody: visitsAnalyticsSegmentSelection,
     dateRangeQuery,
+    filteredDateRangeQuery: dateRangeQuery.extend({
+      sources: z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$/).optional(),
+    }),
+    sourceQualityQuery: dateRangeQuery.extend({
+      sources: z.string().regex(/^(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$/).optional(),
+    }),
   },
 };
 

@@ -4,6 +4,7 @@ const {
   createRealtimeEvent,
   matchRealtimeChange,
 } = require('../../src/realtime');
+const { buildRealtimeFanoutChanges } = require('../../src/realtime/middleware');
 
 function req(method, originalUrl) {
   return { method, originalUrl };
@@ -47,6 +48,7 @@ test('route mapper covers integrations and system-facing sync endpoints', () => 
   assert.equal(webhook.domain, 'finance');
   assert.equal(webhook.source, 'webhook');
   assert.equal(webhook.action, 'imported');
+  assert.equal(webhook.hints.queryGroups.includes('visitsAnalytics'), true);
   assert.equal(telephony.domain, 'telephony');
   assert.equal(telephony.action, 'synced');
   assert.equal(transcription.domain, 'telephony');
@@ -55,6 +57,30 @@ test('route mapper covers integrations and system-facing sync endpoints', () => 
   assert.equal(workerRetry.domain, 'telephony');
   assert.equal(workerRetry.entity, 'telephony_transcription_job');
   assert.equal(workerRetry.action, 'updated');
+});
+
+test('revenue dependencies fan out a sanitized visits analytics invalidation', () => {
+  const pendingSale = matchRealtimeChange(
+    req('POST', '/api/catalog/pending-sales/42/link'),
+    { id: 42, client: { id: 7 } },
+  );
+  const [fanout] = buildRealtimeFanoutChanges(pendingSale);
+
+  assert.deepEqual(fanout, {
+    action: 'recalculated',
+    domain: 'visits_analytics',
+    entity: 'analytics_dependency',
+    entityId: null,
+    hints: {
+      queryGroups: ['visitsAnalytics'],
+      routes: ['/admin/visits-analytics'],
+    },
+    source: 'system',
+  });
+  assert.deepEqual(buildRealtimeFanoutChanges({
+    domain: 'visits_analytics',
+    hints: { queryGroups: ['visitsAnalytics'] },
+  }), []);
 });
 
 test('event schema stays narrow and excludes response body data', () => {

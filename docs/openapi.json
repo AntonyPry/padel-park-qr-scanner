@@ -38,6 +38,9 @@
       "name": "Client Bases"
     },
     {
+      "name": "Client bases"
+    },
+    {
       "name": "Clients"
     },
     {
@@ -22859,6 +22862,167 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "visitsAnalytics": {
+                        "type": "object",
+                        "properties": {
+                          "algorithmVersion": {
+                            "type": "string",
+                            "const": "visits_analytics_segment_v1"
+                          },
+                          "asOf": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "canonicalClientRule": {
+                            "type": "string",
+                            "const": "recursive_merged_root_v1"
+                          },
+                          "clientStatus": {
+                            "type": "string",
+                            "const": "active"
+                          },
+                          "excludeDuplicateVisits": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "excludeTraining": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "firstVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "firstVisitMonth": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}$"
+                          },
+                          "firstVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lifecycleStatus": {
+                            "type": "string",
+                            "enum": [
+                              "new",
+                              "developing",
+                              "regular",
+                              "atRisk",
+                              "sleeping",
+                              "lost"
+                            ]
+                          },
+                          "sourceKeys": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                            }
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "const": "Europe/Moscow"
+                          },
+                          "visitCountMax": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "visitCountMin": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "algorithmVersion",
+                          "asOf",
+                          "canonicalClientRule",
+                          "clientStatus",
+                          "excludeDuplicateVisits",
+                          "excludeTraining",
+                          "sourceKeys",
+                          "timeZone"
+                        ]
                       }
                     },
                     "additionalProperties": {}
@@ -23570,6 +23734,172 @@
                 }
               ]
             }
+          },
+          {
+            "in": "query",
+            "name": "visitsAnalytics",
+            "required": false,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "algorithmVersion": {
+                  "type": "string",
+                  "const": "visits_analytics_segment_v1"
+                },
+                "asOf": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "canonicalClientRule": {
+                  "type": "string",
+                  "const": "recursive_merged_root_v1"
+                },
+                "clientStatus": {
+                  "type": "string",
+                  "const": "active"
+                },
+                "excludeDuplicateVisits": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "excludeTraining": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "firstVisitFrom": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "firstVisitMonth": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}$"
+                },
+                "firstVisitTo": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "lastVisitFrom": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "lastVisitTo": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "lifecycleStatus": {
+                  "type": "string",
+                  "enum": [
+                    "new",
+                    "developing",
+                    "regular",
+                    "atRisk",
+                    "sleeping",
+                    "lost"
+                  ]
+                },
+                "sourceKeys": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                  }
+                },
+                "timeZone": {
+                  "type": "string",
+                  "const": "Europe/Moscow"
+                },
+                "visitCountMax": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+([.,]\\d+)?$"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "visitCountMin": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+([.,]\\d+)?$"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "algorithmVersion",
+                "asOf",
+                "canonicalClientRule",
+                "clientStatus",
+                "excludeDuplicateVisits",
+                "excludeTraining",
+                "sourceKeys",
+                "timeZone"
+              ]
+            }
           }
         ]
       }
@@ -24003,6 +24333,167 @@
                           {
                             "type": "null"
                           }
+                        ]
+                      },
+                      "visitsAnalytics": {
+                        "type": "object",
+                        "properties": {
+                          "algorithmVersion": {
+                            "type": "string",
+                            "const": "visits_analytics_segment_v1"
+                          },
+                          "asOf": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "canonicalClientRule": {
+                            "type": "string",
+                            "const": "recursive_merged_root_v1"
+                          },
+                          "clientStatus": {
+                            "type": "string",
+                            "const": "active"
+                          },
+                          "excludeDuplicateVisits": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "excludeTraining": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "firstVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "firstVisitMonth": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}$"
+                          },
+                          "firstVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lifecycleStatus": {
+                            "type": "string",
+                            "enum": [
+                              "new",
+                              "developing",
+                              "regular",
+                              "atRisk",
+                              "sleeping",
+                              "lost"
+                            ]
+                          },
+                          "sourceKeys": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                            }
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "const": "Europe/Moscow"
+                          },
+                          "visitCountMax": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "visitCountMin": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "algorithmVersion",
+                          "asOf",
+                          "canonicalClientRule",
+                          "clientStatus",
+                          "excludeDuplicateVisits",
+                          "excludeTraining",
+                          "sourceKeys",
+                          "timeZone"
                         ]
                       }
                     },
@@ -33367,6 +33858,172 @@
                 }
               ]
             }
+          },
+          {
+            "in": "query",
+            "name": "visitsAnalytics",
+            "required": false,
+            "schema": {
+              "type": "object",
+              "properties": {
+                "algorithmVersion": {
+                  "type": "string",
+                  "const": "visits_analytics_segment_v1"
+                },
+                "asOf": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                },
+                "canonicalClientRule": {
+                  "type": "string",
+                  "const": "recursive_merged_root_v1"
+                },
+                "clientStatus": {
+                  "type": "string",
+                  "const": "active"
+                },
+                "excludeDuplicateVisits": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "excludeTraining": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "firstVisitFrom": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "firstVisitMonth": {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}$"
+                },
+                "firstVisitTo": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "lastVisitFrom": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "lastVisitTo": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    }
+                  ]
+                },
+                "lifecycleStatus": {
+                  "type": "string",
+                  "enum": [
+                    "new",
+                    "developing",
+                    "regular",
+                    "atRisk",
+                    "sleeping",
+                    "lost"
+                  ]
+                },
+                "sourceKeys": {
+                  "maxItems": 100,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                  }
+                },
+                "timeZone": {
+                  "type": "string",
+                  "const": "Europe/Moscow"
+                },
+                "visitCountMax": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+([.,]\\d+)?$"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "visitCountMin": {
+                  "anyOf": [
+                    {
+                      "anyOf": [
+                        {
+                          "type": "number",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^\\d+([.,]\\d+)?$"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "string",
+                      "const": ""
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "algorithmVersion",
+                "asOf",
+                "canonicalClientRule",
+                "clientStatus",
+                "excludeDuplicateVisits",
+                "excludeTraining",
+                "sourceKeys",
+                "timeZone"
+              ]
+            }
           }
         ]
       },
@@ -34482,6 +35139,167 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "visitsAnalytics": {
+                        "type": "object",
+                        "properties": {
+                          "algorithmVersion": {
+                            "type": "string",
+                            "const": "visits_analytics_segment_v1"
+                          },
+                          "asOf": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "canonicalClientRule": {
+                            "type": "string",
+                            "const": "recursive_merged_root_v1"
+                          },
+                          "clientStatus": {
+                            "type": "string",
+                            "const": "active"
+                          },
+                          "excludeDuplicateVisits": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "excludeTraining": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "firstVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "firstVisitMonth": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}$"
+                          },
+                          "firstVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lifecycleStatus": {
+                            "type": "string",
+                            "enum": [
+                              "new",
+                              "developing",
+                              "regular",
+                              "atRisk",
+                              "sleeping",
+                              "lost"
+                            ]
+                          },
+                          "sourceKeys": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                            }
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "const": "Europe/Moscow"
+                          },
+                          "visitCountMax": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "visitCountMin": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "algorithmVersion",
+                          "asOf",
+                          "canonicalClientRule",
+                          "clientStatus",
+                          "excludeDuplicateVisits",
+                          "excludeTraining",
+                          "sourceKeys",
+                          "timeZone"
+                        ]
                       }
                     },
                     "additionalProperties": {}
@@ -34918,6 +35736,167 @@
                           {
                             "type": "null"
                           }
+                        ]
+                      },
+                      "visitsAnalytics": {
+                        "type": "object",
+                        "properties": {
+                          "algorithmVersion": {
+                            "type": "string",
+                            "const": "visits_analytics_segment_v1"
+                          },
+                          "asOf": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          "canonicalClientRule": {
+                            "type": "string",
+                            "const": "recursive_merged_root_v1"
+                          },
+                          "clientStatus": {
+                            "type": "string",
+                            "const": "active"
+                          },
+                          "excludeDuplicateVisits": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "excludeTraining": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "firstVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "firstVisitMonth": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}$"
+                          },
+                          "firstVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitFrom": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lastVisitTo": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              }
+                            ]
+                          },
+                          "lifecycleStatus": {
+                            "type": "string",
+                            "enum": [
+                              "new",
+                              "developing",
+                              "regular",
+                              "atRisk",
+                              "sleeping",
+                              "lost"
+                            ]
+                          },
+                          "sourceKeys": {
+                            "maxItems": 100,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                            }
+                          },
+                          "timeZone": {
+                            "type": "string",
+                            "const": "Europe/Moscow"
+                          },
+                          "visitCountMax": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "visitCountMin": {
+                            "anyOf": [
+                              {
+                                "anyOf": [
+                                  {
+                                    "type": "number",
+                                    "minimum": 0
+                                  },
+                                  {
+                                    "type": "string",
+                                    "pattern": "^\\d+([.,]\\d+)?$"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "string",
+                                "const": ""
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          }
+                        },
+                        "required": [
+                          "algorithmVersion",
+                          "asOf",
+                          "canonicalClientRule",
+                          "clientStatus",
+                          "excludeDuplicateVisits",
+                          "excludeTraining",
+                          "sourceKeys",
+                          "timeZone"
                         ]
                       }
                     },
@@ -52318,6 +53297,969 @@
         ]
       }
     },
+    "/analytics/visits/source-quality": {
+      "get": {
+        "operationId": "visitsAnalytics.sourceQuality",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Visits source quality",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
+            }
+          }
+        ]
+      }
+    },
+    "/analytics/visits/cohorts-lifecycle": {
+      "get": {
+        "operationId": "visitsAnalytics.cohortsLifecycle",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Visits cohorts and client lifecycle",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
+            }
+          }
+        ]
+      }
+    },
+    "/analytics/visits/revenue-ltv": {
+      "get": {
+        "operationId": "visitsAnalytics.revenueLtv",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Attributed revenue and LTV by acquisition source and cohort",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
+            }
+          }
+        ]
+      }
+    },
+    "/analytics/visits/client-base-preview": {
+      "post": {
+        "operationId": "visitsAnalytics.clientBasePreview",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Preview a ClientBase from visits analytics filters",
+        "tags": [
+          "Reports",
+          "Client bases"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "asOf": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                      },
+                      {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                      }
+                    ]
+                  },
+                  "cohortMonth": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}$"
+                  },
+                  "from": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "source",
+                      "lifecycle",
+                      "cohort",
+                      "filters"
+                    ]
+                  },
+                  "lifecycleStatus": {
+                    "type": "string",
+                    "enum": [
+                      "new",
+                      "developing",
+                      "regular",
+                      "atRisk",
+                      "sleeping",
+                      "lost"
+                    ]
+                  },
+                  "sourceKeys": {
+                    "maxItems": 100,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                    }
+                  },
+                  "to": {
+                    "type": "string",
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                  }
+                },
+                "required": [
+                  "from",
+                  "kind",
+                  "to"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/analytics/visits/client-bases": {
+      "post": {
+        "operationId": "visitsAnalytics.createClientBase",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a server-owned ClientBase from visits analytics selection",
+        "tags": [
+          "Reports",
+          "Client bases"
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 160
+                  },
+                  "selection": {
+                    "type": "object",
+                    "properties": {
+                      "asOf": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                          },
+                          {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          }
+                        ]
+                      },
+                      "cohortMonth": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}$"
+                      },
+                      "from": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "source",
+                          "lifecycle",
+                          "cohort",
+                          "filters"
+                        ]
+                      },
+                      "lifecycleStatus": {
+                        "type": "string",
+                        "enum": [
+                          "new",
+                          "developing",
+                          "regular",
+                          "atRisk",
+                          "sleeping",
+                          "lost"
+                        ]
+                      },
+                      "sourceKeys": {
+                        "maxItems": 100,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)$"
+                        }
+                      },
+                      "to": {
+                        "type": "string",
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                      }
+                    },
+                    "required": [
+                      "from",
+                      "kind",
+                      "to"
+                    ],
+                    "additionalProperties": {}
+                  }
+                },
+                "required": [
+                  "name",
+                  "selection"
+                ],
+                "additionalProperties": {}
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
     "/export/visits": {
       "get": {
         "operationId": "visitsAnalytics.export",
@@ -52479,6 +54421,190 @@
                   "const": ""
                 }
               ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
+            }
+          }
+        ]
+      }
+    },
+    "/export/visits/source-quality": {
+      "get": {
+        "operationId": "visitsAnalytics.sourceQualityExport",
+        "responses": {
+          "200": {
+            "content": {
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export visits source quality",
+        "tags": [
+          "Reports"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+                },
+                {
+                  "type": "string",
+                  "const": ""
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "sources",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified)(?:,(?:id:\\d+|legacy:[A-Za-z0-9_-]+|unspecified))*$"
             }
           }
         ]

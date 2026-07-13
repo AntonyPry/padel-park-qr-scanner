@@ -94,6 +94,24 @@ function calloutsPartiallyOverlap(first, second) {
   return !firstContainsSecond && !secondContainsFirst;
 }
 
+function allowsEmbeddedScreenshotCallouts(task) {
+  return task.route === '/admin/visits-analytics';
+}
+
+function screenshotCalloutsAreValid(task) {
+  return task.lesson.screenshots.every((screenshot) => {
+    if (!Array.isArray(screenshot.callouts)) {
+      return screenshot.calloutsEmbedded !== true;
+    }
+
+    return (
+      allowsEmbeddedScreenshotCallouts(task) &&
+      screenshot.calloutsEmbedded === true &&
+      screenshot.callouts.every((callout) => callout.label && callout.text)
+    );
+  });
+}
+
 test('onboarding catalog has a valid path for every account role', () => {
   assert.deepEqual(validateOnboardingCatalog(), []);
 
@@ -315,16 +333,115 @@ test('screenshot-backed lessons start with a concrete open-screen card', () => {
         );
         assertFirstOpenScreenBlock(task);
         assert.equal(
-          task.lesson.screenshots.every(
-            (screenshot) =>
-              !Array.isArray(screenshot.callouts) &&
-              screenshot.calloutsEmbedded !== true,
-          ),
+          screenshotCalloutsAreValid(task),
           true,
-          `${task.key} should not expose screenshot callout metadata`,
+          `${task.key} should only expose approved embedded screenshot callouts`,
         );
       }
     }
+  }
+});
+
+test('visits analytics onboarding covers deep analytics epic without new checkpoint events', () => {
+  const manager = findOnboardingTask('manager', 'manager.visits-analytics.review').task;
+  const owner = findOnboardingTask('owner', 'owner.operations.review-visits').task;
+  const accountant = findOnboardingTask('accountant', 'accountant.visits-analytics.review').task;
+  const viewer = findOnboardingTask('viewer', 'viewer.visits-analytics.review').task;
+  const managerKnowledge = findOnboardingTask('manager', 'manager.knowledge.visits-analytics').task;
+  const ownerKnowledge = findOnboardingTask('owner', 'owner.knowledge.visits-analytics').task;
+
+  for (const task of [manager, owner, accountant, viewer]) {
+    assert.equal(task.route, '/admin/visits-analytics');
+    assert.equal(task.checkpoint.event, 'report.viewed');
+    assert.deepEqual(task.checkpoint.conditions, { report: 'visits_analytics' });
+    assert.equal(task.lesson.format, 'section-first-cards');
+    assertFirstOpenScreenBlock(task);
+    assert.equal(screenshotCalloutsAreValid(task), true);
+
+    const text = [getTaskVisibleText(task), getTaskScreenshotText(task)].join('\n');
+    const normalizedText = text.toLowerCase();
+    for (const snippet of [
+      'канонич',
+      'scannedAt',
+      'createdAt',
+      'Учеб',
+      'дубли',
+      'eligible 30/60/90',
+      'Недостаточно времени',
+      'Мало данных',
+      'M0',
+      'active',
+      'risk',
+      'sleeping',
+      'lost',
+      'PAYBACK',
+      'LTV 30/60/90/lifetime',
+      'coverage',
+      'Europe/Moscow',
+    ]) {
+      assert.equal(
+        normalizedText.includes(snippet.toLowerCase()),
+        true,
+        `${task.key} should cover ${snippet}`,
+      );
+    }
+  }
+
+  for (const task of [manager, owner]) {
+    const text = [getTaskVisibleText(task), getTaskScreenshotText(task)].join('\n');
+    assert.equal(task.lesson.screenshots.length, 6);
+    assert.equal(text.includes('source filter'), true, `${task.key} source filter`);
+    assert.equal(text.includes('cohort filter'), true, `${task.key} cohort filter`);
+    assert.equal(text.includes('lifecycle filter'), true, `${task.key} lifecycle filter`);
+    assert.equal(text.includes('provenance'), true, `${task.key} provenance`);
+    assert.equal(text.includes('Создай задачу обзвона'), true, `${task.key} call task handoff`);
+  }
+
+  for (const task of [accountant, viewer]) {
+    const text = [getTaskVisibleText(task), getTaskScreenshotText(task)].join('\n');
+    assert.equal(task.lesson.screenshots.length, 4);
+    assert.equal(text.includes('Экспорт'), true, `${task.key} export`);
+    assert.equal(text.includes('Создай задачу обзвона'), false, `${task.key} should not create call tasks`);
+    assert.equal(text.includes('Кнопка создания базы'), false, `${task.key} should not describe base creation button`);
+    assert.equal(text.includes('Создание клиентской базы доступно'), false, `${task.key} should not describe base creation`);
+  }
+
+  const visitsAnalyticsText = [
+    manager,
+    owner,
+    accountant,
+    viewer,
+    managerKnowledge,
+    ownerKnowledge,
+  ]
+    .flatMap((task) => [getTaskVisibleText(task), getTaskScreenshotText(task)])
+    .join('\n');
+
+  for (const forbiddenSnippet of [
+    'окупаемость PAYBACK',
+    'PAYBACK показывает окупаемость',
+  ]) {
+    assert.equal(
+      visitsAnalyticsText.includes(forbiddenSnippet),
+      false,
+      `visits analytics onboarding should not say: ${forbiddenSnippet}`,
+    );
+  }
+
+  for (const requiredSnippet of [
+    'PAYBACK - возвратный чек',
+    'уменьшает net-выручку',
+    'Непривязанный PAYBACK остается в coverage',
+    'Рост active - благоприятный',
+    'Снижение risk, sleeping или lost - благоприятное',
+    'Рост risk, sleeping или lost - неблагоприятный',
+    'нулевое изменение нейтрально',
+  ]) {
+    assert.equal(
+      visitsAnalyticsText.includes(requiredSnippet),
+      true,
+      `visits analytics onboarding should explain: ${requiredSnippet}`,
+    );
   }
 });
 

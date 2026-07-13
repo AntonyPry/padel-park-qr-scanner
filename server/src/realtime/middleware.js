@@ -43,6 +43,27 @@ function captureResponseBody(res) {
   };
 }
 
+function buildRealtimeFanoutChanges(change) {
+  if (
+    change?.domain === 'visits_analytics'
+    || !change?.hints?.queryGroups?.includes('visitsAnalytics')
+  ) {
+    return [];
+  }
+
+  return [{
+    action: 'recalculated',
+    domain: 'visits_analytics',
+    entity: 'analytics_dependency',
+    entityId: null,
+    hints: {
+      queryGroups: ['visitsAnalytics'],
+      routes: ['/admin/visits-analytics'],
+    },
+    source: 'system',
+  }];
+}
+
 function realtimeMutations() {
   return (req, res, next) => {
     if (!MUTATION_METHODS.has(req.method)) {
@@ -59,8 +80,9 @@ function realtimeMutations() {
       const change = matchRealtimeChange(req, responseBody);
       if (!change) return;
 
+      const io = req.app.get('io');
       publishRealtimeChange(
-        req.app.get('io'),
+        io,
         {
           ...change,
           source: change.source || 'api',
@@ -69,6 +91,9 @@ function realtimeMutations() {
         },
         req.account,
       );
+      buildRealtimeFanoutChanges(change).forEach((fanout) => {
+        publishRealtimeChange(io, fanout, null);
+      });
     });
 
     next();
@@ -76,5 +101,6 @@ function realtimeMutations() {
 }
 
 module.exports = {
+  buildRealtimeFanoutChanges,
   realtimeMutations,
 };

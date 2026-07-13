@@ -8,8 +8,8 @@ const DEFAULT_DOMAIN_HINTS = {
     routes: ['/admin/users'],
   },
   bookings: {
-    queryGroups: ['bookings', 'clients', 'trainingPlans', 'managerControl'],
-    routes: ['/admin/bookings', '/admin/clients', '/admin/manager-control'],
+    queryGroups: ['bookings', 'clients', 'trainingPlans', 'managerControl', 'visitsAnalytics'],
+    routes: ['/admin/bookings', '/admin/clients', '/admin/manager-control', '/admin/visits-analytics'],
   },
   booking_resources: {
     queryGroups: ['bookings'],
@@ -29,12 +29,13 @@ const DEFAULT_DOMAIN_HINTS = {
     routes: ['/admin/catalog', '/admin/finances', '/admin/prepayments'],
   },
   certificates: {
-    queryGroups: ['certificates', 'clients', 'bookings', 'prepayments'],
+    queryGroups: ['certificates', 'clients', 'bookings', 'prepayments', 'visitsAnalytics'],
     routes: [
       '/admin/certificates',
       '/admin/clients',
       '/admin/bookings',
       '/admin/prepayments',
+      '/admin/visits-analytics',
     ],
   },
   client_bases: {
@@ -42,30 +43,32 @@ const DEFAULT_DOMAIN_HINTS = {
     routes: ['/admin/client-bases', '/admin/call-tasks'],
   },
   client_subscriptions: {
-    queryGroups: ['clientSubscriptions', 'clients', 'bookings', 'prepayments'],
+    queryGroups: ['clientSubscriptions', 'clients', 'bookings', 'prepayments', 'visitsAnalytics'],
     routes: [
       '/admin/clients',
       '/admin/bookings',
       '/admin/prepayments',
       '/admin/catalog',
+      '/admin/visits-analytics',
     ],
   },
   clients: {
-    queryGroups: ['clients', 'callTasks', 'clientBases', 'bookings'],
+    queryGroups: ['clients', 'callTasks', 'clientBases', 'bookings', 'visitsAnalytics'],
     routes: [
       '/admin/clients',
       '/admin/client-bases',
       '/admin/call-tasks',
       '/admin/bookings',
+      '/admin/visits-analytics',
     ],
   },
   corporate_clients: {
-    queryGroups: ['corporateClients', 'finance', 'prepayments'],
-    routes: ['/admin/corporate-clients', '/admin/finances', '/admin/prepayments'],
+    queryGroups: ['corporateClients', 'finance', 'prepayments', 'visitsAnalytics'],
+    routes: ['/admin/corporate-clients', '/admin/finances', '/admin/prepayments', '/admin/visits-analytics'],
   },
   finance: {
-    queryGroups: ['finance', 'catalog', 'prepayments', 'managerControl'],
-    routes: ['/admin/finances', '/admin/catalog', '/admin/prepayments'],
+    queryGroups: ['finance', 'catalog', 'prepayments', 'managerControl', 'visitsAnalytics'],
+    routes: ['/admin/finances', '/admin/catalog', '/admin/prepayments', '/admin/visits-analytics'],
   },
   manager_control: {
     queryGroups: ['managerControl'],
@@ -96,8 +99,8 @@ const DEFAULT_DOMAIN_HINTS = {
     routes: ['/admin/staff', '/admin/finances'],
   },
   prepayment_sales: {
-    queryGroups: ['prepayments', 'catalog', 'clients', 'bookings'],
-    routes: ['/admin/prepayments', '/admin/catalog', '/admin/clients'],
+    queryGroups: ['prepayments', 'catalog', 'clients', 'bookings', 'visitsAnalytics'],
+    routes: ['/admin/prepayments', '/admin/catalog', '/admin/clients', '/admin/visits-analytics'],
   },
   prepayment_settings: {
     queryGroups: ['prepayments', 'catalog'],
@@ -108,8 +111,8 @@ const DEFAULT_DOMAIN_HINTS = {
     routes: ['/admin/prepayments'],
   },
   references: {
-    queryGroups: ['references', 'clients', 'access'],
-    routes: ['/admin/references', '/admin/clients', '/admin'],
+    queryGroups: ['references', 'clients', 'access', 'visitsAnalytics'],
+    routes: ['/admin/references', '/admin/clients', '/admin', '/admin/visits-analytics'],
   },
   reports: {
     queryGroups: ['reports'],

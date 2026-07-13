@@ -1,8 +1,9 @@
-import { useState, useMemo, type ReactNode } from 'react';
+import { lazy, Suspense, useState, useMemo, type ReactNode } from 'react';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import {
   getVisitsAnalytics,
   type ChartDatum,
+  type VisitsAnalyticsSegmentSelection,
 } from '@/api/visits-analytics';
 import { queryKeys } from '@/api/query-keys';
 import { ErrorState } from '@/components/error-state';
@@ -38,6 +39,19 @@ import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { SourceQualityTab } from '@/components/source-quality-tab';
+import { VisitsAnalyticsSegmentDialog } from '@/components/visits-analytics-segment-dialog';
+import {
+  getVisitsExportRequest,
+  requestVisitsExport,
+  type LifecycleSourceFilterState,
+} from '@/lib/visits-analytics-export';
+import { canManageClientBases } from '@/lib/permissions';
+import { useAuth } from '@/lib/useAuth';
+
+const CohortsLifecycleTab = lazy(() => import('@/components/cohorts-lifecycle-tab'));
+const RevenueLtvTab = lazy(() => import('@/components/revenue-ltv-tab'));
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
@@ -66,20 +80,31 @@ function CompactStat({
   icon,
   label,
   value,
+  change,
+  title,
 }: {
   icon: ReactNode;
   label: string;
   value: ReactNode;
+  change?: { absolute: number; percent: number | null };
+  title?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-lg bg-background/70 px-3 py-2">
+    <div className="min-w-0 rounded-lg bg-background/70 px-3 py-2" title={title}>
       <div className="flex items-center gap-2 text-xs text-muted-foreground">
         {icon}
-        <span className="truncate">{label}</span>
+        <span className="leading-tight">{label}</span>
       </div>
       <div className="mt-1 truncate text-lg font-semibold">
         <AnimatedMetricValue value={value} />
       </div>
+      {change && (
+        <div className={cn('text-[11px]', change.absolute > 0 ? 'text-emerald-600' : change.absolute < 0 ? 'text-red-600' : 'text-muted-foreground')}>
+          {change.absolute > 0 ? '+' : ''}{change.absolute.toFixed(1).replace('.0', '')}
+          {change.percent !== null ? ` (${change.percent > 0 ? '+' : ''}${change.percent.toFixed(1)}%)` : ' (нет базы)'}
+          {' '}к пред. периоду
+        </div>
+      )}
     </div>
   );
 }
@@ -167,6 +192,12 @@ function DonutChartCard({
 }
 
 export default function VisitsAnalyticsPage() {
+  const { account } = useAuth();
+  const canCreateBase = canManageClientBases(account?.role);
+  const [activeTab, setActiveTab] = useState('overview');
+  const [segmentSelection, setSegmentSelection] = useState<VisitsAnalyticsSegmentSelection | null>(null);
+  const [lifecycleSourceFilter, setLifecycleSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });
+  const [revenueSourceFilter, setRevenueSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -186,15 +217,23 @@ export default function VisitsAnalyticsPage() {
   const errorText = analyticsQuery.isError
     ? getApiErrorMessage(analyticsQuery.error, 'Не удалось загрузить аналитику посещений')
     : '';
+  const exportRequest = getVisitsExportRequest({
+    activeTab,
+    from: analyticsParams.from,
+    sourceFilter: activeTab === 'revenue-ltv' ? revenueSourceFilter : lifecycleSourceFilter,
+    to: analyticsParams.to,
+  });
 
   // ЭКСПОРТ В EXCEL
   const handleExport = async () => {
-    const fromStr = dateRange?.from ? format(dateRange.from, 'yyyy-MM-dd') : '';
-    const toStr = dateRange?.to ? format(dateRange.to, 'yyyy-MM-dd') : fromStr;
     try {
-      const response = await apiFetch(
-        `/api/export/visits?from=${fromStr}&to=${toStr}`,
-      );
+      const response = await requestVisitsExport(apiFetch, {
+        activeTab,
+        from: analyticsParams.from,
+        sourceFilter: activeTab === 'revenue-ltv' ? revenueSourceFilter : lifecycleSourceFilter,
+        to: analyticsParams.to,
+      });
+      if (!response) return;
 
       if (!response.ok) {
         const apiError = await readApiError(response, 'Не удалось выгрузить аналитику');
@@ -206,7 +245,7 @@ export default function VisitsAnalyticsPage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `visits-${fromStr || 'all'}-${toStr || 'all'}.xlsx`;
+      link.download = `visits-${analyticsParams.from || 'all'}-${analyticsParams.to || 'all'}.xlsx`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -249,83 +288,83 @@ export default function VisitsAnalyticsPage() {
   };
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 xl:flex-row xl:items-center xl:justify-between">
+    <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 grid-cols-[minmax(0,1fr)] gap-5">
+      <TabsList className="grid h-auto w-full min-w-0 max-w-full grid-cols-1 sm:w-auto sm:grid-cols-2 lg:grid-cols-4">
+        <TabsTrigger value="overview">Обзор</TabsTrigger>
+        <TabsTrigger value="source-quality">Качество источников</TabsTrigger>
+        <TabsTrigger value="cohorts-lifecycle" className="h-auto min-h-8 whitespace-normal">Когорты и жизненный цикл</TabsTrigger>
+        <TabsTrigger value="revenue-ltv" className="h-auto min-h-8 whitespace-normal">Выручка и LTV</TabsTrigger>
+      </TabsList>
+      {activeTab !== 'source-quality' && (
+        <div className="flex w-full min-w-0 flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-end">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn('w-full justify-start bg-card text-left font-normal sm:w-[260px]', !dateRange && 'text-muted-foreground')}
+              >
+                <CalendarIcon className="mr-2 h-4 w-4" />
+                {dateRange?.from ? (
+                  dateRange.to ? <>{format(dateRange.from, 'dd.MM.yyyy')} — {format(dateRange.to, 'dd.MM.yyyy')}</> : format(dateRange.from, 'dd.MM.yyyy')
+                ) : <span>Выберите период</span>}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto p-0" align="end">
+              <Calendar initialFocus mode="range" defaultMonth={dateRange?.from} selected={dateRange} onSelect={setDateRange} numberOfMonths={1} locale={ru} />
+            </PopoverContent>
+          </Popover>
+          <Button disabled={exportRequest.disabled} onClick={handleExport} variant="default" className="w-full bg-green-600 text-white hover:bg-green-700 sm:w-auto">
+            <Download className="mr-2 h-4 w-4" /> Экспорт в Excel
+          </Button>
+        </div>
+      )}
+      <TabsContent value="source-quality" className="w-full min-w-0"><SourceQualityTab canCreateBase={canCreateBase} onCreateSegment={setSegmentSelection} /></TabsContent>
+      <TabsContent value="cohorts-lifecycle" className="w-full min-w-0">
+        <Suspense fallback={<ChartLoadingState title="Загрузка вкладки когорт" />}>
+          <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} canCreateBase={canCreateBase} from={analyticsParams.from} to={analyticsParams.to} onCreateSegment={setSegmentSelection} onSourceFilterChange={setLifecycleSourceFilter} />
+        </Suspense>
+      </TabsContent>
+      <TabsContent value="revenue-ltv" className="w-full min-w-0">
+        {activeTab === 'revenue-ltv' && (
+          <Suspense fallback={<ChartLoadingState title="Загрузка вкладки выручки и LTV" />}>
+            <RevenueLtvTab
+              key={`${analyticsParams.from}:${analyticsParams.to}`}
+              from={analyticsParams.from}
+              to={analyticsParams.to}
+              onSourceFilterChange={setRevenueSourceFilter}
+            />
+          </Suspense>
+        )}
+      </TabsContent>
+      <TabsContent value="overview" className="w-full min-w-0"><div className="flex w-full min-w-0 flex-col gap-5">
+      <div className="rounded-xl border bg-card/60 p-3">
         {data && (
-          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid min-w-0 flex-1 gap-2 sm:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-7">
             <CompactStat
               icon={<Key className="h-3.5 w-3.5 text-primary" />}
               label="Всего визитов"
               value={data.totalVisits}
+              change={data.changes.totalVisits}
             />
             <CompactStat
               icon={<Users className="h-3.5 w-3.5 text-sky-500" />}
               label="Уникальных гостей"
               value={data.uniqueGuests}
+              change={data.changes.uniqueGuests}
             />
+            <CompactStat icon={<Users className="h-3.5 w-3.5 text-violet-500" />} label="Новые гости" value={data.newGuests} change={data.changes.newGuests} title="Клиенты, чей самый первый визит за всю историю попал в выбранный период" />
+            <CompactStat icon={<Users className="h-3.5 w-3.5 text-cyan-500" />} label="Вернувшиеся гости" value={data.returningGuests} change={data.changes.returningGuests} title="Клиенты с визитом в периоде, чей первый визит был раньше периода" />
+            <CompactStat icon={<TrendingUp className="h-3.5 w-3.5 text-indigo-500" />} label="Повторные визиты" value={data.repeatVisits} change={data.changes.repeatVisits} title="Все визиты периода сверх первого визита каждого уникального гостя в этом периоде" />
+            <CompactStat icon={<Target className="h-3.5 w-3.5 text-orange-500" />} label="Визитов на гостя" value={data.averageVisitsPerGuest.toFixed(2)} change={data.changes.averageVisitsPerGuest} title="Всего визитов / уникальные гости" />
             <CompactStat
               icon={<TrendingUp className="h-3.5 w-3.5 text-emerald-500" />}
-              label="Возвращаемость"
-              value={`${
-                data.uniqueGuests > 0
-                  ? Math.round((data.totalVisits / data.uniqueGuests - 1) * 100)
-                  : 0
-              }%`}
-            />
-            <CompactStat
-              icon={<Target className="h-3.5 w-3.5 text-amber-500" />}
-              label="Топ источник"
-              value={aggregatedSources.length > 0 ? aggregatedSources[0].name : '-'}
+              label="Повтор за 30 дней"
+              value={`${data.repeatRate30.toFixed(1)}%`}
+              change={data.changes.repeatRate30}
+              title={`Клиенты со вторым визитом не позднее 30 дней после первого / клиенты когорты с завершённым 30-дневным окном. Основание: ${data.repeatRate30RepeatedGuests} из ${data.repeatRate30EligibleGuests}.`}
             />
           </div>
         )}
-        <div className="flex w-full flex-wrap gap-3 xl:w-auto xl:justify-end">
-          <Popover>
-            <PopoverTrigger asChild>
-              <Button
-                variant={'outline'}
-                className={cn(
-                  'w-full sm:w-[260px] justify-start text-left font-normal bg-card',
-                  !dateRange && 'text-muted-foreground',
-                )}
-              >
-                <CalendarIcon className="mr-2 h-4 w-4" />
-                {dateRange?.from ? (
-                  dateRange.to ? (
-                    <>
-                      {format(dateRange.from, 'dd.MM.yyyy')} —{' '}
-                      {format(dateRange.to, 'dd.MM.yyyy')}
-                    </>
-                  ) : (
-                    format(dateRange.from, 'dd.MM.yyyy')
-                  )
-                ) : (
-                  <span>Выберите период</span>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent className="w-auto p-0" align="end">
-              <Calendar
-                initialFocus
-                mode="range"
-                defaultMonth={dateRange?.from}
-                selected={dateRange}
-                onSelect={setDateRange}
-                numberOfMonths={1}
-                locale={ru}
-              />
-            </PopoverContent>
-          </Popover>
-
-          <Button
-            onClick={handleExport}
-            variant="default"
-            className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
-          >
-            <Download className="mr-2 h-4 w-4" />
-            Экспорт в Excel
-          </Button>
-        </div>
       </div>
 
       {errorText && !data ? (
@@ -343,7 +382,7 @@ export default function VisitsAnalyticsPage() {
               colors={SOURCE_CHART_COLORS}
               emptyText="Нет данных"
               items={aggregatedSources}
-              title="Откуда о нас узнают"
+              title="Визиты клиентов по источникам"
             />
 
             <DonutChartCard
@@ -465,6 +504,8 @@ export default function VisitsAnalyticsPage() {
           </Card>
         </>
       )}
-    </div>
+    </div></TabsContent>
+      <VisitsAnalyticsSegmentDialog selection={segmentSelection} onOpenChange={(open) => !open && setSegmentSelection(null)} />
+    </Tabs>
   );
 }

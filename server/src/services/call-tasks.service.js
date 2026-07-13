@@ -1,6 +1,7 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
+const clientBasesService = require('./client-bases.service');
 const onboardingService = require('./onboarding.service');
 
 const TASK_STATUSES = new Set(['backlog', 'in_progress', 'done', 'archived']);
@@ -315,7 +316,7 @@ async function getTaskClientMetrics(taskIds) {
 async function countCurrentBaseClients(task) {
   const raw = task.toJSON ? task.toJSON() : task;
   const filters = parseFilters(raw.clientBase?.filters);
-  return clientsService.countClients(filters);
+  return clientBasesService.countBaseClients(filters);
 }
 
 async function mapTask(task, metricsByTask = new Map(), options = {}) {
@@ -460,10 +461,10 @@ async function getBaseSnapshotClients(base, options = {}) {
   assertBaseTargetsOnlyActiveClients(base);
 
   const filters = parseFilters(base.filters);
-  const clients = await clientsService.listClientsForSnapshot(filters, {
+  const clients = await clientBasesService.listBaseClientsForSnapshot(filters, {
     limit: options.limit || 20000,
   });
-  const total = await clientsService.countClients(filters);
+  const total = await clientBasesService.countBaseClients(filters);
 
   if (clients.length < total) {
     throw appError(
