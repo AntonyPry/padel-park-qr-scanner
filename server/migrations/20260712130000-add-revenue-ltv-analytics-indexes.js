@@ -1,6 +1,25 @@
+function getIndexFieldName(field) {
+  if (typeof field === 'string') return field;
+  return field.attribute || field.name || field.column;
+}
+
+function hasEquivalentIndex(indexes, fields) {
+  const expectedFields = fields.map((field) => field.toLowerCase());
+
+  return indexes.some((index) => {
+    const indexFields = (index.fields || [])
+      .map(getIndexFieldName)
+      .filter(Boolean)
+      .map((field) => field.toLowerCase());
+
+    return indexFields.length === expectedFields.length
+      && indexFields.every((field, position) => field === expectedFields[position]);
+  });
+}
+
 async function addIndexIfMissing(queryInterface, table, fields, name) {
   const indexes = await queryInterface.showIndex(table);
-  if (indexes.some((index) => index.name === name)) return;
+  if (indexes.some((index) => index.name === name) || hasEquivalentIndex(indexes, fields)) return;
   await queryInterface.addIndex(table, fields, { name });
 }
 
