@@ -12,6 +12,7 @@ const manageClientBases = requireRole(...ACCESS_MATRIX.clientBasesManage);
 router.get('/analytics/visits', viewReports, validate({ query: apiSchemas.visitsAnalytics.dateRangeQuery }), visitsAnalyticsController.getAnalytics);
 router.get('/analytics/visits/source-quality', viewReports, validate({ query: apiSchemas.visitsAnalytics.sourceQualityQuery }), visitsAnalyticsController.getSourceQuality);
 router.get('/analytics/visits/cohorts-lifecycle', viewReports, validate({ query: apiSchemas.visitsAnalytics.filteredDateRangeQuery }), visitsAnalyticsController.getCohortsLifecycle);
+router.get('/analytics/visits/revenue-ltv', viewReports, validate({ query: apiSchemas.visitsAnalytics.filteredDateRangeQuery }), visitsAnalyticsController.getRevenueLtv);
 router.post('/analytics/visits/client-base-preview', manageClientBases, validate({ body: apiSchemas.visitsAnalytics.clientBasePreviewBody }), visitsAnalyticsController.previewClientBase);
 router.post('/analytics/visits/client-bases', manageClientBases, validate({ body: apiSchemas.visitsAnalytics.clientBaseCreateBody }), visitsAnalyticsController.createClientBase);
 router.get('/export/visits', viewReports, validate({ query: apiSchemas.visitsAnalytics.filteredDateRangeQuery }), visitsAnalyticsController.exportVisits);

@@ -47,6 +47,11 @@ describe('realtime invalidation mapping', () => {
     expect(groups).toContain('bookings');
   });
 
+  it('invalidates revenue LTV for finance and prepayment changes', () => {
+    expect(getRealtimeQueryKeys(event({ domain: 'finance' }))).toContainEqual(['visits-analytics']);
+    expect(getRealtimeQueryKeys(event({ domain: 'prepayment_sales' }))).toContainEqual(['visits-analytics']);
+  });
+
   it('keeps unknown groups usable for legacy screens', () => {
     expect(
       getRealtimeQueryKeys(

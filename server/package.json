@@ -37,7 +37,7 @@
     "onboarding:audit:strict": "node scripts/onboarding-audit.js --strict",
     "seed:demo-accounts": "node scripts/seed-demo-accounts.js",
     "smoke:api": "node scripts/api-smoke.js",
-    "test": "node --test tests/**/*.test.js",
+    "test": "node --test --test-concurrency=1 tests/**/*.test.js",
     "typecheck": "tsc --noEmit"
   }
 }

@@ -11,12 +11,12 @@ export interface VisitsExportInput {
 }
 
 export function getVisitsExportRequest(input: VisitsExportInput) {
-  const isLifecycleTab = input.activeTab === 'cohorts-lifecycle';
-  if (isLifecycleTab && input.sourceFilter.allHidden) {
+  const usesSourceFilter = ['cohorts-lifecycle', 'revenue-ltv'].includes(input.activeTab);
+  if (usesSourceFilter && input.sourceFilter.allHidden) {
     return { disabled: true, url: null };
   }
   const query = new URLSearchParams({ from: input.from, to: input.to });
-  if (isLifecycleTab && input.sourceFilter.sourceKeys?.length) {
+  if (usesSourceFilter && input.sourceFilter.sourceKeys?.length) {
     query.set('sources', input.sourceFilter.sourceKeys.join(','));
   }
   return { disabled: false, url: `/api/export/visits?${query}` };

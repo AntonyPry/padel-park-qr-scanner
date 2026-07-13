@@ -35,6 +35,17 @@ class VisitsAnalyticsController {
     }
   }
 
+  async getRevenueLtv(req, res) {
+    try {
+      const { from, to, sources } = req.query;
+      res.json(await visitsAnalyticsService.getRevenueLtv(from, to, {
+        sourceKeys: sources ? String(sources).split(',') : undefined,
+      }));
+    } catch (error) {
+      sendError(res, error, 'Ошибка аналитики выручки и LTV');
+    }
+  }
+
   async previewClientBase(req, res) {
     try {
       res.json(await visitsAnalyticsService.previewVisitAnalyticsSegment(req.body));

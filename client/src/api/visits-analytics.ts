@@ -119,6 +119,99 @@ export function getCohortsLifecycle(params: { from: string; to: string; sources?
   return apiRequest<CohortsLifecycleAnalytics>(`/api/analytics/visits/cohorts-lifecycle?${query}`, {}, 'Не удалось загрузить когорты и жизненный цикл');
 }
 
+export interface LtvMetric {
+  eligibleCount: number;
+  lowSample: boolean;
+  revenue: number;
+  value: number | null;
+}
+export interface RevenueLtvSourceRow {
+  sourceId: number | null;
+  sourceKey: string;
+  source: string;
+  acquiredClients: number;
+  payingClients: number;
+  payerConversion: number | null;
+  attributedRevenue: number;
+  averageRevenuePerAcquiredClient: number | null;
+  averageRevenuePerPayingClient: number | null;
+  ltv30: LtvMetric;
+  ltv60: LtvMetric;
+  ltv90: LtvMetric;
+  lifetimeLtv: LtvMetric;
+  matureSample: { days30: number; days60: number; days90: number };
+  reliability: { key: string; label: string };
+}
+export interface RevenueCohortValue {
+  isMature: boolean;
+  monthIndex: number;
+  revenue: number | null;
+  value: number | null;
+  windowEnd: string;
+}
+export interface RevenueLtvAnalytics {
+  from: string;
+  to: string;
+  asOf: string;
+  timeZone: string;
+  appliedSourceKeys: string[];
+  availableSources: VisitsAnalyticsSourceOption[];
+  summary: {
+    attributedRevenue: number;
+    cohortAttributedRevenue: number;
+    acquiredClients: number;
+    payingClients: number;
+    payerConversion: number | null;
+    averageRevenuePerAcquiredClient: number | null;
+    averageRevenuePerPayingClient: number | null;
+    ltv30: LtvMetric;
+    ltv60: LtvMetric;
+    ltv90: LtvMetric;
+    lifetimeLtv: LtvMetric;
+    coveragePercent: number | null;
+  };
+  sources: RevenueLtvSourceRow[];
+  cohorts: {
+    months: number[];
+    rows: Array<{ cohortMonth: string; cohortSize: number; values: RevenueCohortValue[] }>;
+  };
+  coverage: {
+    cashNetRevenue: number;
+    cashMovementAmount: number;
+    attributedCashRevenue: number;
+    attributedCashMovementAmount: number;
+    allAttributedCashRevenue: number;
+    allAttributedCashMovementAmount: number;
+    unlinkedCashRevenue: number;
+    unlinkedCashMovementAmount: number;
+    outsideSelectedSourcesCashRevenue: number;
+    coveragePercent: number | null;
+    selectedCashSharePercent: number | null;
+    paybackCount: number;
+    unlinkedPaybackCount: number;
+    unlinkedPaybackAmount: number;
+    unknownClientAmount: number;
+    ambiguousClientAmount: number;
+    duplicateRiskAmount: number;
+    receiptItemReconciliationDifference: number;
+    periodAttributedRevenue: number;
+    legacySales: { amount: number; count: number };
+    bookingPaymentsReference: number;
+    manualFinanceWithoutClient: number;
+    corporateLedgerExcludedAmount: number;
+    sourceFilterScope: 'all_sources' | 'selected_sources_vs_all_cash';
+  };
+}
+export function getRevenueLtv(params: { from: string; to: string; sources?: string[] }) {
+  const query = new URLSearchParams({ from: params.from, to: params.to });
+  if (params.sources?.length) query.set('sources', params.sources.join(','));
+  return apiRequest<RevenueLtvAnalytics>(
+    `/api/analytics/visits/revenue-ltv?${query}`,
+    {},
+    'Не удалось загрузить выручку и LTV',
+  );
+}
+
 export interface VisitsAnalyticsSegmentSelection {
   asOf?: string;
   cohortMonth?: string;

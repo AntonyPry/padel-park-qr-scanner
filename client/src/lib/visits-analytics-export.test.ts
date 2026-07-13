@@ -14,4 +14,20 @@ describe('visits analytics export', () => {
     expect(await requestVisitsExport(request, input)).toBeNull();
     expect(request).not.toHaveBeenCalled();
   });
+
+  it('disables all-hidden revenue export and applies revenue source keys', async () => {
+    const hidden = {
+      activeTab: 'revenue-ltv',
+      from: '2026-01-01',
+      sourceFilter: { allHidden: true, sourceKeys: undefined },
+      to: '2026-07-31',
+    };
+    const request = vi.fn(async () => new Response());
+    expect(await requestVisitsExport(request, hidden)).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+    expect(getVisitsExportRequest({
+      ...hidden,
+      sourceFilter: { allHidden: false, sourceKeys: ['id:7'] },
+    }).url).toContain('sources=id%3A7');
+  });
 });

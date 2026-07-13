@@ -266,6 +266,7 @@ export const apiEndpoints = {
   "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json" },
   "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json" },
   "visitsAnalytics.cohortsLifecycle": { method: "GET", path: "/analytics/visits/cohorts-lifecycle", responseType: "json" },
+  "visitsAnalytics.revenueLtv": { method: "GET", path: "/analytics/visits/revenue-ltv", responseType: "json" },
   "visitsAnalytics.clientBasePreview": { method: "POST", path: "/analytics/visits/client-base-preview", responseType: "json" },
   "visitsAnalytics.createClientBase": { method: "POST", path: "/analytics/visits/client-bases", responseType: "json" },
   "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob" },
@@ -2299,6 +2300,12 @@ export type VisitsAnalyticsCohortsLifecycleQuery = {
   sources?: string;
   [key: string]: unknown;
 };
+export type VisitsAnalyticsRevenueLtvQuery = {
+  from?: string | "";
+  to?: string | "";
+  sources?: string;
+  [key: string]: unknown;
+};
 export type VisitsAnalyticsClientBasePreviewBody = {
   asOf?: string | string;
   cohortMonth?: string;
@@ -2602,6 +2609,7 @@ export interface ApiEndpointRequestMap {
   "visitsAnalytics.get": ApiEndpointRequest<undefined, VisitsAnalyticsGetQuery, undefined>;
   "visitsAnalytics.sourceQuality": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityQuery, undefined>;
   "visitsAnalytics.cohortsLifecycle": ApiEndpointRequest<undefined, VisitsAnalyticsCohortsLifecycleQuery, undefined>;
+  "visitsAnalytics.revenueLtv": ApiEndpointRequest<undefined, VisitsAnalyticsRevenueLtvQuery, undefined>;
   "visitsAnalytics.clientBasePreview": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsClientBasePreviewBody>;
   "visitsAnalytics.createClientBase": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsCreateClientBaseBody>;
   "visitsAnalytics.export": ApiEndpointRequest<undefined, VisitsAnalyticsExportQuery, undefined>;

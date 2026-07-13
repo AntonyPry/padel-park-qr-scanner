@@ -51,6 +51,7 @@ import { canManageClientBases } from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
 
 const CohortsLifecycleTab = lazy(() => import('@/components/cohorts-lifecycle-tab'));
+const RevenueLtvTab = lazy(() => import('@/components/revenue-ltv-tab'));
 
 const DAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 const HOURS = Array.from({ length: 16 }, (_, i) => i + 8);
@@ -196,6 +197,7 @@ export default function VisitsAnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [segmentSelection, setSegmentSelection] = useState<VisitsAnalyticsSegmentSelection | null>(null);
   const [lifecycleSourceFilter, setLifecycleSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });
+  const [revenueSourceFilter, setRevenueSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });
   const [dateRange, setDateRange] = useState<DateRange | undefined>({
     from: subDays(new Date(), 30),
     to: new Date(),
@@ -218,7 +220,7 @@ export default function VisitsAnalyticsPage() {
   const exportRequest = getVisitsExportRequest({
     activeTab,
     from: analyticsParams.from,
-    sourceFilter: lifecycleSourceFilter,
+    sourceFilter: activeTab === 'revenue-ltv' ? revenueSourceFilter : lifecycleSourceFilter,
     to: analyticsParams.to,
   });
 
@@ -228,7 +230,7 @@ export default function VisitsAnalyticsPage() {
       const response = await requestVisitsExport(apiFetch, {
         activeTab,
         from: analyticsParams.from,
-        sourceFilter: lifecycleSourceFilter,
+        sourceFilter: activeTab === 'revenue-ltv' ? revenueSourceFilter : lifecycleSourceFilter,
         to: analyticsParams.to,
       });
       if (!response) return;
@@ -287,10 +289,11 @@ export default function VisitsAnalyticsPage() {
 
   return (
     <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-5">
-      <TabsList className="grid h-auto w-full grid-cols-1 sm:w-auto sm:grid-cols-3">
+      <TabsList className="grid h-auto w-full grid-cols-1 sm:w-auto sm:grid-cols-2 lg:grid-cols-4">
         <TabsTrigger value="overview">Обзор</TabsTrigger>
         <TabsTrigger value="source-quality">Качество источников</TabsTrigger>
         <TabsTrigger value="cohorts-lifecycle" className="h-auto min-h-8 whitespace-normal">Когорты и жизненный цикл</TabsTrigger>
+        <TabsTrigger value="revenue-ltv" className="h-auto min-h-8 whitespace-normal">Выручка и LTV</TabsTrigger>
       </TabsList>
       {activeTab !== 'source-quality' && (
         <div className="flex flex-col gap-3 rounded-xl border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-end">
@@ -320,6 +323,18 @@ export default function VisitsAnalyticsPage() {
         <Suspense fallback={<ChartLoadingState title="Загрузка вкладки когорт" />}>
           <CohortsLifecycleTab key={`${analyticsParams.from}:${analyticsParams.to}`} canCreateBase={canCreateBase} from={analyticsParams.from} to={analyticsParams.to} onCreateSegment={setSegmentSelection} onSourceFilterChange={setLifecycleSourceFilter} />
         </Suspense>
+      </TabsContent>
+      <TabsContent value="revenue-ltv">
+        {activeTab === 'revenue-ltv' && (
+          <Suspense fallback={<ChartLoadingState title="Загрузка вкладки выручки и LTV" />}>
+            <RevenueLtvTab
+              key={`${analyticsParams.from}:${analyticsParams.to}`}
+              from={analyticsParams.from}
+              to={analyticsParams.to}
+              onSourceFilterChange={setRevenueSourceFilter}
+            />
+          </Suspense>
+        )}
       </TabsContent>
       <TabsContent value="overview"><div className="flex flex-col gap-5">
       <div className="rounded-xl border bg-card/60 p-3">

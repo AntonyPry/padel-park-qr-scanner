@@ -375,6 +375,422 @@ function cohortFromRows(row, retentionCounts, retentionMonths, asOfDate) {
   };
 }
 
+function ltvMetric(revenue, eligibleCount) {
+  const eligible = number(eligibleCount);
+  const amount = number(revenue);
+  return {
+    eligibleCount: eligible,
+    lowSample: eligible > 0 && eligible < 10,
+    revenue: amount,
+    value: eligible ? amount / eligible : null,
+  };
+}
+
+function revenueAttributionCte(sourceFilterSql = '') {
+  return `${CANONICAL_CLIENTS_CTE},
+    valid_visits AS (
+      SELECT cc.canonicalUserId,v.visitedAt
+      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      JOIN Users origin ON origin.id=v.userId
+      JOIN canonical_clients cc ON cc.originUserId=v.userId
+      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+    ), client_facts AS (
+      SELECT canonicalUserId,MIN(visitedAt) firstVisitAt
+      FROM valid_visits GROUP BY canonicalUserId
+    ), cohort_clients AS (
+      SELECT facts.canonicalUserId,facts.firstVisitAt,root.sourceId,
+        COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,
+        DATE_FORMAT(CONVERT_TZ(facts.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y-%m') cohortMonth
+      FROM client_facts facts
+      JOIN Users root ON root.id=facts.canonicalUserId
+      LEFT JOIN ClientSources cs ON cs.id=root.sourceId
+      WHERE facts.firstVisitAt BETWEEN :from AND :to
+        AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}
+    ), receipt_item_candidates AS (
+      SELECT ps.receiptItemId,ps.clientId
+      FROM PendingSales ps
+      WHERE ps.clientId IS NOT NULL AND ps.status='linked'
+      UNION ALL
+      SELECT subscriptions.sourceReceiptItemId,subscriptions.clientId
+      FROM ClientSubscriptions subscriptions
+      WHERE subscriptions.sourceReceiptItemId IS NOT NULL
+        AND subscriptions.status<>'canceled'
+      UNION ALL
+      SELECT certificates.sourceReceiptItemId,certificates.clientId
+      FROM Certificates certificates
+      WHERE certificates.sourceReceiptItemId IS NOT NULL
+        AND certificates.status<>'canceled'
+        AND certificates.source<>'legacy_stn_google_sheet'
+    ), receipt_item_candidate_roots AS (
+      SELECT candidates.receiptItemId,cc.canonicalUserId
+      FROM receipt_item_candidates candidates
+      JOIN Users origin ON origin.id=candidates.clientId
+      JOIN canonical_clients cc ON cc.originUserId=candidates.clientId
+      JOIN Users root ON root.id=cc.canonicalUserId
+      WHERE COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0
+    ), receipt_item_links AS (
+      SELECT receiptItemId,COUNT(DISTINCT canonicalUserId) candidateCount,
+        MIN(canonicalUserId) canonicalUserId
+      FROM receipt_item_candidate_roots GROUP BY receiptItemId
+    ), receipt_events AS (
+      SELECT CONCAT('receipt:',items.id) eventKey,receipts.id receiptId,
+        receipts.type receiptType,receipts.dateTime eventDate,
+        CASE WHEN receipts.type='PAYBACK' THEN -ABS(CASE WHEN COALESCE(items.sumPrice,0)<>0 THEN items.sumPrice ELSE items.sum END)
+          ELSE ABS(CASE WHEN COALESCE(items.sumPrice,0)<>0 THEN items.sumPrice ELSE items.sum END) END amount,
+        COALESCE(links.candidateCount,0) candidateCount,links.canonicalUserId,
+        'receipt_item' eventSource
+      FROM ReceiptItems items
+      JOIN Receipts receipts ON receipts.id=items.receiptId
+      LEFT JOIN receipt_item_links links ON links.receiptItemId=items.id
+      WHERE receipts.dateTime<=:asOf
+    ), manual_subscription_events AS (
+      SELECT CONCAT('subscription:',subscriptions.id) eventKey,subscriptions.startsAt eventDate,
+        subscriptions.saleAmount amount,1 candidateCount,cc.canonicalUserId,
+        'manual_subscription' eventSource
+      FROM ClientSubscriptions subscriptions
+      JOIN Users origin ON origin.id=subscriptions.clientId
+      JOIN canonical_clients cc ON cc.originUserId=subscriptions.clientId
+      JOIN Users root ON root.id=cc.canonicalUserId
+      WHERE subscriptions.sourceReceiptItemId IS NULL
+        AND subscriptions.sourceReceiptId IS NULL
+        AND subscriptions.pendingSaleId IS NULL
+        AND subscriptions.status<>'canceled'
+        AND subscriptions.startsAt<=:asOf
+        AND COALESCE(subscriptions.saleAmount,0)<>0
+        AND COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0
+    ), manual_certificate_events AS (
+      SELECT CONCAT('certificate:',certificates.id) eventKey,certificates.startsAt eventDate,
+        certificates.saleAmount amount,1 candidateCount,cc.canonicalUserId,
+        'manual_certificate' eventSource
+      FROM Certificates certificates
+      JOIN Users origin ON origin.id=certificates.clientId
+      JOIN canonical_clients cc ON cc.originUserId=certificates.clientId
+      JOIN Users root ON root.id=cc.canonicalUserId
+      WHERE certificates.sourceReceiptItemId IS NULL
+        AND certificates.sourceReceiptId IS NULL
+        AND certificates.pendingSaleId IS NULL
+        AND certificates.status<>'canceled'
+        AND certificates.source<>'legacy_stn_google_sheet'
+        AND certificates.startsAt<=:asOf
+        AND COALESCE(certificates.saleAmount,0)<>0
+        AND COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0
+    ), attributed_events AS (
+      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource
+      FROM receipt_events WHERE candidateCount=1
+      UNION ALL
+      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_subscription_events
+      UNION ALL
+      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_certificate_events
+    )`;
+}
+
+function sourceRevenueFromRow(row) {
+  const acquiredClients = number(row.acquiredClients);
+  const payingClients = number(row.payingClients);
+  return {
+    sourceId: row.sourceId === null || row.sourceId === undefined ? null : number(row.sourceId),
+    sourceKey: sourceKeyFromRow({ sourceId: row.sourceId, sourceName: row.sourceName }),
+    source: row.sourceName || 'Не указан',
+    acquiredClients,
+    payingClients,
+    payerConversion: acquiredClients ? payingClients / acquiredClients * 100 : null,
+    attributedRevenue: number(row.attributedRevenue),
+    averageRevenuePerAcquiredClient: acquiredClients ? number(row.attributedRevenue) / acquiredClients : null,
+    averageRevenuePerPayingClient: payingClients ? number(row.attributedRevenue) / payingClients : null,
+    ltv30: ltvMetric(row.revenue30, row.mature30),
+    ltv60: ltvMetric(row.revenue60, row.mature60),
+    ltv90: ltvMetric(row.revenue90, row.mature90),
+    lifetimeLtv: ltvMetric(row.attributedRevenue, acquiredClients),
+    matureSample: {
+      days30: number(row.mature30),
+      days60: number(row.mature60),
+      days90: number(row.mature90),
+    },
+  };
+}
+
+async function queryRevenueBySource(period, sourceFilter) {
+  const rows = await db.sequelize.query(`${revenueAttributionCte(sourceFilter.sql)},
+    client_revenue AS (
+      SELECT cohort.canonicalUserId,cohort.sourceId,cohort.sourceName,cohort.firstVisitAt,
+        SUM(CASE WHEN events.eventDate>=cohort.firstVisitAt AND events.eventDate<=:asOf THEN events.amount ELSE 0 END) lifetimeRevenue,
+        SUM(CASE WHEN events.eventDate>=cohort.firstVisitAt AND events.eventDate<=DATE_ADD(cohort.firstVisitAt,INTERVAL 30 DAY) THEN events.amount ELSE 0 END) revenue30,
+        SUM(CASE WHEN events.eventDate>=cohort.firstVisitAt AND events.eventDate<=DATE_ADD(cohort.firstVisitAt,INTERVAL 60 DAY) THEN events.amount ELSE 0 END) revenue60,
+        SUM(CASE WHEN events.eventDate>=cohort.firstVisitAt AND events.eventDate<=DATE_ADD(cohort.firstVisitAt,INTERVAL 90 DAY) THEN events.amount ELSE 0 END) revenue90,
+        SUM(events.eventDate>=cohort.firstVisitAt AND events.eventDate<=:asOf AND events.amount>0) positiveEvents
+      FROM cohort_clients cohort
+      LEFT JOIN attributed_events events ON events.canonicalUserId=cohort.canonicalUserId
+      GROUP BY cohort.canonicalUserId,cohort.sourceId,cohort.sourceName,cohort.firstVisitAt
+    )
+    SELECT sourceId,sourceName,COUNT(*) acquiredClients,SUM(positiveEvents>0) payingClients,
+      SUM(lifetimeRevenue) attributedRevenue,
+      SUM(DATE_ADD(firstVisitAt,INTERVAL 30 DAY)<=:asOf) mature30,
+      SUM(CASE WHEN DATE_ADD(firstVisitAt,INTERVAL 30 DAY)<=:asOf THEN revenue30 ELSE 0 END) revenue30,
+      SUM(DATE_ADD(firstVisitAt,INTERVAL 60 DAY)<=:asOf) mature60,
+      SUM(CASE WHEN DATE_ADD(firstVisitAt,INTERVAL 60 DAY)<=:asOf THEN revenue60 ELSE 0 END) revenue60,
+      SUM(DATE_ADD(firstVisitAt,INTERVAL 90 DAY)<=:asOf) mature90,
+      SUM(CASE WHEN DATE_ADD(firstVisitAt,INTERVAL 90 DAY)<=:asOf THEN revenue90 ELSE 0 END) revenue90
+    FROM client_revenue GROUP BY sourceId,sourceName ORDER BY attributedRevenue DESC,sourceName`, {
+    replacements: {
+      asOf: period.toSql,
+      from: period.fromSql,
+      to: period.toSql,
+      ...sourceFilter.replacements,
+    },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  return rows.map(sourceRevenueFromRow);
+}
+
+async function queryRevenueCohorts(period, sourceFilter) {
+  return db.sequelize.query(`${revenueAttributionCte(sourceFilter.sql)},
+    cohort_sizes AS (
+      SELECT cohortMonth,COUNT(*) cohortSize FROM cohort_clients GROUP BY cohortMonth
+    ), cohort_month_revenue AS (
+      SELECT cohort.cohortMonth,
+        PERIOD_DIFF(DATE_FORMAT(CONVERT_TZ(events.eventDate,'+00:00','${CLUB_UTC_OFFSET}'),'%Y%m'),
+          DATE_FORMAT(CONVERT_TZ(cohort.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y%m')) revenueMonth,
+        SUM(events.amount) revenue
+      FROM cohort_clients cohort
+      JOIN attributed_events events ON events.canonicalUserId=cohort.canonicalUserId
+        AND events.eventDate>=cohort.firstVisitAt AND events.eventDate<=:asOf
+      GROUP BY cohort.cohortMonth,revenueMonth HAVING revenueMonth>=0
+    )
+    SELECT sizes.cohortMonth,sizes.cohortSize,revenue.revenueMonth,revenue.revenue
+    FROM cohort_sizes sizes LEFT JOIN cohort_month_revenue revenue ON revenue.cohortMonth=sizes.cohortMonth
+    ORDER BY sizes.cohortMonth,revenue.revenueMonth`, {
+    replacements: {
+      asOf: period.toSql,
+      from: period.fromSql,
+      to: period.toSql,
+      ...sourceFilter.replacements,
+    },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+}
+
+function buildRevenueCohorts(rows, asOfDate) {
+  const cohortMonths = Array.from(new Set(rows.map((row) => row.cohortMonth).filter(Boolean)));
+  if (!cohortMonths.length) return { months: [0, 1, 2, 3], rows: [] };
+  const asOfMonth = asOfDate.slice(0, 7);
+  const lastCompletedMonth = monthIndex(asOfMonth) - (asOfDate === endOfMonthDate(asOfMonth) ? 0 : 1);
+  const maximumMonth = Math.max(3, lastCompletedMonth - monthIndex(cohortMonths[0]));
+  const months = Array.from({ length: maximumMonth + 1 }, (_, index) => index);
+  const revenueByCohort = new Map();
+  for (const row of rows) {
+    const key = row.cohortMonth;
+    if (!revenueByCohort.has(key)) revenueByCohort.set(key, new Map());
+    if (row.revenueMonth !== null && row.revenueMonth !== undefined) {
+      revenueByCohort.get(key).set(number(row.revenueMonth), number(row.revenue));
+    }
+  }
+  return {
+    months,
+    rows: cohortMonths.map((cohortMonth) => {
+      const firstRow = rows.find((row) => row.cohortMonth === cohortMonth);
+      const cohortSize = number(firstRow?.cohortSize);
+      let cumulativeRevenue = 0;
+      const values = months.map((index) => {
+        cumulativeRevenue += number(revenueByCohort.get(cohortMonth)?.get(index));
+        const targetMonth = monthFromIndex(monthIndex(cohortMonth) + index);
+        const windowEnd = endOfMonthDate(targetMonth);
+        const isMature = windowEnd <= asOfDate;
+        return {
+          isMature,
+          monthIndex: index,
+          revenue: isMature ? cumulativeRevenue : null,
+          value: isMature && cohortSize ? cumulativeRevenue / cohortSize : null,
+          windowEnd,
+        };
+      });
+      return { cohortMonth, cohortSize, values };
+    }),
+  };
+}
+
+async function queryRevenueCoverage(period, sourceFilter) {
+  const rows = await db.sequelize.query(`${revenueAttributionCte('')}
+    SELECT
+      (SELECT COALESCE(SUM(CASE WHEN type='PAYBACK' THEN -ABS(totalAmount) ELSE ABS(totalAmount) END),0)
+        FROM Receipts WHERE dateTime BETWEEN :from AND :to) cashNetRevenue,
+      (SELECT COALESCE(SUM(ABS(totalAmount)),0)
+        FROM Receipts WHERE dateTime BETWEEN :from AND :to) cashMovementAmount,
+      (SELECT COUNT(*) FROM Receipts WHERE type='PAYBACK' AND dateTime BETWEEN :from AND :to) paybackCount,
+      (SELECT COALESCE(SUM(events.amount),0) FROM receipt_events events
+        JOIN Users root ON root.id=events.canonicalUserId
+        WHERE events.candidateCount=1 AND events.eventDate BETWEEN :from AND :to ${sourceFilter.sql}) attributedCashRevenue,
+      (SELECT COALESCE(SUM(ABS(events.amount)),0) FROM receipt_events events
+        JOIN Users root ON root.id=events.canonicalUserId
+        WHERE events.candidateCount=1 AND events.eventDate BETWEEN :from AND :to ${sourceFilter.sql}) attributedCashMovementAmount,
+      (SELECT COALESCE(SUM(events.amount),0) FROM receipt_events events
+        WHERE events.candidateCount=1 AND events.eventDate BETWEEN :from AND :to) allAttributedCashRevenue,
+      (SELECT COALESCE(SUM(ABS(events.amount)),0) FROM receipt_events events
+        WHERE events.candidateCount=1 AND events.eventDate BETWEEN :from AND :to) allAttributedCashMovementAmount,
+      (SELECT COALESCE(SUM(events.amount),0) FROM receipt_events events
+        WHERE events.eventDate BETWEEN :from AND :to) receiptItemsNetRevenue,
+      (SELECT COALESCE(SUM(ABS(events.amount)),0) FROM receipt_events events
+        WHERE events.candidateCount=0 AND events.eventDate BETWEEN :from AND :to) unknownClientAmount,
+      (SELECT COALESCE(SUM(ABS(events.amount)),0) FROM receipt_events events
+        WHERE events.candidateCount>1 AND events.eventDate BETWEEN :from AND :to) ambiguousClientAmount,
+      (SELECT COUNT(DISTINCT events.receiptId) FROM receipt_events events
+        WHERE events.receiptType='PAYBACK' AND events.candidateCount<>1
+          AND events.eventDate BETWEEN :from AND :to) unlinkedPaybackCount,
+      (SELECT COALESCE(SUM(ABS(events.amount)),0) FROM receipt_events events
+        WHERE events.receiptType='PAYBACK' AND events.candidateCount<>1
+          AND events.eventDate BETWEEN :from AND :to) unlinkedPaybackAmount,
+      (SELECT COALESCE(SUM(events.amount),0) FROM attributed_events events
+        JOIN Users root ON root.id=events.canonicalUserId
+        WHERE events.eventDate BETWEEN :from AND :to ${sourceFilter.sql}) periodAttributedRevenue,
+      (SELECT COALESCE(SUM(subscriptions.saleAmount),0) FROM ClientSubscriptions subscriptions
+        JOIN Users subscription_origin ON subscription_origin.id=subscriptions.clientId
+        JOIN canonical_clients subscription_clients ON subscription_clients.originUserId=subscriptions.clientId
+        JOIN Users root ON root.id=subscription_clients.canonicalUserId
+        WHERE (subscriptions.sourceReceiptItemId IS NOT NULL OR subscriptions.sourceReceiptId IS NOT NULL OR subscriptions.pendingSaleId IS NOT NULL)
+          AND subscriptions.status<>'canceled'
+          AND subscriptions.startsAt BETWEEN :from AND :to
+          AND COALESCE(subscription_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) subscriptionReceiptDuplicateRisk,
+      (SELECT COALESCE(SUM(certificates.saleAmount),0) FROM Certificates certificates
+        JOIN Users certificate_origin ON certificate_origin.id=certificates.clientId
+        JOIN canonical_clients certificate_clients ON certificate_clients.originUserId=certificates.clientId
+        JOIN Users root ON root.id=certificate_clients.canonicalUserId
+        WHERE (certificates.sourceReceiptItemId IS NOT NULL OR certificates.sourceReceiptId IS NOT NULL OR certificates.pendingSaleId IS NOT NULL)
+          AND certificates.status<>'canceled'
+          AND certificates.startsAt BETWEEN :from AND :to
+          AND COALESCE(certificate_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) certificateReceiptDuplicateRisk,
+      (SELECT COUNT(*) FROM Certificates certificates
+        JOIN Users legacy_origin ON legacy_origin.id=certificates.clientId
+        JOIN canonical_clients legacy_clients ON legacy_clients.originUserId=certificates.clientId
+        JOIN Users root ON root.id=legacy_clients.canonicalUserId
+        WHERE certificates.source='legacy_stn_google_sheet'
+          AND certificates.status<>'canceled'
+          AND COALESCE(legacy_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) legacySalesCount,
+      (SELECT COALESCE(SUM(ABS(certificates.saleAmount)),0) FROM Certificates certificates
+        JOIN Users legacy_origin ON legacy_origin.id=certificates.clientId
+        JOIN canonical_clients legacy_clients ON legacy_clients.originUserId=certificates.clientId
+        JOIN Users root ON root.id=legacy_clients.canonicalUserId
+        WHERE certificates.source='legacy_stn_google_sheet'
+          AND certificates.status<>'canceled'
+          AND COALESCE(legacy_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) legacySalesAmount,
+      (SELECT COALESCE(SUM(bookings.paidAmount),0) FROM Bookings bookings
+        JOIN canonical_clients booking_clients ON booking_clients.originUserId=bookings.userId
+        JOIN Users root ON root.id=booking_clients.canonicalUserId
+        WHERE bookings.startsAt BETWEEN :from AND :to AND bookings.status<>'canceled'
+          AND COALESCE(bookings.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) bookingPaymentsReference,
+      (SELECT COALESCE(SUM(finance.amount),0) FROM Finances finance
+        WHERE finance.date BETWEEN :fromDate AND :toDate AND finance.type='income'
+          AND COALESCE(finance.isTraining,0)=0
+          AND NOT EXISTS (SELECT 1 FROM CorporateLedgerEntries ledger WHERE ledger.financeId=finance.id)) manualFinanceWithoutClient,
+      (SELECT COALESCE(SUM(ABS(ledger.amount)),0) FROM CorporateLedgerEntries ledger
+        WHERE ledger.date BETWEEN :fromDate AND :toDate AND ledger.status='active'
+          AND COALESCE(ledger.isTraining,0)=0) corporateLedgerExcludedAmount
+    `, {
+    replacements: {
+      asOf: period.toSql,
+      from: period.fromSql,
+      fromDate: clubDateString(period.from),
+      to: period.toSql,
+      toDate: clubDateString(period.to),
+      ...sourceFilter.replacements,
+    },
+    type: db.Sequelize.QueryTypes.SELECT,
+  });
+  const row = rows[0] || {};
+  const cashNetRevenue = number(row.cashNetRevenue);
+  const cashMovementAmount = number(row.cashMovementAmount);
+  const attributedCashRevenue = number(row.attributedCashRevenue);
+  const attributedCashMovementAmount = number(row.attributedCashMovementAmount);
+  const allAttributedCashRevenue = number(row.allAttributedCashRevenue);
+  const allAttributedCashMovementAmount = number(row.allAttributedCashMovementAmount);
+  const duplicateRiskAmount = number(row.ambiguousClientAmount)
+    + Math.abs(number(row.subscriptionReceiptDuplicateRisk))
+    + Math.abs(number(row.certificateReceiptDuplicateRisk));
+  return {
+    cashNetRevenue,
+    cashMovementAmount,
+    attributedCashRevenue,
+    attributedCashMovementAmount,
+    allAttributedCashRevenue,
+    allAttributedCashMovementAmount,
+    unlinkedCashRevenue: cashNetRevenue - allAttributedCashRevenue,
+    unlinkedCashMovementAmount: cashMovementAmount - allAttributedCashMovementAmount,
+    outsideSelectedSourcesCashRevenue: allAttributedCashRevenue - attributedCashRevenue,
+    coveragePercent: cashMovementAmount > 0
+      ? allAttributedCashMovementAmount / cashMovementAmount * 100
+      : null,
+    selectedCashSharePercent: cashMovementAmount > 0
+      ? attributedCashMovementAmount / cashMovementAmount * 100
+      : null,
+    paybackCount: number(row.paybackCount),
+    unlinkedPaybackCount: number(row.unlinkedPaybackCount),
+    unlinkedPaybackAmount: number(row.unlinkedPaybackAmount),
+    unknownClientAmount: number(row.unknownClientAmount),
+    ambiguousClientAmount: number(row.ambiguousClientAmount),
+    duplicateRiskAmount,
+    receiptItemReconciliationDifference: cashNetRevenue - number(row.receiptItemsNetRevenue),
+    periodAttributedRevenue: number(row.periodAttributedRevenue),
+    legacySales: { amount: number(row.legacySalesAmount), count: number(row.legacySalesCount) },
+    bookingPaymentsReference: number(row.bookingPaymentsReference),
+    manualFinanceWithoutClient: number(row.manualFinanceWithoutClient),
+    corporateLedgerExcludedAmount: number(row.corporateLedgerExcludedAmount),
+    sourceFilterScope: sourceFilter.sql ? 'selected_sources_vs_all_cash' : 'all_sources',
+  };
+}
+
+function revenueReliability(coveragePercent, mature90) {
+  if (!mature90) return { key: 'insufficient_time', label: 'Недостаточно времени' };
+  if (mature90 < 10) return { key: 'low_sample', label: 'Мало данных' };
+  if (coveragePercent === null || coveragePercent < 50 || coveragePercent > 105) return { key: 'low', label: 'Низкая' };
+  if (coveragePercent < 80) return { key: 'medium', label: 'Средняя' };
+  return { key: 'high', label: 'Высокая' };
+}
+
+async function getRevenueLtv(from, to, options = {}) {
+  const period = resolvePeriod(from, to, options.now ? new Date(options.now) : new Date());
+  const sourceFilter = buildSourceFilter(options.sourceKeys);
+  const [sources, cohortRows, coverage, availableSources] = await Promise.all([
+    queryRevenueBySource(period, sourceFilter),
+    queryRevenueCohorts(period, sourceFilter),
+    queryRevenueCoverage(period, sourceFilter),
+    queryAvailableSources(period.toSql),
+  ]);
+  const acquiredClients = sources.reduce((sum, row) => sum + row.acquiredClients, 0);
+  const payingClients = sources.reduce((sum, row) => sum + row.payingClients, 0);
+  const attributedRevenue = sources.reduce((sum, row) => sum + row.attributedRevenue, 0);
+  const aggregateMetric = (key) => ltvMetric(
+    sources.reduce((sum, row) => sum + row[key].revenue, 0),
+    sources.reduce((sum, row) => sum + row[key].eligibleCount, 0),
+  );
+  const sourcesWithReliability = sources.map((row) => ({
+    ...row,
+    reliability: revenueReliability(coverage.coveragePercent, row.matureSample.days90),
+  }));
+  return {
+    from: period.from,
+    to: period.to,
+    asOf: period.to,
+    timeZone: CLUB_TIME_ZONE,
+    appliedSourceKeys: Array.isArray(options.sourceKeys) ? options.sourceKeys : [],
+    availableSources,
+    summary: {
+      attributedRevenue: coverage.periodAttributedRevenue,
+      cohortAttributedRevenue: attributedRevenue,
+      acquiredClients,
+      payingClients,
+      payerConversion: acquiredClients ? payingClients / acquiredClients * 100 : null,
+      averageRevenuePerAcquiredClient: acquiredClients ? attributedRevenue / acquiredClients : null,
+      averageRevenuePerPayingClient: payingClients ? attributedRevenue / payingClients : null,
+      ltv30: aggregateMetric('ltv30'),
+      ltv60: aggregateMetric('ltv60'),
+      ltv90: aggregateMetric('ltv90'),
+      lifetimeLtv: ltvMetric(attributedRevenue, acquiredClients),
+      coveragePercent: coverage.coveragePercent,
+    },
+    sources: sourcesWithReliability,
+    cohorts: buildRevenueCohorts(cohortRows, clubDateString(period.to)),
+    coverage,
+  };
+}
+
 function classifyLifecycleFacts({ firstVisitAt, lastVisitAt, visitCount }, asOf) {
   const first = new Date(firstVisitAt).getTime();
   const last = new Date(lastVisitAt).getTime();
@@ -824,13 +1240,92 @@ function formatClubDateTime(value) {
   return new Intl.DateTimeFormat('ru-RU', { timeZone: CLUB_TIME_ZONE, dateStyle: 'short', timeStyle: 'medium' }).format(new Date(value));
 }
 
+function appendRevenueLtvSheets(workbook, analytics) {
+  const summaryRows = [
+    ['Период', `${clubDateString(new Date(analytics.from))} — ${clubDateString(new Date(analytics.to))}`, 'Дата денежного события; Europe/Moscow'],
+    ['Надежно атрибутированная выручка', analytics.summary.attributedRevenue, 'Сумма уникальных денежных событий периода с однозначной canonical client связью'],
+    ['Привлечено клиентов', analytics.summary.acquiredClients, 'Canonical-клиенты, чей первый реальный визит попал в период'],
+    ['Платящих клиентов', analytics.summary.payingClients, 'Клиенты когорты хотя бы с одним положительным надежно атрибутированным событием после первого визита'],
+    ['Конверсия в оплату, %', analytics.summary.payerConversion, 'Платящие клиенты / привлеченные клиенты × 100'],
+    ['Средняя выручка на привлеченного', analytics.summary.averageRevenuePerAcquiredClient, 'Накопленная выручка когорты / привлеченные клиенты'],
+    ['Средняя выручка на платящего', analytics.summary.averageRevenuePerPayingClient, 'Накопленная выручка когорты / платящие клиенты'],
+    ['LTV 30', analytics.summary.ltv30.value, 'Выручка первых 30 дней зрелых клиентов / mature30'],
+    ['LTV 60', analytics.summary.ltv60.value, 'Выручка первых 60 дней зрелых клиентов / mature60'],
+    ['LTV 90', analytics.summary.ltv90.value, 'Выручка первых 90 дней зрелых клиентов / mature90'],
+    ['Lifetime LTV', analytics.summary.lifetimeLtv.value, 'Накопленная выручка от первого визита до даты среза / размер когорты'],
+    ['Покрытие кассовых движений, %', analytics.summary.coveragePercent, 'Модули надежно привязанных позиций чеков / модули всех чеков × 100; PAYBACK не ломает знаменатель'],
+  ];
+  const summarySheet = XLSX.utils.aoa_to_sheet([['Метрика', 'Значение', 'Формула и ограничение'], ...summaryRows]);
+  summarySheet['!cols'] = [{ wch: 38 }, { wch: 24 }, { wch: 100 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Выручка и LTV');
+
+  const sourceRows = analytics.sources.map((row) => ({
+    Источник: row.source,
+    'Stable source key': row.sourceKey,
+    'Привлечено клиентов': row.acquiredClients,
+    'Платящих клиентов': row.payingClients,
+    'Конверсия в оплату, %': row.payerConversion,
+    'Атрибутированная выручка': row.attributedRevenue,
+    'LTV 30': row.ltv30.value,
+    'Mature 30': row.ltv30.eligibleCount,
+    'LTV 60': row.ltv60.value,
+    'Mature 60': row.ltv60.eligibleCount,
+    'LTV 90': row.ltv90.value,
+    'Mature 90': row.ltv90.eligibleCount,
+    'Lifetime LTV': row.lifetimeLtv.value,
+    'Надежность': row.reliability.label,
+  }));
+  const sourceSheet = XLSX.utils.json_to_sheet(sourceRows);
+  sourceSheet['!cols'] = Object.keys(sourceRows[0] || { Источник: '' }).map((key) => ({ wch: Math.max(16, Math.min(32, key.length + 2)) }));
+  XLSX.utils.book_append_sheet(workbook, sourceSheet, 'LTV по источникам');
+
+  const cohortRows = analytics.cohorts.rows.map((cohort) => {
+    const row = { 'Месяц первого визита': cohort.cohortMonth, 'Размер когорты': cohort.cohortSize };
+    cohort.values.forEach((metric) => {
+      row[`M${metric.monthIndex} cumulative LTV`] = metric.value;
+      row[`M${metric.monthIndex} cumulative revenue`] = metric.revenue;
+      row[`M${metric.monthIndex} окно`] = metric.isMature ? `Созрело ${metric.windowEnd}` : `Недостаточно времени; созреет ${metric.windowEnd}`;
+    });
+    return row;
+  });
+  const cohortSheet = XLSX.utils.json_to_sheet(cohortRows);
+  cohortSheet['!cols'] = Object.keys(cohortRows[0] || { 'Месяц первого визита': '' }).map((key) => ({ wch: Math.max(18, Math.min(38, key.length + 2)) }));
+  XLSX.utils.book_append_sheet(workbook, cohortSheet, 'LTV по когортам');
+
+  const coverage = analytics.coverage;
+  const coverageRows = [
+    ['Общая кассовая net-выручка', coverage.cashNetRevenue, 'SELL положительно, PAYBACK отрицательно'],
+    ['Надежно привязано к выбранным источникам', coverage.attributedCashRevenue, 'Уникальные позиции чеков с одной canonical client связью; source-фильтр применяется к этой сумме'],
+    ['Надежно привязано по всем источникам', coverage.allAttributedCashRevenue, 'Используется для расчета истинно непривязанной net-суммы'],
+    ['Истинно не привязано', coverage.unlinkedCashRevenue, 'Кассовая net-выручка минус надежно привязанные позиции всех источников'],
+    ['Вне выбранных источников', coverage.outsideSelectedSourcesCashRevenue, 'Надежно привязанная сумма скрытых source-фильтром клиентов'],
+    ['Покрытие кассовых движений, %', coverage.coveragePercent, 'Модули всех надежно привязанных позиций / модули всех чеков × 100'],
+    ['Доля выбранных источников в кассовых движениях, %', coverage.selectedCashSharePercent, 'Модули надежно привязанных позиций выбранных источников / модули всех чеков × 100'],
+    ['Количество PAYBACK', coverage.paybackCount, 'Все кассовые возвраты периода'],
+    ['Непривязанный PAYBACK, количество', coverage.unlinkedPaybackCount, 'Возвратные чеки хотя бы с одной позицией без единственной canonical client связи'],
+    ['Непривязанный PAYBACK, сумма позиций', coverage.unlinkedPaybackAmount, 'Модули возвратных позиций, не включенных в LTV'],
+    ['Неизвестный клиент', coverage.unknownClientAmount, 'Позиции чеков без прямой клиентской связи'],
+    ['Неоднозначный клиент', coverage.ambiguousClientAmount, 'Позиции чеков со связями к разным canonical-клиентам'],
+    ['Предотвращенный риск двойного учета', coverage.duplicateRiskAmount, 'Не включенные повторно saleAmount receipt-backed сущностей плюс неоднозначные позиции'],
+    ['Расхождение чек / позиции', coverage.receiptItemReconciliationDifference, 'Кассовая net-выручка минус net-сумма сохраненных позиций'],
+    ['Legacy-продажи без надежной даты', coverage.legacySales.amount, `${coverage.legacySales.count} сертификатов legacy_stn_google_sheet`],
+    ['Booking payments (справочно)', coverage.bookingPaymentsReference, 'Не входят в LTV: отдельный от кассы платеж не доказан'],
+    ['Ручные Finance без clientId', coverage.manualFinanceWithoutClient, 'Не входят в индивидуальный LTV'],
+    ['Corporate ledger исключен', coverage.corporateLedgerExcludedAmount, 'Движение предоплаченного баланса, не новый cash event; не входит в индивидуальный LTV'],
+  ];
+  const coverageSheet = XLSX.utils.aoa_to_sheet([['Показатель', 'Сумма / количество', 'Ограничение'], ...coverageRows]);
+  coverageSheet['!cols'] = [{ wch: 48 }, { wch: 24 }, { wch: 100 }];
+  XLSX.utils.book_append_sheet(workbook, coverageSheet, 'Покрытие данных');
+}
+
 async function createVisitsExportBuffer(from, to, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
   const sourceFilter = buildSourceFilter(options.sourceKeys);
-  const [analytics, cohortsLifecycle] = await Promise.all([
+  const [analytics, cohortsLifecycle, revenueLtv] = await Promise.all([
     getVisitsAnalytics(from, to, { now, sourceKeys: options.sourceKeys }),
     getCohortsLifecycle(from, to, options),
+    getRevenueLtv(from, to, { ...options, now }),
   ]);
   const visits = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE}
     SELECT v.id,v.visitedAt,v.keyNumber,v.category,root.name,root.phone,
@@ -899,6 +1394,7 @@ async function createVisitsExportBuffer(from, to, options = {}) {
   const lifecycleSheet = XLSX.utils.json_to_sheet(lifecycleRows);
   lifecycleSheet['!cols'] = [{ wch: 20 }, { wch: 22 }, { wch: 38 }, { wch: 14 }, { wch: 32 }, { wch: 22 }, { wch: 18 }, { wch: 80 }];
   XLSX.utils.book_append_sheet(workbook, lifecycleSheet, 'Жизненный цикл');
+  appendRevenueLtvSheets(workbook, revenueLtv);
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
@@ -910,4 +1406,4 @@ async function explainPeriodIndex(from, to, options = {}) {
   });
 }
 
-module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, SEGMENT_ALGORITHM_VERSION, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, countVisitAnalyticsSegmentClients, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, listVisitAnalyticsSegmentClients, metricFromRow, normalizeVisitAnalyticsSegmentFilters, parseSourceKeys, previewVisitAnalyticsSegment, rateMetric, resolvePeriod, retentionMetric, retentionMonthCountForAsOf, sourceKeyFromRow, sourceQualityFromRow };
+module.exports = { CANONICAL_CLIENTS_CTE, CLUB_TIME_ZONE, LIFECYCLE_STATUSES, SEGMENT_ALGORITHM_VERSION, appendRevenueLtvSheets, buildRevenueCohorts, buildSourceFilter, calculateChanges, classifyLifecycleFacts, cohortFromRows, countVisitAnalyticsSegmentClients, createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, formatClubDateTime, getCohortsLifecycle, getRevenueLtv, getSourceQuality, getVisitsAnalytics, listVisitAnalyticsSegmentClients, ltvMetric, metricFromRow, normalizeVisitAnalyticsSegmentFilters, parseSourceKeys, previewVisitAnalyticsSegment, rateMetric, resolvePeriod, retentionMetric, retentionMonthCountForAsOf, sourceKeyFromRow, sourceQualityFromRow, sourceRevenueFromRow };
