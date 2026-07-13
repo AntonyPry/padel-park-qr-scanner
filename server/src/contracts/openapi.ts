@@ -470,7 +470,7 @@ function getOpenApiDocument() {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'Padel Park CRM API',
+      title: 'Setly API',
       version: '1.0.0',
     },
     servers: [{ url: '/api' }],
