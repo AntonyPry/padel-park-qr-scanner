@@ -1,5 +1,8 @@
 const { Server } = require('socket.io');
 const authService = require('../services/auth.service');
+const {
+  assertTenantFoundationInitialized,
+} = require('../services/tenant-foundation.service');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 const { getRealtimeRoomsForRole } = require('../realtime');
 
@@ -29,6 +32,19 @@ function createSocketServer(httpServer) {
   });
 
   io.use(async (socket, next) => {
+    try {
+      await assertTenantFoundationInitialized();
+    } catch (error) {
+      const code = error.code || 'TENANT_FOUNDATION_UNAVAILABLE';
+      const handshakeError = new Error(code);
+      handshakeError.data = {
+        code,
+        details: error.details,
+        status: error.statusCode || 503,
+      };
+      return next(handshakeError);
+    }
+
     try {
       const token = String(socket.handshake.auth?.token || '').trim();
       const payload = token ? authService.verifyToken(token) : null;

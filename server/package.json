@@ -26,6 +26,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
     "sequelize-cli": "^6.6.5",
+    "socket.io-client": "^4.8.3",
     "typescript": "^6.0.3"
   },
   "scripts": {

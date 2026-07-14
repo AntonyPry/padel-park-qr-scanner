@@ -15,6 +15,7 @@ const {
 const {
   assertTenantFoundationOperational,
   classifyTenantFoundation,
+  invalidateTenantFoundationGateCache,
 } = require('../src/services/tenant-foundation.service');
 
 function normalizedTableNames(rawTables) {
@@ -457,6 +458,7 @@ module.exports = {
           state: classification.state,
         }),
       );
+      invalidateTenantFoundationGateCache();
       return;
     }
 
@@ -476,6 +478,7 @@ module.exports = {
           state: classification.state,
         }),
       );
+      invalidateTenantFoundationGateCache();
     } catch (error) {
       if (schemaCreated) {
         try {
@@ -484,6 +487,7 @@ module.exports = {
           error.cleanupError = cleanupError;
         }
       }
+      invalidateTenantFoundationGateCache();
       throw error;
     }
   },
@@ -497,6 +501,7 @@ module.exports = {
     }
     await assertRollbackPreflight(queryInterface);
     await dropSchema(queryInterface);
+    invalidateTenantFoundationGateCache();
   },
 
   _private: {

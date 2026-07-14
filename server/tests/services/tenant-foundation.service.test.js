@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const {
   classifySnapshot,
+  getTenantFoundationGateState,
+  invalidateTenantFoundationGateCache,
+  resolveGateCacheTtlMs,
 } = require('../../src/services/tenant-foundation.service');
 
 function snapshot({ accounts = [], memberships = [], accesses = [], organizations, clubs } = {}) {
@@ -129,4 +132,101 @@ test('owner access and owner roleOverride are never accepted by classifier', () 
   );
   assert.equal(result.state, 'invalid');
   assert.match(result.diagnostics.reasons.join(' '), /must not have Club access/);
+});
+
+test('request gate cache is short, bounded and coalesces concurrent strict reads', async () => {
+  invalidateTenantFoundationGateCache();
+  assert.equal(resolveGateCacheTtlMs(-10), 0);
+  assert.equal(resolveGateCacheTtlMs(50000), 1000);
+
+  let nowMs = 100;
+  let calls = 0;
+  let releaseFirst;
+  const classify = async () => {
+    calls += 1;
+    if (calls === 1) {
+      await new Promise((resolve) => {
+        releaseFirst = resolve;
+      });
+    }
+    return { state: 'initialized', sequence: calls };
+  };
+
+  const first = getTenantFoundationGateState({
+    classify,
+    now: () => nowMs,
+    ttlMs: 250,
+  });
+  const concurrent = getTenantFoundationGateState({
+    classify,
+    now: () => nowMs,
+    ttlMs: 250,
+  });
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  releaseFirst();
+  assert.equal((await first).sequence, 1);
+  assert.equal((await concurrent).sequence, 1);
+  assert.equal(
+    (
+      await getTenantFoundationGateState({
+        classify,
+        now: () => nowMs,
+        ttlMs: 250,
+      })
+    ).sequence,
+    1,
+  );
+
+  nowMs += 251;
+  assert.equal(
+    (
+      await getTenantFoundationGateState({
+        classify,
+        now: () => nowMs,
+        ttlMs: 250,
+      })
+    ).sequence,
+    2,
+  );
+  invalidateTenantFoundationGateCache();
+});
+
+test('cache invalidation generation prevents an old in-flight snapshot from returning', async () => {
+  invalidateTenantFoundationGateCache();
+  let releaseOld;
+  const oldResult = getTenantFoundationGateState({
+    classify: async () => {
+      await new Promise((resolve) => {
+        releaseOld = resolve;
+      });
+      return { state: 'bootstrap-pending', source: 'old' };
+    },
+    now: () => 100,
+    ttlMs: 250,
+  });
+  await Promise.resolve();
+  invalidateTenantFoundationGateCache();
+
+  const currentResult = await getTenantFoundationGateState({
+    classify: async () => ({ state: 'initialized', source: 'current' }),
+    now: () => 100,
+    ttlMs: 250,
+  });
+  assert.equal(currentResult.source, 'current');
+  releaseOld();
+  assert.equal((await oldResult).source, 'old');
+
+  let unexpectedCalls = 0;
+  const cached = await getTenantFoundationGateState({
+    classify: async () => {
+      unexpectedCalls += 1;
+      return { state: 'invalid', source: 'unexpected' };
+    },
+    now: () => 100,
+    ttlMs: 250,
+  });
+  assert.equal(cached.source, 'current');
+  assert.equal(unexpectedCalls, 0);
+  invalidateTenantFoundationGateCache();
 });

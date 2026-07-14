@@ -8,6 +8,16 @@ const {
   TENANT_FOUNDATION_STATES,
 } = require('../tenant-foundation/constants');
 
+const DEFAULT_GATE_CACHE_TTL_MS = 250;
+const MAX_GATE_CACHE_TTL_MS = 1000;
+
+// Request middleware may reuse one strict snapshot briefly, so five full-table
+// parity reads stay bounded under load. Lifecycle commits invalidate by
+// generation; strict startup/status/socket assertions always bypass this cache.
+let gateCacheGeneration = 0;
+let gateClassificationCache = null;
+let gateClassificationInFlight = null;
+
 class TenantFoundationStateError extends Error {
   constructor(message, classification, code = 'TENANT_FOUNDATION_INVALID') {
     super(message);
@@ -63,32 +73,33 @@ async function loadTenantFoundationSnapshot({
   sequelize = db.sequelize,
   transaction,
   lock = false,
+  afterRead,
 } = {}) {
   const queryOptions = { lock: lock && Boolean(transaction), transaction };
-  const organizations = await selectRows(
-    sequelize,
+  const read = async (table, sql) => {
+    const rows = await selectRows(sequelize, sql, queryOptions);
+    if (afterRead) await afterRead({ rows, table, transaction });
+    return rows;
+  };
+  const organizations = await read(
+    'Organizations',
     'SELECT id, slug, name, status FROM Organizations ORDER BY id',
-    queryOptions,
   );
-  const clubs = await selectRows(
-    sequelize,
+  const clubs = await read(
+    'Clubs',
     'SELECT id, organizationId, slug, name, timezone, status FROM Clubs ORDER BY id',
-    queryOptions,
   );
-  const accounts = await selectRows(
-    sequelize,
+  const accounts = await read(
+    'Accounts',
     'SELECT id, role, status FROM Accounts ORDER BY id',
-    queryOptions,
   );
-  const memberships = await selectRows(
-    sequelize,
+  const memberships = await read(
+    'Memberships',
     'SELECT id, organizationId, accountId, role, status FROM Memberships ORDER BY id',
-    queryOptions,
   );
-  const accesses = await selectRows(
-    sequelize,
+  const accesses = await read(
+    'MembershipClubAccesses',
     'SELECT organizationId, membershipId, clubId, roleOverride, status FROM MembershipClubAccesses ORDER BY membershipId, clubId',
-    queryOptions,
   );
 
   return { accesses, accounts, clubs, memberships, organizations };
@@ -282,8 +293,27 @@ function classifySnapshot(snapshot) {
 
 async function classifyTenantFoundation(options = {}) {
   try {
-    const snapshot = await loadTenantFoundationSnapshot(options);
-    return classifySnapshot(snapshot);
+    const sequelize = options.sequelize || db.sequelize;
+    const classifyInTransaction = async (transaction) => {
+      const snapshot = await loadTenantFoundationSnapshot({
+        ...options,
+        sequelize,
+        transaction,
+      });
+      return classifySnapshot(snapshot);
+    };
+
+    if (options.transaction) {
+      return await classifyInTransaction(options.transaction);
+    }
+
+    return await sequelize.transaction(
+      {
+        isolationLevel:
+          db.Sequelize.Transaction.ISOLATION_LEVELS.REPEATABLE_READ,
+      },
+      classifyInTransaction,
+    );
   } catch (error) {
     if (
       ['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error?.original?.code) ||
@@ -304,6 +334,58 @@ async function classifyTenantFoundation(options = {}) {
       };
     }
     throw error;
+  }
+}
+
+function resolveGateCacheTtlMs(value = process.env.TENANT_FOUNDATION_GATE_CACHE_MS) {
+  if (value === undefined || value === null || value === '') {
+    return DEFAULT_GATE_CACHE_TTL_MS;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_GATE_CACHE_TTL_MS;
+  return Math.min(Math.max(Math.trunc(parsed), 0), MAX_GATE_CACHE_TTL_MS);
+}
+
+function invalidateTenantFoundationGateCache() {
+  gateCacheGeneration += 1;
+  gateClassificationCache = null;
+  gateClassificationInFlight = null;
+}
+
+async function getTenantFoundationGateState(options = {}) {
+  const classify = options.classify || classifyTenantFoundation;
+  const now = options.now || Date.now;
+  const ttlMs = resolveGateCacheTtlMs(options.ttlMs);
+  const currentTime = now();
+
+  if (
+    !options.force &&
+    gateClassificationCache &&
+    gateClassificationCache.expiresAt > currentTime
+  ) {
+    return gateClassificationCache.classification;
+  }
+  if (!options.force && gateClassificationInFlight) {
+    return gateClassificationInFlight;
+  }
+
+  const generation = gateCacheGeneration;
+  const promise = Promise.resolve().then(classify);
+  if (!options.force) gateClassificationInFlight = promise;
+
+  try {
+    const classification = await promise;
+    if (!options.force && generation === gateCacheGeneration && ttlMs > 0) {
+      gateClassificationCache = {
+        classification,
+        expiresAt: now() + ttlMs,
+      };
+    }
+    return classification;
+  } finally {
+    if (gateClassificationInFlight === promise) {
+      gateClassificationInFlight = null;
+    }
   }
 }
 
@@ -344,6 +426,9 @@ module.exports = {
   assertTenantFoundationOperational,
   classifySnapshot,
   classifyTenantFoundation,
+  getTenantFoundationGateState,
+  invalidateTenantFoundationGateCache,
   loadTenantFoundationSnapshot,
+  resolveGateCacheTtlMs,
   stateError,
 };

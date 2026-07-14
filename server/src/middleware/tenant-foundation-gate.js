@@ -4,7 +4,7 @@ const {
   TENANT_FOUNDATION_STATES,
 } = require('../tenant-foundation/constants');
 const {
-  classifyTenantFoundation,
+  getTenantFoundationGateState,
 } = require('../services/tenant-foundation.service');
 
 const PENDING_ALLOWLIST = new Set([
@@ -29,7 +29,7 @@ function sendGateError(res, classification, code, message) {
 
 async function tenantFoundationGate(req, res, next) {
   try {
-    const classification = await classifyTenantFoundation();
+    const classification = await getTenantFoundationGateState();
     req.tenantFoundation = classification;
     if (classification.state === TENANT_FOUNDATION_STATES.INITIALIZED) {
       return next();

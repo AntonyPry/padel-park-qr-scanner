@@ -2,10 +2,12 @@
 
 const assert = require('node:assert/strict');
 const fs = require('fs');
+const http = require('node:http');
 const path = require('path');
 const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
+const { io: createSocketClient } = require('socket.io-client');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE = '20260714120000-create-tenant-foundation.js';
@@ -67,6 +69,34 @@ async function closeServer(server) {
   );
 }
 
+async function socketHandshake(server, token) {
+  return new Promise((resolve, reject) => {
+    const socket = createSocketClient(
+      `http://127.0.0.1:${server.address().port}`,
+      {
+        auth: token ? { token } : {},
+        forceNew: true,
+        reconnection: false,
+        timeout: 3000,
+        transports: ['websocket'],
+      },
+    );
+    const timeout = setTimeout(() => {
+      socket.close();
+      reject(new Error('Socket handshake timed out'));
+    }, 5000);
+    socket.once('connect', () => {
+      clearTimeout(timeout);
+      resolve({ socket });
+    });
+    socket.once('connect_error', (error) => {
+      clearTimeout(timeout);
+      socket.close();
+      resolve({ error });
+    });
+  });
+}
+
 function apiUrl(server, route) {
   return `http://127.0.0.1:${server.address().port}/api${route}`;
 }
@@ -89,6 +119,8 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
   let schemaSequelize;
   let db;
   let server;
+  let socketHttpServer;
+  let socketIo;
   try {
     schemaSequelize = await createBaseSchema(database);
     db = require('../../models');
@@ -102,6 +134,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     const demoSeeder = require('../../seeders/20260511120000-demo-crm-data');
     const { runDemoAccountSeed } = require('../../scripts/seed-demo-accounts');
     const createApp = require('../../src/app');
+    const { createSocketServer } = require('../../src/sockets');
     const queryInterface = schemaSequelize.getQueryInterface();
 
     const assertInitialized = async () => {
@@ -180,6 +213,17 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       }
     });
 
+    await t.test('bootstrap-pending rejects Socket.IO before authentication', async () => {
+      socketHttpServer = http.createServer();
+      socketIo = createSocketServer(socketHttpServer);
+      await listen(socketHttpServer);
+      const result = await socketHandshake(socketHttpServer, null);
+      assert.equal(result.socket, undefined);
+      assert.equal(result.error?.message, 'BOOTSTRAP_REQUIRED');
+      assert.equal(result.error?.data?.code, 'BOOTSTRAP_REQUIRED');
+      assert.equal(result.error?.data?.status, 503);
+    });
+
     await t.test('forced bootstrap failures roll back Staff, Account and Membership', async () => {
       for (const failAfter of ['staff', 'account', 'membership']) {
         await assert.rejects(
@@ -205,6 +249,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     });
 
     let initialOwner;
+    let initialSession;
     await t.test('concurrent bootstrap yields one owner and one 409', async () => {
       const payloads = [
         {
@@ -227,12 +272,20 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
           }),
         ),
       );
+      const results = await Promise.all(
+        responses.map(async (response) => ({
+          body: await response.json(),
+          status: response.status,
+        })),
+      );
       assert.deepEqual(
-        responses.map((response) => response.status).sort(),
+        results.map((result) => result.status).sort(),
         [200, 409],
       );
-      const conflict = responses.find((response) => response.status === 409);
-      assert.equal((await conflict.json()).code, 'ALREADY_BOOTSTRAPPED');
+      const conflict = results.find((result) => result.status === 409);
+      assert.equal(conflict.body.code, 'ALREADY_BOOTSTRAPPED');
+      initialSession = results.find((result) => result.status === 200).body;
+      assert.ok(initialSession.token);
       assert.equal(await db.Account.count(), 1);
       assert.equal(await db.Membership.count(), 1);
       assert.equal(await db.MembershipClubAccess.count(), 0);
@@ -240,6 +293,19 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       assert.ok(initialOwner);
       await assertInitialized();
       assert.equal((await fetch(apiUrl(server, '/openapi.json'))).status, 200);
+    });
+
+    await t.test('initialized Socket.IO preserves authenticated connection contract', async () => {
+      const result = await socketHandshake(socketHttpServer, initialSession.token);
+      assert.equal(result.error, undefined, result.error?.message);
+      assert.equal(result.socket.connected, true);
+      const serverSocket = [...socketIo.sockets.sockets.values()].find(
+        (socket) => socket.id === result.socket.id,
+      );
+      assert.ok(serverSocket);
+      assert.equal(serverSocket.data.account.id, initialSession.account.id);
+      assert.equal(serverSocket.rooms.has('access'), true);
+      result.socket.close();
     });
 
     await t.test('rollback initialized and backfill existing Accounts preserves parity', async () => {
@@ -332,6 +398,79 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         0,
       );
       await assertInitialized();
+    });
+
+    await t.test('classifier uses one snapshot across concurrent graph create/update/delete commits', async () => {
+      const runAcrossCommit = async (label, mutate) => {
+        let releaseRead;
+        let signalAccountsRead;
+        let paused = false;
+        const accountsRead = new Promise((resolve) => {
+          signalAccountsRead = resolve;
+        });
+        const resumeRead = new Promise((resolve) => {
+          releaseRead = resolve;
+        });
+        const classificationPromise = tenantFoundation.classifyTenantFoundation({
+          afterRead: async ({ table, transaction }) => {
+            assert.ok(transaction, `${label} classifier must own a transaction`);
+            if (table === 'Accounts' && !paused) {
+              paused = true;
+              signalAccountsRead();
+              await resumeRead;
+            }
+          },
+        });
+
+        await accountsRead;
+        let mutationResult;
+        try {
+          mutationResult = await mutate();
+          const apiResponse = await fetch(apiUrl(server, '/openapi.json'));
+          assert.equal(apiResponse.status, 200, `${label} returned false 503`);
+        } finally {
+          releaseRead();
+        }
+
+        const during = await classificationPromise;
+        assert.equal(
+          during.state,
+          'initialized',
+          `${label}: ${JSON.stringify(during.diagnostics)}`,
+        );
+        await assertInitialized();
+        return mutationResult;
+      };
+
+      const racedAccount = await runAcrossCommit('create', () =>
+        accountLifecycle.createAccount({
+          email: 'snapshot-race@lifecycle.test',
+          passwordHash: authService.hashPassword('Snapshot123!'),
+          role: 'viewer',
+          status: 'active',
+        }),
+      );
+      await runAcrossCommit('update', () =>
+        accountLifecycle.updateAccount(racedAccount.id, {
+          role: 'trainer',
+          status: 'inactive',
+        }),
+      );
+      await runAcrossCommit('delete', () =>
+        accountLifecycle.permanentDeleteAccount(racedAccount.id),
+      );
+
+      await db.sequelize.transaction(async (transaction) => {
+        let observedTransaction = null;
+        const state = await tenantFoundation.classifyTenantFoundation({
+          afterRead: ({ transaction: snapshotTransaction }) => {
+            observedTransaction = snapshotTransaction;
+          },
+          transaction,
+        });
+        assert.equal(state.state, 'initialized');
+        assert.equal(observedTransaction, transaction);
+      });
     });
 
     await t.test('role/status transitions, mixed dispatch, archive and restore stay atomic', async () => {
@@ -625,8 +764,17 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         where: { accountId: created['manager-archived'].id },
       });
       await membership.update({ status: 'inactive' });
+      tenantFoundation.invalidateTenantFoundationGateCache();
       const invalid = await tenantFoundation.classifyTenantFoundation();
       assert.equal(invalid.state, 'invalid');
+      const socketResult = await socketHandshake(socketHttpServer, null);
+      assert.equal(socketResult.socket, undefined);
+      assert.equal(socketResult.error?.message, 'TENANT_FOUNDATION_INVALID');
+      assert.equal(
+        socketResult.error?.data?.code,
+        'TENANT_FOUNDATION_INVALID',
+      );
+      assert.equal(socketResult.error?.data?.status, 503);
       await assert.rejects(
         authService.isSetupRequired(),
         (error) => error.code === 'TENANT_FOUNDATION_INVALID',
@@ -636,6 +784,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       assert.equal((await response.json()).code, 'TENANT_FOUNDATION_INVALID');
       const account = await db.Account.findByPk(membership.accountId);
       await membership.update({ status: account.status });
+      tenantFoundation.invalidateTenantFoundationGateCache();
       await assertInitialized();
     });
 
@@ -680,6 +829,10 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     });
   } finally {
     await closeServer(server).catch(() => {});
+    if (socketIo) {
+      await new Promise((resolve) => socketIo.close(resolve)).catch(() => {});
+    }
+    await closeServer(socketHttpServer).catch(() => {});
     if (db?.sequelize) await db.sequelize.close().catch(() => {});
     if (schemaSequelize) await schemaSequelize.close().catch(() => {});
     if (process.env.KEEP_TENANT_TEST_DB === 'true') {

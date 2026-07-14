@@ -9,6 +9,7 @@ const {
 const {
   assertTenantFoundationInitialized,
   classifyTenantFoundation,
+  invalidateTenantFoundationGateCache,
   stateError,
 } = require('./tenant-foundation.service');
 const accountLifecycle = require('./account-lifecycle.service');
@@ -222,6 +223,7 @@ async function runInitializedSeederBatch(
     }
     return callbackResult;
   });
+  invalidateTenantFoundationGateCache();
   await assertTenantFoundationInitialized({ sequelize: queryInterface.sequelize });
   return result;
 }
@@ -318,6 +320,7 @@ async function seedDemoAccounts(accounts, options = {}) {
     }
     return output;
   });
+  invalidateTenantFoundationGateCache();
   await assertTenantFoundationInitialized();
   return results;
 }

@@ -11,6 +11,7 @@ const {
 const {
   assertTenantFoundationInitialized,
   classifyTenantFoundation,
+  invalidateTenantFoundationGateCache,
   stateError,
 } = require('./tenant-foundation.service');
 
@@ -207,6 +208,7 @@ async function createAccount(payload, options = {}) {
     return createdAccount;
   });
 
+  invalidateTenantFoundationGateCache();
   await assertTenantFoundationInitialized();
   return account;
 }
@@ -250,6 +252,7 @@ async function updateAccount(accountId, payload, options = {}) {
     return graph.account;
   });
 
+  invalidateTenantFoundationGateCache();
   await assertTenantFoundationInitialized();
   return account;
 }
@@ -285,6 +288,7 @@ async function permanentDeleteAccount(accountId, options = {}) {
     await assertTenantFoundationInitialized({ transaction });
   });
 
+  invalidateTenantFoundationGateCache();
   await assertTenantFoundationInitialized();
   return { success: true };
 }
@@ -344,6 +348,7 @@ async function bootstrapInitialOwner(
     }
   });
 
+  invalidateTenantFoundationGateCache();
   await assertTenantFoundationInitialized();
   return accountId;
 }
