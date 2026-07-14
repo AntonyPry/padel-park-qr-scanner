@@ -103,6 +103,13 @@ test('admins can manage phone bookings without finance or catalog access', () =>
   assert.equal(ACCESS_MATRIX.catalogManage.includes('admin'), false);
 });
 
+test('admins can operate shift cash without receiving finance management', () => {
+  assert.equal(ACCESS_MATRIX.shiftsOperate.includes('admin'), true);
+  assert.equal(ACCESS_MATRIX.shiftsManage.includes('admin'), false);
+  assert.equal(ACCESS_MATRIX.financeManage.includes('admin'), false);
+  assert.equal(ACCESS_MATRIX.financeView.includes('admin'), false);
+});
+
 test('telephony separates setup from call processing', () => {
   assert.equal(ACCESS_MATRIX.telephonyManage.includes('owner'), true);
   assert.equal(ACCESS_MATRIX.telephonyManage.includes('manager'), true);

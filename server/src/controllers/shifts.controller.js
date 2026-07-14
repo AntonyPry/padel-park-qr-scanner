@@ -22,8 +22,7 @@ class ShiftsController {
 
   async endActive(req, res) {
     try {
-      const shift = await shiftsService.endActive(req.account);
-      res.json({ shift });
+      res.json(await shiftsService.endActive(req.account, req.body));
     } catch (error) {
       sendError(res, error, 'Ошибка завершения смены');
     }
