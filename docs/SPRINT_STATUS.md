@@ -2221,24 +2221,25 @@ Product source:
 - screenshots являются реальными CRM screenshots из feature UI, без generated assets;
 - `server npm run onboarding:audit:strict` проходит без warnings.
 
-## Backlog - SaaS-фундамент
+## Epic - Multi-tenant CRM
+
+Статус: `Feature 1 complete, QA pending`.
+
+- Принята целевая модель `Organization → Clubs → Memberships`; текущий Padel Park станет default organization/club без изменения UX.
+- Inventory всех 67 Sequelize models и ключевых HTTP/realtime/worker/file/integration поверхностей зафиксирован в [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md).
+- ADR, backfill strategy и зависимые feature-срезы зафиксированы в [`MULTI_TENANCY_ARCHITECTURE_V1.md`](./MULTI_TENANCY_ARCHITECTURE_V1.md).
+- Feature 1 не содержит migrations/runtime/product changes. Следующий mergeable срез — additive tenant foundation (Feature 2) после QA архитектуры.
+- SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
+
+## Backlog - SaaS billing
 
 Статус: `postponed`.
 
-SaaS-фундамент временно отложен по решению владельца продукта. Вернемся к нему после текущего этапа производительности, контрактов, QA и обсуждения модуля бронирования вместо Лунды.
+Коммерческая SaaS-модель Setly временно отложена по решению владельца продукта и не входит в multi-tenant CRM epic.
 
 Пункт про тренерский кабинет пока убран из ближайшего плана.
 
-Когда вернемся:
-
-- модель организации/клуба;
-- привязка всех бизнес-сущностей к клубу;
-- изоляция данных по клубам;
-- пользователь с доступом к одному или нескольким клубам;
-- роли внутри конкретного клуба;
-- миграция существующих данных в default club;
-- подготовка тарифов и ограничений;
-- техническая стратегия деплоя нескольких клубов.
+Когда вернемся: отдельно спроектировать тарифы, подписки организации на Setly, usage metering, SaaS invoices и коммерческие ограничения, не смешивая их с CRM-финансами, P&L, сертификатами, абонементами и предоплатами.
 
 ## Backlog - AI Telephony
 
