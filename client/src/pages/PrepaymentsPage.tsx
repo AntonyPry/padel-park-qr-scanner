@@ -211,6 +211,11 @@ interface DashboardResponse {
   summary: DashboardSummary;
 }
 
+interface DashboardRefreshError {
+  message: string;
+  requestChanged: boolean;
+}
+
 const TYPE_LABELS: Record<DashboardType, string> = {
   all: 'Все типы',
   certificates: 'Сертификаты',
@@ -390,6 +395,8 @@ export default function PrepaymentsPage() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [errorText, setErrorText] = useState('');
+  const [refreshError, setRefreshError] =
+    useState<DashboardRefreshError | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<DashboardType>('all');
@@ -397,6 +404,7 @@ export default function PrepaymentsPage() {
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
   const dashboardRef = useRef<DashboardResponse | null>(null);
+  const lastSuccessfulRequestKeyRef = useRef<string | null>(null);
   const latestRequestIdRef = useRef(0);
 
   const loadDashboard = useCallback(async () => {
@@ -409,37 +417,54 @@ export default function PrepaymentsPage() {
     } else {
       setInitialLoading(true);
       setErrorText('');
+      setRefreshError(null);
     }
 
-    try {
-      const params = new URLSearchParams({ limit: '12' });
-      if (query.trim()) params.set('q', query.trim());
-      if (typeFilter !== 'all') params.set('type', typeFilter);
-      if (statusFilter !== 'all') params.set('status', statusFilter);
-      if (expiryFilter !== 'all') params.set('expiry', expiryFilter);
+    const params = new URLSearchParams({ limit: '12' });
+    if (query.trim()) params.set('q', query.trim());
+    if (typeFilter !== 'all') params.set('type', typeFilter);
+    if (statusFilter !== 'all') params.set('status', statusFilter);
+    if (expiryFilter !== 'all') params.set('expiry', expiryFilter);
+    const requestKey = params.toString();
 
+    try {
       const response = await apiFetch(
-        `/api/prepayments/dashboard?${params.toString()}`,
+        `/api/prepayments/dashboard?${requestKey}`,
       );
       if (requestId !== latestRequestIdRef.current) return;
 
       if (!response.ok) {
         const message = await readError(response, 'Не удалось загрузить предоплаты');
         if (requestId !== latestRequestIdRef.current) return;
-        if (!hasDashboard) setErrorText(message);
+        if (hasDashboard) {
+          setRefreshError({
+            message,
+            requestChanged: lastSuccessfulRequestKeyRef.current !== requestKey,
+          });
+        } else {
+          setErrorText(message);
+        }
         return;
       }
       const nextDashboard = (await response.json()) as DashboardResponse;
       if (requestId !== latestRequestIdRef.current) return;
       dashboardRef.current = nextDashboard;
+      lastSuccessfulRequestKeyRef.current = requestKey;
       setDashboard(nextDashboard);
       setErrorText('');
+      setRefreshError(null);
     } catch (error) {
       if (requestId !== latestRequestIdRef.current) {
         return;
       }
-      if (!hasDashboard) {
-        setErrorText(getApiErrorMessage(error, 'Не удалось загрузить предоплаты'));
+      const message = getApiErrorMessage(error, 'Не удалось загрузить предоплаты');
+      if (hasDashboard) {
+        setRefreshError({
+          message,
+          requestChanged: lastSuccessfulRequestKeyRef.current !== requestKey,
+        });
+      } else {
+        setErrorText(message);
       }
     } finally {
       if (requestId === latestRequestIdRef.current) {
@@ -654,6 +679,27 @@ export default function PrepaymentsPage() {
           onRetry={() => void loadDashboard()}
           title="Не удалось загрузить сводку"
         />
+      )}
+
+      {refreshError && dashboard && (
+        <div role="alert" data-testid="prepayments-stale-notice">
+          <ErrorState
+            compact
+            message={
+              refreshError.requestChanged
+                ? `Показана последняя успешно загруженная сводка. ${refreshError.message}`
+                : `Показаны последние успешно загруженные данные. ${refreshError.message}`
+            }
+            onRetry={() => {
+              if (!refreshing) void loadDashboard();
+            }}
+            title={
+              refreshError.requestChanged
+                ? 'Поиск и фильтры не применены'
+                : 'Сводка не обновлена'
+            }
+          />
+        </div>
       )}
 
       {initialLoading && !dashboard ? (

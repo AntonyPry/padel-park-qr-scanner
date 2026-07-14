@@ -201,6 +201,93 @@ describe('PrepaymentsPage KPI stability', () => {
     );
   });
 
+  it('keeps the dashboard visible and offers retry after a background refresh error', async () => {
+    mocks.apiFetch
+      .mockResolvedValueOnce(
+        jsonResponse(makeDashboard({ corporateBalance: 251400 })),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'Недоступно' }), { status: 500 }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(makeDashboard({ corporateBalance: 999999 })),
+      );
+
+    renderPage();
+    await waitFor(() =>
+      expect(
+        metricCard('Корпоративные балансы')?.textContent?.replace(
+          /[\u00a0\u202f]/g,
+          ' ',
+        ),
+      ).toContain('251 400 ₽'),
+    );
+
+    act(() => mocks.realtimeRefresh?.());
+
+    const staleNotice = await screen.findByTestId('prepayments-stale-notice');
+    expect(staleNotice).toHaveTextContent('Сводка не обновлена');
+    expect(staleNotice).toHaveTextContent(
+      'Показаны последние успешно загруженные данные',
+    );
+    expect(screen.queryByTestId('prepayments-metrics-skeleton')).not.toBeInTheDocument();
+    expect(metricCard('Корпоративные балансы')?.textContent).toContain('251');
+    expect(screen.getByTestId('prepayments-metrics-grid')).toHaveAttribute(
+      'aria-busy',
+      'false',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Повторить' }));
+
+    await waitFor(() =>
+      expect(
+        metricCard('Корпоративные балансы')?.textContent?.replace(
+          /[\u00a0\u202f]/g,
+          ' ',
+        ),
+      ).toContain('999 999 ₽'),
+    );
+    expect(screen.queryByTestId('prepayments-stale-notice')).not.toBeInTheDocument();
+    expect(screen.getByTestId('prepayments-metrics-grid')).toHaveAttribute(
+      'aria-busy',
+      'false',
+    );
+  });
+
+  it('marks stale data when a search request fails', async () => {
+    mocks.apiFetch
+      .mockResolvedValueOnce(jsonResponse(makeDashboard({ pendingSales: 4 })))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: 'Недоступно' }), { status: 500 }),
+      );
+
+    renderPage();
+    await screen.findByText('4', { selector: '[data-slot="card-title"] span' });
+
+    fireEvent.change(screen.getByPlaceholderText('Клиент, сертификат или компания'), {
+      target: { value: 'неуспешный поиск' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Найти' }));
+
+    const staleNotice = await screen.findByTestId('prepayments-stale-notice');
+    expect(staleNotice).toHaveTextContent('Поиск и фильтры не применены');
+    expect(staleNotice).toHaveTextContent(
+      'Показана последняя успешно загруженная сводка',
+    );
+    expect(mocks.apiFetch).toHaveBeenLastCalledWith(
+      '/api/prepayments/dashboard?limit=12&q=%D0%BD%D0%B5%D1%83%D1%81%D0%BF%D0%B5%D1%88%D0%BD%D1%8B%D0%B9+%D0%BF%D0%BE%D0%B8%D1%81%D0%BA',
+    );
+    expect(
+      metricCard('Ожидают привязки')?.querySelector('[data-slot="card-title"]')
+        ?.textContent,
+    ).toBe('4');
+    expect(screen.queryByTestId('prepayments-metrics-skeleton')).not.toBeInTheDocument();
+    expect(screen.getByTestId('prepayments-metrics-grid')).toHaveAttribute(
+      'aria-busy',
+      'false',
+    );
+  });
+
   it('replaces the first-frame skeleton with a distinct initial error state', async () => {
     mocks.apiFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ error: 'Недоступно' }), { status: 500 }),
