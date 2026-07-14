@@ -636,6 +636,8 @@ test('training methodology onboarding scenarios are wired by role', () => {
 });
 
 test('prepayments onboarding scenarios are wired by role', () => {
+  const screenshotRefreshUpdatedAt = '2026-07-14T00:00:00.000+03:00';
+  const prepaymentsOverviewSrc = '/onboarding/knowledge/prepayments/overview.png';
   const adminDashboard = findOnboardingTask(
     'admin',
     'admin.prepayments.dashboard-review',
@@ -646,6 +648,13 @@ test('prepayments onboarding scenarios are wired by role', () => {
     taskKey: 'admin.prepayments.dashboard-review',
   });
   assert.equal(adminDashboard.task.trainingMode.recommended, false);
+  assert.equal(adminDashboard.task.lesson.updatedAt, screenshotRefreshUpdatedAt);
+  assert.equal(
+    adminDashboard.task.lesson.screenshots.some(
+      (screenshot) => screenshot.src === prepaymentsOverviewSrc,
+    ),
+    true,
+  );
 
   const managerMapping = findOnboardingTask(
     'manager',
@@ -676,6 +685,31 @@ test('prepayments onboarding scenarios are wired by role', () => {
   );
   assert.equal(accountantPrepayments.task.route, '/admin/prepayments');
   assert.equal(accountantPrepayments.task.checkpoint.event, 'prepayments.viewed');
+  assert.equal(
+    accountantPrepayments.task.lesson.updatedAt,
+    screenshotRefreshUpdatedAt,
+  );
+  assert.equal(
+    accountantPrepayments.task.lesson.screenshots.some(
+      (screenshot) => screenshot.src === prepaymentsOverviewSrc,
+    ),
+    true,
+  );
+
+  for (const [role, taskKey] of [
+    ['manager', 'manager.knowledge.prepayments'],
+    ['owner', 'owner.knowledge.prepayments'],
+  ]) {
+    const { task } = findOnboardingTask(role, taskKey);
+    assert.equal(task.lesson.updatedAt, screenshotRefreshUpdatedAt);
+    assert.equal(
+      task.lesson.screenshots.some(
+        (screenshot) => screenshot.src === prepaymentsOverviewSrc,
+      ),
+      true,
+      `${taskKey} should use refreshed prepayments screenshot`,
+    );
+  }
 });
 
 test('manager control onboarding is wired for owner and manager daily review', () => {
