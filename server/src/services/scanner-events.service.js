@@ -29,7 +29,8 @@ function sanitizeMetadata(value, depth = 0) {
   if (Array.isArray(value)) {
     return value.slice(0, 50).map((item) => sanitizeMetadata(item, depth + 1));
   }
-  if (!value || typeof value !== 'object') return value || null;
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'object') return value;
 
   return Object.entries(value).reduce((acc, [key, item]) => {
     if (/token|password|authorization|secret|qr/i.test(key)) {
@@ -185,5 +186,6 @@ module.exports = {
   hashQr,
   listEvents,
   recordEvent,
+  sanitizeMetadata,
   sanitizeQrPreview,
 };
