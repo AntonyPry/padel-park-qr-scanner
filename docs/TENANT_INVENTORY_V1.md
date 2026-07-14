@@ -1,6 +1,8 @@
 # Tenant inventory v1
 
-Статус: `QA fixes applied, re-review pending`
+Статус: `accepted for implementation planning — QA green`
+
+QA result: `ready for SaaS integration`; P0–P3 findings отсутствуют.
 
 Дата: 2026-07-14
 

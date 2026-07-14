@@ -2223,15 +2223,16 @@ Product source:
 
 ## Epic - Multi-tenant CRM
 
-Статус: `QA fixes applied, re-review pending`.
+Статус: `QA green — ready for SaaS integration`.
 
-`accepted for implementation planning` и старт Feature 2 разрешены только после повторного green QA.
+Promotion rule выполнено: Feature 1 имеет статус `accepted for implementation planning`; можно создавать SaaS integration base и запускать Feature 2.
 
 - Принята целевая модель `Organization → Clubs → Memberships`; текущий Padel Park станет default organization/club без изменения UX.
 - Inventory всех 67 Sequelize models и ключевых HTTP/realtime/worker/file/integration поверхностей зафиксирован в [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md).
 - ADR, backfill strategy и зависимые feature-срезы зафиксированы в [`MULTI_TENANCY_ARCHITECTURE_V1.md`](./MULTI_TENANCY_ARCHITECTURE_V1.md).
-- Feature 1 не содержит migrations/runtime/product changes. Следующий mergeable срез — additive tenant foundation (Feature 2) после QA архитектуры.
+- Feature 1 не содержит migrations/runtime/product changes. Следующий mergeable срез — additive tenant foundation (Feature 2).
 - QA findings добавили формальный bootstrap-pending contract, split Account writer contract, seeder parity и DB-backed lifecycle/concurrency acceptance; Feature 2 runtime/migrations еще не реализуются.
+- Повторный независимый QA завершен без P0–P3 findings; Feature 1 готов к созданию SaaS integration base.
 - SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
 
 ## Backlog - SaaS billing

@@ -1,8 +1,8 @@
 # Multi-tenant architecture v1: Organization → Clubs → Memberships
 
-Статус: `QA fixes applied, re-review pending`
+Статус: `accepted for implementation planning — QA green`
 
-Promotion rule: статус `accepted for implementation planning` выставляется только после повторного независимого green QA; до этого Feature 2 implementation не начинается.
+Promotion result: повторный независимый QA завершен со статусом `ready for SaaS integration`; P0–P3 findings отсутствуют. Feature 1 принят для implementation planning.
 
 Дата: 2026-07-14
 
