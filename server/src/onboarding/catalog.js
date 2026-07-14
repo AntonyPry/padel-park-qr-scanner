@@ -1984,10 +1984,11 @@ function makeCardLesson({
   };
 }
 
-function makeTextLesson({ blocks, screenshots = [], summary, title }) {
+function makeTextLesson({ blocks, screenshots = [], summary, title, updatedAt }) {
   return {
     title,
     summary,
+    ...(updatedAt ? { updatedAt } : {}),
     blocks: blocks.map((block) => {
       const normalizedBlock = {
         type: 'paragraph',
@@ -2016,6 +2017,7 @@ function makeTextLesson({ blocks, screenshots = [], summary, title }) {
 }
 
 const VISITS_ANALYTICS_UPDATED_AT = '2026-07-13T00:00:00.000+03:00';
+const PREPAYMENTS_SCREENSHOT_UPDATED_AT = '2026-07-14T00:00:00.000+03:00';
 
 function makeVisitsAnalyticsScreenshot(fileName, alt, caption, callouts) {
   return {
@@ -2323,6 +2325,7 @@ const roleInstructionLessons = {
     title: 'Как администратору читать сводку предоплат',
     summary:
       'Сводка предоплат помогает на смене быстро перейти к разрешенным деталям по абонементам и сертификатам.',
+    updatedAt: PREPAYMENTS_SCREENSHOT_UPDATED_AT,
     blocks: [
       {
         title: 'Что нажать: открыть сводку предоплат',
@@ -2905,6 +2908,7 @@ const roleInstructionLessons = {
     title: 'Как бухгалтеру читать корпоративные остатки в предоплатах',
     summary:
       'Для бухгалтера экран предоплат нужен прежде всего для сверки корпоративных балансов с финансовыми операциями.',
+    updatedAt: PREPAYMENTS_SCREENSHOT_UPDATED_AT,
     blocks: [
       {
         title: 'Что нажать: открыть предоплаты',
@@ -4687,6 +4691,7 @@ const CRM_KNOWLEDGE_SECTIONS = [
     skills: ['Предоплаты', 'Контроль'],
     badge: 'Логика предоплат',
     estimatedMinutes: 8,
+    updatedAt: PREPAYMENTS_SCREENSHOT_UPDATED_AT,
     summary:
       'Предоплаты показывают оплаченные или пополненные остатки, которые еще нужно отработать услугами.',
     cards: [
@@ -5972,6 +5977,7 @@ function makeKnowledgeLesson(role, section) {
   return {
     title: `${section.title}: как это работает`,
     summary: section.summary,
+    ...(section.updatedAt ? { updatedAt: section.updatedAt } : {}),
     screenshots,
     blocks: [
       ...cards.map((card) => ({
