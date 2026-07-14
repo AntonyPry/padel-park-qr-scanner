@@ -60,8 +60,9 @@ import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import {
   canExportFinance,
   canManageCorporateDeposits,
+  canViewCorporateClients,
 } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { useRealtimeRefresh } from '@/lib/realtime';
 
 type CorporateClientStatus = 'active' | 'archived';
@@ -371,10 +372,13 @@ function clientToForm(client: CorporateClient | null): ClientFormState {
 }
 
 export default function CorporateClientsPage() {
-  const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
+  const clubRole = useAuthorizationRole('club');
   const [searchParams] = useSearchParams();
-  const canManage = canManageCorporateDeposits(account?.role);
-  const canExport = canExportFinance(account?.role);
+  const canManageOrganization = canManageCorporateDeposits(organizationRole);
+  const canViewClubLedger = canViewCorporateClients(clubRole);
+  const canManageClubLedger = canManageCorporateDeposits(clubRole);
+  const canExport = canExportFinance(clubRole);
   const [clients, setClients] = useState<CorporateClient[]>([]);
   const [selectedClient, setSelectedClient] = useState<CorporateClient | null>(null);
   const [selectedClientId, setSelectedClientId] = useState<number | null>(null);
@@ -504,10 +508,12 @@ export default function CorporateClientsPage() {
         return;
       }
       const detail = (await response.json()) as CorporateClient;
-      const ledgerResponse = await apiFetch(
-        `/api/corporate-clients/${clientId}/ledger${getLedgerQuery()}`,
-      );
-      if (ledgerResponse.ok) {
+      const ledgerResponse = canViewClubLedger
+        ? await apiFetch(
+            `/api/corporate-clients/${clientId}/ledger${getLedgerQuery()}`,
+          )
+        : null;
+      if (ledgerResponse?.ok) {
         const ledgerPayload = (await ledgerResponse.json()) as
           | CorporateLedgerEntry[]
           | CorporateLedgerReport;
@@ -522,6 +528,7 @@ export default function CorporateClientsPage() {
           );
         }
       } else {
+        detail.ledgerEntries = [];
         setLedgerSummary(null);
       }
       setSelectedClient(detail);
@@ -532,7 +539,7 @@ export default function CorporateClientsPage() {
     } finally {
       setDetailLoading(false);
     }
-  }, [getLedgerQuery]);
+  }, [canViewClubLedger, getLedgerQuery]);
 
   useEffect(() => {
     void loadCategories();
@@ -554,7 +561,7 @@ export default function CorporateClientsPage() {
   });
 
   const openCreateClientDialog = () => {
-    if (!canManage) {
+    if (!canManageOrganization) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -565,7 +572,7 @@ export default function CorporateClientsPage() {
   };
 
   const openEditClientDialog = () => {
-    if (!canManage) {
+    if (!canManageOrganization) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -576,7 +583,7 @@ export default function CorporateClientsPage() {
   };
 
   const handleSaveClient = async () => {
-    if (!canManage) {
+    if (!canManageOrganization) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -617,7 +624,7 @@ export default function CorporateClientsPage() {
   };
 
   const openDepositDialog = () => {
-    if (!canManage) {
+    if (!canManageClubLedger) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -632,7 +639,7 @@ export default function CorporateClientsPage() {
   };
 
   const openSpendingDialog = () => {
-    if (!canManage) {
+    if (!canManageClubLedger) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -645,7 +652,7 @@ export default function CorporateClientsPage() {
   };
 
   const handleCreateDeposit = async () => {
-    if (!canManage) {
+    if (!canManageClubLedger) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -694,7 +701,7 @@ export default function CorporateClientsPage() {
   };
 
   const handleCreateSpending = async () => {
-    if (!canManage) {
+    if (!canManageClubLedger) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -769,7 +776,7 @@ export default function CorporateClientsPage() {
   };
 
   const requestArchive = () => {
-    if (!canManage) {
+    if (!canManageOrganization) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -801,7 +808,7 @@ export default function CorporateClientsPage() {
   };
 
   const requestRestore = () => {
-    if (!canManage) {
+    if (!canManageOrganization) {
       showPermissionDenied(permissionMessages.corporateDepositsManage);
       return;
     }
@@ -832,7 +839,7 @@ export default function CorporateClientsPage() {
 
   const requestCancelDeposit = useCallback(
     (entry: CorporateLedgerEntry, corporateClientId: number) => {
-      if (!canManage) {
+      if (!canManageClubLedger) {
         showPermissionDenied(permissionMessages.corporateDepositsManage);
         return;
       }
@@ -864,12 +871,12 @@ export default function CorporateClientsPage() {
         },
       });
     },
-    [canManage, loadClientDetail, loadClients],
+    [canManageClubLedger, loadClientDetail, loadClients],
   );
 
   const requestReverseSpending = useCallback(
     (entry: CorporateLedgerEntry, corporateClientId: number) => {
-      if (!canManage) {
+      if (!canManageClubLedger) {
         showPermissionDenied(permissionMessages.corporateDepositsManage);
         return;
       }
@@ -901,7 +908,7 @@ export default function CorporateClientsPage() {
         },
       });
     },
-    [canManage, loadClientDetail, loadClients],
+    [canManageClubLedger, loadClientDetail, loadClients],
   );
 
   const columns = useMemo<ColumnDef<CorporateClient>[]>(
@@ -1051,7 +1058,7 @@ export default function CorporateClientsPage() {
         cell: ({ row }) => {
           const corporateClientId = selectedClient?.id;
           const canCancel =
-            canManage &&
+            canManageClubLedger &&
             Boolean(corporateClientId) &&
             row.original.status === 'active';
 
@@ -1076,7 +1083,12 @@ export default function CorporateClientsPage() {
         },
       },
     ],
-    [canManage, requestCancelDeposit, requestReverseSpending, selectedClient?.id],
+    [
+      canManageClubLedger,
+      requestCancelDeposit,
+      requestReverseSpending,
+      selectedClient?.id,
+    ],
   );
 
   const activeClients = clients.filter((client) => client.status === 'active');
@@ -1136,7 +1148,7 @@ export default function CorporateClientsPage() {
         <div className="flex flex-wrap gap-2">
           <PermissionActionButton
             type="button"
-            allowed={canManage}
+            allowed={canManageOrganization}
             deniedMessage={permissionMessages.corporateDepositsManage}
             onClick={openCreateClientDialog}
           >
@@ -1388,7 +1400,7 @@ export default function CorporateClientsPage() {
                   )}
                 </div>
 
-                {!canManage && (
+                {!canManageClubLedger && (
                   <PermissionHint>
                     {permissionMessages.corporateDepositsManage}
                   </PermissionHint>
@@ -1397,7 +1409,7 @@ export default function CorporateClientsPage() {
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <PermissionActionButton
                     type="button"
-                    allowed={canManage}
+                    allowed={canManageClubLedger}
                     deniedMessage={permissionMessages.corporateDepositsManage}
                     onClick={openDepositDialog}
                   >
@@ -1407,7 +1419,7 @@ export default function CorporateClientsPage() {
                   <PermissionActionButton
                     type="button"
                     variant="outline"
-                    allowed={canManage}
+                    allowed={canManageClubLedger}
                     deniedMessage={permissionMessages.corporateDepositsManage}
                     onClick={openSpendingDialog}
                   >
@@ -1417,7 +1429,7 @@ export default function CorporateClientsPage() {
                   <PermissionActionButton
                     type="button"
                     variant="outline"
-                    allowed={canManage}
+                    allowed={canManageOrganization}
                     deniedMessage={permissionMessages.corporateDepositsManage}
                     onClick={openEditClientDialog}
                   >
@@ -1428,7 +1440,7 @@ export default function CorporateClientsPage() {
                     <PermissionActionButton
                       type="button"
                       variant="outline"
-                      allowed={canManage}
+                      allowed={canManageOrganization}
                       deniedMessage={permissionMessages.corporateDepositsManage}
                       onClick={requestArchive}
                     >
@@ -1439,7 +1451,7 @@ export default function CorporateClientsPage() {
                     <PermissionActionButton
                       type="button"
                       variant="outline"
-                      allowed={canManage}
+                      allowed={canManageOrganization}
                       deniedMessage={permissionMessages.corporateDepositsManage}
                       onClick={requestRestore}
                     >
@@ -1448,7 +1460,7 @@ export default function CorporateClientsPage() {
                     </PermissionActionButton>
                   )}
                 </div>
-                {canManage && !hasIncomeCategories && (
+                {canManageClubLedger && !hasIncomeCategories && (
                   <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
                     <div className="flex items-start gap-2">
                       <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1466,7 +1478,8 @@ export default function CorporateClientsPage() {
                   </div>
                 )}
 
-                <div className="space-y-3">
+                {canViewClubLedger && (
+                  <div className="space-y-3">
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center gap-2 text-sm font-medium">
                       <History className="h-4 w-4" />
@@ -1617,7 +1630,8 @@ export default function CorporateClientsPage() {
                     minWidthClassName="min-w-[1160px]"
                     pageSize={6}
                   />
-                </div>
+                  </div>
+                )}
               </>
             )}
           </CardContent>

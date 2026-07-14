@@ -59,7 +59,7 @@ import { Badge } from '@/components/ui/badge';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import { AnimatedDonut, AnimatedMetricValue } from '@/components/animated-data';
 import { canExportFinance, canManageFinance } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { MetricCard } from '@/components/dashboard-metric';
 import {
   PermissionActionButton,
@@ -342,9 +342,9 @@ async function readError(response: Response, fallback: string) {
 }
 
 export default function FinancePage() {
-  const { account } = useAuth();
-  const canEditFinance = canManageFinance(account?.role);
-  const canDownloadFinance = canExportFinance(account?.role);
+  const clubRole = useAuthorizationRole('club');
+  const canEditFinance = canManageFinance(clubRole);
+  const canDownloadFinance = canExportFinance(clubRole);
   const [report, setReport] = useState<FinanceReport | null>(null);
   const [history, setHistory] = useState<FinanceHistoryItem[]>([]);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);

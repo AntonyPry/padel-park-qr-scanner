@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthGate } from '@/components/AuthGate';
 import { apiFetch, clearAuthToken, setAuthToken } from '@/lib/api';
 import { AuthProvider } from '@/lib/auth';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth, useAuthorizationRole } from '@/lib/useAuth';
 import { getActiveTenantContext } from '@/lib/tenant-context';
 
 const account = {
@@ -41,12 +41,15 @@ const discovery = {
 
 function DomainProbe() {
   const { account: currentAccount, tenantContext, tenantReady } = useAuth();
+  const membershipRole = useAuthorizationRole('membership');
+  const clubRole = useAuthorizationRole('club');
   useEffect(() => {
     if (tenantReady) void apiFetch('/api/bookings/schedule');
   }, [tenantReady]);
   return (
     <div>
-      ready:{String(tenantReady)} role:{currentAccount?.role} club:{tenantContext?.clubId}
+      ready:{String(tenantReady)} role:{currentAccount?.role} membership:{membershipRole}{' '}
+      clubRole:{clubRole} club:{tenantContext?.clubId}
     </div>
   );
 }
@@ -146,7 +149,11 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(screen.getByText('Загрузка...')).toBeInTheDocument();
 
     releaseDiscovery();
-    expect(await screen.findByText('ready:true role:manager club:12')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'ready:true role:manager membership:manager clubRole:manager club:12',
+      ),
+    ).toBeInTheDocument();
     await waitFor(() => {
       expect(calls.some((call) => call.url.endsWith('/api/bookings/schedule'))).toBe(true);
     });
@@ -189,7 +196,11 @@ describe('AuthProvider tenant bootstrap', () => {
       </AuthProvider>,
     );
 
-    expect(await screen.findByText('ready:true role:manager club:')).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        'ready:true role:manager membership:manager clubRole:manager club:',
+      ),
+    ).toBeInTheDocument();
     await waitFor(() => {
       expect(calls.some((call) => call.url.endsWith('/api/bookings/schedule'))).toBe(true);
     });
@@ -220,6 +231,52 @@ describe('AuthProvider tenant bootstrap', () => {
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
     expect(getActiveTenantContext()).toBeNull();
+  });
+
+  it('keeps Account.role as identity while exposing separate membership and club roles', async () => {
+    setAuthToken('test-token');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/status')) {
+          return Response.json({ capabilities: { tenantContext: true }, setupRequired: false });
+        }
+        if (url.endsWith('/api/auth/me')) {
+          return Response.json({ account: { ...account, role: 'trainer' } });
+        }
+        if (url.endsWith('/api/auth/me/memberships')) {
+          return Response.json({
+            ...discovery,
+            memberships: [
+              {
+                ...discovery.memberships[0],
+                clubs: [
+                  { ...discovery.memberships[0].clubs[0], effectiveRole: 'manager' },
+                ],
+                role: 'trainer',
+              },
+            ],
+          });
+        }
+        if (url.endsWith('/api/bookings/schedule')) return Response.json({ courts: [] });
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <DomainProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByText(
+        'ready:true role:trainer membership:trainer clubRole:manager club:12',
+      ),
+    ).toBeInTheDocument();
   });
 
   it('clears the active context after a tenant request returns 401', async () => {

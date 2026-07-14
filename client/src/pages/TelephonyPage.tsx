@@ -109,7 +109,7 @@ import {
 } from '@/lib/permissions';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 const PAGE_SIZE = 20;
 const RECORDING_LINK_REFRESH_MS = 2 * 60 * 1000;
@@ -449,7 +449,7 @@ function getClientVisitSummary(client: ClientListItem) {
 }
 
 export default function TelephonyPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
@@ -477,8 +477,8 @@ export default function TelephonyPage() {
   const [clientForm, setClientForm] = useState<ClientCallForm>(EMPTY_CLIENT_FORM);
   const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
 
-  const canManage = canManageTelephony(account?.role);
-  const canWork = canWorkTelephony(account?.role);
+  const canManage = canManageTelephony(clubRole);
+  const canWork = canWorkTelephony(clubRole);
   const canAccessCallRecordings = canWork;
   const callsTableColumnCount = canWork ? 7 : 5;
 

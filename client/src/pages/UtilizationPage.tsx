@@ -60,7 +60,7 @@ import { ru } from 'date-fns/locale';
 import type { DateRange } from 'react-day-picker';
 import { cn } from '@/lib/utils';
 import { canManageUtilization } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { getApiErrorMessage } from '@/lib/api';
 
 const CAP_15 = 15 * 5; // 75 часов (5 кортов 2х2 по 15 часов)
@@ -145,9 +145,9 @@ function getEmptyUtilizationForm(): UtilizationFormValues {
 }
 
 export default function UtilizationPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const queryClient = useQueryClient();
-  const canEditUtilization = canManageUtilization(account?.role);
+  const canEditUtilization = canManageUtilization(clubRole);
   const [isOpen, setIsOpen] = useState(false);
   const [courtFilter, setCourtFilter] = useState<CourtFilter>('all');
 

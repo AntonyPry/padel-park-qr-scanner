@@ -18,7 +18,6 @@ export interface Account {
   staffId?: number | null;
   lastLoginAt?: string | null;
   Staff?: StaffProfile | null;
-  identityRole?: AccountRole;
 }
 
 export interface Credentials {

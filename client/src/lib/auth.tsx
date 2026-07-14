@@ -62,11 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const selected = selectTenantContext(discovery);
       setTenantContext(selected);
       setTenantReady(true);
-      return {
-        ...identityAccount,
-        identityRole: identityAccount.role,
-        role: selected.effectiveRole,
-      };
+      return identityAccount;
     },
     [],
   );

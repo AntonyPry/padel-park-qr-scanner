@@ -69,7 +69,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { canManageShiftReportTemplates } from '@/lib/permissions';
 import { ru } from 'date-fns/locale';
 
@@ -991,8 +991,8 @@ function TemplateEditorDialog({
 }
 
 export default function ShiftReportsPage() {
-  const { account } = useAuth();
-  const canManageTemplates = canManageShiftReportTemplates(account?.role);
+  const organizationRole = useAuthorizationRole('organization');
+  const canManageTemplates = canManageShiftReportTemplates(organizationRole);
   const [activeTab, setActiveTab] = useState<'reports' | 'templates'>('reports');
   const [reports, setReports] = useState<ShiftReport[]>([]);
   const [templates, setTemplates] = useState<ShiftReportTemplate[]>([]);

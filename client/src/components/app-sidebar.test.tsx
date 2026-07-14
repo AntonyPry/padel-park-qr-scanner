@@ -23,7 +23,15 @@ vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
 afterEach(() => cleanup());
 
-function renderSidebar(role: AccountRole) {
+function renderSidebar(
+  role: AccountRole,
+  options: {
+    effectiveRole?: AccountRole;
+    membershipRole?: AccountRole;
+    tenantContextEnabled?: boolean;
+  } = {},
+) {
+  const tenantContextEnabled = options.tenantContextEnabled ?? false;
   return render(
     <MemoryRouter initialEntries={['/admin/catalog']}>
       <AuthContext.Provider
@@ -39,8 +47,16 @@ function renderSidebar(role: AccountRole) {
           login: vi.fn(),
           logout: vi.fn(),
           setupRequired: false,
-          tenantContext: null,
-          tenantContextEnabled: false,
+          tenantContext: tenantContextEnabled
+            ? {
+                clubId: 12,
+                effectiveRole: options.effectiveRole || role,
+                membershipId: 21,
+                membershipRole: options.membershipRole || role,
+                organizationId: 11,
+              }
+            : null,
+          tenantContextEnabled,
           tenantReady: true,
         }}
       >
@@ -52,7 +68,7 @@ function renderSidebar(role: AccountRole) {
   );
 }
 
-describe('AppSidebar inventory placeholder', () => {
+describe('AppSidebar authorization', () => {
   it('renders the current Setly brand mark', () => {
     const { container } = renderSidebar('owner');
 
@@ -94,4 +110,31 @@ describe('AppSidebar inventory placeholder', () => {
       expect(screen.queryByText('Инвентаризация')).not.toBeInTheDocument();
     },
   );
+
+  it('hides organization staff/users but shows club manager routes for membership trainer + club manager', () => {
+    renderSidebar('trainer', {
+      effectiveRole: 'manager',
+      membershipRole: 'trainer',
+      tenantContextEnabled: true,
+    });
+
+    expect(screen.queryByRole('link', { name: 'Персонал' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Пользователи' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Монитор входов' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Бронирование' })).toBeInTheDocument();
+  });
+
+  it('shows organization staff/users but hides club manager routes for membership manager + club trainer', () => {
+    renderSidebar('manager', {
+      effectiveRole: 'trainer',
+      membershipRole: 'manager',
+      tenantContextEnabled: true,
+    });
+
+    expect(screen.getByRole('link', { name: 'Персонал' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Пользователи' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Монитор входов' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Бронирование' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Тренерский кабинет' })).toBeInTheDocument();
+  });
 });

@@ -36,6 +36,7 @@ export interface ActiveTenantContext {
   clubId: number;
   effectiveRole: AccountRole;
   membershipId: number;
+  membershipRole: AccountRole;
   organizationId: number;
 }
 
@@ -95,6 +96,7 @@ export function selectTenantContext(discovery: TenantDiscoveryResponse) {
       clubId: club.id,
       effectiveRole: club.effectiveRole,
       membershipId: membership.id,
+      membershipRole: membership.role,
       organizationId: membership.organization.id,
     })),
   );

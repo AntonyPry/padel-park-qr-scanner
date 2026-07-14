@@ -56,7 +56,7 @@ import type {
   ReferenceStatus,
   ReferenceType,
 } from '@/lib/references';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 const REFERENCE_TABS: Array<{
   type: ReferenceType;
@@ -110,9 +110,9 @@ function getStatusBadgeClass(status: ReferenceStatus) {
 }
 
 export default function ReferencesPage() {
-  const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
   const queryClient = useQueryClient();
-  const canEditReferences = canManageReferences(account?.role);
+  const canEditReferences = canManageReferences(organizationRole);
   const [activeType, setActiveType] = useState<ReferenceType>('client-sources');
   const [status, setStatus] = useState<ReferenceStatus>('active');
   const [formOpen, setFormOpen] = useState(false);

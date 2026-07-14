@@ -2,28 +2,42 @@ import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
 import { useAuth } from '@/lib/useAuth';
 import {
-  getDefaultPath,
-  hasRoleAccess,
+  canAccessPathForAuthority,
+  getDefaultPathForAuthority,
+  type ClientRoute,
 } from '@/lib/permissions';
-import type { AccountRole } from '@/lib/roles';
 
 export function RequireRoles({
-  roles,
+  path,
   children,
 }: {
-  roles: AccountRole[];
+  path: ClientRoute;
   children: ReactNode;
 }) {
-  const { account } = useAuth();
+  const { account, tenantContext, tenantContextEnabled } = useAuth();
+  const authority = {
+    accountRole: account?.role,
+    tenantContext,
+    tenantContextEnabled,
+  };
 
-  if (!hasRoleAccess(account?.role, roles)) {
-    return <Navigate to={getDefaultPath(account?.role)} replace />;
+  if (!canAccessPathForAuthority(authority, path)) {
+    return <Navigate to={getDefaultPathForAuthority(authority)} replace />;
   }
 
   return children;
 }
 
 export function HomeRedirect() {
-  const { account } = useAuth();
-  return <Navigate to={getDefaultPath(account?.role)} replace />;
+  const { account, tenantContext, tenantContextEnabled } = useAuth();
+  return (
+    <Navigate
+      to={getDefaultPathForAuthority({
+        accountRole: account?.role,
+        tenantContext,
+        tenantContextEnabled,
+      })}
+      replace
+    />
+  );
 }

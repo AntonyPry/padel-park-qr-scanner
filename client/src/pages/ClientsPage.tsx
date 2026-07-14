@@ -121,6 +121,7 @@ import {
   parseNonNegativeNumericFilter,
 } from '@/lib/client-query';
 import {
+  canAccessPath,
   canManageClients,
   canManageCallTasks,
   canManageTrainingNotes,
@@ -135,7 +136,7 @@ import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
 import { useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 type ClientStatus = 'active' | 'archived';
 type ClientSegment = 'all' | 'new' | 'regular' | 'inactive' | 'no_visits';
@@ -1310,22 +1311,24 @@ function TooltipIconButton({
 }
 
 export default function ClientsPage() {
-  const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
+  const clubRole = useAuthorizationRole('club');
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const canEdit = canManageClients(account?.role);
-  const canCreateCallTask = canManageCallTasks(account?.role);
-  const canMerge = canMergeClients(account?.role);
-  const canViewTraining = canViewTrainingNotes(account?.role);
-  const canEditTraining = canManageTrainingNotes(account?.role);
-  const canViewSubscriptions = canViewClientSubscriptions(account?.role);
-  const canRedeemSubscriptions = canRedeemClientSubscriptions(account?.role);
-  const canViewClientCertificates = canViewCertificates(account?.role);
-  const canRedeemClientCertificates = canRedeemCertificates(account?.role);
+  const canEdit = canManageClients(organizationRole);
+  const canCreateCallTask = canManageCallTasks(clubRole);
+  const canMerge = canMergeClients(organizationRole);
+  const canViewTraining = canViewTrainingNotes(clubRole);
+  const canEditTraining = canManageTrainingNotes(clubRole);
+  const canViewSubscriptions = canViewClientSubscriptions(clubRole);
+  const canRedeemSubscriptions = canRedeemClientSubscriptions(clubRole);
+  const canViewClientCertificates = canViewCertificates(clubRole);
+  const canRedeemClientCertificates = canRedeemCertificates(clubRole);
   const canViewClientTelephony = ['owner', 'manager', 'admin', 'viewer'].includes(
-    account?.role || '',
+    clubRole || '',
   );
-  const isTrainerAccount = account?.role === 'trainer';
+  const isOrganizationTrainer = organizationRole === 'trainer';
+  const canViewClubBookingHistory = canAccessPath(clubRole, '/admin/bookings');
 
   const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
   const [clients, setClients] = useState<Client[]>([]);
@@ -2985,7 +2988,7 @@ export default function ClientsPage() {
         );
       },
     },
-    ...(!isTrainerAccount
+    ...(!isOrganizationTrainer
       ? ([
           {
             accessorKey: 'phone',
@@ -3062,7 +3065,7 @@ export default function ClientsPage() {
                     aria-label="Поиск клиентов"
                     value={q}
                     onChange={(event) => { setQ(event.target.value); setPage(1); }}
-                    placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
+                    placeholder={isOrganizationTrainer ? 'Имя клиента' : 'Имя или телефон'}
                     className="h-9 pl-9 pr-9"
                   />
                   {hasClientSearchQuery && (
@@ -3426,7 +3429,7 @@ export default function ClientsPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-2 text-sm">
-                  {!isTrainerAccount && (
+                  {!isOrganizationTrainer && (
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">Телефон</span>
                       <span className="text-right font-medium">{client.phone}</span>
@@ -4376,7 +4379,7 @@ export default function ClientsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {!isTrainerAccount && getPhoneHref(details.client.phone) && (
+                  {!isOrganizationTrainer && getPhoneHref(details.client.phone) && (
                     <Button asChild variant="outline" size="sm">
                       <a href={getPhoneHref(details.client.phone)}>
                         <PhoneCall className="mr-2 h-4 w-4" />
@@ -4384,7 +4387,7 @@ export default function ClientsPage() {
                       </a>
                     </Button>
                   )}
-                  {!isTrainerAccount && (
+                  {!isOrganizationTrainer && (
                     <Button
                       type="button"
                       variant="outline"
@@ -4437,10 +4440,10 @@ export default function ClientsPage() {
                 <>
                   <div
                     className={`grid grid-cols-1 gap-4 ${
-                      isTrainerAccount ? 'md:grid-cols-2' : 'md:grid-cols-3'
+                      isOrganizationTrainer ? 'md:grid-cols-2' : 'md:grid-cols-3'
                     }`}
                   >
-                    {!isTrainerAccount && (
+                    {!isOrganizationTrainer && (
                       <div className="min-w-0 rounded-md border p-4">
                         <div className="text-xs text-muted-foreground">
                           Телефон
@@ -5076,7 +5079,7 @@ export default function ClientsPage() {
                     </div>
                   )}
 
-                  {!isTrainerAccount && (
+                  {canViewClientTelephony && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
@@ -5263,7 +5266,7 @@ export default function ClientsPage() {
                     </div>
                   )}
 
-                  {!isTrainerAccount && (
+                  {canViewClubBookingHistory && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>

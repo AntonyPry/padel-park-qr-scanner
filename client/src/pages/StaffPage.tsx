@@ -58,7 +58,7 @@ import {
   canPayPayroll,
   canReviewPayroll,
 } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
@@ -228,12 +228,13 @@ function formatShiftTimeRange(shift: ShiftRecord) {
 }
 
 export default function StaffPage() {
-  const { account } = useAuth();
-  const canEditStaff = canManageStaff(account?.role);
-  const canEditShifts = canManageShifts(account?.role);
-  const canReview = canReviewPayroll(account?.role);
-  const canApprove = canApprovePayroll(account?.role);
-  const canPay = canPayPayroll(account?.role);
+  const organizationRole = useAuthorizationRole('organization');
+  const clubRole = useAuthorizationRole('club');
+  const canEditStaff = canManageStaff(organizationRole);
+  const canEditShifts = canManageShifts(clubRole);
+  const canReview = canReviewPayroll(organizationRole);
+  const canApprove = canApprovePayroll(organizationRole);
+  const canPay = canPayPayroll(organizationRole);
   const [admins, setAdmins] = useState<AdminStat[]>([]);
   const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);

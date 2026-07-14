@@ -40,21 +40,24 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 import { Link, useLocation } from 'react-router-dom';
-import { ROUTE_ACCESS, hasRoleAccess } from '@/lib/permissions';
+import {
+  canAccessPathForAuthority,
+  type ClientRoute,
+} from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import { selectAuthorizationRole } from '@/lib/authorization';
 import { getAccountRoleLabel } from '@/lib/roles';
-import type { AccountRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './theme-toggle';
 
 type NavItem = {
   title: string;
-  url?: string;
+  url?: ClientRoute;
+  authorizationPath?: ClientRoute;
   icon: LucideIcon;
   activeUrls?: string[];
   badge?: string;
   disabled?: boolean;
-  roles?: AccountRole[];
   tooltip?: string;
 };
 
@@ -203,7 +206,7 @@ const navigationSections: NavSection[] = [
         icon: Boxes,
         badge: 'Скоро',
         disabled: true,
-        roles: ROUTE_ACCESS['/admin/catalog'],
+        authorizationPath: '/admin/catalog',
         tooltip: 'Раздел в разработке',
       },
       {
@@ -228,7 +231,17 @@ function isRouteActive(currentPath: string, item: NavItem) {
 
 export function AppSidebar() {
   const location = useLocation();
-  const { account, logout } = useAuth();
+  const {
+    account,
+    logout,
+    tenantContext,
+    tenantContextEnabled,
+  } = useAuth();
+  const authority = {
+    accountRole: account?.role,
+    tenantContext,
+    tenantContextEnabled,
+  };
   const navRef = useRef<HTMLDivElement | null>(null);
   const [activeIndicator, setActiveIndicator] = useState({
     height: 0,
@@ -240,18 +253,16 @@ export function AppSidebar() {
   const availableSections = navigationSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) =>
-        hasRoleAccess(
-          account?.role,
-          item.roles || (item.url ? ROUTE_ACCESS[item.url] : []) || [],
-        ),
-      ),
+      items: section.items.filter((item) => {
+        const path = item.authorizationPath || item.url;
+        return path ? canAccessPathForAuthority(authority, path) : false;
+      }),
     }))
     .filter((section) => section.items.length > 0);
   const displayName = account?.Staff?.name || account?.email || 'Аккаунт';
   const secondaryLabel = account?.Staff?.name
     ? account.email
-    : getAccountRoleLabel(account?.role);
+    : getAccountRoleLabel(selectAuthorizationRole(authority, 'membership'));
   const initials = displayName
     .split(/\s+/)
     .filter(Boolean)

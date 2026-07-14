@@ -151,7 +151,7 @@ import {
 } from '@/lib/permissions';
 import { formatClientPhone, getPhoneDigits } from '@/lib/phone';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 const SLOT_HEIGHT = 38;
 const DEFAULT_DAY_START_MINUTES = 8 * 60;
@@ -1104,13 +1104,13 @@ function buildAnalyticsCsv(report: BookingAnalytics) {
 }
 
 export default function BookingsPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const queryClient = useQueryClient();
-  const canEditBookings = canManageBookings(account?.role);
-  const canEditBookingResources = canManageBookingResources(account?.role);
-  const canCloseTrainingPlans = canManageTrainingNotes(account?.role);
-  const canViewBookingCertificates = canViewCertificates(account?.role);
-  const canViewBookingSubscriptions = canViewClientSubscriptions(account?.role);
+  const canEditBookings = canManageBookings(clubRole);
+  const canEditBookingResources = canManageBookingResources(clubRole);
+  const canCloseTrainingPlans = canManageTrainingNotes(clubRole);
+  const canViewBookingCertificates = canViewCertificates(clubRole);
+  const canViewBookingSubscriptions = canViewClientSubscriptions(clubRole);
   const [searchParams, setSearchParams] = useSearchParams();
   const priceManuallyEditedRef = useRef(false);
   const priceQuoteBaselineRef = useRef('');

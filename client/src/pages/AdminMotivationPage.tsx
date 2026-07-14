@@ -60,7 +60,7 @@ import {
 } from '@/lib/motivation';
 import { canManageMotivation } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import {
   listActiveShiftReports,
   type ShiftReport,
@@ -822,8 +822,8 @@ function BonusRuleForm({
 }
 
 export default function AdminMotivationPage() {
-  const { account } = useAuth();
-  const canEditMotivation = canManageMotivation(account?.role);
+  const organizationRole = useAuthorizationRole('organization');
+  const canEditMotivation = canManageMotivation(organizationRole);
 
   const [records, setRecords] = useState<FinanceRecord[]>([]);
   const [paymentSummary, setPaymentSummary] =

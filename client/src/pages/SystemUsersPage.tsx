@@ -51,7 +51,7 @@ import {
   getAccountRoleLabel,
   type AccountRole,
 } from '@/lib/roles';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { useRealtimeRefresh } from '@/lib/realtime';
 
 type AccountStatus = 'active' | 'inactive' | 'archived';
@@ -131,7 +131,7 @@ function getStaffPosition(staff: StaffOption) {
 }
 
 export default function SystemUsersPage() {
-  const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
   const [accounts, setAccounts] = useState<SystemAccount[]>([]);
   const [staff, setStaff] = useState<StaffOption[]>([]);
   const [loading, setLoading] = useState(true);
@@ -155,11 +155,11 @@ export default function SystemUsersPage() {
   const selectedStatus = accountForm.watch('status');
 
   const availableRoles = useMemo(() => {
-    if (account?.role === 'owner') return ACCOUNT_ROLES;
+    if (organizationRole === 'owner') return ACCOUNT_ROLES;
     return ACCOUNT_ROLES.filter((role) =>
       MANAGER_MANAGED_ROLES.includes(role.value),
     );
-  }, [account?.role]);
+  }, [organizationRole]);
 
   const linkedStaffIds = useMemo(() => {
     return new Set(
@@ -238,9 +238,9 @@ export default function SystemUsersPage() {
   });
 
   const canManageAccount = (target: SystemAccount) => {
-    if (account?.role === 'owner') return true;
+    if (organizationRole === 'owner') return true;
     return Boolean(
-      account?.role === 'manager' &&
+      organizationRole === 'manager' &&
         MANAGER_MANAGED_ROLES.includes(target.role),
     );
   };
@@ -280,7 +280,7 @@ export default function SystemUsersPage() {
       return;
     }
     if (
-      account?.role === 'manager' &&
+      organizationRole === 'manager' &&
       !MANAGER_MANAGED_ROLES.includes(values.role)
     ) {
       showPermissionDenied(permissionMessages.systemUsersRestricted);

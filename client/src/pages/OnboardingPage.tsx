@@ -66,7 +66,7 @@ import { clearStoredActiveOnboardingQuest } from '@/lib/onboarding-quest';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
 import { useTheme } from '@/lib/theme-context';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 function getTaskStatus(task: OnboardingTask) {
   if (task.progress.isCompleted && task.progress.lesson.isUpdatedAfterCompletion) {
@@ -474,7 +474,8 @@ function OnboardingListView({
   onRoleChange: (role: string) => void;
   overview: OnboardingOverview;
 }) {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
+  const organizationRole = useAuthorizationRole('organization');
   const queryClient = useQueryClient();
   const [confirmTrainingCleanup, setConfirmTrainingCleanup] = useState(false);
   const activeRole = overview.selectedRole;
@@ -493,12 +494,12 @@ function OnboardingListView({
   );
 
   const trainingDataQuery = useQuery({
-    enabled: account?.role === 'owner',
+    enabled: clubRole === 'owner',
     queryFn: () => getOnboardingTrainingData(activeRole),
     queryKey: queryKeys.onboarding.trainingData(activeRole),
   });
   const metricsQuery = useQuery({
-    enabled: account?.role === 'owner',
+    enabled: organizationRole === 'owner',
     queryFn: getOnboardingMetrics,
     queryKey: queryKeys.onboarding.metrics(),
   });
@@ -1219,26 +1220,26 @@ function TaskDetailView({
 export default function OnboardingPage() {
   const { taskKey } = useParams<{ taskKey?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { account } = useAuth();
+  const membershipRole = useAuthorizationRole('membership');
   const queryClient = useQueryClient();
   const roleFromQuery = searchParams.get('role') as AccountRole | null;
   const roleFromTaskKey = inferRoleFromTaskKey(taskKey);
   const roleForRequest =
-    account?.role === 'owner'
-      ? roleFromQuery || roleFromTaskKey || account.role
+    membershipRole === 'owner'
+      ? roleFromQuery || roleFromTaskKey || membershipRole
       : undefined;
   const roleForQueryKey =
-    account?.role === 'owner'
-      ? roleFromQuery || roleFromTaskKey || account.role
-      : account?.role;
+    membershipRole === 'owner'
+      ? roleFromQuery || roleFromTaskKey || membershipRole
+      : membershipRole;
 
   const overviewQuery = useQuery({
-    enabled: Boolean(account?.role) && !taskKey,
+    enabled: Boolean(membershipRole) && !taskKey,
     queryFn: () => getOnboardingOverview(roleForRequest),
     queryKey: queryKeys.onboarding.detail(roleForQueryKey),
   });
   const detailQuery = useQuery({
-    enabled: Boolean(account?.role && taskKey),
+    enabled: Boolean(membershipRole && taskKey),
     queryFn: () => getOnboardingTaskDetail(taskKey!, roleForRequest),
     queryKey: queryKeys.onboarding.task(taskKey || 'none', roleForQueryKey),
     refetchOnMount: 'always',
@@ -1247,12 +1248,12 @@ export default function OnboardingPage() {
   });
 
   useEffect(() => {
-    if (!account?.role || !taskKey) return;
+    if (!membershipRole || !taskKey) return;
 
     void queryClient.invalidateQueries({
       queryKey: queryKeys.onboarding.task(taskKey, roleForQueryKey),
     });
-  }, [account?.role, queryClient, roleForQueryKey, taskKey]);
+  }, [membershipRole, queryClient, roleForQueryKey, taskKey]);
 
   const completeInstructionMutation = useMutation({
     mutationFn: (detail: OnboardingTaskDetail) =>

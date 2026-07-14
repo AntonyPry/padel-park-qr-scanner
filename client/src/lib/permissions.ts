@@ -1,6 +1,11 @@
+import {
+  selectAuthorizationRole,
+  type AuthorizationScope,
+  type RoleAuthority,
+} from '@/lib/authorization';
 import type { AccountRole } from '@/lib/roles';
 
-export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
+export const ROUTE_ACCESS = {
   '/admin': ['owner', 'manager', 'admin'],
   '/admin/manager-control': ['owner', 'manager'],
   '/admin/audit': ['owner', 'manager'],
@@ -25,17 +30,59 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
   '/admin/references': ['owner', 'manager', 'admin', 'accountant', 'viewer'],
+} as const satisfies Record<string, readonly AccountRole[]>;
+
+export type ClientRoute = keyof typeof ROUTE_ACCESS;
+
+export const ROUTE_SCOPES: Record<ClientRoute, AuthorizationScope> = {
+  '/admin': 'club',
+  '/admin/manager-control': 'club',
+  '/admin/audit': 'organization',
+  '/admin/onboarding': 'membership',
+  '/admin/bookings': 'club',
+  '/admin/clients': 'organization',
+  '/admin/trainer': 'club',
+  '/admin/methodology': 'organization',
+  '/admin/methodology-analytics': 'organization',
+  '/admin/client-bases': 'club',
+  '/admin/call-tasks': 'club',
+  '/admin/prepayments': 'club',
+  '/admin/certificates': 'club',
+  '/admin/corporate-clients': 'organization',
+  '/admin/telephony': 'club',
+  '/admin/visits-analytics': 'club',
+  '/admin/finances': 'club',
+  '/admin/staff': 'organization',
+  '/admin/users': 'organization',
+  '/admin/motivation': 'club',
+  '/admin/shift-reports': 'club',
+  '/admin/utilization': 'club',
+  '/admin/catalog': 'organization',
+  '/admin/references': 'organization',
 };
 
 export function hasRoleAccess(
   role: AccountRole | null | undefined,
-  allowedRoles: AccountRole[],
+  allowedRoles: readonly AccountRole[],
 ) {
   return Boolean(role && allowedRoles.includes(role));
 }
 
-export function canAccessPath(role: AccountRole | null | undefined, path: string) {
-  return hasRoleAccess(role, ROUTE_ACCESS[path] || []);
+export function canAccessPath(
+  role: AccountRole | null | undefined,
+  path: ClientRoute,
+) {
+  return hasRoleAccess(role, ROUTE_ACCESS[path]);
+}
+
+export function canAccessPathForAuthority(
+  authority: RoleAuthority,
+  path: ClientRoute,
+) {
+  return hasRoleAccess(
+    selectAuthorizationRole(authority, ROUTE_SCOPES[path]),
+    ROUTE_ACCESS[path],
+  );
 }
 
 export function getDefaultPath(role: AccountRole | null | undefined) {
@@ -48,6 +95,32 @@ export function getDefaultPath(role: AccountRole | null | undefined) {
   );
 
   return entry?.[0] || '/admin/motivation';
+}
+
+const DEFAULT_PATH_PRIORITY: ClientRoute[] = [
+  '/admin',
+  '/admin/finances',
+  '/admin/visits-analytics',
+  '/admin/trainer',
+  '/admin/onboarding',
+  ...Object.keys(ROUTE_ACCESS).filter(
+    (path) =>
+      ![
+        '/admin',
+        '/admin/finances',
+        '/admin/visits-analytics',
+        '/admin/trainer',
+        '/admin/onboarding',
+      ].includes(path),
+  ) as ClientRoute[],
+];
+
+export function getDefaultPathForAuthority(authority: RoleAuthority) {
+  return (
+    DEFAULT_PATH_PRIORITY.find((path) =>
+      canAccessPathForAuthority(authority, path),
+    ) || '/admin/motivation'
+  );
 }
 
 export function canManageFinance(role: AccountRole | null | undefined) {

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ROUTE_ACCESS,
+  ROUTE_SCOPES,
   canAccessPath,
+  canAccessPathForAuthority,
   canManageBookingResources,
   canManageBookings,
   canManageClientBases,
@@ -12,7 +15,9 @@ import {
   canManagePrepaymentSales,
   canManagePrepaymentSettings,
   canManageShiftReportTemplates,
+  canManageStaff,
   canManageSubscriptionTypes,
+  canManageSystemUsers,
   canManageTelephony,
   canViewManagerControlDashboard,
   canRedeemCertificates,
@@ -26,8 +31,60 @@ import {
   canViewTrainingNotes,
   getDefaultPath,
 } from './permissions';
+import { selectAuthorizationRole, type RoleAuthority } from './authorization';
 
 describe('permissions', () => {
+  it('declares one audited authorization scope for every protected client route', () => {
+    expect(Object.keys(ROUTE_SCOPES).sort()).toEqual(Object.keys(ROUTE_ACCESS).sort());
+    expect(ROUTE_SCOPES['/admin/onboarding']).toBe('membership');
+    expect(ROUTE_SCOPES['/admin/staff']).toBe('organization');
+    expect(ROUTE_SCOPES['/admin/users']).toBe('organization');
+    expect(ROUTE_SCOPES['/admin/clients']).toBe('organization');
+    expect(ROUTE_SCOPES['/admin/bookings']).toBe('club');
+    expect(ROUTE_SCOPES['/admin/finances']).toBe('club');
+  });
+
+  it('separates organization management from club manager actions', () => {
+    const authority = (
+      accountRole: 'trainer' | 'manager',
+      membershipRole: 'trainer' | 'manager',
+      effectiveRole: 'trainer' | 'manager',
+    ): RoleAuthority => ({
+      accountRole,
+      tenantContext: {
+        clubId: 12,
+        effectiveRole,
+        membershipId: 21,
+        membershipRole,
+        organizationId: 11,
+      },
+      tenantContextEnabled: true,
+    });
+    const trainerManager = authority('trainer', 'trainer', 'manager');
+    const trainerOrganizationRole = selectAuthorizationRole(
+      trainerManager,
+      'organization',
+    );
+    const managerClubRole = selectAuthorizationRole(trainerManager, 'club');
+    expect(canManageStaff(trainerOrganizationRole)).toBe(false);
+    expect(canManageSystemUsers(trainerOrganizationRole)).toBe(false);
+    expect(canManageBookingResources(managerClubRole)).toBe(true);
+    expect(canAccessPathForAuthority(trainerManager, '/admin/staff')).toBe(false);
+    expect(canAccessPathForAuthority(trainerManager, '/admin/bookings')).toBe(true);
+
+    const managerTrainer = authority('manager', 'manager', 'trainer');
+    const managerOrganizationRole = selectAuthorizationRole(
+      managerTrainer,
+      'organization',
+    );
+    const trainerClubRole = selectAuthorizationRole(managerTrainer, 'club');
+    expect(canManageStaff(managerOrganizationRole)).toBe(true);
+    expect(canManageSystemUsers(managerOrganizationRole)).toBe(true);
+    expect(canManageBookingResources(trainerClubRole)).toBe(false);
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/users')).toBe(true);
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/bookings')).toBe(false);
+  });
+
   it('routes accountants and trainers to their safe default sections', () => {
     expect(getDefaultPath('accountant')).toBe('/admin/finances');
     expect(getDefaultPath('trainer')).toBe('/admin/trainer');

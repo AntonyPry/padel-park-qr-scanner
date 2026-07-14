@@ -43,7 +43,10 @@ beforeEach(() => {
 describe('tenant context transport', () => {
   it('auto-selects the deterministic single club and keeps preference non-authoritative', () => {
     const selected = selectTenantContext(discovery);
-    expect(selected).toEqual(discovery.recommendedContext);
+    expect(selected).toEqual({
+      ...discovery.recommendedContext,
+      membershipRole: 'manager',
+    });
     expect(Object.isFrozen(selected)).toBe(true);
     expect(getActiveTenantContext()).toEqual(selected);
 
@@ -51,7 +54,55 @@ describe('tenant context transport', () => {
       'setly_tenant_context_preference',
       JSON.stringify({ organizationId: 999, clubId: 999 }),
     );
-    expect(selectTenantContext(discovery)).toEqual(discovery.recommendedContext);
+    expect(selectTenantContext(discovery)).toEqual({
+      ...discovery.recommendedContext,
+      membershipRole: 'manager',
+    });
+  });
+
+  it('reselects membership and effective roles together without trusting the preference', () => {
+    const multiContextDiscovery: TenantDiscoveryResponse = {
+      memberships: [
+        discovery.memberships[0],
+        {
+          clubs: [
+            {
+              effectiveRole: 'trainer',
+              id: 32,
+              name: 'Second club',
+              slug: 'second-club',
+              timezone: 'Europe/Moscow',
+            },
+          ],
+          id: 31,
+          organization: { id: 30, name: 'Second org', slug: 'second-org' },
+          role: 'viewer',
+        },
+      ],
+      recommendedContext: null,
+    };
+    localStorage.setItem(
+      'setly_tenant_context_preference',
+      JSON.stringify({ organizationId: 30, clubId: 32 }),
+    );
+
+    expect(selectTenantContext(multiContextDiscovery)).toEqual({
+      clubId: 32,
+      effectiveRole: 'trainer',
+      membershipId: 31,
+      membershipRole: 'viewer',
+      organizationId: 30,
+    });
+
+    localStorage.setItem(
+      'setly_tenant_context_preference',
+      JSON.stringify({ organizationId: 11, clubId: 12 }),
+    );
+    expect(selectTenantContext(multiContextDiscovery)).toMatchObject({
+      effectiveRole: 'manager',
+      membershipRole: 'manager',
+      organizationId: 11,
+    });
   });
 
   it('maps generated global, membership, organization and club contracts', () => {

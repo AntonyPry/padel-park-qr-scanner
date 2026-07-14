@@ -8,7 +8,6 @@ import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
 import { OnboardingRouteEvents } from './components/onboarding-route-events';
 import { HomeRedirect, RequireRoles } from './components/RequireRoles';
-import { ROUTE_ACCESS } from './lib/permissions';
 import { AuthProvider } from './lib/auth';
 import { queryClient } from './lib/query-client';
 import { RealtimeProvider } from './lib/realtime-provider';
@@ -68,7 +67,7 @@ function App() {
                     <Route
                       path="/admin"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin']}>
+                        <RequireRoles path="/admin">
                           <AdminPage />
                         </RequireRoles>
                       }
@@ -76,7 +75,7 @@ function App() {
                     <Route
                       path="/admin/manager-control"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/manager-control']}>
+                        <RequireRoles path="/admin/manager-control">
                           <ManagerControlDashboardPage />
                         </RequireRoles>
                       }
@@ -84,7 +83,7 @@ function App() {
                     <Route
                       path="/admin/clients"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/clients']}>
+                        <RequireRoles path="/admin/clients">
                           <ClientsPage />
                         </RequireRoles>
                       }
@@ -92,7 +91,7 @@ function App() {
                     <Route
                       path="/admin/onboarding"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/onboarding']}>
+                        <RequireRoles path="/admin/onboarding">
                           <OnboardingPage />
                         </RequireRoles>
                       }
@@ -100,7 +99,7 @@ function App() {
                     <Route
                       path="/admin/onboarding/:taskKey"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/onboarding']}>
+                        <RequireRoles path="/admin/onboarding">
                           <OnboardingPage />
                         </RequireRoles>
                       }
@@ -108,7 +107,7 @@ function App() {
                     <Route
                       path="/admin/bookings"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/bookings']}>
+                        <RequireRoles path="/admin/bookings">
                           <BookingsPage />
                         </RequireRoles>
                       }
@@ -116,7 +115,7 @@ function App() {
                     <Route
                       path="/admin/trainer"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/trainer']}>
+                        <RequireRoles path="/admin/trainer">
                           <TrainerPage />
                         </RequireRoles>
                       }
@@ -124,7 +123,7 @@ function App() {
                     <Route
                       path="/admin/methodology"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/methodology']}>
+                        <RequireRoles path="/admin/methodology">
                           <MethodologyPage />
                         </RequireRoles>
                       }
@@ -132,9 +131,7 @@ function App() {
                     <Route
                       path="/admin/methodology-analytics"
                       element={
-                        <RequireRoles
-                          roles={ROUTE_ACCESS['/admin/methodology-analytics']}
-                        >
+                        <RequireRoles path="/admin/methodology-analytics">
                           <MethodologyAnalyticsPage />
                         </RequireRoles>
                       }
@@ -142,7 +139,7 @@ function App() {
                     <Route
                       path="/admin/client-bases"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/client-bases']}>
+                        <RequireRoles path="/admin/client-bases">
                           <ClientBasesPage />
                         </RequireRoles>
                       }
@@ -150,7 +147,7 @@ function App() {
                     <Route
                       path="/admin/call-tasks"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/call-tasks']}>
+                        <RequireRoles path="/admin/call-tasks">
                           <CallTasksPage />
                         </RequireRoles>
                       }
@@ -158,7 +155,7 @@ function App() {
                     <Route
                       path="/admin/prepayments"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/prepayments']}>
+                        <RequireRoles path="/admin/prepayments">
                           <Suspense fallback={<PrepaymentsPageShell />}>
                             <PrepaymentsPage />
                           </Suspense>
@@ -168,7 +165,7 @@ function App() {
                     <Route
                       path="/admin/certificates"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/certificates']}>
+                        <RequireRoles path="/admin/certificates">
                           <CertificatesPage />
                         </RequireRoles>
                       }
@@ -176,9 +173,7 @@ function App() {
                     <Route
                       path="/admin/corporate-clients"
                       element={
-                        <RequireRoles
-                          roles={ROUTE_ACCESS['/admin/corporate-clients']}
-                        >
+                        <RequireRoles path="/admin/corporate-clients">
                           <CorporateClientsPage />
                         </RequireRoles>
                       }
@@ -186,7 +181,7 @@ function App() {
                     <Route
                       path="/admin/telephony"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/telephony']}>
+                        <RequireRoles path="/admin/telephony">
                           <TelephonyPage />
                         </RequireRoles>
                       }
@@ -194,7 +189,7 @@ function App() {
                     <Route
                       path="/admin/staff"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/staff']}>
+                        <RequireRoles path="/admin/staff">
                           <StaffPage />
                         </RequireRoles>
                       }
@@ -202,7 +197,7 @@ function App() {
                     <Route
                       path="/admin/finances"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/finances']}>
+                        <RequireRoles path="/admin/finances">
                           <FinancePage />
                         </RequireRoles>
                       }
@@ -210,7 +205,7 @@ function App() {
                     <Route
                       path="/admin/users"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/users']}>
+                        <RequireRoles path="/admin/users">
                           <SystemUsersPage />
                         </RequireRoles>
                       }
@@ -218,7 +213,7 @@ function App() {
                     <Route
                       path="/admin/audit"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/audit']}>
+                        <RequireRoles path="/admin/audit">
                           <AuditLogPage />
                         </RequireRoles>
                       }
@@ -226,9 +221,7 @@ function App() {
                     <Route
                       path="/admin/visits-analytics"
                       element={
-                        <RequireRoles
-                          roles={ROUTE_ACCESS['/admin/visits-analytics']}
-                        >
+                        <RequireRoles path="/admin/visits-analytics">
                           <VisitsAnalyticsPage />
                         </RequireRoles>
                       }
@@ -236,7 +229,7 @@ function App() {
                     <Route
                       path="/admin/utilization"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/utilization']}>
+                        <RequireRoles path="/admin/utilization">
                           <UtilizationPage />
                         </RequireRoles>
                       }
@@ -244,7 +237,7 @@ function App() {
                     <Route
                       path="/admin/catalog"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/catalog']}>
+                        <RequireRoles path="/admin/catalog">
                           <CatalogPage />
                         </RequireRoles>
                       }
@@ -252,7 +245,7 @@ function App() {
                     <Route
                       path="/admin/references"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/references']}>
+                        <RequireRoles path="/admin/references">
                           <ReferencesPage />
                         </RequireRoles>
                       }
@@ -260,7 +253,7 @@ function App() {
                     <Route
                       path="/admin/motivation"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/motivation']}>
+                        <RequireRoles path="/admin/motivation">
                           <AdminMotivationPage />
                         </RequireRoles>
                       }
@@ -268,7 +261,7 @@ function App() {
                     <Route
                       path="/admin/shift-reports"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift-reports']}>
+                        <RequireRoles path="/admin/shift-reports">
                           <ShiftReportsPage />
                         </RequireRoles>
                       }

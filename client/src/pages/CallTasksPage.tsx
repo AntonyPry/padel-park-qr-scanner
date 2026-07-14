@@ -71,7 +71,7 @@ import {
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import { canManageCallTasks } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 type CallTaskStatus = 'backlog' | 'in_progress' | 'done' | 'archived';
 type TaskFilterStatus = CallTaskStatus | 'active' | 'all';
@@ -425,10 +425,10 @@ function getTaskStatusActionCopy(task: CallTask, nextStatus: CallTaskStatus) {
 }
 
 export default function CallTasksPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const canManage = canManageCallTasks(account?.role);
+  const canManage = canManageCallTasks(clubRole);
   const initialStatus = searchParams.get('status') as TaskFilterStatus | null;
   const initialClientStatus = searchParams.get('clientStatus') as ClientFilterStatus | null;
   const [tasks, setTasks] = useState<CallTask[]>([]);
