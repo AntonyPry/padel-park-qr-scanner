@@ -4,7 +4,7 @@
 
 Дата: 2026-07-14
 
-Ревизия: `1.1 — architecture findings resolved`
+Ревизия: `1.2 — Feature 2 compatibility lifecycle bridge`
 
 Архитектурное решение: [`MULTI_TENANCY_ARCHITECTURE_V1.md`](./MULTI_TENANCY_ARCHITECTURE_V1.md)
 
@@ -33,11 +33,13 @@ Inventory сопоставлен с фактическим состоянием 
 
 Foundation decision для будущих таблиц зафиксирован однозначно: `MembershipClubAccess(organizationId, membershipId, clubId)` имеет composite FK к `Membership(organizationId,id)` и `Club(organizationId,id)`. Оба parent composite keys unique; access имеет PK `(membershipId,clubId)` и tenant-leading indexes. `Membership.staffId` в Feature 2 не создается: сначала в Feature 5 Staff/access wave backfill-ится `Staff.organizationId`, затем добавляется composite Membership→Staff FK. Полный DDL contract, active-chain и rollback preflight находятся в ADR.
 
+Feature 2 также содержит mandatory compatibility lifecycle bridge: Account остается read/auth source, но create/update/archive/restore/permanent-delete атомарно поддерживают default Membership/access parity. Existing permanent-delete product contract сохраняется; hard delete удаляет access → membership → Account в одной transaction после текущих dependency/self checks.
+
 ## 2. Identity, membership и organization dictionaries
 
 | Model / table | Scope | Текущий owner и связи | Целевой tenant key / можно ли вывести | Tenant-aware unique/index | Isolation risk | Backfill |
 | --- | --- | --- | --- | --- | --- | --- |
-| `Account` / `Accounts` | G + access bridge | Login identity; global `role`, optional `staffId`; auth/JWT owner сейчас сам Account | Не добавлять tenant. Доступ через `Membership`; `role/status/staffId` остаются compatibility path, staff link переносится только после Staff wave | `email` остается global unique; Membership indexes отдельно | **P0:** одна global role дает доступ ко всем данным, shared account нельзя безопасно включить в две организации | 1: создать Membership для каждого active/inactive/archived Account с exact role/status; Account fields не менять |
+| `Account` / `Accounts` | G + access bridge | Login identity; global `role`, optional `staffId`; auth/JWT owner сейчас сам Account | Не добавлять tenant. Feature 2 reads/auth остаются Account-based, а centralized write bridge синхронизирует Membership/access; staff link переносится после Staff wave | `email` global unique; Membership `(organizationId,accountId)` unique; lifecycle transaction сохраняет exact role/status parity | **P0:** direct Account mutation вне bridge создает divergence и ломает startup/rollback | 1 + continuous bridge: каждый active/inactive/archived Account имеет parity Membership; non-owner один parity access, owner access отсутствует |
 | `User` / `Users` | O | CRM-клиент; parent для visits, bookings, prepayments, calls, skill map; merge chain `mergedIntoUserId` | Прямой `organizationId`; club нельзя вывести: клиент может посещать несколько clubs | `(organizationId, telegramId/vkId/webId)` unique where non-null; tenant-leading phone/name/status/source/merge indexes | **P0:** поиск/merge/bot registration смешивает клиентов организаций | 2: все roots → Padel Park org; затем проверить merge/source parents |
 | `Staff` / `Staffs` | O | Сотрудник, trainer/account link, shifts/bookings/finance | Прямой `organizationId`; club access — MembershipClubAccess, не Staff. Feature 5: Staff org backfill first, затем nullable Membership.staffId composite FK | unique `(organizationId, id)` для composite FK; `(organizationId, status)`, `(organizationId, name)`; Membership unique `(organizationId,staffId)` with nullable staffId | **P0:** staff/account link и списки сотрудников глобальны | 2 в Feature 5: default org → validate Account.staffId → add composite link; не входит в Feature 2 |
 | `ClientSource` / `ClientSources` | O | Справочник источников для User/registration | Прямой `organizationId` | unique `(organizationId, name)`; tenant + active/sort | **P1:** bot/UI может переиспользовать источник чужой организации | 2: dictionary before User FK validation |
@@ -140,7 +142,7 @@ Foundation decision для будущих таблиц зафиксирован 
 | Surface | Найденное текущее состояние | Required tenant control | Риск |
 | --- | --- | --- | --- |
 | HTTP routes/controllers/services | 30 route files, 29 controllers, 36 logical services; большинство `findByPk/findAll` без scope; raw SQL в `clients.service.js`, `telephony.service.js`, `visits-analytics.service.js` | Authenticated resolver создает `TenantContext`; endpoint декларирует G/O/C/M; service принимает context обязательным параметром; lookup всегда `id + tenant`; raw SQL начинает CTE/root predicates с tenant | **P0** cross-tenant reads/writes/IDOR и смешанные exports |
-| Auth / roles / permissions | JWT содержит `accountId/role/staffId`; `requireRole` проверяет global role; frontend access matrix тоже global | Account only identity; explicit org header for M/O and org+club headers for C; O uses Membership.role, C uses effectiveRole; roleOverride cannot owner; active Account/Organization/Membership plus active Club/access; transactional last-active-owner guard | **P0** shared identity не изолирована |
+| Auth / roles / permissions | JWT содержит `accountId/role/staffId`; `requireRole` проверяет global role; frontend access matrix тоже global | Feature 2 сохраняет Account auth/read behavior, но все Account writes идут через lifecycle bridge; Feature 3 добавляет explicit headers/resolver: O uses Membership.role, C uses effectiveRole; roleOverride cannot owner; active chain и last-owner guard | **P0** direct mutation/divergence или преждевременное переключение auth source ломает compatibility |
 | Files/uploads | `server/var/shift-report-attachments/<reportId>/<uuid>`; JSON metadata на answer; download auth через report/role | Storage key `<org>/<club>/<domain>/<record>/<file>`; tenant from DB/context, never request path; signed/streamed download rechecks membership; dual-read during migration | **P0** attachment disclosure/overwrite |
 | Exports | P&L/payroll XLSX, visits/source-quality XLSX, corporate ledger XLSX, shift attachment `sendFile` | Snapshot verified tenant context; filename/metadata declares org/club; row-count assertion; owner consolidated export explicit and read-only | **P0** bulk exfiltration has higher impact than single row |
 | Socket.IO | Account/global role auth; rooms `crm:domain:<domain>`; payload lacks tenant | Rooms `org:<id>`, `club:<id>`, `membership:<id>`; tenant in signed server event envelope; join only after membership check; disconnect/rejoin on switch | **P1** fanout to same roles in other clubs |
@@ -205,7 +207,9 @@ For default Padel Park organization/club each wave must record:
 - onboarding progress/training artifacts by account/role;
 - audit rows whose tenant cannot be derived.
 
-Feature 2 creates exact slugs `padel-park` / `padel-park`; Membership role/status mirrors every Account including inactive/archived. Non-owner gets one default access with matching status, owner gets no access row, and only the fully active chain authorizes. Backfill never guesses a tenant from phone, actor account or current selected club. Ambiguous rows go to an exception report and block enforcement, while additive foundation/runtime compatibility can remain deployed. Exact six-step rollback preflight from ADR is mandatory before dropping foundation tables.
+Feature 2 creates exact slugs `padel-park` / `padel-park`; Membership role/status mirrors every Account including inactive/archived. Non-owner gets one default access with matching status, owner gets no access row, and only the fully active chain authorizes. После migration та же parity непрерывно поддерживается transactional lifecycle bridge для create, role/status update, archive, restore и permanent delete. Backfill никогда не угадывает tenant из phone, actor или selected context. Divergence блокирует startup/release/rollback и не чинится молча. Exact six-step rollback preflight из ADR обязателен перед drop foundation tables.
+
+DB-backed Feature 2 gate покрывает lifecycle matrix, forced rollback, hard-delete order, unchanged Account auth/reads и concurrency последнего active owner. После каждой test sequence повторно запускается общий startup/release/rollback parity assertion.
 
 ## 13. Сознательно открытые решения
 
