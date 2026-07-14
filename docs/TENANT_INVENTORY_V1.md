@@ -4,6 +4,8 @@
 
 Дата: 2026-07-14
 
+Ревизия: `1.1 — architecture findings resolved`
+
 Архитектурное решение: [`MULTI_TENANCY_ARCHITECTURE_V1.md`](./MULTI_TENANCY_ARCHITECTURE_V1.md)
 
 ## 1. Метод и обозначения
@@ -29,13 +31,15 @@ Inventory сопоставлен с фактическим состоянием 
 
 Колонка «Backfill» обозначает волну из ADR: `1 identity`, `2 org roots`, `3 club roots`, `4 operational roots`, `5 children/history`, `6 audit/infrastructure`.
 
+Foundation decision для будущих таблиц зафиксирован однозначно: `MembershipClubAccess(organizationId, membershipId, clubId)` имеет composite FK к `Membership(organizationId,id)` и `Club(organizationId,id)`. Оба parent composite keys unique; access имеет PK `(membershipId,clubId)` и tenant-leading indexes. `Membership.staffId` в Feature 2 не создается: сначала в Feature 5 Staff/access wave backfill-ится `Staff.organizationId`, затем добавляется composite Membership→Staff FK. Полный DDL contract, active-chain и rollback preflight находятся в ADR.
+
 ## 2. Identity, membership и organization dictionaries
 
 | Model / table | Scope | Текущий owner и связи | Целевой tenant key / можно ли вывести | Tenant-aware unique/index | Isolation risk | Backfill |
 | --- | --- | --- | --- | --- | --- | --- |
-| `Account` / `Accounts` | G + access bridge | Login identity; global `role`, optional `staffId`; auth/JWT owner сейчас сам Account | Не добавлять tenant. Доступ через `Membership`; `staffId` становится compatibility path | `email` остается global unique; индексы membership отдельно | **P0:** одна global role дает доступ ко всем данным, shared account нельзя безопасно включить в две организации | 1: создать memberships из текущих role/status, затем compatibility assertions |
+| `Account` / `Accounts` | G + access bridge | Login identity; global `role`, optional `staffId`; auth/JWT owner сейчас сам Account | Не добавлять tenant. Доступ через `Membership`; `role/status/staffId` остаются compatibility path, staff link переносится только после Staff wave | `email` остается global unique; Membership indexes отдельно | **P0:** одна global role дает доступ ко всем данным, shared account нельзя безопасно включить в две организации | 1: создать Membership для каждого active/inactive/archived Account с exact role/status; Account fields не менять |
 | `User` / `Users` | O | CRM-клиент; parent для visits, bookings, prepayments, calls, skill map; merge chain `mergedIntoUserId` | Прямой `organizationId`; club нельзя вывести: клиент может посещать несколько clubs | `(organizationId, telegramId/vkId/webId)` unique where non-null; tenant-leading phone/name/status/source/merge indexes | **P0:** поиск/merge/bot registration смешивает клиентов организаций | 2: все roots → Padel Park org; затем проверить merge/source parents |
-| `Staff` / `Staffs` | O | Сотрудник, trainer/account link, shifts/bookings/finance | Прямой `organizationId`; club access — membership/access, не Staff | `(organizationId, status)`, `(organizationId, name)`; natural staff keys scoped if introduced | **P0:** staff/account link и списки сотрудников глобальны | 2: присвоить org до memberships/staff compatibility validation |
+| `Staff` / `Staffs` | O | Сотрудник, trainer/account link, shifts/bookings/finance | Прямой `organizationId`; club access — MembershipClubAccess, не Staff. Feature 5: Staff org backfill first, затем nullable Membership.staffId composite FK | unique `(organizationId, id)` для composite FK; `(organizationId, status)`, `(organizationId, name)`; Membership unique `(organizationId,staffId)` with nullable staffId | **P0:** staff/account link и списки сотрудников глобальны | 2 в Feature 5: default org → validate Account.staffId → add composite link; не входит в Feature 2 |
 | `ClientSource` / `ClientSources` | O | Справочник источников для User/registration | Прямой `organizationId` | unique `(organizationId, name)`; tenant + active/sort | **P1:** bot/UI может переиспользовать источник чужой организации | 2: dictionary before User FK validation |
 | `VisitCategory` / `VisitCategories` | O | Справочник аналитических категорий; assignments привязаны к Visit | Прямой `organizationId` | unique `(organizationId, name)`; tenant + active/sort | **P1:** одинаковые названия конфликтуют, аналитика смешивается | 2 |
 | `Category` / `Categories` | O | Финансовая/мотивационная категория; hierarchy + bonus rules | Прямой `organizationId`; parent обязан быть в той же org | unique `(organizationId, name)` вместо global name; tenant + parent/sort/status | **P1:** чужая иерархия/правило может попасть в расчет | 2: parents before children, orphan/cycle audit |
@@ -136,7 +140,7 @@ Inventory сопоставлен с фактическим состоянием 
 | Surface | Найденное текущее состояние | Required tenant control | Риск |
 | --- | --- | --- | --- |
 | HTTP routes/controllers/services | 30 route files, 29 controllers, 36 logical services; большинство `findByPk/findAll` без scope; raw SQL в `clients.service.js`, `telephony.service.js`, `visits-analytics.service.js` | Authenticated resolver создает `TenantContext`; endpoint декларирует G/O/C/M; service принимает context обязательным параметром; lookup всегда `id + tenant`; raw SQL начинает CTE/root predicates с tenant | **P0** cross-tenant reads/writes/IDOR и смешанные exports |
-| Auth / roles / permissions | JWT содержит `accountId/role/staffId`; `requireRole` проверяет global role; frontend access matrix тоже global | Account only identity; Membership role + optional club override; owner organization-wide и автоматически имеет все current/future clubs; every request validates membership/access | **P0** shared identity не изолирована |
+| Auth / roles / permissions | JWT содержит `accountId/role/staffId`; `requireRole` проверяет global role; frontend access matrix тоже global | Account only identity; explicit org header for M/O and org+club headers for C; O uses Membership.role, C uses effectiveRole; roleOverride cannot owner; active Account/Organization/Membership plus active Club/access; transactional last-active-owner guard | **P0** shared identity не изолирована |
 | Files/uploads | `server/var/shift-report-attachments/<reportId>/<uuid>`; JSON metadata на answer; download auth через report/role | Storage key `<org>/<club>/<domain>/<record>/<file>`; tenant from DB/context, never request path; signed/streamed download rechecks membership; dual-read during migration | **P0** attachment disclosure/overwrite |
 | Exports | P&L/payroll XLSX, visits/source-quality XLSX, corporate ledger XLSX, shift attachment `sendFile` | Snapshot verified tenant context; filename/metadata declares org/club; row-count assertion; owner consolidated export explicit and read-only | **P0** bulk exfiltration has higher impact than single row |
 | Socket.IO | Account/global role auth; rooms `crm:domain:<domain>`; payload lacks tenant | Rooms `org:<id>`, `club:<id>`, `membership:<id>`; tenant in signed server event envelope; join only after membership check; disconnect/rejoin on switch | **P1** fanout to same roles in other clubs |
@@ -150,8 +154,8 @@ Inventory сопоставлен с фактическим состоянием 
 | Transcription worker | Global `CRM_WORKER_TOKEN`, global claim queue; local SQLite/UI state and temp `crm-transcription-<callId>` lack tenant; ASR/LLM shared | Worker credential has tenant allowlist or platform worker scope; claim returns immutable tenant; recording/result URLs tenant authorized; temp/state/log keys include tenant; ASR/LLM receive only required content | **P1** recording/transcript disclosure and wrong job completion |
 | Audit logs | Generic entity ID/payload, no immutable tenant | Store verified org/club/membership at write time; audit queries require scope; platform events explicit G; redact integration payload secrets | **P1** investigation/export cannot isolate tenant |
 | Backups/restore | Documented DB dump/restore; local shift uploads and worker state outside DB not in backup contract | Manifest covers DB + object/files + connection metadata; encryption/access logs; restore into empty environment; tenant-selective restore either formally unsupported or remaps every FK/key | **P1** partial restore mixes IDs or loses files |
-| Demo/training fixtures | Three seeders, demo accounts `*@padelpark.demo`, performance data and cleanup by global markers, mock ASR fixtures | Fixture manifest names org/club; cleanup filters tenant + run ID; never reuse production natural keys; two-tenant isolation fixture mandatory before enforcement | **P1** seed/cleanup mutates another tenant |
-| API/OpenAPI/generated client | Routes generated/consumed without tenant contract; no scope field/header in contract | Scope metadata is part of endpoint definition and OpenAPI; context selector documented; generated client requires selected tenant for O/C APIs | Contract drift can reintroduce unscoped endpoint |
+| Demo/training fixtures | Three seeders, demo accounts `*@padelpark.demo`, performance data and cleanup by global markers, mock ASR fixtures | Features 2–8 may seed only exact default tenant data and add no organization/club provisioning seeder; cleanup filters tenant + run ID; two-tenant fixture allowed only in Feature 9 ephemeral DB | **P1** seed/cleanup mutates another tenant |
+| API/OpenAPI/generated client | Routes generated/consumed without tenant contract; no scope field/header in contract | Scope metadata is part of endpoint definition/OpenAPI; generated client always sends `X-Organization-Id` for M/O and both explicit headers for C; selected context only supplies preference, never server authority | Contract drift can reintroduce unscoped endpoint |
 
 ## 10. API/service coverage map
 
@@ -179,13 +183,14 @@ Routes `manager-control-dashboard` and all aggregate dashboards inherit the stri
 
 Before replacing constraints, run duplicate preflight grouped by target tenant. Critical changes:
 
-1. Keep global: `Accounts.email`, `Organizations.slug`.
-2. Organization composite: User external IDs, ClientSource/VisitCategory/Category names, MotivationRule key, TrainingSkill name, SubscriptionType name, PayrollPeriod dates.
-3. Club composite: Court name, BookingScheduleException date, Receipt Evotor ID, CatalogRule/EvotorSaleSetting itemName, every Beeline external ID/subscription/event ID, Utilizations date.
-4. Membership composite: progress `(membershipId, role, taskKey)`, training mode session policy, saved view `(membershipId, clubId, name)`.
-5. Parent-scoped uniques stay parent-scoped: BookingParticipant, CallTaskClient, TrainingExerciseSkill, ClientTrainingSkill, TrainingPlanParticipant, ShiftReport scheduling key, PendingSale receipt item, receipt-derived subscription/certificate provenance.
-6. Existing analytics indexes on Receipt, Finance, CorporateLedgerEntry, Booking, ClientSubscription and Certificate get tenant as leading column; otherwise isolation predicate causes table scans.
-7. Any composite FK emulation is backed by application validation first and DB constraints where MySQL schema permits; consistency audit runs before `NOT NULL`/unique enforcement.
+1. Foundation: `Organizations.slug`; `Clubs(organizationId,slug)` and `(organizationId,id)`; `Memberships(organizationId,accountId)` and `(organizationId,id)`; access PK `(membershipId,clubId)`, indexes `(organizationId,membershipId)` / `(organizationId,clubId,status)`, composite FKs к обоим parents. Same-organization здесь DB-enforced, не эмулируется приложением.
+2. Keep global: `Accounts.email`.
+3. Organization composite: User external IDs, ClientSource/VisitCategory/Category names, MotivationRule key, TrainingSkill name, SubscriptionType name, PayrollPeriod dates.
+4. Club composite: Court name, BookingScheduleException date, Receipt Evotor ID, CatalogRule/EvotorSaleSetting itemName, every Beeline external ID/subscription/event ID, Utilizations date.
+5. Membership composite: progress `(membershipId, role, taskKey)`, training mode session policy, saved view `(membershipId, clubId, name)`.
+6. Parent-scoped uniques stay parent-scoped: BookingParticipant, CallTaskClient, TrainingExerciseSkill, ClientTrainingSkill, TrainingPlanParticipant, ShiftReport scheduling key, PendingSale receipt item, receipt-derived subscription/certificate provenance.
+7. Existing analytics indexes on Receipt, Finance, CorporateLedgerEntry, Booking, ClientSubscription and Certificate get tenant as leading column; otherwise isolation predicate causes table scans.
+8. Cross-parent relations use composite FK where tenant is stored on both sides; where a child intentionally inherits scope through one parent, consistency audit and parent-scoped lookup remain mandatory before enforcement.
 
 ## 12. Backfill reconciliation gates
 
@@ -200,7 +205,7 @@ For default Padel Park organization/club each wave must record:
 - onboarding progress/training artifacts by account/role;
 - audit rows whose tenant cannot be derived.
 
-Backfill never guesses a tenant from phone, actor account or current selected club. Ambiguous rows go to an exception report and block enforcement, while additive foundation/runtime compatibility can remain deployed.
+Feature 2 creates exact slugs `padel-park` / `padel-park`; Membership role/status mirrors every Account including inactive/archived. Non-owner gets one default access with matching status, owner gets no access row, and only the fully active chain authorizes. Backfill never guesses a tenant from phone, actor account or current selected club. Ambiguous rows go to an exception report and block enforcement, while additive foundation/runtime compatibility can remain deployed. Exact six-step rollback preflight from ADR is mandatory before dropping foundation tables.
 
 ## 13. Сознательно открытые решения
 

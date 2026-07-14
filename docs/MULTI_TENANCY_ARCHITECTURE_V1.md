@@ -4,6 +4,8 @@
 
 Дата: 2026-07-14
 
+Ревизия: `1.1 — architecture findings resolved`
+
 Срез: Feature 1 — inventory и архитектурное решение
 
 Связанный inventory: [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md)
@@ -53,11 +55,11 @@ erDiagram
       bigint id PK
       bigint organizationId FK
       bigint accountId FK
-      bigint staffId FK
       string role
       string status
     }
     MEMBERSHIP_CLUB_ACCESS {
+      bigint organizationId FK
       bigint membershipId FK
       bigint clubId FK
       string roleOverride
@@ -65,17 +67,22 @@ erDiagram
     }
 ```
 
-Обязательные ограничения:
+### DB-enforceable foundation schema
 
-- `Membership`: unique `(organizationId, accountId)`;
-- nullable `Membership.staffId` ссылается только на `Staff` той же organization; при политике «один login на сотрудника» — unique `(organizationId, staffId)` where non-null;
-- `MembershipClubAccess`: unique `(membershipId, clubId)`;
-- `Club`: unique `(organizationId, slug)`;
-- `Organization`: глобально unique `slug`;
-- `MembershipClubAccess.clubId` должен принадлежать той же организации, что и `Membership`;
-- `Account.email` остается глобально unique: один login может состоять в нескольких организациях.
+Feature 2 использует один явный `organizationId` в `MembershipClubAccess` и два composite FK. Это не application-only validation: строка access физически не сможет связать membership одной организации с club другой.
 
-`Account.role` и `Account.staffId` сейчас смешивают identity и tenant-доступ. В переходный период они остаются compatibility-полями, но целевым источником роли становится `Membership`/`MembershipClubAccess`, а связь с сотрудником переезжает на tenant-уровень.
+| Table | Keys, constraints and required indexes |
+| --- | --- |
+| `Organizations` | PK `(id)`; global unique `(slug)`; `status ENUM('active','inactive','archived') NOT NULL`; default row slug `padel-park`. |
+| `Clubs` | PK `(id)`; `organizationId NOT NULL` FK → `Organizations(id)` `ON DELETE RESTRICT`; `status ENUM('active','inactive','archived') NOT NULL`; unique `(organizationId, slug)`; additional unique `(organizationId, id)` as referenced composite key; index `(organizationId, status, id)`. Default row slug `padel-park`. |
+| `Memberships` | PK `(id)`; `organizationId NOT NULL` FK → `Organizations(id)` `ON DELETE RESTRICT`; `accountId NOT NULL` FK → `Accounts(id)` `ON DELETE RESTRICT`; `role ENUM('owner','manager','admin','accountant','viewer','trainer') NOT NULL`; `status ENUM('active','inactive','archived') NOT NULL`; unique `(organizationId, accountId)`; additional unique `(organizationId, id)` as referenced composite key; indexes `(accountId, status, organizationId)` and `(organizationId, role, status)` for discovery and last-owner checks. |
+| `MembershipClubAccesses` | Columns `organizationId`, `membershipId`, `clubId` are `NOT NULL`; `roleOverride ENUM('manager','admin','accountant','viewer','trainer') NULL` — `owner` отсутствует в DB enum; `status ENUM('active','inactive','archived') NOT NULL`; PK `(membershipId, clubId)`; FK `(organizationId, membershipId)` → `Memberships(organizationId, id)` `ON DELETE RESTRICT`; FK `(organizationId, clubId)` → `Clubs(organizationId, id)` `ON DELETE RESTRICT`; indexes `(organizationId, membershipId)` and `(organizationId, clubId, status)`. |
+
+Referenced composite keys `(organizationId, id)` намеренно объявлены unique, даже несмотря на global PK `id`: так MySQL FK contract не зависит от permissive non-unique referenced-index behavior. Все tenant records архивируются/status-disable, а не удаляются cascade.
+
+`Account.email` остается global unique: один login может состоять в нескольких организациях. `Account.role` остается compatibility-полем до переключения auth source.
+
+`Membership.staffId` **не входит в Feature 2**. До Staff/access wave существующий `Account.staffId` остается compatibility link. В Feature 5 сначала добавляются и backfill-ятся `Staff.organizationId`, unique `(organizationId, id)` и tenant indexes; только затем в `Membership` добавляется nullable `staffId`, composite FK `(organizationId, staffId) → Staff(organizationId, id)` и unique `(organizationId, staffId)`. Обычный MySQL unique допускает несколько `NULL`, поэтому отдельный partial index не нужен.
 
 ## 2. Scope данных
 
@@ -143,24 +150,41 @@ type TenantContext = {
 };
 ```
 
-Правила:
+Токен содержит стабильный `accountId` и session/version metadata, но не является долгоживущим доказательством доступа к tenant. Каждый endpoint декларирует один scope; обязательный transport contract:
 
-1. Токен содержит стабильный `accountId` и session/version metadata, но не является долгоживущим доказательством доступа к tenant.
-2. Запрошенные organization/club IDs берутся из явного header (`X-Organization-Id`, `X-Club-Id`) или server-side active-context endpoint, затем всегда сверяются с активными memberships.
-3. Если у membership доступен один клуб, resolver выбирает его автоматически. Это сохраняет текущий UX Padel Park.
-4. Endpoint декларирует `global`, `organization` или `club` scope. Club endpoint без валидного `clubId` отвечает `400/409`, а без доступа — `403`.
-5. `organizationId`/`clubId` из body не используется как authority. Create берет tenant только из `req.tenant`.
-6. Lookup выполняется как `id + tenant predicate` либо через уже tenant-scoped parent. Один `findByPk(id)` для бизнес-сущности недопустим.
+| Endpoint scope | Required headers | Как определяется membership и роль |
+| --- | --- | --- |
+| `global` | tenant headers не нужны | Только allowlisted auth/discovery/health/platform metadata. Global endpoint не читает business rows. |
+| `membership` | `X-Organization-Id` | Resolver требует active Account, Organization и Membership по `accountId + organizationId`; client-supplied `membershipId` не является authority. Self-progress/preferences разрешаются внутри этой Membership. |
+| `organization` | `X-Organization-Id` | Resolver требует active Account, Organization и Membership. Authorization использует только `Membership.role`; club `roleOverride` никогда не влияет на organization endpoint. |
+| `club` | `X-Organization-Id` и `X-Club-Id` | Resolver требует active Account/Organization/Membership/Club и active access row для non-owner. Authorization использует `effectiveRole`. |
+
+Дополнительные правила:
+
+1. Явные headers обязательны на **каждом** organization/club request, включая single-club Padel Park. Их отсутствие дает `400 TENANT_CONTEXT_REQUIRED`; server не подставляет сохраненный context.
+2. Server-side last-selected context — только preference/default, который помогает UI выбрать значения и сформировать headers. Он не является authority и не заменяет ни header, ни повторную membership/access проверку.
+3. Если доступен один club, frontend автоматически ставит оба headers и скрывает switcher; это сохраняет UX без implicit server fallback.
+4. `organizationId`/`clubId` из body, query, saved preference или JWT не используется как authority. Create берет tenant только из проверенного `req.tenant`.
+5. `X-Club-Id` обязан принадлежать `X-Organization-Id`; mismatch отклоняется до controller. Недоступный tenant возвращает единообразный `404` или `403` без раскрытия существования.
+6. Lookup выполняется как `id + tenant predicate` либо через уже tenant-scoped parent. Один `findByPk(id)` для business entity недопустим.
 7. Raw SQL/CTE получает обязательные tenant replacements и фильтрует каждую корневую таблицу до join/aggregation.
+
+Membership-scoped endpoints обслуживают только ресурс текущего authenticated membership: onboarding progress, membership preferences и last-selected context. Global `/auth/me/memberships` может вернуть минимальный список доступных organizations для bootstrap без tenant header. Просмотр/изменение **чужого** membership — organization-scoped administrative endpoint: path `membershipId` всегда ищется вместе с `X-Organization-Id`, а права проверяются по actor `Membership.role`. Любой membership resource с club-bound data становится club-scoped и требует оба headers.
 
 ### Roles и owner
 
 - базовая роль находится в `Membership.role`;
-- `MembershipClubAccess.roleOverride` применяется только внутри конкретного клуба;
+- `MembershipClubAccess.roleOverride` применяется только внутри конкретного клуба и не может быть `owner`; значение исключено из DB enum и application validation enum;
 - effective role = `owner`, если membership role `owner`, иначе `roleOverride ?? membership.role`;
+- organization endpoints проверяют `Membership.role`; club endpoints проверяют `effectiveRole`;
 - owner видит все текущие и будущие clubs своей organization, даже без отдельных access rows;
 - owner не получает доступ к другой organization;
+- обязательная active chain для organization request: `Account.status = active`, `Organization.status = active`, `Membership.status = active`;
+- для club request дополнительно обязательны `Club.status = active` и, если Membership не owner, `MembershipClubAccess.status = active`; inactive/archived rows никогда не дают доступ;
+- в каждой Organization, независимо от ее собственного status, должен оставаться минимум один active Membership с role `owner`; `Organization.status != active` все равно блокирует request, но не разрешает удалить последнего owner;
 - platform support/admin, если когда-либо появится, должен быть отдельным явно audited механизмом и не использовать CRM role `owner`.
+
+Последнего active owner нельзя удалить, архивировать, деактивировать или понизить. Обычный FK/unique не выражает count invariant, поэтому mutation transaction блокирует строку Organization и ее active owner memberships через `SELECT ... FOR UPDATE`, повторно считает owners и отклоняет результат `< 1`. Тот же guard обязателен для bulk/admin/migration paths; startup/release assertion проверяет invariant независимо от application service. Feature 2 содержит concurrency tests двух одновременных demotion/deactivation attempts.
 
 ### Переключение клуба
 
@@ -232,7 +256,7 @@ DB metadata содержит organization/club; download сначала пров
 - `AuditLog`, `FinanceChangeLog`, `BookingChangeLog`, raw events и scanner events сохраняют immutable tenant snapshot;
 - onboarding catalog global, progress membership-scoped, action events/training data club-scoped;
 - training cleanup требует organization + club + membership/account, иначе возможна массовая cross-tenant deletion;
-- demo/performance/smoke fixtures создаются только внутри явно выбранного test organization/club;
+- до Feature 9 demo/performance/smoke fixtures создаются только в exact default organization/club; multi-tenant fixtures разрешены лишь в isolated ephemeral DB Feature 9;
 - production seeders не используют глобальные `findOrCreate` по имени/email бизнес-сущности без tenant.
 
 ### Backups/restore
@@ -252,23 +276,39 @@ DB metadata содержит organization/club; download сначала пров
 5. FK между organization-scoped и club-scoped данными обязан проверять, что `club.organizationId` совпадает с organization owner записи.
 6. Нельзя использовать client-supplied tenant ID без membership check.
 7. Нельзя возвращать данные другой организации через error detail, autocomplete, count, metrics, export, log, realtime event или cache.
-8. Изоляционные тесты используют минимум две organizations, одинаковые natural keys и пользователя с разными ролями/club access.
+8. Изоляционные тесты используют минимум две organizations, одинаковые natural keys и пользователя с разными ролями/club access; до Feature 9 это разрешено только в isolated ephemeral test DB.
 9. Cross-organization join запрещен по умолчанию. Разрешение требует отдельного ADR и platform-level authorization.
 10. SaaS billing entities (`SaasPlan`, `OrganizationSubscription`, `UsageRecord`, SaaS `Invoice`) не создаются в этом эпике.
+11. До acceptance Feature 9 production schema содержит ровно default Organization и default Club; provisioning второго tenant запрещен.
+12. Organization/club request без обязательных explicit tenant headers отклоняется, даже если server хранит last-selected context.
+13. Ни одна Organization, включая inactive/archived, не может остаться без active owner Membership.
 
 ## 6. Backfill Padel Park
 
 Общий порядок для будущих migrations (в этом Feature 1 migrations нет):
 
-1. Создать `Organization` со стабильным slug `padel-park` и первый `Club` со стабильным slug, согласованным до migration.
-2. Создать по одному `Membership` для каждого `Account`; текущую `Account.role/status` скопировать, owner пометить organization-wide.
-3. Создать club access для non-owner active/archive memberships, сохранив текущие роли. Owner не зависит от access rows и получает все current/future clubs по invariant. Скрытый default context указывает первый club.
+1. Создать единственный `Organization(name = 'Padel Park', slug = 'padel-park', status = 'active')` и единственный принадлежащий ему `Club(name = 'Padel Park', slug = 'padel-park', status = 'active')`. Константы slugs: `DEFAULT_ORGANIZATION_SLUG=padel-park`, `DEFAULT_CLUB_SLUG=padel-park`; migration aborts, если такой slug уже занят несовместимой строкой.
+2. Создать ровно один `Membership` для каждого `Account`, включая inactive/archived: `organizationId = default`, `role = Account.role`, `status = Account.status`. Перед завершением обязан существовать минимум один `active owner`; иначе migration aborts.
+3. Для каждого non-owner Membership создать ровно один access row к default Club со status, равным Membership status: active → active, inactive → inactive, archived → archived. Для owner access row не создается; active owner получает все clubs по invariant, inactive/archived owner доступа не имеет из-за active chain. `Account.role/status/staffId` остаются неизменными compatibility fields.
 4. Добавлять tenant columns только nullable, backfill-ить корневые таблицы default organization/club, валидировать row counts и orphan paths.
 5. Backfill children через parent. Если parent path неоднозначен или отсутствует — остановить migration и записать exception, не назначать tenant по догадке.
 6. Добавить dual-write и shadow assertions; старые reads остаются до проверки.
 7. Перестроить global unique indexes в tenant-aware только после duplicate preflight.
 8. Включить scoped reads domain wave за feature flag; сравнить counts/exports с baseline первого клуба.
 9. После QA сделать tenant columns `NOT NULL`, включить cross-tenant guards и только затем удалить compatibility role/context paths.
+
+### Feature 2 rollback preflight
+
+`down` выполняет **все** проверки до первого `DROP`; при одном failure rollback aborts без частичного удаления:
+
+1. В `Organizations` ровно одна строка: active slug `padel-park`. В `Clubs` ровно одна строка: active slug `padel-park`, связанная с этой Organization.
+2. `Memberships.count = Accounts.count`; для каждого Account существует ровно одна default Membership, а `role/status` все еще равны compatibility `Account.role/status`. Нет membership другой organization и есть минимум один active owner.
+3. Для каждого non-owner Membership существует ровно один default access с тем же status; owner access rows отсутствуют; дополнительных/mismatched rows нет.
+4. `INFORMATION_SCHEMA` не содержит FK из других tables на `Organizations`, `Clubs`, `Memberships`, `MembershipClubAccesses` и не содержит tenant columns `organizationId`, `clubId`, `membershipId` вне четырех foundation tables. Это запрещает rollback после merge любой последующей tenant wave.
+5. В `SequelizeMeta` отсутствуют migrations Features 3–9. Проверка выполняется по точному allowlist migration names, определенному в Feature 2; prefix/date guessing запрещен.
+6. Compatibility `Accounts.role/status/staffId` существуют и не были изменены/удалены; row-count и checksum preflight сохранены в rollback output.
+
+После успешного preflight drop order только такой: `MembershipClubAccesses → Memberships → Clubs → Organizations`. Rollback не изменяет Accounts, Staff или business rows. Повторное применение migration обязано воспроизвести те же counts, roles, statuses и default slugs.
 
 Backfill order по зависимостям:
 
@@ -286,15 +326,23 @@ Organization/Club/Membership
 
 | Срез | Зависит от | Scope и merge point | Rollback |
 | --- | --- | --- | --- |
-| Feature 2 — tenant foundation | Feature 1 QA | Additive models/migrations `Organization`, `Club`, `Membership`, `MembershipClubAccess`; default Padel Park backfill; compatibility с `Account.role`; tests только на invariants. Merge после DB backup + migration rollback/reapply на копии. | `down` удаляет только новые связи после preflight; runtime продолжает старую single-club модель. |
-| Feature 3 — context plumbing | Feature 2 | `req.tenant`, membership resolver, `/auth/me` context, endpoint scope declaration API, feature flag; без массовой фильтрации доменов. Merge при identical behavior для default club. | Disable flag; старые services остаются источником поведения. |
+| Feature 2 — tenant foundation | Feature 1 QA | Additive models/migrations `Organization`, `Club`, `Membership`, `MembershipClubAccess`; DB-enforced composite same-org FKs; exact default Padel Park backfill; compatibility с `Account.role/status/staffId`; no Membership.staffId yet; startup/migration/release single-default assertion. Merge после DB backup + rollback/reapply на копии. | `down` только после exact six-step preflight; runtime продолжает старую single-club модель. |
+| Feature 3 — context plumbing | Feature 2 | `req.tenant`, mandatory explicit header contract, membership resolver, `/auth/me` discovery/preferences, endpoint scope declaration API, feature flag; без массовой фильтрации доменов. Merge при identical UI behavior для default club, но без implicit server context fallback. | Disable flag; старые services остаются источником поведения. |
 | Feature 4 — isolation infrastructure | Features 2–3 | Tenant-aware realtime rooms, Redis/query keys, files, worker claim, integration connections, per-tenant locks. Merge до подключения второго club. | Отключить new fanout/cache/worker routing; новые columns остаются additive. |
-| Feature 5 — CRM/access wave | Features 2–4 | Users/clients, references, visits/scanner, client bases/call tasks; expand → backfill → dual-write → scoped reads → constraints. | Per-domain read flag назад; dual-written tenant data сохраняется. |
+| Feature 5 — CRM/Staff/access wave | Features 2–4 | `Staff.organizationId` backfill и затем Membership.staffId composite FK; Users/clients, references, visits/scanner, client bases/call tasks; expand → backfill → dual-write → scoped reads → constraints. | Per-domain read flag назад; Account.staffId compatibility и dual-written tenant data сохраняются. |
 | Feature 6 — bookings/training wave | Feature 5 org client identity | Courts/settings/bookings/series, training notes/plans, methodology/skill map; cross-parent checks. | Per-domain read flag; не откатывать committed business rows. |
 | Feature 7 — finance/prepayments wave | Feature 5 + решения liability scope | Evotor/catalog/finance/payroll/prepayments/certificates/corporate; tenant-aware exports and reconciliation. | Отключить scoped reads/ingress по provider connection; сохранить tenant attribution. |
-| Feature 8 — ops/audit/onboarding | Features 5–7 | Staff/shifts/reports/uploads, audit logs, onboarding/training cleanup, demo fixtures and backups. | Per-surface flags; attachment layout поддерживает dual-read до copy verification. |
-| Feature 9 — enforcement and two-tenant QA | Features 4–8 | `NOT NULL`, composite uniques, orphan/cross-tenant detectors, two-org isolation suite, restore drill. | Roll back constraints, не tenant attribution; второй tenant не provision-ить при failure. |
-| Feature 10 — club switch UX/rollout | Feature 9 | Switcher, selected context, owner all-club UX, staged production enablement. | Скрыть switcher и pin default club; data model остается multi-tenant. |
+| Feature 8 — ops/audit/onboarding | Features 5–7 | Shifts/reports/uploads, audit logs, onboarding/training cleanup, default-tenant demo fixtures and backups. | Per-surface flags; attachment layout поддерживает dual-read до copy verification. |
+| Feature 9 — enforcement and two-tenant QA | Features 4–8 | `NOT NULL`, composite uniques, orphan/cross-tenant detectors, ephemeral two-org isolation suite, restore drill. Второй tenant разрешен только в isolated test DB до acceptance. | Roll back constraints, не tenant attribution; production остается pinned к default tenant при failure. |
+| Feature 10 — club switch UX/rollout | Feature 9 accepted | Только после снятия single-default gate: controlled provisioning contract/UI, switcher, selected preference, owner all-club UX, staged production enablement. | Отключить provisioning/switcher и pin default club; data model остается multi-tenant. |
+
+### Hard rollout gate до Feature 9
+
+- До полного acceptance Feature 9 нельзя создать вторую Organization или второй Club в production/staging data stores, кроме isolated ephemeral DB самой isolation suite.
+- Features 2–8 не добавляют provisioning API, CLI, admin action или general-purpose organization/club seeder. Единственный разрешенный insert path — deterministic Feature 2 migration для slugs `padel-park`/`padel-park`.
+- Feature 2 обязана добавить один общий assertion, используемый post-migration check, application startup и release gate: `Organizations.count = 1`, `Clubs.count = 1`, exact default slugs/status/relationship совпадают, все Memberships/Access rows принадлежат default tenant и last active owner существует.
+- До снятия gate assertion работает fail-closed: migration/release останавливается, application startup не принимает business traffic при втором tenant или нарушенном default mapping.
+- Feature 9 может создать второй tenant только test fixture в ephemeral DB. Production gate снимается отдельным release decision после green isolation suite, restore drill и QA; только Feature 10 получает право реализовать provisioning.
 
 Параллельные обычные фичи продолжаются от актуального `main`. Требования на время эпика:
 
