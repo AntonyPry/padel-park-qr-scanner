@@ -68,6 +68,14 @@ module.exports = (sequelize, DataTypes) => {
       as: 'archivedBy',
       foreignKey: 'archivedByAccountId',
     });
+    Shift.hasMany(models.ShiftCashSession, {
+      as: 'cashSessions',
+      foreignKey: 'shiftId',
+    });
+    Shift.hasMany(models.ShiftCashExpense, {
+      as: 'cashExpenses',
+      foreignKey: 'shiftId',
+    });
   };
 
   return Shift;

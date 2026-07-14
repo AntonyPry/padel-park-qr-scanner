@@ -134,3 +134,23 @@ test('event schema stays narrow and excludes response body data', () => {
   assert.equal(event.entityId, '42');
   assert.equal(JSON.stringify(event).includes('+79990000000'), false);
 });
+
+test('shift cash mutations refresh shifts, motivation, and finance without response leakage', () => {
+  const created = matchRealtimeChange(
+    req('POST', '/api/shifts/active/cash/expenses'),
+    { createdExpenseId: 91, expenses: [{ description: 'private receipt note' }] },
+  );
+  const canceled = matchRealtimeChange(
+    req('POST', '/api/shifts/active/cash/expenses/91/cancel'),
+    { expenses: [] },
+  );
+
+  assert.equal(created.domain, 'shifts');
+  assert.equal(created.entity, 'shift_cash_expense');
+  assert.equal(created.action, 'created');
+  assert.equal(created.hints.queryGroups.includes('motivation'), true);
+  assert.equal(created.hints.queryGroups.includes('finance'), true);
+  assert.equal(JSON.stringify(created).includes('private receipt note'), false);
+  assert.equal(canceled.entityId, '91');
+  assert.equal(canceled.action, 'archived');
+});

@@ -52,6 +52,20 @@ describe('realtime invalidation mapping', () => {
     expect(getRealtimeQueryKeys(event({ domain: 'prepayment_sales' }))).toContainEqual(['visits-analytics']);
   });
 
+  it('invalidates shifts, motivation, and finance for shift cash changes', () => {
+    const groups = getRealtimeQueryGroups(
+      event({
+        domain: 'shifts',
+        entity: 'shift_cash_expense',
+        hints: { queryGroups: ['shifts', 'motivation', 'finance'] },
+      }),
+    );
+
+    expect(groups).toContain('shifts');
+    expect(groups).toContain('motivation');
+    expect(groups).toContain('finance');
+  });
+
   it('keeps unknown groups usable for legacy screens', () => {
     expect(
       getRealtimeQueryKeys(
