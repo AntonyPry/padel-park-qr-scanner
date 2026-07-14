@@ -58,6 +58,8 @@ import { useRealtimeEvent, useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import { canManageClients, canViewReferences } from '@/lib/permissions';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import {
   createInitialScannerSnapshot,
   WebSerialScannerLifecycle,
@@ -289,6 +291,9 @@ function playSound(type: 'success' | 'error') {
 }
 
 export default function AdminPage() {
+  const organizationRole = useAuthorizationRole('organization');
+  const canManageOrganizationClients = canManageClients(organizationRole);
+  const canLoadOrganizationReferences = canViewReferences(organizationRole);
   const [cards, setCards] = useState<VisitCard[]>([]);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -431,6 +436,12 @@ export default function AdminPage() {
   });
 
   useEffect(() => {
+    if (!canLoadOrganizationReferences) {
+      setClientSources([]);
+      setVisitCategories([]);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadReferences() {
@@ -466,7 +477,7 @@ export default function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canLoadOrganizationReferences]);
 
   const buildVisitCard = useCallback((data: ScanResultPayload): VisitCard => {
     const time = new Date().toLocaleTimeString('ru-RU', {
@@ -776,7 +787,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     const phoneDigits = getPhoneDigits(regForm.phone);
-    if (!isRegOpen || phoneDigits.length !== 10) {
+    if (
+      !canManageOrganizationClients ||
+      !isRegOpen ||
+      phoneDigits.length !== 10
+    ) {
       setRegCandidate(null);
       return;
     }
@@ -812,7 +827,12 @@ export default function AdminPage() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [isRegOpen, regForm.phone, restoreCandidate]);
+  }, [
+    canManageOrganizationClients,
+    isRegOpen,
+    regForm.phone,
+    restoreCandidate,
+  ]);
 
   const handleManualVisit = async (userId: number) => {
     const clientEventId = createClientEventId('manual');
@@ -854,14 +874,16 @@ export default function AdminPage() {
   };
 
   const openNewClientDialog = useCallback(() => {
+    if (!canManageOrganizationClients) return;
     setRegForm(getEmptyReceptionForm());
     setRegCandidate(null);
     setRestoreCandidate(null);
     setRegError('');
     setIsRegOpen(true);
-  }, [getEmptyReceptionForm]);
+  }, [canManageOrganizationClients, getEmptyReceptionForm]);
 
   const openReceptionRestore = (candidate: ExistingClientCandidate) => {
+    if (!canManageOrganizationClients) return;
     setRestoreCandidate(candidate);
     setRegCandidate(null);
     setRegError('');
@@ -900,6 +922,8 @@ export default function AdminPage() {
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!canManageOrganizationClients) return;
 
     if (regForm.name.trim().length < 2) {
       setRegError('Введите корректное имя');
@@ -1350,10 +1374,12 @@ export default function AdminPage() {
               <Search className="w-4 h-4 mr-2" />
               Ручной поиск
             </Button>
-            <Button onClick={openNewClientDialog} className="w-full md:w-auto">
-              <UserPlus className="w-4 h-4 mr-2" />
-              Новый клиент
-            </Button>
+            {canManageOrganizationClients && (
+              <Button onClick={openNewClientDialog} className="w-full md:w-auto">
+                <UserPlus className="w-4 h-4 mr-2" />
+                Новый клиент
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1612,19 +1638,21 @@ export default function AdminPage() {
                   <p className="text-sm text-muted-foreground mb-4">
                     Ничего не найдено
                   </p>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setIsSearchOpen(false);
-                      setRegForm(getEmptyReceptionForm());
-                      setRegCandidate(null);
-                      setRestoreCandidate(null);
-                      setRegError('');
-                      setIsRegOpen(true);
-                    }}
-                  >
-                    Создать нового
-                  </Button>
+                  {canManageOrganizationClients && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsSearchOpen(false);
+                        setRegForm(getEmptyReceptionForm());
+                        setRegCandidate(null);
+                        setRestoreCandidate(null);
+                        setRegError('');
+                        setIsRegOpen(true);
+                      }}
+                    >
+                      Создать нового
+                    </Button>
+                  )}
                 </div>
               ) : (
                 searchResults.map((u) => (

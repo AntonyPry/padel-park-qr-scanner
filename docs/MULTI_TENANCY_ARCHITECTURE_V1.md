@@ -426,6 +426,20 @@ Organization/Club/Membership
 | Feature 9 — enforcement and two-tenant QA | Features 4–8 | `NOT NULL`, composite uniques, orphan/cross-tenant detectors, ephemeral two-org isolation suite, restore drill. Второй tenant разрешен только в isolated test DB до acceptance. | Roll back constraints, не tenant attribution; production остается pinned к default tenant при failure. |
 | Feature 10 — club switch UX/rollout | Feature 9 accepted | Только после снятия single-default gate: controlled provisioning contract/UI, switcher, selected preference, owner all-club UX, staged production enablement. | Отключить provisioning/switcher и pin default club; data model остается multi-tenant. |
 
+### Feature 3 decision — mixed-scope frontend pages
+
+Один page route не считается одно-scope только потому, что его основной URL относится к одному домену. Client authorization contract имеет три явных стратегии:
+
+- `single`: page mount и все запросы используют один scope;
+- `composite`: `RequireRoles` и sidebar проверяют все обязательные scope requirements до mount; при провале page code, initial queries и realtime subscriptions не монтируются;
+- `partial`: основной scope монтирует страницу, а каждый optional cross-scope section/query/mutation имеет отдельный role guard по своему server `tenantScope`.
+
+В Feature 3 composite contract выбран для текущих неразделимых flow: bookings (club schedule + organization client lookup), clients (organization registry + club saved views), trainer workspace (organization clients/methodology + club notes/plans), motivation, catalog, shift reports и finances. Эти страницы сейчас имеют общий loading/error/form state либо mount-time/realtime загрузки обеих сторон; показ только половины интерфейса создавал бы ложный рабочий flow. Поэтому отсутствие одной authority намеренно блокирует mount до будущего продуктового выделения независимых sections. Server permission matrix не расширяется.
+
+Partial contract выбран для reception dashboard, call tasks, client bases, corporate clients, staff, onboarding и telephony: их cross-scope sections опциональны и могут быть безопасно отключены без потери основного flow. Запрещенный authority не запускает initial/background query, realtime refresh или mutation своего scope и не показывает ожидаемый `403` как UX-состояние.
+
+При `TENANT_CONTEXT_ENABLED=false` каждое requirement использует legacy `Account.role`, поэтому default single-club visibility остается прежней. При включенном context membership/organization requirements используют `Membership.role`, club requirements — `effectiveRole`. Generated endpoint `tenantScope` и mixed-page dependency inventory проверяются автоматическим client audit.
+
 ### Hard rollout gate до Feature 9
 
 - До полного acceptance Feature 9 нельзя создать вторую Organization или второй Club в production/staging data stores, кроме isolated ephemeral DB самой isolation suite.

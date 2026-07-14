@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ROUTE_ACCESS,
-  ROUTE_SCOPES,
+  ROUTE_AUTHORIZATION,
   canAccessPath,
   canAccessPathForAuthority,
   canManageBookingResources,
@@ -34,14 +34,65 @@ import {
 import { selectAuthorizationRole, type RoleAuthority } from './authorization';
 
 describe('permissions', () => {
-  it('declares one audited authorization scope for every protected client route', () => {
-    expect(Object.keys(ROUTE_SCOPES).sort()).toEqual(Object.keys(ROUTE_ACCESS).sort());
-    expect(ROUTE_SCOPES['/admin/onboarding']).toBe('membership');
-    expect(ROUTE_SCOPES['/admin/staff']).toBe('organization');
-    expect(ROUTE_SCOPES['/admin/users']).toBe('organization');
-    expect(ROUTE_SCOPES['/admin/clients']).toBe('organization');
-    expect(ROUTE_SCOPES['/admin/bookings']).toBe('club');
-    expect(ROUTE_SCOPES['/admin/finances']).toBe('club');
+  it('declares one audited authorization contract for every protected client route', () => {
+    expect(Object.keys(ROUTE_AUTHORIZATION).sort()).toEqual(
+      Object.keys(ROUTE_ACCESS).sort(),
+    );
+    expect(ROUTE_AUTHORIZATION['/admin/onboarding']).toMatchObject({
+      strategy: 'partial',
+      requirements: [{ scope: 'membership' }],
+    });
+    expect(ROUTE_AUTHORIZATION['/admin/staff']).toMatchObject({
+      strategy: 'partial',
+      requirements: [{ scope: 'organization' }],
+    });
+    expect(ROUTE_AUTHORIZATION['/admin/users']).toMatchObject({
+      strategy: 'single',
+      requirements: [{ scope: 'organization' }],
+    });
+    expect(
+      ROUTE_AUTHORIZATION['/admin/bookings'].requirements.map(({ scope }) => scope),
+    ).toEqual(['club', 'organization']);
+    expect(
+      ROUTE_AUTHORIZATION['/admin/finances'].requirements.map(({ scope }) => scope),
+    ).toEqual(['club', 'organization']);
+  });
+
+  it('requires both organization and club authority for inseparable mixed pages', () => {
+    const authority = (
+      membershipRole: 'manager' | 'trainer',
+      effectiveRole: 'manager' | 'trainer',
+    ): RoleAuthority => ({
+      accountRole: membershipRole,
+      tenantContext: {
+        clubId: 12,
+        effectiveRole,
+        membershipId: 21,
+        membershipRole,
+        organizationId: 11,
+      },
+      tenantContextEnabled: true,
+    });
+
+    const trainerManager = authority('trainer', 'manager');
+    expect(canAccessPathForAuthority(trainerManager, '/admin/motivation')).toBe(
+      false,
+    );
+    expect(canAccessPathForAuthority(trainerManager, '/admin/shift-reports')).toBe(
+      false,
+    );
+    expect(canAccessPathForAuthority(trainerManager, '/admin/finances')).toBe(
+      false,
+    );
+
+    const managerTrainer = authority('manager', 'trainer');
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/catalog')).toBe(false);
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/shift-reports')).toBe(
+      false,
+    );
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/finances')).toBe(
+      false,
+    );
   });
 
   it('separates organization management from club manager actions', () => {

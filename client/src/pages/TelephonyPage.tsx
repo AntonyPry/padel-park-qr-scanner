@@ -105,6 +105,8 @@ import { queryKeys } from '@/api/query-keys';
 import { fetchReferences } from '@/lib/references';
 import {
   canManageTelephony,
+  canViewClients,
+  canViewReferences,
   canWorkTelephony,
 } from '@/lib/permissions';
 import { getApiErrorMessage } from '@/lib/api';
@@ -450,6 +452,7 @@ function getClientVisitSummary(client: ClientListItem) {
 
 export default function TelephonyPage() {
   const clubRole = useAuthorizationRole('club');
+  const organizationRole = useAuthorizationRole('organization');
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
@@ -479,6 +482,8 @@ export default function TelephonyPage() {
 
   const canManage = canManageTelephony(clubRole);
   const canWork = canWorkTelephony(clubRole);
+  const canSearchOrganizationClients = canViewClients(organizationRole);
+  const canLoadOrganizationReferences = canViewReferences(organizationRole);
   const canAccessCallRecordings = canWork;
   const callsTableColumnCount = canWork ? 7 : 5;
 
@@ -532,7 +537,10 @@ export default function TelephonyPage() {
     queryFn: () => getTelephonyRawEvents({ page: 1, pageSize: 5, status: 'all' }),
   });
   const clientSourcesQuery = useQuery({
-    enabled: canWork && Boolean(clientDialogCall),
+    enabled:
+      canWork &&
+      canLoadOrganizationReferences &&
+      Boolean(clientDialogCall),
     queryKey: queryKeys.references.list('client-sources', 'active'),
     queryFn: () => fetchReferences('client-sources', 'active'),
   });
@@ -546,7 +554,11 @@ export default function TelephonyPage() {
     [clientSearch],
   );
   const clientSearchQuery = useQuery({
-    enabled: canWork && Boolean(clientDialogCall) && clientSearch.trim().length > 0,
+    enabled:
+      canWork &&
+      canSearchOrganizationClients &&
+      Boolean(clientDialogCall) &&
+      clientSearch.trim().length > 0,
     queryKey: queryKeys.clients.list(clientSearchParams),
     queryFn: () => listClients(clientSearchParams),
   });

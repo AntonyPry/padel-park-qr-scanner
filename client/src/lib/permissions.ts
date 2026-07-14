@@ -34,31 +34,122 @@ export const ROUTE_ACCESS = {
 
 export type ClientRoute = keyof typeof ROUTE_ACCESS;
 
-export const ROUTE_SCOPES: Record<ClientRoute, AuthorizationScope> = {
-  '/admin': 'club',
-  '/admin/manager-control': 'club',
-  '/admin/audit': 'organization',
-  '/admin/onboarding': 'membership',
-  '/admin/bookings': 'club',
-  '/admin/clients': 'organization',
-  '/admin/trainer': 'club',
-  '/admin/methodology': 'organization',
-  '/admin/methodology-analytics': 'organization',
-  '/admin/client-bases': 'club',
-  '/admin/call-tasks': 'club',
-  '/admin/prepayments': 'club',
-  '/admin/certificates': 'club',
-  '/admin/corporate-clients': 'organization',
-  '/admin/telephony': 'club',
-  '/admin/visits-analytics': 'club',
-  '/admin/finances': 'club',
-  '/admin/staff': 'organization',
-  '/admin/users': 'organization',
-  '/admin/motivation': 'club',
-  '/admin/shift-reports': 'club',
-  '/admin/utilization': 'club',
-  '/admin/catalog': 'organization',
-  '/admin/references': 'organization',
+export const CLIENT_VIEW_ROLES = [
+  'owner',
+  'manager',
+  'admin',
+  'viewer',
+  'trainer',
+] as const satisfies readonly AccountRole[];
+
+export type RouteAuthorizationStrategy =
+  | 'single'
+  | 'composite'
+  | 'partial';
+
+export interface RouteScopeRequirement {
+  roles: readonly AccountRole[];
+  scope: AuthorizationScope;
+}
+
+export interface RouteAuthorizationContract {
+  requirements: readonly RouteScopeRequirement[];
+  strategy: RouteAuthorizationStrategy;
+}
+
+const single = (
+  scope: AuthorizationScope,
+  roles: readonly AccountRole[],
+): RouteAuthorizationContract => ({
+  requirements: [{ roles, scope }],
+  strategy: 'single',
+});
+
+const composite = (
+  requirements: readonly RouteScopeRequirement[],
+): RouteAuthorizationContract => ({ requirements, strategy: 'composite' });
+
+const partial = (
+  scope: AuthorizationScope,
+  roles: readonly AccountRole[],
+): RouteAuthorizationContract => ({
+  requirements: [{ roles, scope }],
+  strategy: 'partial',
+});
+
+export const ROUTE_AUTHORIZATION: Record<
+  ClientRoute,
+  RouteAuthorizationContract
+> = {
+  '/admin': partial('club', ROUTE_ACCESS['/admin']),
+  '/admin/manager-control': single(
+    'club',
+    ROUTE_ACCESS['/admin/manager-control'],
+  ),
+  '/admin/audit': single('organization', ROUTE_ACCESS['/admin/audit']),
+  '/admin/onboarding': partial(
+    'membership',
+    ROUTE_ACCESS['/admin/onboarding'],
+  ),
+  '/admin/bookings': composite([
+    { roles: ROUTE_ACCESS['/admin/bookings'], scope: 'club' },
+    { roles: CLIENT_VIEW_ROLES, scope: 'organization' },
+  ]),
+  '/admin/clients': composite([
+    { roles: ROUTE_ACCESS['/admin/clients'], scope: 'organization' },
+    { roles: CLIENT_VIEW_ROLES, scope: 'club' },
+  ]),
+  '/admin/trainer': composite([
+    { roles: ROUTE_ACCESS['/admin/trainer'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/trainer'], scope: 'organization' },
+  ]),
+  '/admin/methodology': single(
+    'organization',
+    ROUTE_ACCESS['/admin/methodology'],
+  ),
+  '/admin/methodology-analytics': single(
+    'organization',
+    ROUTE_ACCESS['/admin/methodology-analytics'],
+  ),
+  '/admin/client-bases': partial(
+    'club',
+    ROUTE_ACCESS['/admin/client-bases'],
+  ),
+  '/admin/call-tasks': partial('club', ROUTE_ACCESS['/admin/call-tasks']),
+  '/admin/prepayments': single('club', ROUTE_ACCESS['/admin/prepayments']),
+  '/admin/certificates': single('club', ROUTE_ACCESS['/admin/certificates']),
+  '/admin/corporate-clients': partial(
+    'organization',
+    ROUTE_ACCESS['/admin/corporate-clients'],
+  ),
+  '/admin/telephony': partial('club', ROUTE_ACCESS['/admin/telephony']),
+  '/admin/visits-analytics': single(
+    'club',
+    ROUTE_ACCESS['/admin/visits-analytics'],
+  ),
+  '/admin/finances': composite([
+    { roles: ROUTE_ACCESS['/admin/finances'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/finances'], scope: 'organization' },
+  ]),
+  '/admin/staff': partial('organization', ROUTE_ACCESS['/admin/staff']),
+  '/admin/users': single('organization', ROUTE_ACCESS['/admin/users']),
+  '/admin/motivation': composite([
+    { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'organization' },
+  ]),
+  '/admin/shift-reports': composite([
+    { roles: ROUTE_ACCESS['/admin/shift-reports'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/shift-reports'], scope: 'organization' },
+  ]),
+  '/admin/utilization': single('club', ROUTE_ACCESS['/admin/utilization']),
+  '/admin/catalog': composite([
+    { roles: ROUTE_ACCESS['/admin/catalog'], scope: 'organization' },
+    { roles: ROUTE_ACCESS['/admin/catalog'], scope: 'club' },
+  ]),
+  '/admin/references': single(
+    'organization',
+    ROUTE_ACCESS['/admin/references'],
+  ),
 };
 
 export function hasRoleAccess(
@@ -79,9 +170,11 @@ export function canAccessPathForAuthority(
   authority: RoleAuthority,
   path: ClientRoute,
 ) {
-  return hasRoleAccess(
-    selectAuthorizationRole(authority, ROUTE_SCOPES[path]),
-    ROUTE_ACCESS[path],
+  return ROUTE_AUTHORIZATION[path].requirements.every((requirement) =>
+    hasRoleAccess(
+      selectAuthorizationRole(authority, requirement.scope),
+      requirement.roles,
+    ),
   );
 }
 
@@ -133,6 +226,10 @@ export function canExportFinance(role: AccountRole | null | undefined) {
 
 export function canManageClients(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+}
+
+export function canViewClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, CLIENT_VIEW_ROLES);
 }
 
 export function canManageBookings(role: AccountRole | null | undefined) {
@@ -233,6 +330,10 @@ export function canManageSubscriptionTypes(role: AccountRole | null | undefined)
 
 export function canManageReferences(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canViewReferences(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin', 'accountant', 'viewer']);
 }
 
 export function canManageMotivation(role: AccountRole | null | undefined) {

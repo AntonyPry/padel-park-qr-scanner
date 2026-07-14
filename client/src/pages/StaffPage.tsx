@@ -334,6 +334,7 @@ export default function StaffPage() {
   }, [errorMessage]);
 
   const handleSaveShift = shiftForm.handleSubmit(async (values) => {
+    if (!canEditShifts) return;
     if (payrollLocked) {
       setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
       return;
@@ -383,6 +384,7 @@ export default function StaffPage() {
   });
 
   const handleDelete = async (id: number | string) => {
+    if (!canEditShifts) return;
     if (String(id).startsWith('draft-')) return;
     if (payrollLocked) {
       setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
