@@ -301,7 +301,11 @@ export function AppSidebar() {
       <SidebarHeader className="border-b border-sidebar-border/70 p-4 pb-3">
         <div className="flex h-10 min-w-0 items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-sidebar-border bg-sidebar-accent shadow-sm shadow-foreground/5">
-            <img src="/setly-mark.svg" alt="" className="size-full" />
+            <img
+              src="/setly-mark.png?v=20260714"
+              alt=""
+              className="size-full object-cover"
+            />
           </div>
           <span className="block min-w-0 truncate text-sm font-semibold tracking-tight text-primary">
             Setly

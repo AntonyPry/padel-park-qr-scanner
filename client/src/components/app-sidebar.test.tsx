@@ -50,6 +50,15 @@ function renderSidebar(role: AccountRole) {
 }
 
 describe('AppSidebar inventory placeholder', () => {
+  it('renders the current Setly brand mark', () => {
+    const { container } = renderSidebar('owner');
+
+    expect(screen.getByText('Setly')).toBeInTheDocument();
+    expect(
+      container.querySelector('img[src="/setly-mark.png?v=20260714"]'),
+    ).toBeInTheDocument();
+  });
+
   it.each<AccountRole>(['owner', 'manager', 'accountant'])(
     'shows a disabled coming-soon item for %s',
     (role) => {

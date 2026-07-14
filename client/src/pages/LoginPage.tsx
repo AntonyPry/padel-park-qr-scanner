@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { LockKeyhole, UserRoundPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -44,12 +43,13 @@ export default function LoginPage({ mode }: LoginPageProps) {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-2">
-          <div className="h-10 w-10 rounded-md bg-primary/10 text-primary flex items-center justify-center">
-            {isSetup ? (
-              <UserRoundPlus className="h-5 w-5" />
-            ) : (
-              <LockKeyhole className="h-5 w-5" />
-            )}
+          <div className="mb-2 flex items-center gap-3">
+            <img
+              src="/setly-mark.png?v=20260714"
+              alt=""
+              className="size-11 rounded-xl border border-border object-cover shadow-sm"
+            />
+            <span className="text-base font-semibold text-foreground">Setly</span>
           </div>
           <CardTitle>
             {isSetup ? 'Первичная настройка' : 'Вход в панель'}
