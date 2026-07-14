@@ -11,6 +11,7 @@ export const apiEndpoints = {
   "access.search": { method: "GET", path: "/search", responseType: "json" },
   "access.manualVisit": { method: "POST", path: "/manual-visit", responseType: "json" },
   "access.issueKey": { method: "POST", path: "/key", responseType: "json" },
+  "access.correctKey": { method: "PATCH", path: "/key", responseType: "json" },
   "access.scan": { method: "POST", path: "/scan", responseType: "json" },
   "access.scannerEvents": { method: "GET", path: "/scanner-events", responseType: "json" },
   "access.recordScannerEvent": { method: "POST", path: "/scanner-events", responseType: "json" },
@@ -304,6 +305,11 @@ export type AccessManualVisitBody = {
   [key: string]: unknown;
 };
 export type AccessIssueKeyBody = {
+  keyNumber: string;
+  visitId: number | string;
+  [key: string]: unknown;
+};
+export type AccessCorrectKeyBody = {
   keyNumber: string;
   visitId: number | string;
   [key: string]: unknown;
@@ -2354,6 +2360,7 @@ export interface ApiEndpointRequestMap {
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
   "access.manualVisit": ApiEndpointRequest<undefined, undefined, AccessManualVisitBody>;
   "access.issueKey": ApiEndpointRequest<undefined, undefined, AccessIssueKeyBody>;
+  "access.correctKey": ApiEndpointRequest<undefined, undefined, AccessCorrectKeyBody>;
   "access.scan": ApiEndpointRequest<undefined, undefined, AccessScanBody>;
   "access.scannerEvents": ApiEndpointRequest<undefined, AccessScannerEventsQuery, undefined>;
   "access.recordScannerEvent": ApiEndpointRequest<undefined, undefined, AccessRecordScannerEventBody>;

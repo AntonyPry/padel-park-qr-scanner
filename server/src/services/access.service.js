@@ -491,6 +491,74 @@ async function issueKey(visitId, keyNumber, account = null) {
   return visit;
 }
 
+async function correctKey(visitId, keyNumber, account = null) {
+  const cleanKeyNumber = String(keyNumber ?? '').trim();
+  if (!/^\d+$/.test(cleanKeyNumber)) {
+    throw appError(
+      'Номер ключа должен содержать только цифры',
+      400,
+      'INVALID_KEY_NUMBER',
+    );
+  }
+
+  return db.sequelize.transaction(async (transaction) => {
+    const lockedVisit = await db.Visit.findByPk(Number(visitId), {
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    if (!lockedVisit) throw appError('Визит не найден', 404);
+
+    const oldKeyNumber = String(lockedVisit.keyNumber || '');
+    if (!oldKeyNumber) {
+      throw appError(
+        'Ключ для визита еще не выдан',
+        409,
+        'KEY_NOT_ISSUED',
+      );
+    }
+    if (oldKeyNumber === cleanKeyNumber) {
+      throw appError(
+        'Номер ключа не изменился',
+        409,
+        'KEY_UNCHANGED',
+      );
+    }
+
+    await lockedVisit.update(
+      { keyNumber: cleanKeyNumber },
+      { transaction },
+    );
+
+    await scannerEventsService.recordEvent({
+      eventType: 'key_changed',
+      severity: 'info',
+      status: 'updated',
+      message: `Номер ключа изменен: №${oldKeyNumber} → №${cleanKeyNumber}`,
+      source: 'reception',
+      visitId: lockedVisit.id,
+      userId: lockedVisit.userId,
+      account,
+      metadata: {
+        visitId: lockedVisit.id,
+        oldKeyNumber,
+        newKeyNumber: cleanKeyNumber,
+        changedByAccountId: account?.id || null,
+        changedByRole: account?.role || null,
+      },
+      transaction,
+      throwOnError: true,
+    });
+
+    return {
+      id: lockedVisit.id,
+      visitId: lockedVisit.id,
+      userId: lockedVisit.userId,
+      keyNumber: cleanKeyNumber,
+      oldKeyNumber,
+    };
+  });
+}
+
 function splitVisitCategories(category) {
   return String(category || '')
     .split(',')
@@ -564,5 +632,6 @@ module.exports = {
   registerReceptionUser,
   getRecentVisitCards,
   issueKey,
+  correctKey,
   updateVisitCategory,
 };

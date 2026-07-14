@@ -59,6 +59,25 @@ test('route mapper covers integrations and system-facing sync endpoints', () => 
   assert.equal(workerRetry.action, 'updated');
 });
 
+test('key correction publishes the same access invalidation as initial issue', () => {
+  const initialIssue = matchRealtimeChange(
+    req('POST', '/api/key'),
+    { status: 'ok' },
+  );
+  const correction = matchRealtimeChange(
+    req('PATCH', '/api/key'),
+    { id: 91, keyNumber: '204', status: 'ok', visitId: 91 },
+  );
+
+  assert.equal(initialIssue.domain, 'access');
+  assert.equal(correction.domain, 'access');
+  assert.equal(correction.entity, 'visit_key');
+  assert.equal(correction.action, 'updated');
+  assert.equal(correction.entityId, '91');
+  assert.equal(correction.hints.queryGroups.includes('access'), true);
+  assert.equal(correction.hints.queryGroups.includes('clients'), true);
+});
+
 test('revenue dependencies fan out a sanitized visits analytics invalidation', () => {
   const pendingSale = matchRealtimeChange(
     req('POST', '/api/catalog/pending-sales/42/link'),

@@ -959,6 +959,19 @@ const trainingMethodologyExerciseUpdateBody = trainingMethodologyExerciseBody
 
 const apiSchemas = {
   access: {
+    correctKey: {
+      body: z
+        .object({
+          keyNumber: z
+            .string()
+            .trim()
+            .min(1, 'Номер ключа обязателен')
+            .max(32, 'Номер ключа слишком длинный')
+            .regex(/^\d+$/, 'Номер ключа должен содержать только цифры'),
+          visitId: id,
+        })
+        .passthrough(),
+    },
     issueKey: {
       body: z
         .object({

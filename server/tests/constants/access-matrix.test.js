@@ -112,6 +112,13 @@ test('telephony separates setup from call processing', () => {
   assert.equal(ACCESS_MATRIX.telephonyWork.includes('viewer'), false);
 });
 
+test('access key correction keeps the existing access operator roles', () => {
+  assert.deepEqual(ACCESS_MATRIX.accessOperate, ['owner', 'manager', 'admin']);
+  assert.equal(ACCESS_MATRIX.accessOperate.includes('viewer'), false);
+  assert.equal(ACCESS_MATRIX.accessOperate.includes('accountant'), false);
+  assert.equal(ACCESS_MATRIX.accessOperate.includes('trainer'), false);
+});
+
 test('shift report templates are owner and manager managed while admins submit active shift reports', () => {
   assert.deepEqual(ACCESS_MATRIX.shiftReportTemplatesManage, ['owner', 'manager']);
   assert.deepEqual(ACCESS_MATRIX.shiftReportsSubmit, ['owner', 'manager', 'admin']);

@@ -57,25 +57,29 @@ async function recordEvent({
   clientEventId = null,
   metadata = null,
   throwOnError = false,
+  transaction = undefined,
 }) {
   if (!eventType) return null;
 
   try {
-    return await db.ScannerEvent.create({
-      eventType,
-      severity,
-      status,
-      message,
-      code,
-      source,
-      qrPreview: sanitizeQrPreview(rawQr),
-      qrHash: hashQr(rawQr),
-      visitId,
-      userId,
-      accountId: account?.id || accountId || null,
-      clientEventId: clientEventId || null,
-      metadata: sanitizeMetadata(metadata),
-    });
+    return await db.ScannerEvent.create(
+      {
+        eventType,
+        severity,
+        status,
+        message,
+        code,
+        source,
+        qrPreview: sanitizeQrPreview(rawQr),
+        qrHash: hashQr(rawQr),
+        visitId,
+        userId,
+        accountId: account?.id || accountId || null,
+        clientEventId: clientEventId || null,
+        metadata: sanitizeMetadata(metadata),
+      },
+      transaction ? { transaction } : undefined,
+    );
   } catch (error) {
     if (
       error?.name === 'SequelizeUniqueConstraintError' ||

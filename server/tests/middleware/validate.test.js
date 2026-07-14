@@ -257,6 +257,26 @@ test('accepts HEIC shift report attachment mime type', () => {
   assert.equal(res.statusCode, null);
 });
 
+test('key correction accepts digits and rejects empty or non-digit values', () => {
+  const valid = runValidation(apiSchemas.access.correctKey, {
+    body: { keyNumber: '204', visitId: 91 },
+    params: {},
+    query: {},
+  });
+  assert.equal(valid.nextCalled, true);
+  assert.equal(valid.res.statusCode, null);
+
+  for (const keyNumber of ['', '   ', '12a', '№12']) {
+    const invalid = runValidation(apiSchemas.access.correctKey, {
+      body: { keyNumber, visitId: 91 },
+      params: {},
+      query: {},
+    });
+    assert.equal(invalid.nextCalled, false);
+    assert.equal(invalid.res.statusCode, 400);
+  }
+});
+
 test('accepts scanner diagnostic statuses from the browser scanner', () => {
   const { nextCalled, res } = runValidation(apiSchemas.access.scannerEvent, {
     body: {

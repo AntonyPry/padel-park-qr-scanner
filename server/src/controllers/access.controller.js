@@ -52,6 +52,21 @@ class AccessController {
     }
   }
 
+  async correctKey(req, res) {
+    const { visitId, keyNumber } = req.body;
+
+    try {
+      const result = await accessService.correctKey(
+        visitId,
+        keyNumber,
+        req.account,
+      );
+      res.json({ status: 'ok', ...result });
+    } catch (error) {
+      sendError(res, error, 'Ошибка изменения номера ключа');
+    }
+  }
+
   async scan(req, res) {
     const { qr, clientEventId, scannerSessionId, deviceLabel, metadata } = req.body;
 

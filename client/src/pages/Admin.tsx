@@ -19,6 +19,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { VisitKeyControl } from '@/components/visit-key-control';
 import {
   Table,
   TableBody,
@@ -386,6 +387,9 @@ export default function AdminPage() {
   const [issuingKeyVisitId, setIssuingKeyVisitId] = useState<number | null>(
     null,
   );
+  const [correctingKeyVisitId, setCorrectingKeyVisitId] = useState<
+    number | null
+  >(null);
   const [savingCategoryVisitId, setSavingCategoryVisitId] = useState<
     number | null
   >(null);
@@ -414,8 +418,24 @@ export default function AdminPage() {
     try {
       const res = await apiFetch('/api/visits');
       if (res.ok) {
-        const history = await res.json();
+        const history = (await res.json()) as VisitCard[];
         setCards(history);
+        setActiveVisit((current) => {
+          if (!current?.visitId) return current;
+          const updated = history.find(
+            (card) => card.visitId === current.visitId,
+          );
+          return updated ? { ...current, ...updated } : current;
+        });
+        setQueuedVisits((current) =>
+          current.map((queued) => {
+            if (!queued.visitId) return queued;
+            const updated = history.find(
+              (card) => card.visitId === queued.visitId,
+            );
+            return updated ? { ...queued, ...updated } : queued;
+          }),
+        );
       }
     } catch (e) {
       console.error('Ошибка загрузки истории:', e);
@@ -1345,6 +1365,60 @@ export default function AdminPage() {
     }
   };
 
+  const handleCorrectKey = async (
+    visitId: number | undefined,
+    keyNumber: string,
+    cardId: string,
+  ) => {
+    if (!visitId || correctingKeyVisitId === visitId) return;
+    setCorrectingKeyVisitId(visitId);
+
+    try {
+      const res = await apiFetch('/api/key', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitId, keyNumber }),
+      });
+      if (!res.ok) {
+        const apiError = await readApiError(
+          res,
+          'Ошибка изменения номера ключа',
+        );
+        throw new Error(apiError.error);
+      }
+
+      const data = (await res.json()) as { keyNumber?: string };
+      const savedKeyNumber = data.keyNumber || keyNumber;
+      setCards((current) =>
+        current.map((card) =>
+          card.visitId === visitId || card.id === cardId
+            ? { ...card, keyNumber: savedKeyNumber, keyIssued: true }
+            : card,
+        ),
+      );
+      setActiveVisit((current) =>
+        current?.visitId === visitId || current?.id === cardId
+          ? { ...current, keyNumber: savedKeyNumber, keyIssued: true }
+          : current,
+      );
+      setVisitActionError('');
+      toast.success('Номер ключа изменен', {
+        description: `Теперь выдан ключ №${savedKeyNumber}`,
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Не удалось изменить номер ключа';
+      toast.error('Не удалось изменить номер ключа', {
+        description: message,
+      });
+      throw error;
+    } finally {
+      setCorrectingKeyVisitId(null);
+    }
+  };
+
   const handleCategoryChange = async (
     cardId: string,
     visitId: number | undefined,
@@ -2196,9 +2270,19 @@ export default function AdminPage() {
                   <div>
                     <div className="mb-2 text-sm font-medium">Ключ</div>
                     {activeVisit.keyIssued ? (
-                      <div className="inline-flex items-center rounded-md border border-primary/20 bg-primary/10 px-3 py-2 text-sm font-medium text-primary">
-                        Выдан №{activeVisit.keyNumber}
-                      </div>
+                      <VisitKeyControl
+                        keyNumber={activeVisit.keyNumber}
+                        isSaving={
+                          correctingKeyVisitId === activeVisit.visitId
+                        }
+                        onSave={(keyNumber) =>
+                          handleCorrectKey(
+                            activeVisit.visitId,
+                            keyNumber,
+                            activeVisit.id,
+                          )
+                        }
+                      />
                     ) : (
                       <div className="flex flex-col gap-2 sm:flex-row">
                         <Input

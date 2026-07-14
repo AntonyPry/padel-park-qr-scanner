@@ -11,6 +11,7 @@ const operateAccess = requireRole(...ACCESS_MATRIX.accessOperate);
 router.get('/search', operateAccess, validate({ query: apiSchemas.access.searchQuery }), accessController.search);
 router.post('/manual-visit', operateAccess, validate(apiSchemas.access.manualVisit), accessController.manualVisit);
 router.post('/key', operateAccess, validate(apiSchemas.access.issueKey), accessController.issueKey);
+router.patch('/key', operateAccess, validate(apiSchemas.access.correctKey), accessController.correctKey);
 router.post('/scan', operateAccess, validate(apiSchemas.access.scan), accessController.scan);
 router.get('/scanner-events', operateAccess, validate({ query: apiSchemas.access.scannerEventsQuery }), accessController.getScannerEvents);
 router.post('/scanner-events', operateAccess, validate(apiSchemas.access.scannerEvent), accessController.recordScannerEvent);

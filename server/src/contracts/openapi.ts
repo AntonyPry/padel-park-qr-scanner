@@ -50,6 +50,7 @@ const endpointContracts: EndpointContract[] = [
   { id: 'access.search', method: 'get', path: '/search', query: apiSchemas.access.searchQuery, summary: 'Search clients for access monitor', tags: ['Access'] },
   { ...apiSchemas.access.manualVisit, id: 'access.manualVisit', method: 'post', path: '/manual-visit', summary: 'Create manual visit', tags: ['Access'] },
   { ...apiSchemas.access.issueKey, id: 'access.issueKey', method: 'post', path: '/key', summary: 'Issue key for visit', tags: ['Access'] },
+  { ...apiSchemas.access.correctKey, id: 'access.correctKey', method: 'patch', path: '/key', summary: 'Correct issued key number', tags: ['Access'] },
   { ...apiSchemas.access.scan, id: 'access.scan', method: 'post', path: '/scan', summary: 'Process QR scan', tags: ['Access'] },
   { id: 'access.scannerEvents', method: 'get', path: '/scanner-events', query: apiSchemas.access.scannerEventsQuery, summary: 'List scanner events', tags: ['Access'] },
   { ...apiSchemas.access.scannerEvent, id: 'access.recordScannerEvent', method: 'post', path: '/scanner-events', summary: 'Record scanner diagnostic event', tags: ['Access'] },
