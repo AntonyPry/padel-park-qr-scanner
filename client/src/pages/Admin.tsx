@@ -72,6 +72,7 @@ import {
   recordPendingScannerRetry,
 } from '@/lib/scanner-scan-queue';
 import type { PendingScannerScan } from '@/lib/scanner-scan-queue';
+import { postScannerDiagnosticEvent } from '@/lib/scanner-telemetry';
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
   name: '',
@@ -401,21 +402,18 @@ export default function AdminPage() {
       } = {},
     ) => {
       try {
-        await apiFetch('/api/scanner-events', {
-          method: 'POST',
-          body: JSON.stringify({
-            eventType,
-            severity: options.severity || 'info',
-            status: options.status,
-            message: options.message,
-            code: options.code,
-            source: 'web_serial',
-            clientEventId: options.clientEventId || createClientEventId('client'),
-            metadata: {
-              scannerSessionId: scannerSessionIdRef.current,
-              ...options.metadata,
-            },
-          }),
+        await postScannerDiagnosticEvent({
+          eventType,
+          severity: options.severity || 'info',
+          status: options.status,
+          message: options.message,
+          code: options.code,
+          source: 'web_serial',
+          clientEventId: options.clientEventId || createClientEventId('client'),
+          metadata: {
+            scannerSessionId: scannerSessionIdRef.current,
+            ...options.metadata,
+          },
         });
       } catch (e) {
         console.error('Ошибка записи события сканера:', e);
