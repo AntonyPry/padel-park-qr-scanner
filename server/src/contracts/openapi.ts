@@ -1,5 +1,8 @@
 const { z } = require('zod');
 const { apiSchemas } = require('./api-schemas');
+const {
+  getEndpointTenantScope,
+} = require('../tenant-context/route-scope-declarations');
 
 type HttpMethod = 'delete' | 'get' | 'patch' | 'post' | 'put';
 
@@ -12,10 +15,12 @@ interface EndpointContract {
   path: string;
   public?: boolean;
   query?: unknown;
+  response?: unknown;
   responseType?: 'binary' | 'json' | 'xlsx';
   successStatus?: number;
   summary: string;
   tags: string[];
+  tenantScope?: 'global' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
 }
 
 const responseOk = z.object({}).passthrough();
@@ -38,7 +43,7 @@ const apiError = z.object({
   status: z.number(),
 });
 
-const endpointContracts: EndpointContract[] = [
+const rawEndpointContracts: EndpointContract[] = [
   { id: 'system.health', method: 'get', path: '/health', public: true, summary: 'Service health check', tags: ['System'] },
   { id: 'system.openapi', method: 'get', path: '/openapi.json', public: true, summary: 'OpenAPI document', tags: ['System'] },
 
@@ -46,6 +51,8 @@ const endpointContracts: EndpointContract[] = [
   { ...apiSchemas.auth.bootstrap, id: 'auth.bootstrap', method: 'post', path: '/auth/bootstrap', public: true, summary: 'Bootstrap owner account', tags: ['Auth'] },
   { ...apiSchemas.auth.login, id: 'auth.login', method: 'post', path: '/auth/login', public: true, summary: 'Login', tags: ['Auth'] },
   { id: 'auth.me', method: 'get', path: '/auth/me', summary: 'Current account', tags: ['Auth'] },
+  { id: 'auth.memberships', method: 'get', path: '/auth/me/memberships', response: apiSchemas.auth.membershipsResponse, summary: 'Current account tenant memberships', tags: ['Auth'] },
+  { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
 
   { id: 'access.search', method: 'get', path: '/search', query: apiSchemas.access.searchQuery, summary: 'Search clients for access monitor', tags: ['Access'] },
   { ...apiSchemas.access.manualVisit, id: 'access.manualVisit', method: 'post', path: '/manual-visit', summary: 'Create manual visit', tags: ['Access'] },
@@ -337,6 +344,14 @@ const endpointContracts: EndpointContract[] = [
   { id: 'visitsAnalytics.sourceQualityExport', method: 'get', path: '/export/visits/source-quality', query: apiSchemas.visitsAnalytics.sourceQualityQuery, responseType: 'xlsx', summary: 'Export visits source quality', tags: ['Reports'] },
 ];
 
+const endpointContracts: EndpointContract[] = rawEndpointContracts.map((endpoint) => {
+  const tenantScope = getEndpointTenantScope(endpoint.id);
+  if (!tenantScope) {
+    throw new Error(`Tenant scope is not declared for endpoint ${endpoint.id}`);
+  }
+  return Object.freeze({ ...endpoint, tenantScope });
+});
+
 function schemaToJsonSchema(schema: unknown) {
   if (!schema) return undefined;
   try {
@@ -359,6 +374,28 @@ function getPathParamNames(path: string) {
 
 function buildParameters(endpoint: EndpointContract) {
   const parameters = [];
+  if (
+    endpoint.tenantScope === 'membership' ||
+    endpoint.tenantScope === 'organization' ||
+    endpoint.tenantScope === 'club'
+  ) {
+    parameters.push({
+      description: 'Verified organization context. Body, query and JWT tenant IDs are not authoritative.',
+      in: 'header',
+      name: 'X-Organization-Id',
+      required: true,
+      schema: { minimum: 1, type: 'integer' },
+    });
+  }
+  if (endpoint.tenantScope === 'club') {
+    parameters.push({
+      description: 'Verified club context within X-Organization-Id.',
+      in: 'header',
+      name: 'X-Club-Id',
+      required: true,
+      schema: { minimum: 1, type: 'integer' },
+    });
+  }
   for (const name of getPathParamNames(endpoint.path)) {
     parameters.push({
       in: 'path',
@@ -385,9 +422,13 @@ function buildParameters(endpoint: EndpointContract) {
 
 function buildOperation(endpoint: EndpointContract) {
   const successStatus = endpoint.successStatus || 200;
+  const tenantScoped =
+    endpoint.tenantScope === 'membership' ||
+    endpoint.tenantScope === 'organization' ||
+    endpoint.tenantScope === 'club';
   let successContent: Record<string, unknown> = {
     'application/json': {
-      schema: schemaToJsonSchema(responseOk),
+      schema: schemaToJsonSchema(endpoint.response || responseOk),
     },
   };
   if (endpoint.responseType === 'xlsx') {
@@ -404,41 +445,70 @@ function buildOperation(endpoint: EndpointContract) {
       },
     };
   }
+  const responses: Record<number, unknown> = {
+    [successStatus]: {
+      content: successContent,
+      description: 'Success',
+    },
+    400: {
+      content: {
+        'application/json': {
+          schema: tenantScoped
+            ? {
+                oneOf: [
+                  schemaToJsonSchema(validationError),
+                  { $ref: '#/components/schemas/ApiError' },
+                ],
+              }
+            : schemaToJsonSchema(validationError),
+        },
+      },
+      description: tenantScoped
+        ? 'Validation or tenant context error'
+        : 'Validation error',
+    },
+    401: {
+      content: {
+        'application/json': {
+          schema: schemaToJsonSchema(apiError),
+        },
+      },
+      description: 'Unauthorized',
+    },
+    500: {
+      content: {
+        'application/json': {
+          schema: schemaToJsonSchema(apiError),
+        },
+      },
+      description: 'Server error',
+    },
+  };
+  if (tenantScoped) {
+    responses[403] = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiError' },
+        },
+      },
+      description: 'Forbidden tenant context',
+    };
+    responses[404] = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiError' },
+        },
+      },
+      description: 'Tenant or resource not found',
+    };
+  }
   const operation: Record<string, unknown> = {
     operationId: endpoint.id,
-    responses: {
-      [successStatus]: {
-        content: successContent,
-        description: 'Success',
-      },
-      400: {
-        content: {
-          'application/json': {
-            schema: schemaToJsonSchema(validationError),
-          },
-        },
-        description: 'Validation error',
-      },
-      401: {
-        content: {
-          'application/json': {
-            schema: schemaToJsonSchema(apiError),
-          },
-        },
-        description: 'Unauthorized',
-      },
-      500: {
-        content: {
-          'application/json': {
-            schema: schemaToJsonSchema(apiError),
-          },
-        },
-        description: 'Server error',
-      },
-    },
+    responses,
     security: endpoint.public ? [] : [{ bearerAuth: [] }],
     summary: endpoint.summary,
     tags: endpoint.tags,
+    'x-tenant-scope': endpoint.tenantScope,
   };
 
   if (endpoint.description) operation.description = endpoint.description;
@@ -483,6 +553,9 @@ function getOpenApiDocument() {
     servers: [{ url: '/api' }],
     tags,
     components: {
+      schemas: {
+        ApiError: schemaToJsonSchema(apiError),
+      },
       securitySchemes: {
         bearerAuth: {
           bearerFormat: 'JWT',

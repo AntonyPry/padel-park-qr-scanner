@@ -12,6 +12,12 @@ const {
 const {
   TENANT_FOUNDATION_STATES,
 } = require('../tenant-foundation/constants');
+const {
+  attachRouteDeclaration,
+  requireRouteClassification,
+  resolveRequestTenant,
+} = require('../middleware/tenant-context');
+const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const router = express.Router();
 
 const authRoutes = require('./auth');
@@ -44,7 +50,11 @@ const telephonyRoutes = require('./telephony');
 const telephonyTranscriptionWorkerRoutes = require('./telephony-transcription-worker');
 const onboardingRoutes = require('./onboarding');
 
-router.get('/health', async (_req, res) => {
+router.use(attachRouteDeclaration);
+
+const globalEndpoint = requireRouteClassification(TENANT_SCOPES.GLOBAL);
+
+router.get('/health', globalEndpoint, async (_req, res) => {
   const services = {
     cache: {
       configured: cacheService.isConfigured(),
@@ -92,7 +102,7 @@ router.get('/health', async (_req, res) => {
 
 });
 
-router.get('/openapi.json', (_req, res) => {
+router.get('/openapi.json', globalEndpoint, (_req, res) => {
   res.json(getOpenApiDocument());
 });
 
@@ -102,6 +112,7 @@ router.use('/webhooks', webhookRoutes);
 router.use(telephonyTranscriptionWorkerRoutes);
 
 router.use(requireAuth);
+router.use(resolveRequestTenant);
 router.use(captureTrainingMode());
 router.use(auditMutations);
 router.use(auditRoutes);

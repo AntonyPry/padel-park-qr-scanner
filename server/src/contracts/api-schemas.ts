@@ -1163,6 +1163,36 @@ const apiSchemas = {
         })
         .passthrough(),
     },
+    membershipsResponse: z.object({
+      memberships: z.array(
+        z.object({
+          clubs: z.array(
+            z.object({
+              effectiveRole: accountRoleValue,
+              id: z.number().int().positive(),
+              name: z.string(),
+              slug: z.string(),
+              timezone: z.string(),
+            }),
+          ),
+          id: z.number().int().positive(),
+          organization: z.object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            slug: z.string(),
+          }),
+          role: accountRoleValue,
+        }),
+      ),
+      recommendedContext: z
+        .object({
+          clubId: z.number().int().positive(),
+          effectiveRole: accountRoleValue,
+          membershipId: z.number().int().positive(),
+          organizationId: z.number().int().positive(),
+        })
+        .nullable(),
+    }),
   },
   callTasks: {
     attempt: {

@@ -3,6 +3,7 @@ import {
   apiEndpoints,
   type ApiEndpointId,
   type ApiEndpointRequestMap,
+  type ApiEndpointResponseMap,
 } from './generated';
 
 type Primitive = boolean | number | string | null | undefined;
@@ -42,8 +43,8 @@ function appendQuery(path: string, query?: Record<string, Primitive | Primitive[
 }
 
 export async function openApiRequest<
-  TResponse = unknown,
   TEndpoint extends ApiEndpointId = ApiEndpointId,
+  TResponse = ApiEndpointResponseMap[TEndpoint],
 >(
   endpointId: TEndpoint,
   input = {} as RequestInput<TEndpoint>,
@@ -62,7 +63,12 @@ export async function openApiRequest<
 
   if (!response.ok) {
     const apiError = await readApiError(response, fallback);
-    throw new ApiRequestError(apiError.message, response.status, apiError.details);
+    throw new ApiRequestError(
+      apiError.message,
+      response.status,
+      apiError.details,
+      apiError.code,
+    );
   }
 
   if (response.status === 204) return undefined as TResponse;

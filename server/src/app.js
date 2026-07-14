@@ -7,6 +7,13 @@ const telephonyController = require('./controllers/telephony.controller');
 const {
   tenantFoundationGate,
 } = require('./middleware/tenant-foundation-gate');
+const {
+  attachRouteDeclaration,
+  requireRouteClassification,
+} = require('./middleware/tenant-context');
+const {
+  ENDPOINT_CLASSIFICATIONS,
+} = require('./tenant-context/route-scope-declarations');
 
 function createApp({ onTenantInitialized } = {}) {
   const app = express();
@@ -18,6 +25,8 @@ function createApp({ onTenantInitialized } = {}) {
   app.post(
     '/api/integrations/beeline/events',
     express.text({ type: '*/*' }),
+    attachRouteDeclaration,
+    requireRouteClassification(ENDPOINT_CLASSIFICATIONS.PROVIDER_INGRESS),
     telephonyController.receiveBeelineEvent,
   );
   app.use(express.json({ limit: '6mb' }));

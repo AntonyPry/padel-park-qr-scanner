@@ -1,5 +1,6 @@
 import { createContext } from 'react';
 import type { AccountRole } from '@/lib/roles';
+import type { ActiveTenantContext } from '@/lib/tenant-context';
 
 interface StaffProfile {
   id: number;
@@ -17,6 +18,7 @@ export interface Account {
   staffId?: number | null;
   lastLoginAt?: string | null;
   Staff?: StaffProfile | null;
+  identityRole?: AccountRole;
 }
 
 export interface Credentials {
@@ -33,6 +35,9 @@ export interface AuthContextValue {
   account: Account | null;
   loading: boolean;
   setupRequired: boolean;
+  tenantContext: ActiveTenantContext | null;
+  tenantContextEnabled: boolean;
+  tenantReady: boolean;
   login: (credentials: Credentials) => Promise<void>;
   bootstrap: (data: BootstrapData) => Promise<void>;
   logout: () => void;

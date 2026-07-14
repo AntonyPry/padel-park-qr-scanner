@@ -12,6 +12,29 @@ declare global {
         } | null;
         [key: string]: unknown;
       };
+      identityAccount?: Request['account'];
+      tenant?: {
+        accountId: number;
+        membershipId: number | null;
+        organizationId: number | null;
+        clubId: number | null;
+        membershipRole: AccountRole | null;
+        effectiveRole: AccountRole | null;
+        scope: 'global' | 'membership' | 'organization' | 'club';
+      };
+      tenantRoute?: {
+        classification:
+          | 'global'
+          | 'membership'
+          | 'organization'
+          | 'club'
+          | 'provider_ingress'
+          | 'worker';
+        id: string;
+        method: string;
+        path: string;
+        public: boolean;
+      } | null;
       trainingMode?: {
         requested: boolean;
         role?: AccountRole;

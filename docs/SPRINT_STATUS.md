@@ -2223,9 +2223,9 @@ Product source:
 
 ## Epic - Multi-tenant CRM
 
-Статус: `Feature 2 integrated — integration gate green, ready as base for Feature 3`.
+Статус: `Feature 3 implemented locally — feature gate green, pending independent SaaS QA`.
 
-Promotion rule выполнено: Feature 1 и Feature 2 приняты в SaaS integration chain, integration gate green. Feature 3 не начата.
+Promotion rule выполнено: Feature 1 и Feature 2 приняты в SaaS integration chain, integration gate green. Feature 3 реализована в отдельной ветке от принятого integration SHA и не merge/deploy до независимого QA.
 
 - Принята целевая модель `Organization → Clubs → Memberships`; текущий Padel Park станет default organization/club без изменения UX.
 - Inventory всех 67 Sequelize models и ключевых HTTP/realtime/worker/file/integration поверхностей зафиксирован в [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md).
@@ -2234,7 +2234,8 @@ Promotion rule выполнено: Feature 1 и Feature 2 приняты в SaaS
 - QA findings Feature 1 добавили формальный bootstrap-pending contract, split Account writer contract, seeder parity и DB-backed lifecycle/concurrency acceptance.
 - Повторный независимый QA Feature 1 завершен без P0–P3 findings; Feature 1 стала принятой SaaS integration base.
 - Feature 2 реализована в `codex/multi-tenant-foundation-v2` строго от accepted Feature 1 SHA `fa183d850ad01b075e49f8ef787ffc10c3b378be`: additive Organization/Club/Membership/access foundation, deterministic backfill/rollback, bootstrap-pending gate и compatibility Account lifecycle bridge.
-- Feature 2 принята точным SHA `f1e925229321521f9a02bf5aebc78b4723aca176`; независимый QA завершен без P0–P3 findings. После merge актуального `origin/main` integration gate подтвердил migrations `down → up`, DB-backed lifecycle/migration/concurrency `22/22`, targeted gate `32/32`, полный server suite `310/310`, server typecheck, Account AST write audit, strict onboarding audit, OpenAPI no-drift, client lint, `85/85` client tests и production build. Fresh-install pending/bootstrap API и Socket.IO smoke green; owner/manager/admin/accountant/trainer/viewer login smoke green без console/network/page errors, desktop overflow и mobile `390px` overflow. Feature 3 не начата.
+- Feature 2 принята точным SHA `f1e925229321521f9a02bf5aebc78b4723aca176`; независимый QA завершен без P0–P3 findings. После merge актуального `origin/main` integration gate подтвердил migrations `down → up`, DB-backed lifecycle/migration/concurrency `22/22`, targeted gate `32/32`, полный server suite `310/310`, server typecheck, Account AST write audit, strict onboarding audit, OpenAPI no-drift, client lint, `85/85` client tests и production build. Fresh-install pending/bootstrap API и Socket.IO smoke green; owner/manager/admin/accountant/trainer/viewer login smoke green без console/network/page errors, desktop overflow и mobile `390px` overflow.
+- Feature 3 реализована в `codex/multi-tenant-context-v3` строго от integration SHA `75ad6b62294c49ce5606160635f9930fc2dd0f06`: immutable request tenant context, explicit header contract, audited route scopes, global membership discovery, Membership/effective-role authorization, server-owned capability и frontend bootstrap без switcher. Gate green: route inventory `272/272`, targeted unit/contract `22/22`, DB-backed tenant context `10/10`, полный server suite `342/342`, client `95/95`, typecheck/lint/build, Account write audit, strict onboarding audit и OpenAPI generation. Flag-on/off API, Socket.IO и browser smoke по шести ролям green; desktop/mobile `390px` без overflow, console/network/page errors; visible permissions идентичны. Независимый SaaS QA, merge и deploy еще не выполнялись.
 - SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
 
 ## Backlog - SaaS billing

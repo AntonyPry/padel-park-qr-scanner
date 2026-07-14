@@ -3,9 +3,9 @@ import LoginPage from '@/pages/LoginPage';
 import { useAuth } from '@/lib/useAuth';
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { account, loading, setupRequired } = useAuth();
+  const { account, loading, setupRequired, tenantReady } = useAuth();
 
-  if (loading) {
+  if (loading || (account && !tenantReady)) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background text-sm text-muted-foreground">
         Загрузка...

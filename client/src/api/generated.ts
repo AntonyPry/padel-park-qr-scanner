@@ -2,279 +2,288 @@
 // Do not edit it manually.
 
 export const apiEndpoints = {
-  "system.health": { method: "GET", path: "/health", responseType: "json" },
-  "system.openapi": { method: "GET", path: "/openapi.json", responseType: "json" },
-  "auth.status": { method: "GET", path: "/auth/status", responseType: "json" },
-  "auth.bootstrap": { method: "POST", path: "/auth/bootstrap", responseType: "json" },
-  "auth.login": { method: "POST", path: "/auth/login", responseType: "json" },
-  "auth.me": { method: "GET", path: "/auth/me", responseType: "json" },
-  "access.search": { method: "GET", path: "/search", responseType: "json" },
-  "access.manualVisit": { method: "POST", path: "/manual-visit", responseType: "json" },
-  "access.issueKey": { method: "POST", path: "/key", responseType: "json" },
-  "access.correctKey": { method: "PATCH", path: "/key", responseType: "json" },
-  "access.scan": { method: "POST", path: "/scan", responseType: "json" },
-  "access.scannerEvents": { method: "GET", path: "/scanner-events", responseType: "json" },
-  "access.recordScannerEvent": { method: "POST", path: "/scanner-events", responseType: "json" },
-  "access.register": { method: "POST", path: "/register", responseType: "json" },
-  "access.visits": { method: "GET", path: "/visits", responseType: "json" },
-  "access.updateVisitCategory": { method: "POST", path: "/visit/category", responseType: "json" },
-  "accounts.list": { method: "GET", path: "/accounts", responseType: "json" },
-  "accounts.create": { method: "POST", path: "/accounts", responseType: "json" },
-  "accounts.update": { method: "PUT", path: "/accounts/{id}", responseType: "json" },
-  "accounts.restore": { method: "POST", path: "/accounts/{id}/restore", responseType: "json" },
-  "accounts.deletePermanent": { method: "DELETE", path: "/accounts/{id}/permanent", responseType: "json" },
-  "accounts.archive": { method: "DELETE", path: "/accounts/{id}", responseType: "json" },
-  "onboarding.overview": { method: "GET", path: "/onboarding", responseType: "json" },
-  "onboarding.trainingMode": { method: "GET", path: "/onboarding/training-mode", responseType: "json" },
-  "onboarding.trainingModeUpdate": { method: "PUT", path: "/onboarding/training-mode", responseType: "json" },
-  "onboarding.trainingData": { method: "GET", path: "/onboarding/training-data", responseType: "json" },
-  "onboarding.trainingDataCleanup": { method: "DELETE", path: "/onboarding/training-data", responseType: "json" },
-  "onboarding.metrics": { method: "GET", path: "/onboarding/metrics", responseType: "json" },
-  "onboarding.taskDetail": { method: "GET", path: "/onboarding/tasks/{taskKey}", responseType: "json" },
-  "onboarding.completeTask": { method: "POST", path: "/onboarding/tasks/{taskKey}/complete", responseType: "json" },
-  "onboarding.lessonRead": { method: "POST", path: "/onboarding/tasks/{taskKey}/lesson-read", responseType: "json" },
-  "onboarding.practiceStart": { method: "POST", path: "/onboarding/tasks/{taskKey}/practice-start", responseType: "json" },
-  "onboarding.practiceStep": { method: "POST", path: "/onboarding/tasks/{taskKey}/steps/{stepKey}", responseType: "json" },
-  "onboarding.quizAttempt": { method: "POST", path: "/onboarding/tasks/{taskKey}/quiz-attempt", responseType: "json" },
-  "onboarding.recordEvent": { method: "POST", path: "/onboarding/events", responseType: "json" },
-  "onboarding.resetProgress": { method: "DELETE", path: "/onboarding/progress", responseType: "json" },
-  "audit.list": { method: "GET", path: "/audit-logs", responseType: "json" },
-  "bookings.schedule": { method: "GET", path: "/bookings/schedule", responseType: "json" },
-  "bookings.courts": { method: "GET", path: "/bookings/courts", responseType: "json" },
-  "bookings.courtCreate": { method: "POST", path: "/bookings/courts", responseType: "json" },
-  "bookings.courtUpdate": { method: "PUT", path: "/bookings/courts/{id}", responseType: "json" },
-  "bookings.courtArchive": { method: "DELETE", path: "/bookings/courts/{id}", responseType: "json" },
-  "bookings.responsibles": { method: "GET", path: "/bookings/responsibles", responseType: "json" },
-  "bookings.analytics": { method: "GET", path: "/bookings/analytics", responseType: "json" },
-  "bookings.settings": { method: "GET", path: "/bookings/settings", responseType: "json" },
-  "bookings.settingsUpdate": { method: "PUT", path: "/bookings/settings", responseType: "json" },
-  "bookings.quote": { method: "GET", path: "/bookings/quote", responseType: "json" },
-  "bookings.priceRules": { method: "GET", path: "/bookings/price-rules", responseType: "json" },
-  "bookings.priceRuleCreate": { method: "POST", path: "/bookings/price-rules", responseType: "json" },
-  "bookings.priceRuleUpdate": { method: "PUT", path: "/bookings/price-rules/{id}", responseType: "json" },
-  "bookings.priceRuleArchive": { method: "DELETE", path: "/bookings/price-rules/{id}", responseType: "json" },
-  "bookings.blocks": { method: "GET", path: "/bookings/blocks", responseType: "json" },
-  "bookings.blockCreate": { method: "POST", path: "/bookings/blocks", responseType: "json" },
-  "bookings.blockUpdate": { method: "PUT", path: "/bookings/blocks/{id}", responseType: "json" },
-  "bookings.blockArchive": { method: "DELETE", path: "/bookings/blocks/{id}", responseType: "json" },
-  "bookings.exceptions": { method: "GET", path: "/bookings/exceptions", responseType: "json" },
-  "bookings.exceptionCreate": { method: "POST", path: "/bookings/exceptions", responseType: "json" },
-  "bookings.exceptionUpdate": { method: "PUT", path: "/bookings/exceptions/{id}", responseType: "json" },
-  "bookings.exceptionArchive": { method: "DELETE", path: "/bookings/exceptions/{id}", responseType: "json" },
-  "bookings.series": { method: "GET", path: "/bookings/series", responseType: "json" },
-  "bookings.seriesPreview": { method: "POST", path: "/bookings/series/preview", responseType: "json" },
-  "bookings.seriesCreate": { method: "POST", path: "/bookings/series", responseType: "json" },
-  "bookings.seriesArchive": { method: "POST", path: "/bookings/series/{id}/archive", responseType: "json" },
-  "bookings.create": { method: "POST", path: "/bookings", responseType: "json" },
-  "bookings.get": { method: "GET", path: "/bookings/{id}", responseType: "json" },
-  "bookings.trainingPlan.get": { method: "GET", path: "/bookings/{id}/training-plan", responseType: "json" },
-  "bookings.trainingPlan.create": { method: "POST", path: "/bookings/{id}/training-plan", responseType: "json" },
-  "bookings.update": { method: "PUT", path: "/bookings/{id}", responseType: "json" },
-  "bookings.status": { method: "PATCH", path: "/bookings/{id}/status", responseType: "json" },
-  "bookings.history": { method: "GET", path: "/bookings/{id}/history", responseType: "json" },
-  "catalog.categories.list": { method: "GET", path: "/catalog/categories", responseType: "json" },
-  "catalog.categories.create": { method: "POST", path: "/catalog/categories", responseType: "json" },
-  "catalog.categories.update": { method: "PUT", path: "/catalog/categories/{id}", responseType: "json" },
-  "catalog.categories.restore": { method: "POST", path: "/catalog/categories/{id}/restore", responseType: "json" },
-  "catalog.categories.deletePermanent": { method: "DELETE", path: "/catalog/categories/{id}/permanent", responseType: "json" },
-  "catalog.categories.archive": { method: "DELETE", path: "/catalog/categories/{id}", responseType: "json" },
-  "catalog.saleSettings.list": { method: "GET", path: "/catalog/sale-settings", responseType: "json" },
-  "catalog.saleSettings.save": { method: "POST", path: "/catalog/sale-settings", responseType: "json" },
-  "catalog.pendingSales.list": { method: "GET", path: "/catalog/pending-sales", responseType: "json" },
-  "catalog.pendingSales.link": { method: "POST", path: "/catalog/pending-sales/{id}/link", responseType: "json" },
-  "catalog.pendingSales.ignore": { method: "POST", path: "/catalog/pending-sales/{id}/ignore", responseType: "json" },
-  "catalog.pendingSales.cancel": { method: "POST", path: "/catalog/pending-sales/{id}/cancel", responseType: "json" },
-  "catalog.unmapped": { method: "GET", path: "/catalog/unmapped", responseType: "json" },
-  "catalog.rules.list": { method: "GET", path: "/catalog/rules", responseType: "json" },
-  "catalog.rules.create": { method: "POST", path: "/catalog/rules", responseType: "json" },
-  "catalog.rules.restore": { method: "POST", path: "/catalog/rules/{id}/restore", responseType: "json" },
-  "catalog.rules.deletePermanent": { method: "DELETE", path: "/catalog/rules/{id}/permanent", responseType: "json" },
-  "catalog.rules.archive": { method: "DELETE", path: "/catalog/rules/{id}", responseType: "json" },
-  "subscriptions.types.list": { method: "GET", path: "/subscriptions/types", responseType: "json" },
-  "subscriptions.types.create": { method: "POST", path: "/subscriptions/types", responseType: "json" },
-  "subscriptions.types.update": { method: "PUT", path: "/subscriptions/types/{id}", responseType: "json" },
-  "subscriptions.types.archive": { method: "POST", path: "/subscriptions/types/{id}/archive", responseType: "json" },
-  "subscriptions.types.restore": { method: "POST", path: "/subscriptions/types/{id}/restore", responseType: "json" },
-  "subscriptions.types.deletePermanent": { method: "DELETE", path: "/subscriptions/types/{id}/permanent", responseType: "json" },
-  "subscriptions.client.list": { method: "GET", path: "/clients/{clientId}/subscriptions", responseType: "json" },
-  "subscriptions.client.get": { method: "GET", path: "/client-subscriptions/{id}", responseType: "json" },
-  "subscriptions.client.redemptions": { method: "GET", path: "/client-subscriptions/{id}/redemptions", responseType: "json" },
-  "subscriptions.client.redeem": { method: "POST", path: "/client-subscriptions/{id}/redemptions", responseType: "json" },
-  "subscriptions.client.reverseRedemption": { method: "POST", path: "/client-subscriptions/{id}/redemptions/{redemptionId}/reverse", responseType: "json" },
-  "certificates.list": { method: "GET", path: "/certificates", responseType: "json" },
-  "certificates.client.list": { method: "GET", path: "/clients/{clientId}/certificates", responseType: "json" },
-  "certificates.get": { method: "GET", path: "/certificates/{id}", responseType: "json" },
-  "certificates.redemptions": { method: "GET", path: "/certificates/{id}/redemptions", responseType: "json" },
-  "certificates.redeem": { method: "POST", path: "/certificates/{id}/redemptions", responseType: "json" },
-  "certificates.reverseRedemption": { method: "POST", path: "/certificates/{id}/redemptions/{redemptionId}/reverse", responseType: "json" },
-  "corporateClients.list": { method: "GET", path: "/corporate-clients", responseType: "json" },
-  "corporateClients.create": { method: "POST", path: "/corporate-clients", responseType: "json" },
-  "corporateClients.get": { method: "GET", path: "/corporate-clients/{id}", responseType: "json" },
-  "corporateClients.update": { method: "PUT", path: "/corporate-clients/{id}", responseType: "json" },
-  "corporateClients.archive": { method: "POST", path: "/corporate-clients/{id}/archive", responseType: "json" },
-  "corporateClients.restore": { method: "POST", path: "/corporate-clients/{id}/restore", responseType: "json" },
-  "corporateClients.ledger": { method: "GET", path: "/corporate-clients/{id}/ledger", responseType: "json" },
-  "corporateClients.ledgerExport": { method: "GET", path: "/corporate-clients/{id}/ledger/export", responseType: "blob" },
-  "corporateClients.deposit": { method: "POST", path: "/corporate-clients/{id}/deposits", responseType: "json" },
-  "corporateClients.depositCancel": { method: "POST", path: "/corporate-clients/{id}/deposits/{entryId}/cancel", responseType: "json" },
-  "corporateClients.spending": { method: "POST", path: "/corporate-clients/{id}/spendings", responseType: "json" },
-  "corporateClients.spendingReverse": { method: "POST", path: "/corporate-clients/{id}/spendings/{entryId}/reverse", responseType: "json" },
-  "prepayments.dashboard": { method: "GET", path: "/prepayments/dashboard", responseType: "json" },
-  "managerControl.dashboard": { method: "GET", path: "/manager-control/dashboard", responseType: "json" },
-  "clientBases.list": { method: "GET", path: "/client-bases", responseType: "json" },
-  "clientBases.create": { method: "POST", path: "/client-bases", responseType: "json" },
-  "clientBases.clients": { method: "GET", path: "/client-bases/{id}/clients", responseType: "json" },
-  "clientBases.update": { method: "PUT", path: "/client-bases/{id}", responseType: "json" },
-  "clientBases.archive": { method: "DELETE", path: "/client-bases/{id}", responseType: "json" },
-  "clientBases.deletePermanent": { method: "DELETE", path: "/client-bases/{id}/permanent", responseType: "json" },
-  "clientBases.restore": { method: "POST", path: "/client-bases/{id}/restore", responseType: "json" },
-  "callTasks.createFromBase": { method: "POST", path: "/client-bases/{baseId}/call-tasks", responseType: "json" },
-  "callTasks.createForClient": { method: "POST", path: "/clients/{clientId}/call-tasks", responseType: "json" },
-  "callTasks.list": { method: "GET", path: "/call-tasks", responseType: "json" },
-  "callTasks.report": { method: "GET", path: "/call-tasks/report", responseType: "json" },
-  "callTasks.runRecurring": { method: "POST", path: "/call-tasks/recurring/run", responseType: "json" },
-  "callTasks.get": { method: "GET", path: "/call-tasks/{id}", responseType: "json" },
-  "callTasks.update": { method: "PUT", path: "/call-tasks/{id}", responseType: "json" },
-  "callTasks.deletePermanent": { method: "DELETE", path: "/call-tasks/{id}/permanent", responseType: "json" },
-  "callTasks.sync": { method: "POST", path: "/call-tasks/{id}/sync", responseType: "json" },
-  "callTasks.clients": { method: "GET", path: "/call-tasks/{id}/clients", responseType: "json" },
-  "callTasks.clientsBulk": { method: "PATCH", path: "/call-tasks/{id}/clients/bulk", responseType: "json" },
-  "callTasks.addAttempt": { method: "POST", path: "/call-task-clients/{taskClientId}/attempts", responseType: "json" },
-  "telephony.config": { method: "GET", path: "/telephony/config", responseType: "json" },
-  "telephony.stats": { method: "GET", path: "/telephony/stats", responseType: "json" },
-  "telephony.report": { method: "GET", path: "/telephony/report", responseType: "json" },
-  "telephony.calls": { method: "GET", path: "/telephony/calls", responseType: "json" },
-  "telephony.getCall": { method: "GET", path: "/telephony/calls/{id}", responseType: "json" },
-  "telephony.startCall": { method: "POST", path: "/telephony/calls/{id}/start", responseType: "json" },
-  "telephony.linkClient": { method: "POST", path: "/telephony/calls/{id}/client", responseType: "json" },
-  "telephony.createClient": { method: "POST", path: "/telephony/calls/{id}/client/create", responseType: "json" },
-  "telephony.completeCall": { method: "POST", path: "/telephony/calls/{id}/complete", responseType: "json" },
-  "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json" },
-  "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json" },
-  "telephony.createTranscriptionJob": { method: "POST", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json" },
-  "telephony.queueMissingTranscriptionJobs": { method: "POST", path: "/telephony/transcription-jobs/queue-missing", responseType: "json" },
-  "telephony.callTranscriptionJobs": { method: "GET", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json" },
-  "telephony.transcriptionJobs": { method: "GET", path: "/telephony/transcription-jobs", responseType: "json" },
-  "telephony.transcriptionJobStats": { method: "GET", path: "/telephony/transcription-jobs/stats", responseType: "json" },
-  "telephony.getTranscriptionJob": { method: "GET", path: "/telephony/transcription-jobs/{id}", responseType: "json" },
-  "telephony.workerTranscriptionQueue": { method: "GET", path: "/telephony/transcription-jobs/worker-queue", responseType: "json" },
-  "telephony.claimTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/claim", responseType: "json" },
-  "telephony.transcriptionAudioReference": { method: "POST", path: "/telephony/transcription-jobs/{id}/audio-reference", responseType: "json" },
-  "telephony.updateTranscriptionProgress": { method: "POST", path: "/telephony/transcription-jobs/{id}/progress", responseType: "json" },
-  "telephony.completeTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/result", responseType: "json" },
-  "telephony.failTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/fail", responseType: "json" },
-  "telephony.workerRetryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/worker-retry", responseType: "json" },
-  "telephony.retryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/retry", responseType: "json" },
-  "telephony.syncStatistics": { method: "POST", path: "/telephony/beeline/sync", responseType: "json" },
-  "telephony.syncRecordings": { method: "POST", path: "/telephony/beeline/records/sync", responseType: "json" },
-  "telephony.subscribe": { method: "POST", path: "/telephony/beeline/subscribe", responseType: "json" },
-  "telephony.checkSubscription": { method: "POST", path: "/telephony/beeline/subscription/check", responseType: "json" },
-  "telephony.rawEvents": { method: "GET", path: "/telephony/raw-events", responseType: "json" },
-  "telephony.reprocessRawEvent": { method: "POST", path: "/telephony/raw-events/{id}/reprocess", responseType: "json" },
-  "telephony.beelineWebhook": { method: "POST", path: "/integrations/beeline/events", responseType: "json" },
-  "clients.list": { method: "GET", path: "/clients", responseType: "json" },
-  "clients.lookup": { method: "GET", path: "/clients/lookup", responseType: "json" },
-  "clients.duplicates": { method: "GET", path: "/clients/duplicates", responseType: "json" },
-  "clients.views.list": { method: "GET", path: "/clients/views", responseType: "json" },
-  "clients.views.create": { method: "POST", path: "/clients/views", responseType: "json" },
-  "clients.views.update": { method: "PUT", path: "/clients/views/{viewId}", responseType: "json" },
-  "clients.views.delete": { method: "DELETE", path: "/clients/views/{viewId}", responseType: "json" },
-  "clients.create": { method: "POST", path: "/clients", responseType: "json" },
-  "clients.groupTrainingRecommendation": { method: "POST", path: "/clients/training-recommendation/group", responseType: "json" },
-  "clients.trainingRecommendation": { method: "GET", path: "/clients/{clientId}/training-recommendation", responseType: "json" },
-  "clients.skillMap.list": { method: "GET", path: "/clients/{clientId}/skill-map", responseType: "json" },
-  "clients.skillMap.update": { method: "PUT", path: "/clients/{clientId}/skill-map/{skillId}", responseType: "json" },
-  "clients.get": { method: "GET", path: "/clients/{id}", responseType: "json" },
-  "clients.update": { method: "PUT", path: "/clients/{id}", responseType: "json" },
-  "clients.deletePermanent": { method: "DELETE", path: "/clients/{id}/permanent", responseType: "json" },
-  "clients.merge": { method: "POST", path: "/clients/{id}/merge", responseType: "json" },
-  "finance.report": { method: "GET", path: "/finance", responseType: "json" },
-  "finance.manualCreate": { method: "POST", path: "/finance", responseType: "json" },
-  "finance.export": { method: "GET", path: "/finance/export", responseType: "blob" },
-  "finance.history": { method: "GET", path: "/finance/history", responseType: "json" },
-  "finance.payroll": { method: "GET", path: "/finance/payroll", responseType: "json" },
-  "finance.payrollExport": { method: "GET", path: "/finance/payroll/export", responseType: "blob" },
-  "finance.payrollPeriods": { method: "GET", path: "/finance/payroll/periods", responseType: "json" },
-  "finance.payrollPeriodCreate": { method: "POST", path: "/finance/payroll/periods", responseType: "json" },
-  "finance.payrollRecalculate": { method: "POST", path: "/finance/payroll/periods/{id}/recalculate", responseType: "json" },
-  "finance.payrollStatus": { method: "PATCH", path: "/finance/payroll/periods/{id}/status", responseType: "json" },
-  "motivation.currentSales": { method: "GET", path: "/motivation/current-sales", responseType: "json" },
-  "motivation.rules": { method: "GET", path: "/motivation/rules", responseType: "json" },
-  "motivation.bonusRules": { method: "GET", path: "/motivation/bonus-rules", responseType: "json" },
-  "motivation.categories": { method: "GET", path: "/motivation/categories", responseType: "json" },
-  "motivation.ruleUpdate": { method: "PUT", path: "/motivation/rules/{key}", responseType: "json" },
-  "motivation.assignCategory": { method: "PUT", path: "/motivation/categories/{categoryId}/rule", responseType: "json" },
-  "motivation.bonusRuleCreate": { method: "POST", path: "/motivation/bonus-rules", responseType: "json" },
-  "motivation.bonusRuleUpdate": { method: "PUT", path: "/motivation/bonus-rules/{id}", responseType: "json" },
-  "motivation.bonusRuleDelete": { method: "DELETE", path: "/motivation/bonus-rules/{id}", responseType: "json" },
-  "references.list": { method: "GET", path: "/references/{type}", responseType: "json" },
-  "references.create": { method: "POST", path: "/references/{type}", responseType: "json" },
-  "references.update": { method: "PUT", path: "/references/{type}/{id}", responseType: "json" },
-  "references.archive": { method: "POST", path: "/references/{type}/{id}/archive", responseType: "json" },
-  "references.restore": { method: "POST", path: "/references/{type}/{id}/restore", responseType: "json" },
-  "references.deletePermanent": { method: "DELETE", path: "/references/{type}/{id}/permanent", responseType: "json" },
-  "staff.list": { method: "GET", path: "/staff", responseType: "json" },
-  "staff.create": { method: "POST", path: "/staff", responseType: "json" },
-  "staff.update": { method: "PUT", path: "/staff/{id}", responseType: "json" },
-  "staff.restore": { method: "POST", path: "/staff/{id}/restore", responseType: "json" },
-  "staff.deletePermanent": { method: "DELETE", path: "/staff/{id}/permanent", responseType: "json" },
-  "staff.archive": { method: "DELETE", path: "/staff/{id}", responseType: "json" },
-  "shifts.active": { method: "GET", path: "/shifts/active", responseType: "json" },
-  "shifts.start": { method: "POST", path: "/shifts/start", responseType: "json" },
-  "shifts.end": { method: "POST", path: "/shifts/end", responseType: "json" },
-  "shifts.create": { method: "POST", path: "/shifts", responseType: "json" },
-  "shifts.update": { method: "PUT", path: "/shifts", responseType: "json" },
-  "shifts.archive": { method: "DELETE", path: "/shifts", responseType: "json" },
-  "shiftReportTemplates.list": { method: "GET", path: "/shift-report-templates", responseType: "json" },
-  "shiftReportTemplates.create": { method: "POST", path: "/shift-report-templates", responseType: "json" },
-  "shiftReportTemplates.update": { method: "PUT", path: "/shift-report-templates/{id}", responseType: "json" },
-  "shiftReportTemplates.archive": { method: "POST", path: "/shift-report-templates/{id}/archive", responseType: "json" },
-  "shiftReportTemplates.restore": { method: "POST", path: "/shift-report-templates/{id}/restore", responseType: "json" },
-  "shiftReportTemplateItems.create": { method: "POST", path: "/shift-report-templates/{templateId}/items", responseType: "json" },
-  "shiftReportTemplateItems.update": { method: "PUT", path: "/shift-report-template-items/{id}", responseType: "json" },
-  "shiftReportTemplateItems.archive": { method: "POST", path: "/shift-report-template-items/{id}/archive", responseType: "json" },
-  "shiftReportTemplateItems.restore": { method: "POST", path: "/shift-report-template-items/{id}/restore", responseType: "json" },
-  "shiftReports.activeShift": { method: "GET", path: "/shifts/active/reports", responseType: "json" },
-  "shiftReports.list": { method: "GET", path: "/shift-reports", responseType: "json" },
-  "shiftReports.get": { method: "GET", path: "/shift-reports/{id}", responseType: "json" },
-  "shiftReports.saveDraft": { method: "PUT", path: "/shift-reports/{id}/draft", responseType: "json" },
-  "shiftReports.submit": { method: "POST", path: "/shift-reports/{id}/submit", responseType: "json" },
-  "shiftReports.uploadAttachment": { method: "POST", path: "/shift-reports/{reportId}/answers/{answerId}/attachments", responseType: "json" },
-  "shiftReports.removeAttachment": { method: "DELETE", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "json" },
-  "shiftReports.attachment": { method: "GET", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "blob" },
-  "trainingNotes.list": { method: "GET", path: "/clients/{clientId}/training-notes", responseType: "json" },
-  "trainingNotes.create": { method: "POST", path: "/clients/{clientId}/training-notes", responseType: "json" },
-  "trainingNotes.update": { method: "PUT", path: "/training-notes/{noteId}", responseType: "json" },
-  "trainingNotes.delete": { method: "DELETE", path: "/training-notes/{noteId}", responseType: "json" },
-  "trainingPlans.list": { method: "GET", path: "/training-plans", responseType: "json" },
-  "trainingPlans.create": { method: "POST", path: "/training-plans", responseType: "json" },
-  "trainingPlans.get": { method: "GET", path: "/training-plans/{planId}", responseType: "json" },
-  "trainingPlans.updateExercises": { method: "PUT", path: "/training-plans/{planId}/exercises", responseType: "json" },
-  "trainingPlans.complete": { method: "POST", path: "/training-plans/{planId}/complete", responseType: "json" },
-  "trainingPlans.quickComplete": { method: "POST", path: "/training-plans/{planId}/quick-complete", responseType: "json" },
-  "methodology.analytics": { method: "GET", path: "/methodology/analytics", responseType: "json" },
-  "methodology.skills.list": { method: "GET", path: "/methodology/skills", responseType: "json" },
-  "methodology.skills.create": { method: "POST", path: "/methodology/skills", responseType: "json" },
-  "methodology.skills.update": { method: "PUT", path: "/methodology/skills/{id}", responseType: "json" },
-  "methodology.exercises.list": { method: "GET", path: "/methodology/exercises", responseType: "json" },
-  "methodology.exercises.create": { method: "POST", path: "/methodology/exercises", responseType: "json" },
-  "methodology.exercises.update": { method: "PUT", path: "/methodology/exercises/{id}", responseType: "json" },
-  "methodology.exercises.approve": { method: "POST", path: "/methodology/exercises/{id}/approve", responseType: "json" },
-  "methodology.exercises.archive": { method: "POST", path: "/methodology/exercises/{id}/archive", responseType: "json" },
-  "methodology.exercises.restore": { method: "POST", path: "/methodology/exercises/{id}/restore", responseType: "json" },
-  "utilization.list": { method: "GET", path: "/utilization", responseType: "json" },
-  "utilization.upsert": { method: "POST", path: "/utilization", responseType: "json" },
-  "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json" },
-  "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json" },
-  "visitsAnalytics.cohortsLifecycle": { method: "GET", path: "/analytics/visits/cohorts-lifecycle", responseType: "json" },
-  "visitsAnalytics.revenueLtv": { method: "GET", path: "/analytics/visits/revenue-ltv", responseType: "json" },
-  "visitsAnalytics.clientBasePreview": { method: "POST", path: "/analytics/visits/client-base-preview", responseType: "json" },
-  "visitsAnalytics.createClientBase": { method: "POST", path: "/analytics/visits/client-bases", responseType: "json" },
-  "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob" },
-  "visitsAnalytics.sourceQualityExport": { method: "GET", path: "/export/visits/source-quality", responseType: "blob" },
+  "system.health": { method: "GET", path: "/health", responseType: "json", tenantScope: "global" },
+  "system.openapi": { method: "GET", path: "/openapi.json", responseType: "json", tenantScope: "global" },
+  "auth.status": { method: "GET", path: "/auth/status", responseType: "json", tenantScope: "global" },
+  "auth.bootstrap": { method: "POST", path: "/auth/bootstrap", responseType: "json", tenantScope: "global" },
+  "auth.login": { method: "POST", path: "/auth/login", responseType: "json", tenantScope: "global" },
+  "auth.me": { method: "GET", path: "/auth/me", responseType: "json", tenantScope: "global" },
+  "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
+  "webhooks.evotor": { method: "POST", path: "/webhooks/evotor", responseType: "json", tenantScope: "provider_ingress" },
+  "access.search": { method: "GET", path: "/search", responseType: "json", tenantScope: "club" },
+  "access.manualVisit": { method: "POST", path: "/manual-visit", responseType: "json", tenantScope: "club" },
+  "access.issueKey": { method: "POST", path: "/key", responseType: "json", tenantScope: "club" },
+  "access.correctKey": { method: "PATCH", path: "/key", responseType: "json", tenantScope: "club" },
+  "access.scan": { method: "POST", path: "/scan", responseType: "json", tenantScope: "club" },
+  "access.scannerEvents": { method: "GET", path: "/scanner-events", responseType: "json", tenantScope: "club" },
+  "access.recordScannerEvent": { method: "POST", path: "/scanner-events", responseType: "json", tenantScope: "club" },
+  "access.register": { method: "POST", path: "/register", responseType: "json", tenantScope: "club" },
+  "access.visits": { method: "GET", path: "/visits", responseType: "json", tenantScope: "club" },
+  "access.updateVisitCategory": { method: "POST", path: "/visit/category", responseType: "json", tenantScope: "club" },
+  "accounts.list": { method: "GET", path: "/accounts", responseType: "json", tenantScope: "organization" },
+  "accounts.create": { method: "POST", path: "/accounts", responseType: "json", tenantScope: "organization" },
+  "accounts.update": { method: "PUT", path: "/accounts/{id}", responseType: "json", tenantScope: "organization" },
+  "accounts.restore": { method: "POST", path: "/accounts/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "accounts.deletePermanent": { method: "DELETE", path: "/accounts/{id}/permanent", responseType: "json", tenantScope: "organization" },
+  "accounts.archive": { method: "DELETE", path: "/accounts/{id}", responseType: "json", tenantScope: "organization" },
+  "onboarding.overview": { method: "GET", path: "/onboarding", responseType: "json", tenantScope: "membership" },
+  "onboarding.trainingMode": { method: "GET", path: "/onboarding/training-mode", responseType: "json", tenantScope: "membership" },
+  "onboarding.trainingModeUpdate": { method: "PUT", path: "/onboarding/training-mode", responseType: "json", tenantScope: "membership" },
+  "onboarding.trainingData": { method: "GET", path: "/onboarding/training-data", responseType: "json", tenantScope: "club" },
+  "onboarding.trainingDataCleanup": { method: "DELETE", path: "/onboarding/training-data", responseType: "json", tenantScope: "club" },
+  "onboarding.metrics": { method: "GET", path: "/onboarding/metrics", responseType: "json", tenantScope: "organization" },
+  "onboarding.taskDetail": { method: "GET", path: "/onboarding/tasks/{taskKey}", responseType: "json", tenantScope: "membership" },
+  "onboarding.completeTask": { method: "POST", path: "/onboarding/tasks/{taskKey}/complete", responseType: "json", tenantScope: "membership" },
+  "onboarding.lessonRead": { method: "POST", path: "/onboarding/tasks/{taskKey}/lesson-read", responseType: "json", tenantScope: "membership" },
+  "onboarding.practiceStart": { method: "POST", path: "/onboarding/tasks/{taskKey}/practice-start", responseType: "json", tenantScope: "membership" },
+  "onboarding.practiceStep": { method: "POST", path: "/onboarding/tasks/{taskKey}/steps/{stepKey}", responseType: "json", tenantScope: "membership" },
+  "onboarding.quizAttempt": { method: "POST", path: "/onboarding/tasks/{taskKey}/quiz-attempt", responseType: "json", tenantScope: "membership" },
+  "onboarding.recordEvent": { method: "POST", path: "/onboarding/events", responseType: "json", tenantScope: "club" },
+  "onboarding.resetProgress": { method: "DELETE", path: "/onboarding/progress", responseType: "json", tenantScope: "membership" },
+  "audit.list": { method: "GET", path: "/audit-logs", responseType: "json", tenantScope: "organization" },
+  "bookings.schedule": { method: "GET", path: "/bookings/schedule", responseType: "json", tenantScope: "club" },
+  "bookings.courts": { method: "GET", path: "/bookings/courts", responseType: "json", tenantScope: "club" },
+  "bookings.courtCreate": { method: "POST", path: "/bookings/courts", responseType: "json", tenantScope: "club" },
+  "bookings.courtUpdate": { method: "PUT", path: "/bookings/courts/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.courtArchive": { method: "DELETE", path: "/bookings/courts/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.responsibles": { method: "GET", path: "/bookings/responsibles", responseType: "json", tenantScope: "club" },
+  "bookings.analytics": { method: "GET", path: "/bookings/analytics", responseType: "json", tenantScope: "club" },
+  "bookings.settings": { method: "GET", path: "/bookings/settings", responseType: "json", tenantScope: "club" },
+  "bookings.settingsUpdate": { method: "PUT", path: "/bookings/settings", responseType: "json", tenantScope: "club" },
+  "bookings.quote": { method: "GET", path: "/bookings/quote", responseType: "json", tenantScope: "club" },
+  "bookings.priceRules": { method: "GET", path: "/bookings/price-rules", responseType: "json", tenantScope: "club" },
+  "bookings.priceRuleCreate": { method: "POST", path: "/bookings/price-rules", responseType: "json", tenantScope: "club" },
+  "bookings.priceRuleUpdate": { method: "PUT", path: "/bookings/price-rules/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.priceRuleArchive": { method: "DELETE", path: "/bookings/price-rules/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.blocks": { method: "GET", path: "/bookings/blocks", responseType: "json", tenantScope: "club" },
+  "bookings.blockCreate": { method: "POST", path: "/bookings/blocks", responseType: "json", tenantScope: "club" },
+  "bookings.blockUpdate": { method: "PUT", path: "/bookings/blocks/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.blockArchive": { method: "DELETE", path: "/bookings/blocks/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.exceptions": { method: "GET", path: "/bookings/exceptions", responseType: "json", tenantScope: "club" },
+  "bookings.exceptionCreate": { method: "POST", path: "/bookings/exceptions", responseType: "json", tenantScope: "club" },
+  "bookings.exceptionUpdate": { method: "PUT", path: "/bookings/exceptions/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.exceptionArchive": { method: "DELETE", path: "/bookings/exceptions/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.series": { method: "GET", path: "/bookings/series", responseType: "json", tenantScope: "club" },
+  "bookings.seriesPreview": { method: "POST", path: "/bookings/series/preview", responseType: "json", tenantScope: "club" },
+  "bookings.seriesCreate": { method: "POST", path: "/bookings/series", responseType: "json", tenantScope: "club" },
+  "bookings.seriesArchive": { method: "POST", path: "/bookings/series/{id}/archive", responseType: "json", tenantScope: "club" },
+  "bookings.create": { method: "POST", path: "/bookings", responseType: "json", tenantScope: "club" },
+  "bookings.get": { method: "GET", path: "/bookings/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.trainingPlan.get": { method: "GET", path: "/bookings/{id}/training-plan", responseType: "json", tenantScope: "club" },
+  "bookings.trainingPlan.create": { method: "POST", path: "/bookings/{id}/training-plan", responseType: "json", tenantScope: "club" },
+  "bookings.update": { method: "PUT", path: "/bookings/{id}", responseType: "json", tenantScope: "club" },
+  "bookings.status": { method: "PATCH", path: "/bookings/{id}/status", responseType: "json", tenantScope: "club" },
+  "bookings.history": { method: "GET", path: "/bookings/{id}/history", responseType: "json", tenantScope: "club" },
+  "catalog.categories.list": { method: "GET", path: "/catalog/categories", responseType: "json", tenantScope: "organization" },
+  "catalog.categories.create": { method: "POST", path: "/catalog/categories", responseType: "json", tenantScope: "organization" },
+  "catalog.categories.update": { method: "PUT", path: "/catalog/categories/{id}", responseType: "json", tenantScope: "organization" },
+  "catalog.categories.restore": { method: "POST", path: "/catalog/categories/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "catalog.categories.deletePermanent": { method: "DELETE", path: "/catalog/categories/{id}/permanent", responseType: "json", tenantScope: "organization" },
+  "catalog.categories.archive": { method: "DELETE", path: "/catalog/categories/{id}", responseType: "json", tenantScope: "organization" },
+  "catalog.saleSettings.list": { method: "GET", path: "/catalog/sale-settings", responseType: "json", tenantScope: "club" },
+  "catalog.saleSettings.save": { method: "POST", path: "/catalog/sale-settings", responseType: "json", tenantScope: "club" },
+  "catalog.pendingSales.list": { method: "GET", path: "/catalog/pending-sales", responseType: "json", tenantScope: "club" },
+  "catalog.pendingSales.link": { method: "POST", path: "/catalog/pending-sales/{id}/link", responseType: "json", tenantScope: "club" },
+  "catalog.pendingSales.ignore": { method: "POST", path: "/catalog/pending-sales/{id}/ignore", responseType: "json", tenantScope: "club" },
+  "catalog.pendingSales.cancel": { method: "POST", path: "/catalog/pending-sales/{id}/cancel", responseType: "json", tenantScope: "club" },
+  "catalog.unmapped": { method: "GET", path: "/catalog/unmapped", responseType: "json", tenantScope: "club" },
+  "catalog.rules.list": { method: "GET", path: "/catalog/rules", responseType: "json", tenantScope: "club" },
+  "catalog.rules.create": { method: "POST", path: "/catalog/rules", responseType: "json", tenantScope: "club" },
+  "catalog.rules.restore": { method: "POST", path: "/catalog/rules/{id}/restore", responseType: "json", tenantScope: "club" },
+  "catalog.rules.deletePermanent": { method: "DELETE", path: "/catalog/rules/{id}/permanent", responseType: "json", tenantScope: "club" },
+  "catalog.rules.archive": { method: "DELETE", path: "/catalog/rules/{id}", responseType: "json", tenantScope: "club" },
+  "subscriptions.types.list": { method: "GET", path: "/subscriptions/types", responseType: "json", tenantScope: "organization" },
+  "subscriptions.types.create": { method: "POST", path: "/subscriptions/types", responseType: "json", tenantScope: "organization" },
+  "subscriptions.types.update": { method: "PUT", path: "/subscriptions/types/{id}", responseType: "json", tenantScope: "organization" },
+  "subscriptions.types.archive": { method: "POST", path: "/subscriptions/types/{id}/archive", responseType: "json", tenantScope: "organization" },
+  "subscriptions.types.restore": { method: "POST", path: "/subscriptions/types/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "subscriptions.types.deletePermanent": { method: "DELETE", path: "/subscriptions/types/{id}/permanent", responseType: "json", tenantScope: "organization" },
+  "subscriptions.client.list": { method: "GET", path: "/clients/{clientId}/subscriptions", responseType: "json", tenantScope: "club" },
+  "subscriptions.client.get": { method: "GET", path: "/client-subscriptions/{id}", responseType: "json", tenantScope: "club" },
+  "subscriptions.client.redemptions": { method: "GET", path: "/client-subscriptions/{id}/redemptions", responseType: "json", tenantScope: "club" },
+  "subscriptions.client.redeem": { method: "POST", path: "/client-subscriptions/{id}/redemptions", responseType: "json", tenantScope: "club" },
+  "subscriptions.client.reverseRedemption": { method: "POST", path: "/client-subscriptions/{id}/redemptions/{redemptionId}/reverse", responseType: "json", tenantScope: "club" },
+  "certificates.list": { method: "GET", path: "/certificates", responseType: "json", tenantScope: "club" },
+  "certificates.client.list": { method: "GET", path: "/clients/{clientId}/certificates", responseType: "json", tenantScope: "club" },
+  "certificates.get": { method: "GET", path: "/certificates/{id}", responseType: "json", tenantScope: "club" },
+  "certificates.redemptions": { method: "GET", path: "/certificates/{id}/redemptions", responseType: "json", tenantScope: "club" },
+  "certificates.redeem": { method: "POST", path: "/certificates/{id}/redemptions", responseType: "json", tenantScope: "club" },
+  "certificates.reverseRedemption": { method: "POST", path: "/certificates/{id}/redemptions/{redemptionId}/reverse", responseType: "json", tenantScope: "club" },
+  "corporateClients.list": { method: "GET", path: "/corporate-clients", responseType: "json", tenantScope: "organization" },
+  "corporateClients.create": { method: "POST", path: "/corporate-clients", responseType: "json", tenantScope: "organization" },
+  "corporateClients.get": { method: "GET", path: "/corporate-clients/{id}", responseType: "json", tenantScope: "organization" },
+  "corporateClients.update": { method: "PUT", path: "/corporate-clients/{id}", responseType: "json", tenantScope: "organization" },
+  "corporateClients.archive": { method: "POST", path: "/corporate-clients/{id}/archive", responseType: "json", tenantScope: "organization" },
+  "corporateClients.restore": { method: "POST", path: "/corporate-clients/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "corporateClients.ledger": { method: "GET", path: "/corporate-clients/{id}/ledger", responseType: "json", tenantScope: "club" },
+  "corporateClients.ledgerExport": { method: "GET", path: "/corporate-clients/{id}/ledger/export", responseType: "blob", tenantScope: "club" },
+  "corporateClients.deposit": { method: "POST", path: "/corporate-clients/{id}/deposits", responseType: "json", tenantScope: "club" },
+  "corporateClients.depositCancel": { method: "POST", path: "/corporate-clients/{id}/deposits/{entryId}/cancel", responseType: "json", tenantScope: "club" },
+  "corporateClients.spending": { method: "POST", path: "/corporate-clients/{id}/spendings", responseType: "json", tenantScope: "club" },
+  "corporateClients.spendingReverse": { method: "POST", path: "/corporate-clients/{id}/spendings/{entryId}/reverse", responseType: "json", tenantScope: "club" },
+  "prepayments.dashboard": { method: "GET", path: "/prepayments/dashboard", responseType: "json", tenantScope: "club" },
+  "managerControl.dashboard": { method: "GET", path: "/manager-control/dashboard", responseType: "json", tenantScope: "club" },
+  "clientBases.list": { method: "GET", path: "/client-bases", responseType: "json", tenantScope: "club" },
+  "clientBases.create": { method: "POST", path: "/client-bases", responseType: "json", tenantScope: "club" },
+  "clientBases.clients": { method: "GET", path: "/client-bases/{id}/clients", responseType: "json", tenantScope: "club" },
+  "clientBases.update": { method: "PUT", path: "/client-bases/{id}", responseType: "json", tenantScope: "club" },
+  "clientBases.archive": { method: "DELETE", path: "/client-bases/{id}", responseType: "json", tenantScope: "club" },
+  "clientBases.deletePermanent": { method: "DELETE", path: "/client-bases/{id}/permanent", responseType: "json", tenantScope: "club" },
+  "clientBases.restore": { method: "POST", path: "/client-bases/{id}/restore", responseType: "json", tenantScope: "club" },
+  "callTasks.createFromBase": { method: "POST", path: "/client-bases/{baseId}/call-tasks", responseType: "json", tenantScope: "club" },
+  "callTasks.createForClient": { method: "POST", path: "/clients/{clientId}/call-tasks", responseType: "json", tenantScope: "club" },
+  "callTasks.list": { method: "GET", path: "/call-tasks", responseType: "json", tenantScope: "club" },
+  "callTasks.report": { method: "GET", path: "/call-tasks/report", responseType: "json", tenantScope: "club" },
+  "callTasks.runRecurring": { method: "POST", path: "/call-tasks/recurring/run", responseType: "json", tenantScope: "club" },
+  "callTasks.get": { method: "GET", path: "/call-tasks/{id}", responseType: "json", tenantScope: "club" },
+  "callTasks.update": { method: "PUT", path: "/call-tasks/{id}", responseType: "json", tenantScope: "club" },
+  "callTasks.deletePermanent": { method: "DELETE", path: "/call-tasks/{id}/permanent", responseType: "json", tenantScope: "club" },
+  "callTasks.sync": { method: "POST", path: "/call-tasks/{id}/sync", responseType: "json", tenantScope: "club" },
+  "callTasks.clients": { method: "GET", path: "/call-tasks/{id}/clients", responseType: "json", tenantScope: "club" },
+  "callTasks.clientsBulk": { method: "PATCH", path: "/call-tasks/{id}/clients/bulk", responseType: "json", tenantScope: "club" },
+  "callTasks.addAttempt": { method: "POST", path: "/call-task-clients/{taskClientId}/attempts", responseType: "json", tenantScope: "club" },
+  "telephony.config": { method: "GET", path: "/telephony/config", responseType: "json", tenantScope: "club" },
+  "telephony.stats": { method: "GET", path: "/telephony/stats", responseType: "json", tenantScope: "club" },
+  "telephony.report": { method: "GET", path: "/telephony/report", responseType: "json", tenantScope: "club" },
+  "telephony.calls": { method: "GET", path: "/telephony/calls", responseType: "json", tenantScope: "club" },
+  "telephony.getCall": { method: "GET", path: "/telephony/calls/{id}", responseType: "json", tenantScope: "club" },
+  "telephony.startCall": { method: "POST", path: "/telephony/calls/{id}/start", responseType: "json", tenantScope: "club" },
+  "telephony.linkClient": { method: "POST", path: "/telephony/calls/{id}/client", responseType: "json", tenantScope: "club" },
+  "telephony.createClient": { method: "POST", path: "/telephony/calls/{id}/client/create", responseType: "json", tenantScope: "club" },
+  "telephony.completeCall": { method: "POST", path: "/telephony/calls/{id}/complete", responseType: "json", tenantScope: "club" },
+  "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json", tenantScope: "club" },
+  "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json", tenantScope: "club" },
+  "telephony.createTranscriptionJob": { method: "POST", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json", tenantScope: "club" },
+  "telephony.queueMissingTranscriptionJobs": { method: "POST", path: "/telephony/transcription-jobs/queue-missing", responseType: "json", tenantScope: "club" },
+  "telephony.callTranscriptionJobs": { method: "GET", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json", tenantScope: "club" },
+  "telephony.transcriptionJobs": { method: "GET", path: "/telephony/transcription-jobs", responseType: "json", tenantScope: "club" },
+  "telephony.transcriptionJobStats": { method: "GET", path: "/telephony/transcription-jobs/stats", responseType: "json", tenantScope: "club" },
+  "telephony.getTranscriptionJob": { method: "GET", path: "/telephony/transcription-jobs/{id}", responseType: "json", tenantScope: "club" },
+  "telephony.workerTranscriptionQueue": { method: "GET", path: "/telephony/transcription-jobs/worker-queue", responseType: "json", tenantScope: "worker" },
+  "telephony.claimTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/claim", responseType: "json", tenantScope: "worker" },
+  "telephony.transcriptionAudioReference": { method: "POST", path: "/telephony/transcription-jobs/{id}/audio-reference", responseType: "json", tenantScope: "worker" },
+  "telephony.updateTranscriptionProgress": { method: "POST", path: "/telephony/transcription-jobs/{id}/progress", responseType: "json", tenantScope: "worker" },
+  "telephony.completeTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/result", responseType: "json", tenantScope: "worker" },
+  "telephony.failTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/fail", responseType: "json", tenantScope: "worker" },
+  "telephony.workerRetryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/worker-retry", responseType: "json", tenantScope: "worker" },
+  "telephony.retryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/retry", responseType: "json", tenantScope: "club" },
+  "telephony.syncStatistics": { method: "POST", path: "/telephony/beeline/sync", responseType: "json", tenantScope: "club" },
+  "telephony.syncRecordings": { method: "POST", path: "/telephony/beeline/records/sync", responseType: "json", tenantScope: "club" },
+  "telephony.subscribe": { method: "POST", path: "/telephony/beeline/subscribe", responseType: "json", tenantScope: "club" },
+  "telephony.checkSubscription": { method: "POST", path: "/telephony/beeline/subscription/check", responseType: "json", tenantScope: "club" },
+  "telephony.rawEvents": { method: "GET", path: "/telephony/raw-events", responseType: "json", tenantScope: "club" },
+  "telephony.reprocessRawEvent": { method: "POST", path: "/telephony/raw-events/{id}/reprocess", responseType: "json", tenantScope: "club" },
+  "telephony.beelineWebhook": { method: "POST", path: "/integrations/beeline/events", responseType: "json", tenantScope: "provider_ingress" },
+  "clients.list": { method: "GET", path: "/clients", responseType: "json", tenantScope: "organization" },
+  "clients.lookup": { method: "GET", path: "/clients/lookup", responseType: "json", tenantScope: "organization" },
+  "clients.duplicates": { method: "GET", path: "/clients/duplicates", responseType: "json", tenantScope: "organization" },
+  "clients.views.list": { method: "GET", path: "/clients/views", responseType: "json", tenantScope: "club" },
+  "clients.views.create": { method: "POST", path: "/clients/views", responseType: "json", tenantScope: "club" },
+  "clients.views.update": { method: "PUT", path: "/clients/views/{viewId}", responseType: "json", tenantScope: "club" },
+  "clients.views.delete": { method: "DELETE", path: "/clients/views/{viewId}", responseType: "json", tenantScope: "club" },
+  "clients.create": { method: "POST", path: "/clients", responseType: "json", tenantScope: "organization" },
+  "clients.groupTrainingRecommendation": { method: "POST", path: "/clients/training-recommendation/group", responseType: "json", tenantScope: "organization" },
+  "clients.trainingRecommendation": { method: "GET", path: "/clients/{clientId}/training-recommendation", responseType: "json", tenantScope: "organization" },
+  "clients.skillMap.list": { method: "GET", path: "/clients/{clientId}/skill-map", responseType: "json", tenantScope: "organization" },
+  "clients.skillMap.update": { method: "PUT", path: "/clients/{clientId}/skill-map/{skillId}", responseType: "json", tenantScope: "organization" },
+  "clients.get": { method: "GET", path: "/clients/{id}", responseType: "json", tenantScope: "organization" },
+  "clients.update": { method: "PUT", path: "/clients/{id}", responseType: "json", tenantScope: "organization" },
+  "clients.deletePermanent": { method: "DELETE", path: "/clients/{id}/permanent", responseType: "json", tenantScope: "organization" },
+  "clients.merge": { method: "POST", path: "/clients/{id}/merge", responseType: "json", tenantScope: "organization" },
+  "finance.report": { method: "GET", path: "/finance", responseType: "json", tenantScope: "club" },
+  "finance.manualCreate": { method: "POST", path: "/finance", responseType: "json", tenantScope: "club" },
+  "finance.export": { method: "GET", path: "/finance/export", responseType: "blob", tenantScope: "club" },
+  "finance.history": { method: "GET", path: "/finance/history", responseType: "json", tenantScope: "club" },
+  "finance.payroll": { method: "GET", path: "/finance/payroll", responseType: "json", tenantScope: "organization" },
+  "finance.payrollExport": { method: "GET", path: "/finance/payroll/export", responseType: "blob", tenantScope: "organization" },
+  "finance.payrollPeriods": { method: "GET", path: "/finance/payroll/periods", responseType: "json", tenantScope: "organization" },
+  "finance.payrollPeriodCreate": { method: "POST", path: "/finance/payroll/periods", responseType: "json", tenantScope: "organization" },
+  "finance.payrollRecalculate": { method: "POST", path: "/finance/payroll/periods/{id}/recalculate", responseType: "json", tenantScope: "organization" },
+  "finance.payrollStatus": { method: "PATCH", path: "/finance/payroll/periods/{id}/status", responseType: "json", tenantScope: "organization" },
+  "motivation.currentSales": { method: "GET", path: "/motivation/current-sales", responseType: "json", tenantScope: "club" },
+  "motivation.rules": { method: "GET", path: "/motivation/rules", responseType: "json", tenantScope: "organization" },
+  "motivation.bonusRules": { method: "GET", path: "/motivation/bonus-rules", responseType: "json", tenantScope: "organization" },
+  "motivation.categories": { method: "GET", path: "/motivation/categories", responseType: "json", tenantScope: "organization" },
+  "motivation.ruleUpdate": { method: "PUT", path: "/motivation/rules/{key}", responseType: "json", tenantScope: "organization" },
+  "motivation.assignCategory": { method: "PUT", path: "/motivation/categories/{categoryId}/rule", responseType: "json", tenantScope: "organization" },
+  "motivation.bonusRuleCreate": { method: "POST", path: "/motivation/bonus-rules", responseType: "json", tenantScope: "organization" },
+  "motivation.bonusRuleUpdate": { method: "PUT", path: "/motivation/bonus-rules/{id}", responseType: "json", tenantScope: "organization" },
+  "motivation.bonusRuleDelete": { method: "DELETE", path: "/motivation/bonus-rules/{id}", responseType: "json", tenantScope: "organization" },
+  "references.list": { method: "GET", path: "/references/{type}", responseType: "json", tenantScope: "organization" },
+  "references.create": { method: "POST", path: "/references/{type}", responseType: "json", tenantScope: "organization" },
+  "references.update": { method: "PUT", path: "/references/{type}/{id}", responseType: "json", tenantScope: "organization" },
+  "references.archive": { method: "POST", path: "/references/{type}/{id}/archive", responseType: "json", tenantScope: "organization" },
+  "references.restore": { method: "POST", path: "/references/{type}/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "references.deletePermanent": { method: "DELETE", path: "/references/{type}/{id}/permanent", responseType: "json", tenantScope: "organization" },
+  "staff.list": { method: "GET", path: "/staff", responseType: "json", tenantScope: "organization" },
+  "staff.create": { method: "POST", path: "/staff", responseType: "json", tenantScope: "organization" },
+  "staff.update": { method: "PUT", path: "/staff/{id}", responseType: "json", tenantScope: "organization" },
+  "staff.restore": { method: "POST", path: "/staff/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "staff.deletePermanent": { method: "DELETE", path: "/staff/{id}/permanent", responseType: "json", tenantScope: "organization" },
+  "staff.archive": { method: "DELETE", path: "/staff/{id}", responseType: "json", tenantScope: "organization" },
+  "shifts.active": { method: "GET", path: "/shifts/active", responseType: "json", tenantScope: "club" },
+  "shifts.start": { method: "POST", path: "/shifts/start", responseType: "json", tenantScope: "club" },
+  "shifts.end": { method: "POST", path: "/shifts/end", responseType: "json", tenantScope: "club" },
+  "shifts.create": { method: "POST", path: "/shifts", responseType: "json", tenantScope: "club" },
+  "shifts.update": { method: "PUT", path: "/shifts", responseType: "json", tenantScope: "club" },
+  "shifts.archive": { method: "DELETE", path: "/shifts", responseType: "json", tenantScope: "club" },
+  "shiftReportTemplates.list": { method: "GET", path: "/shift-report-templates", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplates.create": { method: "POST", path: "/shift-report-templates", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplates.update": { method: "PUT", path: "/shift-report-templates/{id}", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplates.archive": { method: "POST", path: "/shift-report-templates/{id}/archive", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplates.restore": { method: "POST", path: "/shift-report-templates/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplateItems.create": { method: "POST", path: "/shift-report-templates/{templateId}/items", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplateItems.update": { method: "PUT", path: "/shift-report-template-items/{id}", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplateItems.archive": { method: "POST", path: "/shift-report-template-items/{id}/archive", responseType: "json", tenantScope: "organization" },
+  "shiftReportTemplateItems.restore": { method: "POST", path: "/shift-report-template-items/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "shiftReports.activeShift": { method: "GET", path: "/shifts/active/reports", responseType: "json", tenantScope: "club" },
+  "shiftReports.list": { method: "GET", path: "/shift-reports", responseType: "json", tenantScope: "club" },
+  "shiftReports.get": { method: "GET", path: "/shift-reports/{id}", responseType: "json", tenantScope: "club" },
+  "shiftReports.saveDraft": { method: "PUT", path: "/shift-reports/{id}/draft", responseType: "json", tenantScope: "club" },
+  "shiftReports.submit": { method: "POST", path: "/shift-reports/{id}/submit", responseType: "json", tenantScope: "club" },
+  "shiftReports.uploadAttachment": { method: "POST", path: "/shift-reports/{reportId}/answers/{answerId}/attachments", responseType: "json", tenantScope: "club" },
+  "shiftReports.removeAttachment": { method: "DELETE", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "json", tenantScope: "club" },
+  "shiftReports.attachment": { method: "GET", path: "/shift-reports/{reportId}/answers/{answerId}/attachments/{attachmentId}", responseType: "blob", tenantScope: "club" },
+  "trainingNotes.list": { method: "GET", path: "/clients/{clientId}/training-notes", responseType: "json", tenantScope: "club" },
+  "trainingNotes.create": { method: "POST", path: "/clients/{clientId}/training-notes", responseType: "json", tenantScope: "club" },
+  "trainingNotes.update": { method: "PUT", path: "/training-notes/{noteId}", responseType: "json", tenantScope: "club" },
+  "trainingNotes.delete": { method: "DELETE", path: "/training-notes/{noteId}", responseType: "json", tenantScope: "club" },
+  "trainingPlans.list": { method: "GET", path: "/training-plans", responseType: "json", tenantScope: "club" },
+  "trainingPlans.create": { method: "POST", path: "/training-plans", responseType: "json", tenantScope: "club" },
+  "trainingPlans.get": { method: "GET", path: "/training-plans/{planId}", responseType: "json", tenantScope: "club" },
+  "trainingPlans.updateExercises": { method: "PUT", path: "/training-plans/{planId}/exercises", responseType: "json", tenantScope: "club" },
+  "trainingPlans.complete": { method: "POST", path: "/training-plans/{planId}/complete", responseType: "json", tenantScope: "club" },
+  "trainingPlans.quickComplete": { method: "POST", path: "/training-plans/{planId}/quick-complete", responseType: "json", tenantScope: "club" },
+  "methodology.analytics": { method: "GET", path: "/methodology/analytics", responseType: "json", tenantScope: "organization" },
+  "methodology.skills.list": { method: "GET", path: "/methodology/skills", responseType: "json", tenantScope: "organization" },
+  "methodology.skills.create": { method: "POST", path: "/methodology/skills", responseType: "json", tenantScope: "organization" },
+  "methodology.skills.update": { method: "PUT", path: "/methodology/skills/{id}", responseType: "json", tenantScope: "organization" },
+  "methodology.exercises.list": { method: "GET", path: "/methodology/exercises", responseType: "json", tenantScope: "organization" },
+  "methodology.exercises.create": { method: "POST", path: "/methodology/exercises", responseType: "json", tenantScope: "organization" },
+  "methodology.exercises.update": { method: "PUT", path: "/methodology/exercises/{id}", responseType: "json", tenantScope: "organization" },
+  "methodology.exercises.approve": { method: "POST", path: "/methodology/exercises/{id}/approve", responseType: "json", tenantScope: "organization" },
+  "methodology.exercises.archive": { method: "POST", path: "/methodology/exercises/{id}/archive", responseType: "json", tenantScope: "organization" },
+  "methodology.exercises.restore": { method: "POST", path: "/methodology/exercises/{id}/restore", responseType: "json", tenantScope: "organization" },
+  "utilization.list": { method: "GET", path: "/utilization", responseType: "json", tenantScope: "club" },
+  "utilization.upsert": { method: "POST", path: "/utilization", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.get": { method: "GET", path: "/analytics/visits", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.sourceQuality": { method: "GET", path: "/analytics/visits/source-quality", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.cohortsLifecycle": { method: "GET", path: "/analytics/visits/cohorts-lifecycle", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.revenueLtv": { method: "GET", path: "/analytics/visits/revenue-ltv", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.clientBasePreview": { method: "POST", path: "/analytics/visits/client-base-preview", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.createClientBase": { method: "POST", path: "/analytics/visits/client-bases", responseType: "json", tenantScope: "club" },
+  "visitsAnalytics.export": { method: "GET", path: "/export/visits", responseType: "blob", tenantScope: "club" },
+  "visitsAnalytics.sourceQualityExport": { method: "GET", path: "/export/visits/source-quality", responseType: "blob", tenantScope: "club" },
 } as const;
 
 export type ApiEndpointId = keyof typeof apiEndpoints;
+export type TenantScope = 'global' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
+export type TenantHeadersForScope<TScope extends TenantScope> =
+  TScope extends 'club'
+    ? { 'X-Organization-Id': number | string; 'X-Club-Id': number | string }
+    : TScope extends 'membership' | 'organization'
+      ? { 'X-Organization-Id': number | string }
+      : Record<string, never>;
 
 export type ApiEndpointRequest<P = undefined, Q = undefined, B = undefined> =
   (P extends undefined ? { params?: never } : { params: P }) &
@@ -292,6 +301,30 @@ export type AuthLoginBody = {
   email: string;
   password: string;
   [key: string]: unknown;
+};
+export type AuthMembershipsResponse = {
+  memberships: Array<{
+    clubs: Array<{
+      effectiveRole: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+      id: number;
+      name: string;
+      slug: string;
+      timezone: string;
+    }>;
+    id: number;
+    organization: {
+      id: number;
+      name: string;
+      slug: string;
+    };
+    role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  }>;
+  recommendedContext: {
+    clubId: number;
+    effectiveRole: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+    membershipId: number;
+    organizationId: number;
+  } | null;
 };
 export type AccessSearchQuery = {
   q?: string | "" | null;
@@ -2357,6 +2390,8 @@ export interface ApiEndpointRequestMap {
   "auth.bootstrap": ApiEndpointRequest<undefined, undefined, AuthBootstrapBody>;
   "auth.login": ApiEndpointRequest<undefined, undefined, AuthLoginBody>;
   "auth.me": ApiEndpointRequest<undefined, undefined, undefined>;
+  "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
+  "webhooks.evotor": ApiEndpointRequest<undefined, undefined, undefined>;
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
   "access.manualVisit": ApiEndpointRequest<undefined, undefined, AccessManualVisitBody>;
   "access.issueKey": ApiEndpointRequest<undefined, undefined, AccessIssueKeyBody>;
@@ -2621,4 +2656,279 @@ export interface ApiEndpointRequestMap {
   "visitsAnalytics.createClientBase": ApiEndpointRequest<undefined, undefined, VisitsAnalyticsCreateClientBaseBody>;
   "visitsAnalytics.export": ApiEndpointRequest<undefined, VisitsAnalyticsExportQuery, undefined>;
   "visitsAnalytics.sourceQualityExport": ApiEndpointRequest<undefined, VisitsAnalyticsSourceQualityExportQuery, undefined>;
+}
+
+export interface ApiEndpointResponseMap {
+  "system.health": unknown;
+  "system.openapi": unknown;
+  "auth.status": unknown;
+  "auth.bootstrap": unknown;
+  "auth.login": unknown;
+  "auth.me": unknown;
+  "auth.memberships": AuthMembershipsResponse;
+  "webhooks.evotor": unknown;
+  "access.search": unknown;
+  "access.manualVisit": unknown;
+  "access.issueKey": unknown;
+  "access.correctKey": unknown;
+  "access.scan": unknown;
+  "access.scannerEvents": unknown;
+  "access.recordScannerEvent": unknown;
+  "access.register": unknown;
+  "access.visits": unknown;
+  "access.updateVisitCategory": unknown;
+  "accounts.list": unknown;
+  "accounts.create": unknown;
+  "accounts.update": unknown;
+  "accounts.restore": unknown;
+  "accounts.deletePermanent": unknown;
+  "accounts.archive": unknown;
+  "onboarding.overview": unknown;
+  "onboarding.trainingMode": unknown;
+  "onboarding.trainingModeUpdate": unknown;
+  "onboarding.trainingData": unknown;
+  "onboarding.trainingDataCleanup": unknown;
+  "onboarding.metrics": unknown;
+  "onboarding.taskDetail": unknown;
+  "onboarding.completeTask": unknown;
+  "onboarding.lessonRead": unknown;
+  "onboarding.practiceStart": unknown;
+  "onboarding.practiceStep": unknown;
+  "onboarding.quizAttempt": unknown;
+  "onboarding.recordEvent": unknown;
+  "onboarding.resetProgress": unknown;
+  "audit.list": unknown;
+  "bookings.schedule": unknown;
+  "bookings.courts": unknown;
+  "bookings.courtCreate": unknown;
+  "bookings.courtUpdate": unknown;
+  "bookings.courtArchive": unknown;
+  "bookings.responsibles": unknown;
+  "bookings.analytics": unknown;
+  "bookings.settings": unknown;
+  "bookings.settingsUpdate": unknown;
+  "bookings.quote": unknown;
+  "bookings.priceRules": unknown;
+  "bookings.priceRuleCreate": unknown;
+  "bookings.priceRuleUpdate": unknown;
+  "bookings.priceRuleArchive": unknown;
+  "bookings.blocks": unknown;
+  "bookings.blockCreate": unknown;
+  "bookings.blockUpdate": unknown;
+  "bookings.blockArchive": unknown;
+  "bookings.exceptions": unknown;
+  "bookings.exceptionCreate": unknown;
+  "bookings.exceptionUpdate": unknown;
+  "bookings.exceptionArchive": unknown;
+  "bookings.series": unknown;
+  "bookings.seriesPreview": unknown;
+  "bookings.seriesCreate": unknown;
+  "bookings.seriesArchive": unknown;
+  "bookings.create": unknown;
+  "bookings.get": unknown;
+  "bookings.trainingPlan.get": unknown;
+  "bookings.trainingPlan.create": unknown;
+  "bookings.update": unknown;
+  "bookings.status": unknown;
+  "bookings.history": unknown;
+  "catalog.categories.list": unknown;
+  "catalog.categories.create": unknown;
+  "catalog.categories.update": unknown;
+  "catalog.categories.restore": unknown;
+  "catalog.categories.deletePermanent": unknown;
+  "catalog.categories.archive": unknown;
+  "catalog.saleSettings.list": unknown;
+  "catalog.saleSettings.save": unknown;
+  "catalog.pendingSales.list": unknown;
+  "catalog.pendingSales.link": unknown;
+  "catalog.pendingSales.ignore": unknown;
+  "catalog.pendingSales.cancel": unknown;
+  "catalog.unmapped": unknown;
+  "catalog.rules.list": unknown;
+  "catalog.rules.create": unknown;
+  "catalog.rules.restore": unknown;
+  "catalog.rules.deletePermanent": unknown;
+  "catalog.rules.archive": unknown;
+  "subscriptions.types.list": unknown;
+  "subscriptions.types.create": unknown;
+  "subscriptions.types.update": unknown;
+  "subscriptions.types.archive": unknown;
+  "subscriptions.types.restore": unknown;
+  "subscriptions.types.deletePermanent": unknown;
+  "subscriptions.client.list": unknown;
+  "subscriptions.client.get": unknown;
+  "subscriptions.client.redemptions": unknown;
+  "subscriptions.client.redeem": unknown;
+  "subscriptions.client.reverseRedemption": unknown;
+  "certificates.list": unknown;
+  "certificates.client.list": unknown;
+  "certificates.get": unknown;
+  "certificates.redemptions": unknown;
+  "certificates.redeem": unknown;
+  "certificates.reverseRedemption": unknown;
+  "corporateClients.list": unknown;
+  "corporateClients.create": unknown;
+  "corporateClients.get": unknown;
+  "corporateClients.update": unknown;
+  "corporateClients.archive": unknown;
+  "corporateClients.restore": unknown;
+  "corporateClients.ledger": unknown;
+  "corporateClients.ledgerExport": unknown;
+  "corporateClients.deposit": unknown;
+  "corporateClients.depositCancel": unknown;
+  "corporateClients.spending": unknown;
+  "corporateClients.spendingReverse": unknown;
+  "prepayments.dashboard": unknown;
+  "managerControl.dashboard": unknown;
+  "clientBases.list": unknown;
+  "clientBases.create": unknown;
+  "clientBases.clients": unknown;
+  "clientBases.update": unknown;
+  "clientBases.archive": unknown;
+  "clientBases.deletePermanent": unknown;
+  "clientBases.restore": unknown;
+  "callTasks.createFromBase": unknown;
+  "callTasks.createForClient": unknown;
+  "callTasks.list": unknown;
+  "callTasks.report": unknown;
+  "callTasks.runRecurring": unknown;
+  "callTasks.get": unknown;
+  "callTasks.update": unknown;
+  "callTasks.deletePermanent": unknown;
+  "callTasks.sync": unknown;
+  "callTasks.clients": unknown;
+  "callTasks.clientsBulk": unknown;
+  "callTasks.addAttempt": unknown;
+  "telephony.config": unknown;
+  "telephony.stats": unknown;
+  "telephony.report": unknown;
+  "telephony.calls": unknown;
+  "telephony.getCall": unknown;
+  "telephony.startCall": unknown;
+  "telephony.linkClient": unknown;
+  "telephony.createClient": unknown;
+  "telephony.completeCall": unknown;
+  "telephony.ignoreCall": unknown;
+  "telephony.recordingReference": unknown;
+  "telephony.createTranscriptionJob": unknown;
+  "telephony.queueMissingTranscriptionJobs": unknown;
+  "telephony.callTranscriptionJobs": unknown;
+  "telephony.transcriptionJobs": unknown;
+  "telephony.transcriptionJobStats": unknown;
+  "telephony.getTranscriptionJob": unknown;
+  "telephony.workerTranscriptionQueue": unknown;
+  "telephony.claimTranscriptionJob": unknown;
+  "telephony.transcriptionAudioReference": unknown;
+  "telephony.updateTranscriptionProgress": unknown;
+  "telephony.completeTranscriptionJob": unknown;
+  "telephony.failTranscriptionJob": unknown;
+  "telephony.workerRetryTranscriptionJob": unknown;
+  "telephony.retryTranscriptionJob": unknown;
+  "telephony.syncStatistics": unknown;
+  "telephony.syncRecordings": unknown;
+  "telephony.subscribe": unknown;
+  "telephony.checkSubscription": unknown;
+  "telephony.rawEvents": unknown;
+  "telephony.reprocessRawEvent": unknown;
+  "telephony.beelineWebhook": unknown;
+  "clients.list": unknown;
+  "clients.lookup": unknown;
+  "clients.duplicates": unknown;
+  "clients.views.list": unknown;
+  "clients.views.create": unknown;
+  "clients.views.update": unknown;
+  "clients.views.delete": unknown;
+  "clients.create": unknown;
+  "clients.groupTrainingRecommendation": unknown;
+  "clients.trainingRecommendation": unknown;
+  "clients.skillMap.list": unknown;
+  "clients.skillMap.update": unknown;
+  "clients.get": unknown;
+  "clients.update": unknown;
+  "clients.deletePermanent": unknown;
+  "clients.merge": unknown;
+  "finance.report": unknown;
+  "finance.manualCreate": unknown;
+  "finance.export": unknown;
+  "finance.history": unknown;
+  "finance.payroll": unknown;
+  "finance.payrollExport": unknown;
+  "finance.payrollPeriods": unknown;
+  "finance.payrollPeriodCreate": unknown;
+  "finance.payrollRecalculate": unknown;
+  "finance.payrollStatus": unknown;
+  "motivation.currentSales": unknown;
+  "motivation.rules": unknown;
+  "motivation.bonusRules": unknown;
+  "motivation.categories": unknown;
+  "motivation.ruleUpdate": unknown;
+  "motivation.assignCategory": unknown;
+  "motivation.bonusRuleCreate": unknown;
+  "motivation.bonusRuleUpdate": unknown;
+  "motivation.bonusRuleDelete": unknown;
+  "references.list": unknown;
+  "references.create": unknown;
+  "references.update": unknown;
+  "references.archive": unknown;
+  "references.restore": unknown;
+  "references.deletePermanent": unknown;
+  "staff.list": unknown;
+  "staff.create": unknown;
+  "staff.update": unknown;
+  "staff.restore": unknown;
+  "staff.deletePermanent": unknown;
+  "staff.archive": unknown;
+  "shifts.active": unknown;
+  "shifts.start": unknown;
+  "shifts.end": unknown;
+  "shifts.create": unknown;
+  "shifts.update": unknown;
+  "shifts.archive": unknown;
+  "shiftReportTemplates.list": unknown;
+  "shiftReportTemplates.create": unknown;
+  "shiftReportTemplates.update": unknown;
+  "shiftReportTemplates.archive": unknown;
+  "shiftReportTemplates.restore": unknown;
+  "shiftReportTemplateItems.create": unknown;
+  "shiftReportTemplateItems.update": unknown;
+  "shiftReportTemplateItems.archive": unknown;
+  "shiftReportTemplateItems.restore": unknown;
+  "shiftReports.activeShift": unknown;
+  "shiftReports.list": unknown;
+  "shiftReports.get": unknown;
+  "shiftReports.saveDraft": unknown;
+  "shiftReports.submit": unknown;
+  "shiftReports.uploadAttachment": unknown;
+  "shiftReports.removeAttachment": unknown;
+  "shiftReports.attachment": unknown;
+  "trainingNotes.list": unknown;
+  "trainingNotes.create": unknown;
+  "trainingNotes.update": unknown;
+  "trainingNotes.delete": unknown;
+  "trainingPlans.list": unknown;
+  "trainingPlans.create": unknown;
+  "trainingPlans.get": unknown;
+  "trainingPlans.updateExercises": unknown;
+  "trainingPlans.complete": unknown;
+  "trainingPlans.quickComplete": unknown;
+  "methodology.analytics": unknown;
+  "methodology.skills.list": unknown;
+  "methodology.skills.create": unknown;
+  "methodology.skills.update": unknown;
+  "methodology.exercises.list": unknown;
+  "methodology.exercises.create": unknown;
+  "methodology.exercises.update": unknown;
+  "methodology.exercises.approve": unknown;
+  "methodology.exercises.archive": unknown;
+  "methodology.exercises.restore": unknown;
+  "utilization.list": unknown;
+  "utilization.upsert": unknown;
+  "visitsAnalytics.get": unknown;
+  "visitsAnalytics.sourceQuality": unknown;
+  "visitsAnalytics.cohortsLifecycle": unknown;
+  "visitsAnalytics.revenueLtv": unknown;
+  "visitsAnalytics.clientBasePreview": unknown;
+  "visitsAnalytics.createClientBase": unknown;
+  "visitsAnalytics.export": unknown;
+  "visitsAnalytics.sourceQualityExport": unknown;
 }

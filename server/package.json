@@ -40,6 +40,7 @@
     "smoke:api": "node scripts/api-smoke.js",
     "tenant:account-writes:audit": "node scripts/audit-account-writes.js",
     "tenant:foundation:assert": "node scripts/tenant-foundation-check.js",
+    "tenant:routes:audit": "node scripts/audit-tenant-route-scopes.js",
     "test": "node --test --test-concurrency=1 tests/**/*.test.js",
     "typecheck": "tsc --noEmit"
   }

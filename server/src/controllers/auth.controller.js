@@ -1,4 +1,5 @@
 const authService = require('../services/auth.service');
+const tenantContextService = require('../services/tenant-context.service');
 const { sendError } = require('../utils/api-error');
 
 class AuthController {
@@ -53,6 +54,14 @@ class AuthController {
 
   async me(req, res) {
     res.json({ account: authService.sanitizeAccount(req.account) });
+  }
+
+  async memberships(req, res) {
+    try {
+      res.json(await tenantContextService.discoverMemberships(req.account.id));
+    } catch (error) {
+      sendError(res, error, 'Не удалось загрузить доступные организации и клубы');
+    }
   }
 }
 

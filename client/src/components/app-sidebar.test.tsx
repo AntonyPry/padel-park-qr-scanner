@@ -39,6 +39,9 @@ function renderSidebar(role: AccountRole) {
           login: vi.fn(),
           logout: vi.fn(),
           setupRequired: false,
+          tenantContext: null,
+          tenantContextEnabled: false,
+          tenantReady: true,
         }}
       >
         <SidebarProvider>

@@ -1,4 +1,9 @@
 import { API_URL } from '@/config';
+import {
+  applyTenantHeaders,
+  clearActiveTenantContext,
+  setTenantContextCapability,
+} from '@/lib/tenant-context';
 
 const AUTH_TOKEN_KEY = 'padel_park_auth_token';
 const TRAINING_MODE_KEY = 'padel_park_training_mode';
@@ -19,6 +24,8 @@ export function setAuthToken(token: string) {
 export function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   clearStoredTrainingMode();
+  clearActiveTenantContext();
+  setTenantContextCapability(false);
 }
 
 export function getStoredTrainingMode() {
@@ -48,6 +55,8 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
+  applyTenantHeaders(input, init, headers);
+
   if (trainingMode?.isEnabled) {
     headers.set('X-Training-Mode', 'true');
     if (trainingMode.role) {
@@ -71,12 +80,14 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
 }
 
 export class ApiRequestError extends Error {
+  code?: string;
   status: number;
   details?: unknown;
 
-  constructor(message: string, status: number, details?: unknown) {
+  constructor(message: string, status: number, details?: unknown, code?: string) {
     super(message);
     this.name = 'ApiRequestError';
+    this.code = code;
     this.status = status;
     this.details = details;
   }
@@ -85,16 +96,19 @@ export class ApiRequestError extends Error {
 export async function readApiError(response: Response, fallback: string) {
   try {
     const data = (await response.json()) as {
+      code?: string;
       details?: unknown;
       error?: string;
     };
 
     return {
+      code: data.code,
       details: data.details,
       message: data.error || fallback,
     };
   } catch {
     return {
+      code: undefined,
       details: undefined,
       message: fallback,
     };
@@ -114,7 +128,12 @@ export async function apiRequest<T>(
 
   if (!response.ok) {
     const apiError = await readApiError(response, fallback);
-    throw new ApiRequestError(apiError.message, response.status, apiError.details);
+    throw new ApiRequestError(
+      apiError.message,
+      response.status,
+      apiError.details,
+      apiError.code,
+    );
   }
 
   if (response.status === 204) {

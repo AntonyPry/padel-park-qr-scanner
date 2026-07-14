@@ -8,6 +8,7 @@ const {
 const {
   TENANT_FOUNDATION_STATES,
 } = require('../tenant-foundation/constants');
+const { tenantContextCapability } = require('../middleware/tenant-context');
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 12;
 const PASSWORD_ITERATIONS = 120000;
@@ -128,6 +129,7 @@ async function getSetupStatus() {
     classification.state === TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING;
   return {
     bootstrapPending,
+    capabilities: tenantContextCapability(),
     setupRequired: bootstrapPending,
     tenantFoundationState: classification.state,
   };
@@ -187,6 +189,7 @@ async function createSession(accountId) {
   return {
     token,
     account: sanitizeAccount(account),
+    capabilities: tenantContextCapability(),
   };
 }
 
