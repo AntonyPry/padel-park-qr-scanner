@@ -256,11 +256,13 @@ function CashMetric({
   tone?: 'default' | 'positive' | 'negative';
 }) {
   return (
-    <div className="min-w-0 rounded-lg border bg-background p-3">
-      <div className="truncate text-xs text-muted-foreground">{label}</div>
+    <div className="flex h-full min-h-24 min-w-0 flex-col rounded-lg border bg-background p-3">
+      <div className="min-h-8 break-words text-xs leading-4 text-muted-foreground">
+        {label}
+      </div>
       <div
         className={cn(
-          'mt-1 truncate text-lg font-semibold tabular-nums',
+          'mt-auto break-words text-lg font-semibold leading-tight tabular-nums',
           tone === 'positive' && 'text-emerald-600 dark:text-emerald-400',
           tone === 'negative' && 'text-destructive',
         )}
@@ -502,7 +504,7 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
             <ErrorState compact message={error} onRetry={() => void load()} title="Не удалось обновить кассу" />
           )}
 
-          <div className="grid grid-cols-2 gap-2 lg:grid-cols-5">
+          <div className="grid auto-rows-fr grid-cols-2 gap-2 lg:grid-cols-5">
             <CashMetric label="На начало" value={formatMoney(summary?.session?.openingTotal || 0)} />
             <CashMetric label="Наличная выручка" value={formatMoney(summary?.cashSales || 0)} tone="positive" />
             <CashMetric label="Расходы" value={formatMoney(summary?.activeExpensesTotal || 0)} tone="negative" />
@@ -884,14 +886,16 @@ export function ShiftCashCloseDialog({
     void load();
   }, [load, open]);
 
+  const hasActualCash = banknotes !== '' && coins !== '';
   const actualTotal = (Number(banknotes.replace(',', '.')) || 0) +
     (Number(coins.replace(',', '.')) || 0);
-  const variance = Number((actualTotal - Number(summary?.expectedClosingCash || 0)).toFixed(2));
-  const needsComment = Math.abs(variance) >= 0.01;
+  const variance = hasActualCash
+    ? Number((actualTotal - Number(summary?.expectedClosingCash || 0)).toFixed(2))
+    : null;
+  const needsComment = variance !== null && Math.abs(variance) >= 0.01;
   const canSubmit = Boolean(
     summary?.session?.openingRecordedAt &&
-    banknotes !== '' &&
-    coins !== '' &&
+    hasActualCash &&
     (!needsComment || comment.trim()),
   );
 
@@ -966,27 +970,33 @@ export function ShiftCashCloseDialog({
                 />
               </div>
             </div>
-            <div className={cn(
-              'rounded-lg border p-4',
-              needsComment ? 'border-destructive/40 bg-destructive/5' : 'border-emerald-500/30 bg-emerald-500/5',
-            )}>
-              <div className="text-xs text-muted-foreground">Расхождение</div>
-              <div className={cn('mt-1 text-2xl font-bold tabular-nums', needsComment ? 'text-destructive' : 'text-emerald-600')}>
-                {variance > 0 ? '+' : ''}{formatMoney(variance)}
+            {hasActualCash ? (
+              <div className={cn(
+                'rounded-lg border p-4',
+                needsComment ? 'border-destructive/40 bg-destructive/5' : 'border-emerald-500/30 bg-emerald-500/5',
+              )}>
+                <div className="text-xs text-muted-foreground">Расхождение</div>
+                <div className={cn('mt-1 text-2xl font-bold tabular-nums', needsComment ? 'text-destructive' : 'text-emerald-600')}>
+                  {Number(variance) > 0 ? '+' : ''}{formatMoney(Number(variance))}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {needsComment ? 'Объясните недостачу или излишек перед закрытием.' : 'Фактический остаток совпадает с ожидаемым.'}
+                </div>
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {needsComment ? 'Объясните недостачу или излишек перед закрытием.' : 'Фактический остаток совпадает с ожидаемым.'}
+            ) : (
+              <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                Заполните купюры и мелочь, чтобы увидеть сверку.
               </div>
-            </div>
+            )}
             <div className="grid gap-1.5">
               <Label htmlFor="shift-cash-closing-comment">
-                Комментарий {needsComment ? '· обязательно' : '· необязательно'}
+                Комментарий {hasActualCash && needsComment ? '· обязательно' : '· необязательно'}
               </Label>
               <textarea
                 id="shift-cash-closing-comment"
                 className="min-h-24 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 maxLength={1000}
-                placeholder={needsComment ? 'Укажите причину расхождения' : 'Комментарий по кассе'}
+                placeholder={hasActualCash && needsComment ? 'Укажите причину расхождения' : 'Комментарий по кассе'}
                 value={comment}
                 onChange={(event) => setComment(event.currentTarget.value)}
               />

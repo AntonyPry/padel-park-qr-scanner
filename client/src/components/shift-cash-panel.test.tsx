@@ -127,6 +127,23 @@ describe('ShiftCashPanel', () => {
     expect(screen.getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
   });
 
+  it('keeps mobile KPI labels and closing placeholder fully visible', async () => {
+    mocks.getActive.mockResolvedValueOnce(makeSummary());
+    render(<ShiftCashPanel activeShiftId={12} />);
+
+    const expectedLabel = await screen.findByText('Ожидаемый остаток');
+    const factLabel = screen.getByText('Факт / расхождение');
+    const closingPlaceholder = screen.getByText('При закрытии');
+
+    [expectedLabel, factLabel, closingPlaceholder].forEach((element) => {
+      expect(element).not.toHaveClass('truncate');
+      expect(element).toHaveClass('break-words');
+    });
+    expect(expectedLabel.parentElement).toHaveClass('h-full', 'min-h-24');
+    expect(factLabel.parentElement).toHaveClass('h-full', 'min-h-24');
+    expect(expectedLabel.parentElement?.parentElement).toHaveClass('auto-rows-fr');
+  });
+
   it('records opening banknotes and coins', async () => {
     mocks.getActive.mockResolvedValueOnce(makeSummary({ opening: false }));
     mocks.saveOpening.mockResolvedValueOnce(makeSummary());
@@ -218,9 +235,17 @@ describe('ShiftCashCloseDialog', () => {
       />,
     );
 
-    fireEvent.change(await screen.findByLabelText('Фактические купюры, ₽'), {
+    const banknotes = await screen.findByLabelText('Фактические купюры, ₽');
+    expect(screen.queryByText('Расхождение')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Комментарий · обязательно')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Комментарий · необязательно')).toBeInTheDocument();
+
+    fireEvent.change(banknotes, {
       target: { value: '45000' },
     });
+    expect(screen.queryByText('Расхождение')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Комментарий · обязательно')).not.toBeInTheDocument();
+
     fireEvent.change(screen.getByLabelText('Фактическая мелочь, ₽'), {
       target: { value: '400' },
     });
