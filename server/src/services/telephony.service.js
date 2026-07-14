@@ -841,7 +841,7 @@ function mapTranscriptionJob(row, options = {}) {
       : [],
     aiTranscriptText: raw.aiTranscriptText || null,
     corrections: Array.isArray(raw.corrections) ? raw.corrections : [],
-    metadata: raw.metadata || null,
+    metadata: parseJsonField(raw.metadata),
     rawTranscriptText: raw.rawTranscriptText || null,
     status: raw.status,
     telephonyCallId: raw.telephonyCallId,

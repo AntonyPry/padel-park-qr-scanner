@@ -61,6 +61,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import { toast } from '@/components/ui/toast';
+import { TranscriptionProgress } from '@/components/transcription-progress';
 import { listClients, type ClientListItem } from '@/api/clients';
 import {
   HelpTooltip,
@@ -312,44 +313,6 @@ function getTranscriptionStatusVariant(status?: TranscriptionViewState) {
 
 function isTranscriptionPending(status?: TelephonyTranscriptionStatus) {
   return status === 'queued' || status === 'processing';
-}
-
-const TRANSCRIPTION_STAGE_LABELS: Record<string, string> = {
-  queued: 'Ожидает worker',
-  claimed: 'Worker начал обработку',
-  downloading_audio: 'Скачиваем запись',
-  ffmpeg_preprocess: 'Подготавливаем аудио',
-  transcribing_admin_channel: 'Распознаем администратора',
-  transcribing_client_channel: 'Распознаем клиента',
-  transcribing_unknown_channel: 'Распознаем запись',
-  merging_segments: 'Собираем диалог',
-  ai_postprocessing: 'AI-редактура',
-  uploading_result: 'Сохраняем результат',
-};
-
-function TranscriptionProgress({ transcription }: { transcription?: TelephonyCall['transcription'] }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
-    return () => window.clearInterval(timer);
-  }, []);
-  if (!transcription || !isTranscriptionPending(transcription.status)) return null;
-  const progress = transcription.metadata?.progress;
-  const percent = Math.min(Math.max(Number(progress?.percent) || 0, 0), 100);
-  const updatedAt = progress?.updatedAt ? new Date(progress.updatedAt).getTime() : 0;
-  const stale = transcription.status === 'processing' && (!updatedAt || now - updatedAt > 5 * 60 * 1000);
-  return (
-    <div className="mt-2 min-w-36 space-y-1" data-testid="transcription-progress">
-      <div className="h-1.5 overflow-hidden rounded-full bg-muted-foreground/20">
-        <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${percent}%` }} />
-      </div>
-      <div className={stale ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-        {stale
-          ? 'Обработка зависла — нет свежего статуса'
-          : `${TRANSCRIPTION_STAGE_LABELS[progress?.stage || 'queued'] || progress?.message || 'Обработка'} · ${percent}%`}
-      </div>
-    </div>
-  );
 }
 
 function getTranscriptionQualityWarnings(
@@ -1813,7 +1776,7 @@ export default function TelephonyPage() {
                 </div>
               )}
               {canWork && (
-                <div>
+                <div className="min-w-0 max-w-full overflow-hidden">
                   <div className="text-xs text-muted-foreground">Транскрипт</div>
                   <TranscriptionProgress transcription={call.transcription} />
                   {getTranscriptionViewState(call) === 'completed' && <CheckCircle2 className="h-5 w-5 text-emerald-500" />}
@@ -1928,8 +1891,8 @@ export default function TelephonyPage() {
                   </TableCell>
                 )}
                 {canWork && (
-                  <TableCell>
-                    <div className="space-y-1" title={TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}>
+                  <TableCell className="min-w-0 max-w-full overflow-hidden">
+                    <div className="min-w-0 max-w-full space-y-1 overflow-hidden" title={TRANSCRIPTION_VIEW_LABELS[getTranscriptionViewState(call)]}>
                       <TranscriptionProgress transcription={call.transcription} />
                       {getTranscriptionViewState(call) === 'completed' && <CheckCircle2 className="h-5 w-5 text-emerald-500" aria-label="Транскрипция готова" />}
                       {getTranscriptionViewState(call) === 'failed' && <CircleX className="h-5 w-5 text-destructive" aria-label="Ошибка транскрибации" />}

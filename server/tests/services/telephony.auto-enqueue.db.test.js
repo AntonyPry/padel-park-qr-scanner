@@ -161,10 +161,8 @@ test('DB-backed paginated call list skips large transcript payloads while detail
     assert.equal(page.items.length, 1);
     assert.equal(page.items[0].transcription.id > 0, true);
     assert.equal(page.items[0].transcription.status, 'failed');
-    const metadata =
-      typeof page.items[0].transcription.metadata === 'string'
-        ? JSON.parse(page.items[0].transcription.metadata)
-        : page.items[0].transcription.metadata;
+    const metadata = page.items[0].transcription.metadata;
+    assert.equal(typeof metadata, 'object');
     assert.equal(metadata.progress.percent, 73);
     assert.equal(page.items[0].transcription.errorMessage, 'ASR unavailable');
     assert.equal(page.items[0].transcription.transcriptText, undefined);
