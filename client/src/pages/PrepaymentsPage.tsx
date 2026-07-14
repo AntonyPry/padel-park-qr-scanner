@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Building2,
@@ -17,8 +17,10 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ModuleSwitch } from '@/components/module-switch';
+import { PrepaymentsMetricsSkeleton } from '@/components/prepayments-page-shell';
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
@@ -34,7 +36,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { ErrorState } from '@/components/error-state';
-import { AnimatedMetricValue } from '@/components/animated-data';
 import { Input } from '@/components/ui/input';
 import {
   Select,
@@ -45,6 +46,10 @@ import {
 } from '@/components/ui/select';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { useRealtimeRefresh } from '@/lib/realtime';
+import {
+  PREPAYMENTS_METRIC_GRID_CLASS,
+  PREPAYMENTS_SWITCH_ITEMS,
+} from '@/lib/prepayments-layout';
 
 type DashboardType =
   | 'all'
@@ -236,12 +241,6 @@ const EXPIRY_LABELS: Record<ExpiryFilter, string> = {
   valid: 'Действующие',
 };
 
-const BILLING_SWITCH_ITEMS = [
-  { label: 'Предоплаты', to: '/admin/prepayments' },
-  { label: 'Сертификаты', to: '/admin/certificates' },
-  { label: 'Корпоративные', to: '/admin/corporate-clients' },
-];
-
 const SALE_INTENT_LABELS: Record<string, string> = {
   certificate: 'Сертификат',
   subscription: 'Абонемент',
@@ -332,20 +331,36 @@ function MetricCard({
   sublabel: string;
   value: string;
 }) {
+  const isMoney = value.includes('₽');
+
   return (
-    <Card size="sm" className="min-h-[120px]">
-      <CardHeader className="flex-row items-start justify-between gap-3">
-        <div className="min-w-0 [container-type:inline-size]">
-          <CardDescription className="truncate">{label}</CardDescription>
-          <CardTitle className="mt-2 whitespace-normal [font-size:clamp(1rem,12cqw,1.5rem)] leading-tight [overflow-wrap:anywhere]">
-            <AnimatedMetricValue value={value} />
-          </CardTitle>
-        </div>
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted">
+    <Card
+      size="sm"
+      className="min-h-[140px] [container-type:inline-size]"
+      data-testid="prepayments-metric-card"
+    >
+      <CardHeader className="grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1">
+        <CardDescription className="min-h-9 min-w-0 whitespace-normal leading-[1.125rem]">
+          {label}
+        </CardDescription>
+        <CardTitle className="flex h-8 min-w-0 items-center leading-none">
+          <span
+            className={
+              isMoney
+                ? 'block max-w-full whitespace-nowrap [font-size:clamp(1rem,7cqw,1.5rem)] tabular-nums'
+                : 'block whitespace-nowrap text-2xl tabular-nums'
+            }
+          >
+            {value}
+          </span>
+        </CardTitle>
+        <CardAction className="flex size-9 items-center justify-center rounded-md border bg-muted">
           <Icon className="h-4 w-4" />
-        </div>
+        </CardAction>
       </CardHeader>
-      <CardContent className="text-xs text-muted-foreground">{sublabel}</CardContent>
+      <CardContent className="min-h-8 text-xs leading-4 text-muted-foreground">
+        {sublabel}
+      </CardContent>
     </Card>
   );
 }
@@ -372,7 +387,8 @@ function SectionHeader({
 
 export default function PrepaymentsPage() {
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [errorText, setErrorText] = useState('');
   const [searchInput, setSearchInput] = useState('');
   const [query, setQuery] = useState('');
@@ -380,10 +396,21 @@ export default function PrepaymentsPage() {
   const [statusFilter, setStatusFilter] = useState<DashboardStatus>('all');
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const dashboardRef = useRef<DashboardResponse | null>(null);
+  const latestRequestIdRef = useRef(0);
 
   const loadDashboard = useCallback(async () => {
-    setLoading(true);
-    setErrorText('');
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+    const hasDashboard = dashboardRef.current !== null;
+
+    if (hasDashboard) {
+      setRefreshing(true);
+    } else {
+      setInitialLoading(true);
+      setErrorText('');
+    }
+
     try {
       const params = new URLSearchParams({ limit: '12' });
       if (query.trim()) params.set('q', query.trim());
@@ -394,20 +421,39 @@ export default function PrepaymentsPage() {
       const response = await apiFetch(
         `/api/prepayments/dashboard?${params.toString()}`,
       );
+      if (requestId !== latestRequestIdRef.current) return;
+
       if (!response.ok) {
-        setErrorText(await readError(response, 'Не удалось загрузить предоплаты'));
+        const message = await readError(response, 'Не удалось загрузить предоплаты');
+        if (requestId !== latestRequestIdRef.current) return;
+        if (!hasDashboard) setErrorText(message);
         return;
       }
-      setDashboard((await response.json()) as DashboardResponse);
+      const nextDashboard = (await response.json()) as DashboardResponse;
+      if (requestId !== latestRequestIdRef.current) return;
+      dashboardRef.current = nextDashboard;
+      setDashboard(nextDashboard);
+      setErrorText('');
     } catch (error) {
-      setErrorText(getApiErrorMessage(error, 'Не удалось загрузить предоплаты'));
+      if (requestId !== latestRequestIdRef.current) {
+        return;
+      }
+      if (!hasDashboard) {
+        setErrorText(getApiErrorMessage(error, 'Не удалось загрузить предоплаты'));
+      }
     } finally {
-      setLoading(false);
+      if (requestId === latestRequestIdRef.current) {
+        setInitialLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [expiryFilter, query, statusFilter, typeFilter]);
 
   useEffect(() => {
     void loadDashboard();
+    return () => {
+      latestRequestIdRef.current += 1;
+    };
   }, [loadDashboard]);
 
   useRealtimeRefresh(
@@ -484,7 +530,7 @@ export default function PrepaymentsPage() {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid gap-2 rounded-xl border bg-card/60 p-3 xl:grid-cols-[auto_minmax(280px,1fr)_auto_auto] xl:items-center">
-        <ModuleSwitch items={BILLING_SWITCH_ITEMS} className="shrink-0" />
+        <ModuleSwitch items={PREPAYMENTS_SWITCH_ITEMS} className="shrink-0" />
         <div className="flex min-w-0 gap-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -610,24 +656,24 @@ export default function PrepaymentsPage() {
         />
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {summaryCards.map((card) => (
-          <MetricCard key={card.label} {...card} />
-        ))}
-        {loading &&
-          !dashboard &&
-          Array.from({ length: 5 }).map((_, index) => (
-            <Card key={index} size="sm" className="min-h-[120px] animate-pulse">
-              <CardHeader>
-                <div className="h-4 w-28 rounded bg-muted" />
-                <div className="mt-3 h-7 w-16 rounded bg-muted" />
-              </CardHeader>
-              <CardContent>
-                <div className="h-3 w-32 rounded bg-muted" />
-              </CardContent>
-            </Card>
+      {initialLoading && !dashboard ? (
+        <PrepaymentsMetricsSkeleton />
+      ) : (
+        <div
+          aria-busy={refreshing}
+          className={PREPAYMENTS_METRIC_GRID_CLASS}
+          data-testid="prepayments-metrics-grid"
+        >
+          {summaryCards.map((card) => (
+            <MetricCard key={card.label} {...card} />
           ))}
-      </div>
+        </div>
+      )}
+      {refreshing && (
+        <span className="sr-only" role="status">
+          Обновление сводки предоплат
+        </span>
+      )}
 
       {dashboard && (
         <div className="grid gap-4 xl:grid-cols-2">
