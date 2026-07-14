@@ -64,26 +64,34 @@ const LAUNCH_ARGS = [
   '--disable-extensions',
 ];
 
-const ROUTES = [
-  '/admin',
-  '/admin/bookings',
-  '/admin/clients',
-  '/admin/trainer',
-  '/admin/methodology',
-  '/admin/methodology-analytics',
-  '/admin/client-bases',
-  '/admin/call-tasks',
-  '/admin/telephony',
-  '/admin/staff',
-  '/admin/finances',
-  '/admin/onboarding',
-  '/admin/users',
-  '/admin/visits-analytics',
-  '/admin/utilization',
-  '/admin/catalog',
-  '/admin/references',
-  '/admin/motivation',
-  '/admin/audit',
+const ROUTE_CHECKS = [
+  { route: '/admin' },
+  { route: '/admin/bookings' },
+  { route: '/admin/clients' },
+  { route: '/admin/trainer' },
+  { route: '/admin/methodology' },
+  {
+    navRoute: '/admin/methodology',
+    route: '/admin/methodology-analytics',
+  },
+  { route: '/admin/client-bases' },
+  { route: '/admin/call-tasks' },
+  {
+    route: '/admin/prepayments',
+    sentinel: '[data-testid="prepayments-metric-card"]',
+    sentinelCount: 5,
+  },
+  { route: '/admin/telephony' },
+  { route: '/admin/staff' },
+  { route: '/admin/finances' },
+  { route: '/admin/onboarding' },
+  { route: '/admin/users' },
+  { route: '/admin/visits-analytics' },
+  { route: '/admin/utilization' },
+  { route: '/admin/catalog' },
+  { route: '/admin/references' },
+  { route: '/admin/motivation' },
+  { route: '/admin/audit' },
 ];
 
 function screenshotName(route) {
@@ -180,20 +188,52 @@ async function main() {
   }, token);
 
   const results = [];
-  for (const route of ROUTES) {
+  for (const {
+    route,
+    navRoute = route,
+    sentinel,
+    sentinelCount = 1,
+  } of ROUTE_CHECKS) {
     const startedAt = Date.now();
     await page.goto(`${BASE_URL}${route}`, {
       timeout: 15_000,
       waitUntil: 'domcontentloaded',
     });
-    await page.waitForSelector('h1', { timeout: 10_000 });
+    const mainContent = page.locator('main[data-slot="sidebar-inset"]');
+    await mainContent.waitFor({ state: 'visible', timeout: 10_000 });
+    await page.locator(
+      `[data-sidebar-nav-item="true"][data-active="true"][href="${navRoute}"]`,
+    ).waitFor({ state: 'visible', timeout: 10_000 });
+    await page.waitForFunction(
+      (main) => Boolean(main?.innerText?.trim()),
+      await mainContent.elementHandle(),
+      { timeout: 10_000 },
+    );
+
+    if (sentinel) {
+      await page.locator(sentinel).first().waitFor({
+        state: 'visible',
+        timeout: 10_000,
+      });
+      const count = await page.locator(sentinel).count();
+      if (count < sentinelCount) {
+        throw new Error(
+          `${route} expected at least ${sentinelCount} elements matching ${sentinel}, found ${count}`,
+        );
+      }
+    }
+
     await page.waitForTimeout(500);
-    const h1 = await page.locator('h1').first().innerText();
     await page.screenshot({
       fullPage: true,
       path: path.join(OUTPUT_DIR, screenshotName(route)),
     });
-    results.push({ h1, ms: Date.now() - startedAt, route });
+    results.push({
+      mainContentReady: true,
+      ms: Date.now() - startedAt,
+      route,
+      sentinel: sentinel || 'active sidebar route + non-empty main content',
+    });
   }
 
   await browser.close();

@@ -58,6 +58,21 @@ import { useRealtimeEvent, useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import {
+  createInitialScannerSnapshot,
+  WebSerialScannerLifecycle,
+} from '@/lib/web-serial-scanner';
+import type {
+  ScannerDiagnosticEvent,
+  ScannerLifecycleStatus,
+  SerialProviderLike,
+} from '@/lib/web-serial-scanner';
+import {
+  createPendingScannerScan,
+  recordPendingScannerRetry,
+} from '@/lib/scanner-scan-queue';
+import type { PendingScannerScan } from '@/lib/scanner-scan-queue';
+import { postScannerDiagnosticEvent } from '@/lib/scanner-telemetry';
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
   name: '',
@@ -66,12 +81,6 @@ const EMPTY_RECEPTION_CLIENT_FORM = {
   source: 'Ресепшн (Админ)',
   note: '',
 };
-
-type ScannerStatus =
-  | 'disconnected'
-  | 'connecting'
-  | 'connected'
-  | 'reconnecting';
 
 type AudioContextConstructor = typeof AudioContext;
 
@@ -119,13 +128,6 @@ interface ScanResultPayload {
   categoryIds?: number[];
 }
 
-interface PendingScan {
-  attempts: number;
-  clientEventId: string;
-  createdAt: number;
-  qrCode: string;
-}
-
 interface SearchUser {
   id: number;
   name: string;
@@ -146,29 +148,8 @@ interface ExistingClientCandidate {
   };
 }
 
-interface SerialPortLike {
-  open: (options: { baudRate: number }) => Promise<void>;
-  close: () => Promise<void>;
-  readable: ReadableStream<Uint8Array> | null;
-  getInfo?: () => {
-    usbVendorId?: number;
-    usbProductId?: number;
-  };
-}
-
 interface NavigatorWithSerial extends Navigator {
-  serial?: {
-    requestPort: () => Promise<SerialPortLike>;
-    getPorts?: () => Promise<SerialPortLike[]>;
-    addEventListener?: (
-      type: 'disconnect',
-      listener: (event: Event) => void,
-    ) => void;
-    removeEventListener?: (
-      type: 'disconnect',
-      listener: (event: Event) => void,
-    ) => void;
-  };
+  serial?: SerialProviderLike;
 }
 
 function getPhoneDigits(value: string) {
@@ -261,33 +242,15 @@ function createClientEventId(prefix = 'scanner') {
   return `${prefix}-${randomPart}`;
 }
 
-function getDeviceLabel(port: SerialPortLike | null) {
-  const info = port?.getInfo?.();
-  if (!info?.usbVendorId && !info?.usbProductId) return 'Web Serial';
-  return `USB ${info.usbVendorId || '-'}:${info.usbProductId || '-'}`;
-}
-
-function getPortFingerprint(port: SerialPortLike | null) {
-  const info = port?.getInfo?.();
-  if (!info?.usbVendorId && !info?.usbProductId) return 'web-serial';
-  return `${info.usbVendorId || 'unknown'}:${info.usbProductId || 'unknown'}`;
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-function isSerialPortSelectionCancelled(error: unknown, message: string) {
-  return (
-    (error instanceof DOMException && error.name === 'NotFoundError') ||
-    message.includes('No port selected')
-  );
-}
-
-function getScannerStatusText(status: ScannerStatus) {
+function getScannerStatusText(status: ScannerLifecycleStatus) {
   if (status === 'connected') return 'Сканер активен';
   if (status === 'connecting') return 'Подключение...';
   if (status === 'reconnecting') return 'Переподключение...';
+  if (status === 'terminal') return 'Требуется подключение';
   return 'Сканер отключен';
 }
 
@@ -340,29 +303,17 @@ export default function AdminPage() {
   const [searchResults, setSearchResults] = useState<SearchUser[]>([]);
   const [searchError, setSearchError] = useState('');
   const searchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [scannerStatus, setScannerStatus] = useState<
-    ScannerStatus
-  >('disconnected');
-  const [, setScannerLastEvent] = useState('');
-  const [scannerSessionId, setScannerSessionId] = useState(() =>
-    createClientEventId('session'),
+  const [scannerSnapshot, setScannerSnapshot] = useState(
+    createInitialScannerSnapshot,
   );
+  const scannerStatus = scannerSnapshot.status;
   const [queuedVisits, setQueuedVisits] = useState<VisitCard[]>([]);
   const activeVisitRef = useRef<VisitCard | null>(null);
   const processedClientEventsRef = useRef<Set<string>>(new Set());
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scanRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptRef = useRef(0);
-  const intentionalDisconnectRef = useRef(false);
-  const scannerSessionIdRef = useRef(scannerSessionId);
-  const scannerRunIdRef = useRef(0);
-  const selectedPortFingerprintRef = useRef<string | null>(null);
-  const portRef = useRef<SerialPortLike | null>(null);
-  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(
-    null,
-  );
-  const scannerActiveRef = useRef(false);
-  const scanQueueRef = useRef<PendingScan[]>([]);
+  const scannerSessionIdRef = useRef(createClientEventId('session'));
+  const scannerLifecycleRef = useRef<WebSerialScannerLifecycle | null>(null);
+  const scanQueueRef = useRef<PendingScannerScan[]>([]);
   const scanQueueProcessingRef = useRef(false);
 
   const notifyScannerError = useCallback(
@@ -397,10 +348,6 @@ export default function AdminPage() {
   useEffect(() => {
     activeVisitRef.current = activeVisit;
   }, [activeVisit]);
-
-  useEffect(() => {
-    scannerSessionIdRef.current = scannerSessionId;
-  }, [scannerSessionId]);
 
   const getEmptyReceptionForm = useCallback(() => {
     const defaultSource =
@@ -455,22 +402,18 @@ export default function AdminPage() {
       } = {},
     ) => {
       try {
-        await apiFetch('/api/scanner-events', {
-          method: 'POST',
-          body: JSON.stringify({
-            eventType,
-            severity: options.severity || 'info',
-            status: options.status,
-            message: options.message,
-            code: options.code,
-            source: 'web_serial',
-            clientEventId: options.clientEventId || createClientEventId('client'),
-            metadata: {
-              scannerSessionId: scannerSessionIdRef.current,
-              deviceLabel: getDeviceLabel(portRef.current),
-              ...options.metadata,
-            },
-          }),
+        await postScannerDiagnosticEvent({
+          eventType,
+          severity: options.severity || 'info',
+          status: options.status,
+          message: options.message,
+          code: options.code,
+          source: 'web_serial',
+          clientEventId: options.clientEventId || createClientEventId('client'),
+          metadata: {
+            scannerSessionId: scannerSessionIdRef.current,
+            ...options.metadata,
+          },
         });
       } catch (e) {
         console.error('Ошибка записи события сканера:', e);
@@ -636,12 +579,6 @@ export default function AdminPage() {
         const scan = scanQueueRef.current[0];
 
         try {
-          setScannerLastEvent(
-            scan.attempts > 0
-              ? `Повторная отправка QR, попытка ${scan.attempts + 1}`
-              : 'QR отправлен в CRM',
-          );
-
           const res = await apiFetch('/api/scan', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -649,7 +586,8 @@ export default function AdminPage() {
               qr: scan.qrCode,
               clientEventId: scan.clientEventId,
               scannerSessionId: scannerSessionIdRef.current,
-              deviceLabel: getDeviceLabel(portRef.current),
+              deviceLabel:
+                scannerLifecycleRef.current?.deviceLabel || 'Web Serial',
             }),
           });
           if (!res.ok) {
@@ -660,7 +598,6 @@ export default function AdminPage() {
           const data = await res.json();
           scanQueueRef.current.shift();
           syncPendingScanCount();
-          setScannerLastEvent('QR обработан');
 
           if (data.event) {
             handleIncomingVisit(data.event);
@@ -668,7 +605,7 @@ export default function AdminPage() {
         } catch (e) {
           console.error('Ошибка сканера:', e);
           const message = getErrorMessage(e, 'Не удалось отправить QR в CRM');
-          scan.attempts += 1;
+          recordPendingScannerRetry(scan);
           const delay = Math.min(
             30000,
             1000 * 2 ** Math.min(scan.attempts, 5),
@@ -677,9 +614,6 @@ export default function AdminPage() {
           notifyScannerError(
             message,
             'QR сохранен в очереди и будет отправлен повторно.',
-          );
-          setScannerLastEvent(
-            `Повторная отправка через ${(delay / 1000).toFixed(0)} сек.`,
           );
           void recordScannerClientEvent('client_scan_submit_failed', {
             severity: 'error',
@@ -714,363 +648,84 @@ export default function AdminPage() {
       const normalizedQr = qrCode.trim();
       if (!normalizedQr) return;
 
-      scanQueueRef.current.push({
-        attempts: 0,
-        clientEventId: createClientEventId('scan'),
-        createdAt: Date.now(),
-        qrCode: normalizedQr,
-      });
+      scanQueueRef.current.push(
+        createPendingScannerScan(normalizedQr, () =>
+          createClientEventId('scan'),
+        ),
+      );
       syncPendingScanCount();
-      setScannerLastEvent('QR добавлен в очередь обработки');
       void processScanQueue();
     },
     [processScanQueue, syncPendingScanCount],
   );
 
-  function clearReconnectTimer() {
-    if (reconnectTimerRef.current) {
-      window.clearTimeout(reconnectTimerRef.current);
-      reconnectTimerRef.current = null;
-    }
-  }
-
-  async function waitForReaderRelease(
-    reader: ReadableStreamDefaultReader<Uint8Array> | null,
-  ) {
-    if (!reader) return;
-
-    for (let i = 0; i < 10; i += 1) {
-      if (readerRef.current !== reader) return;
-      await new Promise((resolve) => window.setTimeout(resolve, 50));
-    }
-  }
-
-  async function closeScannerPort(
-    nextStatus: 'disconnected' | 'reconnecting' = 'disconnected',
-    options: { markStale?: boolean } = {},
-  ) {
-    if (options.markStale !== false) {
-      scannerRunIdRef.current += 1;
-    }
-    scannerActiveRef.current = false;
-
-    const reader = readerRef.current;
-    if (reader) {
-      try {
-        await reader.cancel();
-      } catch {
-        // reader may already be released after a hardware disconnect
-      }
-      await waitForReaderRelease(reader);
-    }
-
-    const port = portRef.current;
-    if (port) {
-      try {
-        await port.close();
-      } catch {
-        // Chrome may already close the port on physical disconnect
-      }
-      if (portRef.current === port) {
-        portRef.current = null;
-      }
-    }
-
-    setScannerStatus(nextStatus);
-  }
-
-  async function readScannerLoop(port: SerialPortLike, runId: number) {
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    try {
-      while (scannerActiveRef.current && port.readable) {
-        const readable = port.readable;
-        if (!readable) break;
-
-        const reader = readable.getReader();
-        readerRef.current = reader;
-
-        try {
-          while (scannerActiveRef.current) {
-            const { value, done } = await reader.read();
-            if (done) break;
-
-            if (value) {
-              buffer += decoder.decode(value, { stream: true });
-
-              let newlineIndex;
-              while ((newlineIndex = buffer.search(/[\r\n]/)) !== -1) {
-                const qrCode = buffer.slice(0, newlineIndex).trim();
-                buffer = buffer.slice(newlineIndex + 1);
-
-                if (qrCode) {
-                  enqueueScan(qrCode);
-                }
-              }
-            }
-          }
-        } finally {
-          if (readerRef.current === reader) {
-            readerRef.current = null;
-          }
-          try {
-            reader.releaseLock();
-          } catch {
-            // reader can be unlocked by Chrome when the device disappears
-          }
-        }
-      }
-    } catch (error) {
-      console.error('Сканер отключился или перестал отдавать данные:', error);
-      const message = getErrorMessage(error, 'Сканер перестал отдавать данные');
-      notifyScannerError('Сканер перестал отдавать данные', message);
-      await recordScannerClientEvent('client_reader_error', {
-        severity: 'error',
-        status: 'failed',
-        message,
-      });
-    } finally {
-      if (scannerRunIdRef.current === runId && portRef.current === port) {
-        await closeScannerPort('reconnecting', { markStale: false });
-        scheduleReconnect('Потеряно чтение данных со сканера');
-      } else if (scannerRunIdRef.current === runId) {
-        scannerActiveRef.current = false;
-        setScannerStatus('disconnected');
-      }
-    }
-  }
-
-  async function openScannerPort(port: SerialPortLike, reason: string) {
-    clearReconnectTimer();
-    setScannerStatus(reason === 'manual' ? 'connecting' : 'reconnecting');
-
-    await port.open({ baudRate: 9600 });
-    selectedPortFingerprintRef.current = getPortFingerprint(port);
-    portRef.current = port;
-    scannerActiveRef.current = true;
-    const runId = scannerRunIdRef.current + 1;
-    scannerRunIdRef.current = runId;
-    intentionalDisconnectRef.current = false;
-    reconnectAttemptRef.current = 0;
-    setScannerStatus('connected');
-    setScannerLastEvent('Сканер подключен');
-    await recordScannerClientEvent('client_connected', {
-      status: 'connected',
-      message: 'Web Serial порт открыт',
-      metadata: {
-        reason,
-        deviceLabel: getDeviceLabel(port),
-        portFingerprint: getPortFingerprint(port),
-      },
-    });
-    void readScannerLoop(port, runId);
-  }
-
-  async function tryReconnectToKnownPort(reason: string) {
-    const serial = (navigator as NavigatorWithSerial).serial;
-    if (!serial?.getPorts) return false;
-
-    const ports = await serial.getPorts();
-    const expectedFingerprint = selectedPortFingerprintRef.current;
-    const port =
-      expectedFingerprint
-        ? ports.find((item) => getPortFingerprint(item) === expectedFingerprint)
-        : ports.length === 1
-          ? ports[0]
-          : null;
-    if (!port) return false;
-
-    await openScannerPort(port, reason);
-    return true;
-  }
-
-  function scheduleReconnect(reason: string) {
-    if (intentionalDisconnectRef.current || scannerActiveRef.current) return;
-
-    const attempt = reconnectAttemptRef.current + 1;
-    reconnectAttemptRef.current = attempt;
-    const delay = Math.min(15000, 1500 * attempt);
-
-    setScannerStatus('reconnecting');
-    setScannerLastEvent(
-      `Автопереподключение через ${(delay / 1000).toFixed(1)} сек.`,
-    );
-    void recordScannerClientEvent('client_reconnect_scheduled', {
-      severity: 'warning',
-      status: 'scheduled',
-      message: reason,
-      metadata: {
-        attempt,
-        delayMs: delay,
-      },
-    });
-
-    clearReconnectTimer();
-    reconnectTimerRef.current = window.setTimeout(async () => {
-      try {
-        const connected = await tryReconnectToKnownPort('auto');
-        if (!connected) {
-          throw new Error('Нет ранее разрешенного Web Serial порта');
-        }
-      } catch (error) {
-        const message = getErrorMessage(
-          error,
-          'Не удалось автоматически переподключить сканер',
-        );
-        await recordScannerClientEvent('client_reconnect_failed', {
-          severity: 'warning',
-          status: 'failed',
-          message,
-          metadata: { attempt },
-        });
-        if (attempt < 8) {
-          scheduleReconnect(reason);
-        } else {
-          setScannerStatus('disconnected');
-          setScannerLastEvent('Автопереподключение остановлено');
-        }
-      }
-    }, delay);
-  }
-
-  // --- ЛОГИКА СКАНЕРА ---
-  const connectScanner = async () => {
-    if (
-      scannerStatus === 'connecting' ||
-      scannerStatus === 'connected' ||
-      scannerActiveRef.current
-    ) {
-      return;
-    }
-
-    const serial = (navigator as NavigatorWithSerial).serial;
-
-    if (!serial) {
-      const message =
-        'Ваш браузер не поддерживает Web Serial API. Используйте Google Chrome или Edge.';
-      notifyScannerError('Сканер недоступен', message);
-      await recordScannerClientEvent('client_reconnect_failed', {
-        severity: 'error',
-        status: 'unsupported',
-        message,
-      });
-      return;
-    }
-
-    let port: SerialPortLike | null = null;
-
-    try {
-      clearReconnectTimer();
-      intentionalDisconnectRef.current = false;
-      reconnectAttemptRef.current = 0;
-      const nextSessionId = createClientEventId('session');
-      scannerSessionIdRef.current = nextSessionId;
-      setScannerSessionId(nextSessionId);
-      setScannerStatus('connecting');
-      port = await serial.requestPort();
-      selectedPortFingerprintRef.current = getPortFingerprint(port);
-      await openScannerPort(port, 'manual');
-    } catch (error) {
-      const message = getErrorMessage(error, 'Не удалось открыть сканер');
-      const isPortSelectionCancelled = isSerialPortSelectionCancelled(
-        error,
-        message,
-      );
-      if (isPortSelectionCancelled) {
-        console.info('Выбор порта сканера отменен:', error);
-      } else {
-        console.error('Ошибка порта:', error);
-      }
-      if (port) {
-        try {
-          await port.close();
-        } catch {
-          // ignore cleanup errors after a failed open attempt
-        }
-      }
-      scannerActiveRef.current = false;
-      portRef.current = null;
-      setScannerStatus('disconnected');
-      notifyScannerError(
-        isPortSelectionCancelled
-          ? 'Порт сканера не выбран'
-          : 'Не удалось открыть сканер',
-        message,
-      );
-      await recordScannerClientEvent('client_reconnect_failed', {
-        severity: isPortSelectionCancelled ? 'warning' : 'error',
-        status: isPortSelectionCancelled ? 'cancelled' : 'failed',
-        message,
-      });
-    }
-  };
-
-  const reconnectScanner = async () => {
-    if (scannerStatus === 'connected' || scannerStatus === 'connecting') return;
-    clearReconnectTimer();
-    reconnectAttemptRef.current = 0;
-    try {
-      const connected = await tryReconnectToKnownPort('manual-reconnect');
-      if (!connected) {
-        await connectScanner();
-      }
-    } catch (error) {
-      const message = getErrorMessage(error, 'Не удалось переподключить');
-      notifyScannerError('Не удалось переподключить сканер', message);
-      setScannerStatus('disconnected');
-    }
-  };
-
-  const disconnectScanner = async () => {
-    intentionalDisconnectRef.current = true;
-    clearReconnectTimer();
-    await recordScannerClientEvent('client_disconnected', {
-      status: 'manual',
-      message: 'Сканер отключен вручную',
-    });
-    await closeScannerPort('disconnected');
-    setScannerLastEvent('Сканер отключен вручную');
-    setIsDisconnectOpen(false);
-  };
+  const recordLifecycleDiagnostic = useCallback(
+    (event: ScannerDiagnosticEvent) =>
+      recordScannerClientEvent(event.eventType, {
+        code: event.code,
+        message: event.message,
+        metadata: event.metadata,
+        severity: event.severity,
+        status: event.status,
+      }),
+    [recordScannerClientEvent],
+  );
 
   useEffect(() => {
     const serial = (navigator as NavigatorWithSerial).serial;
-    if (!serial) return;
+    if (!serial) {
+      setScannerSnapshot({
+        lastReason: {
+          at: new Date().toISOString(),
+          code: 'web_serial_unsupported',
+          message:
+            'Используйте актуальную версию Google Chrome или Microsoft Edge.',
+          title: 'Web Serial недоступен',
+        },
+        reconnectAttempt: 0,
+        status: 'terminal',
+      });
+      return;
+    }
 
-    const handleDisconnect = (event: Event) => {
-      const disconnectedPort = event.target as unknown as SerialPortLike | null;
-      if (!portRef.current || disconnectedPort === portRef.current) {
-        notifyScannerError(
-          'Сканер отключен',
-          'Устройство отключено от компьютера',
-        );
-        void recordScannerClientEvent('client_disconnected', {
-          severity: 'warning',
-          status: 'hardware_disconnect',
-          message: 'Chrome сообщил об отключении Web Serial устройства',
-        });
-        void closeScannerPort('reconnecting').then(() =>
-          scheduleReconnect('Устройство отключено от компьютера'),
-        );
-      }
-    };
-
-    serial.addEventListener?.('disconnect', handleDisconnect);
-    void tryReconnectToKnownPort('initial').catch(() => {
-      // Пользователь подключит сканер вручную, если у браузера еще нет разрешенного порта.
+    const lifecycle = new WebSerialScannerLifecycle({
+      onDiagnostic: recordLifecycleDiagnostic,
+      onError: notifyScannerError,
+      onScan: enqueueScan,
+      onSessionChange: (sessionId) => {
+        scannerSessionIdRef.current = sessionId;
+      },
+      onStateChange: setScannerSnapshot,
+      serial,
     });
+    scannerLifecycleRef.current = lifecycle;
+    void lifecycle.start();
 
     return () => {
-      serial.removeEventListener?.('disconnect', handleDisconnect);
-      intentionalDisconnectRef.current = true;
-      clearReconnectTimer();
       clearScanRetryTimer();
-      void closeScannerPort('disconnected');
+      if (scannerLifecycleRef.current === lifecycle) {
+        scannerLifecycleRef.current = null;
+      }
+      void lifecycle.dispose();
     };
-    // Web Serial disconnect listener is bound once; mutable refs keep the current port/session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [enqueueScan, notifyScannerError, recordLifecycleDiagnostic]);
+
+  const reconnectScanner = async () => {
+    const lifecycle = scannerLifecycleRef.current;
+    if (!lifecycle) {
+      notifyScannerError(
+        'Web Serial недоступен',
+        'Используйте актуальную версию Google Chrome или Microsoft Edge.',
+      );
+      return;
+    }
+    await lifecycle.connectManually();
+  };
+
+  const disconnectScanner = async () => {
+    await scannerLifecycleRef.current?.disconnectManually();
+    setIsDisconnectOpen(false);
+  };
 
   useEffect(() => {
     if (searchTimeout.current) {
@@ -1668,7 +1323,9 @@ export default function AdminPage() {
               ) : (
                 <>
                   <Unplug className="w-4 h-4 mr-2 text-destructive" />{' '}
-                  Подключить сканер
+                  {scannerStatus === 'terminal'
+                    ? 'Подключить снова'
+                    : 'Подключить сканер'}
                 </>
               )}
             </Button>
@@ -1699,6 +1356,38 @@ export default function AdminPage() {
             </Button>
           </div>
         </div>
+
+        {scannerSnapshot.lastReason && (
+          <div
+            role="status"
+            className={cn(
+              'flex flex-col gap-1 rounded-xl border px-4 py-3 text-sm sm:flex-row sm:items-start sm:justify-between',
+              scannerStatus === 'terminal'
+                ? 'border-destructive/35 bg-destructive/5'
+                : scannerStatus === 'reconnecting'
+                  ? 'border-amber-500/35 bg-amber-500/5'
+                  : 'border-border/70 bg-muted/30',
+            )}
+          >
+            <div className="min-w-0">
+              <p className="font-medium text-foreground">
+                {scannerSnapshot.lastReason.title}
+              </p>
+              <p className="mt-0.5 text-muted-foreground">
+                {scannerSnapshot.lastReason.message}
+              </p>
+            </div>
+            <time
+              className="shrink-0 text-xs text-muted-foreground"
+              dateTime={scannerSnapshot.lastReason.at}
+            >
+              {new Date(scannerSnapshot.lastReason.at).toLocaleTimeString(
+                'ru-RU',
+                { hour: '2-digit', minute: '2-digit', second: '2-digit' },
+              )}
+            </time>
+          </div>
+        )}
 
         {(pendingScanCount > 0 || queuedVisits.length > 0) && (
           <div className="flex flex-wrap items-center gap-2 text-sm">

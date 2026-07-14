@@ -19,12 +19,12 @@ function dateFromStatusTestNow(days) {
   return new Date(STATUS_TEST_NOW.getTime() + days * DAY_MS);
 }
 
-function dateFromRealNow(days) {
-  return new Date(Date.now() + days * DAY_MS);
+function dateInputFromStatusTestNow(days) {
+  return dateFromStatusTestNow(days).toISOString().slice(0, 10);
 }
 
-function dateInputFromRealNow(days) {
-  return dateFromRealNow(days).toISOString().slice(0, 10);
+function freezeStatusTestClock(t) {
+  t.mock.timers.enable({ apis: ['Date'], now: STATUS_TEST_NOW });
 }
 
 afterEach(() => {
@@ -87,13 +87,14 @@ test('client subscription status and remaining sessions are calculated safely', 
   );
 });
 
-test('redeemClientSubscription creates ledger row and marks final session used', async () => {
+test('redeemClientSubscription creates ledger row and marks final session used', async (t) => {
+  freezeStatusTestClock(t);
   const createdRedemptions = [];
   const updates = [];
   const subscription = {
     id: 91,
     clientId: 20,
-    expiresAt: dateFromRealNow(30),
+    expiresAt: dateFromStatusTestNow(30),
     isUnlimited: false,
     sessionsTotal: 4,
     sessionsUsed: 3,
@@ -141,7 +142,7 @@ test('redeemClientSubscription creates ledger row and marks final session used',
     subscription.id,
     {
       comment: 'Групповая тренировка',
-      redeemedAt: dateInputFromRealNow(-1),
+      redeemedAt: dateInputFromStatusTestNow(-1),
       trainingKind: 'group',
     },
     { id: 7, role: 'admin' },
@@ -157,12 +158,13 @@ test('redeemClientSubscription creates ledger row and marks final session used',
   assert.equal(result.redemption.status, 'active');
 });
 
-test('redeemClientSubscription blocks used subscriptions before ledger write', async () => {
+test('redeemClientSubscription blocks used subscriptions before ledger write', async (t) => {
+  freezeStatusTestClock(t);
   let createCalled = false;
   const subscription = {
     id: 92,
     clientId: 20,
-    expiresAt: dateFromRealNow(30),
+    expiresAt: dateFromStatusTestNow(30),
     isUnlimited: false,
     sessionsTotal: 1,
     sessionsUsed: 1,
@@ -198,13 +200,14 @@ test('redeemClientSubscription blocks used subscriptions before ledger write', a
   assert.equal(createCalled, false);
 });
 
-test('reverseClientSubscriptionRedemption restores remaining sessions and audit trail', async () => {
+test('reverseClientSubscriptionRedemption restores remaining sessions and audit trail', async (t) => {
+  freezeStatusTestClock(t);
   const subscriptionUpdates = [];
   const redemptionUpdates = [];
   const subscription = {
     id: 93,
     clientId: 20,
-    expiresAt: dateFromRealNow(30),
+    expiresAt: dateFromStatusTestNow(30),
     isUnlimited: false,
     sessionsTotal: 4,
     sessionsUsed: 4,
@@ -225,7 +228,7 @@ test('reverseClientSubscriptionRedemption restores remaining sessions and audit 
     clientId: 20,
     clientSubscriptionId: subscription.id,
     quantity: 1,
-    redeemedAt: dateFromRealNow(-1),
+    redeemedAt: dateFromStatusTestNow(-1),
     serviceType: 'training',
     status: 'active',
     async update(payload) {
@@ -280,19 +283,20 @@ test('reverseClientSubscriptionRedemption restores remaining sessions and audit 
   assert.equal(result.redemption.status, 'reversed');
 });
 
-test('createFromPendingSale creates a snapshot subscription once', async () => {
+test('createFromPendingSale creates a snapshot subscription once', async (t) => {
+  freezeStatusTestClock(t);
   const pendingSale = {
     id: 10,
     clientId: 20,
     itemName: 'Evotor: групповая 4',
-    linkedAt: dateFromRealNow(-5),
+    linkedAt: dateFromStatusTestNow(-5),
     linkedByAccountId: 7,
     metadata: {
       amount: 6000,
       saleSettings: { subscriptionTypeId: 30 },
     },
     receipt: {
-      dateTime: dateFromRealNow(-5),
+      dateTime: dateFromStatusTestNow(-5),
       evotorId: 'receipt-1',
       id: 40,
       type: 'SELL',

@@ -2223,18 +2223,18 @@ Product source:
 
 ## Epic - Multi-tenant CRM
 
-Статус: `Feature 2 implemented — feature QA green, independent QA pending`.
+Статус: `Feature 2 integrated — integration gate green, ready as base for Feature 3`.
 
-Promotion rule выполнено: Feature 1 имеет статус `accepted for implementation planning`; можно создавать SaaS integration base и запускать Feature 2.
+Promotion rule выполнено: Feature 1 и Feature 2 приняты в SaaS integration chain, integration gate green. Feature 3 не начата.
 
 - Принята целевая модель `Organization → Clubs → Memberships`; текущий Padel Park станет default organization/club без изменения UX.
 - Inventory всех 67 Sequelize models и ключевых HTTP/realtime/worker/file/integration поверхностей зафиксирован в [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md).
 - ADR, backfill strategy и зависимые feature-срезы зафиксированы в [`MULTI_TENANCY_ARCHITECTURE_V1.md`](./MULTI_TENANCY_ARCHITECTURE_V1.md).
-- Feature 1 не содержит migrations/runtime/product changes. Следующий mergeable срез — additive tenant foundation (Feature 2).
-- QA findings добавили формальный bootstrap-pending contract, split Account writer contract, seeder parity и DB-backed lifecycle/concurrency acceptance; Feature 2 runtime/migrations еще не реализуются.
-- Повторный независимый QA завершен без P0–P3 findings; Feature 1 готов к созданию SaaS integration base.
+- Feature 1 не содержит migrations/runtime/product changes и принята точным SHA `fa183d850ad01b075e49f8ef787ffc10c3b378be`.
+- QA findings Feature 1 добавили формальный bootstrap-pending contract, split Account writer contract, seeder parity и DB-backed lifecycle/concurrency acceptance.
+- Повторный независимый QA Feature 1 завершен без P0–P3 findings; Feature 1 стала принятой SaaS integration base.
 - Feature 2 реализована в `codex/multi-tenant-foundation-v2` строго от accepted Feature 1 SHA `fa183d850ad01b075e49f8ef787ffc10c3b378be`: additive Organization/Club/Membership/access foundation, deterministic backfill/rollback, bootstrap-pending gate и compatibility Account lifecycle bridge.
-- Feature-side verification Feature 2: DB-backed lifecycle/concurrency `19/19`, полный server suite `297/297`, server typecheck, Account direct-write audit, OpenAPI drift, client lint/test/build, initialized API smoke, все шесть ролей на desktop/mobile `390px` и fresh-install setup/bootstrap smoke. Независимый QA/release review обязателен до merge и до старта Feature 3.
+- Feature 2 принята точным SHA `f1e925229321521f9a02bf5aebc78b4723aca176`; независимый QA завершен без P0–P3 findings. После merge актуального `origin/main` integration gate подтвердил migrations `down → up`, DB-backed lifecycle/migration/concurrency `22/22`, targeted gate `32/32`, полный server suite `310/310`, server typecheck, Account AST write audit, strict onboarding audit, OpenAPI no-drift, client lint, `85/85` client tests и production build. Fresh-install pending/bootstrap API и Socket.IO smoke green; owner/manager/admin/accountant/trainer/viewer login smoke green без console/network/page errors, desktop overflow и mobile `390px` overflow. Feature 3 не начата.
 - SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
 
 ## Backlog - SaaS billing

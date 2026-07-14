@@ -2,6 +2,10 @@
 
 require('dotenv').config();
 
+const {
+  findMissingOpenApiOperations,
+} = require('./api-smoke-contracts');
+
 const DEFAULT_API_URL = `http://127.0.0.1:${process.env.PORT || 3004}/api`;
 const API_URL = process.env.API_SMOKE_URL || DEFAULT_API_URL;
 const EMAIL = process.env.API_SMOKE_EMAIL || 'owner@padelpark.demo';
@@ -59,6 +63,41 @@ async function checkEndpoint(token, [name, url]) {
   };
 }
 
+async function checkRequiredOpenApiOperations() {
+  const startedAt = Date.now();
+  const response = await fetch(`${API_URL}/openapi.json`);
+  const text = await response.text();
+  let sample;
+  let ok = response.ok;
+
+  if (ok) {
+    try {
+      const document = JSON.parse(text);
+      const missing = findMissingOpenApiOperations(document);
+      ok = missing.length === 0;
+      if (!ok) {
+        sample = `Missing OpenAPI operations: ${missing
+          .map(({ method, name, path }) => `${name} (${method.toUpperCase()} ${path})`)
+          .join(', ')}`;
+      }
+    } catch (error) {
+      ok = false;
+      sample = `Invalid OpenAPI response: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  } else {
+    sample = text.slice(0, 300);
+  }
+
+  return {
+    name: 'openapi.requiredOperations',
+    ms: Date.now() - startedAt,
+    ok,
+    status: response.status,
+    responseTimeHeader: response.headers.get('x-response-time-ms'),
+    sample,
+  };
+}
+
 async function main() {
   const token = await login();
   const results = [];
@@ -66,6 +105,7 @@ async function main() {
   for (const check of PUBLIC_CHECKS) {
     results.push(await checkEndpoint(null, check));
   }
+  results.push(await checkRequiredOpenApiOperations());
 
   for (const check of CHECKS) {
     results.push(await checkEndpoint(token, check));
