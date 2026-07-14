@@ -37,6 +37,8 @@
     "onboarding:audit:strict": "node scripts/onboarding-audit.js --strict",
     "seed:demo-accounts": "node scripts/seed-demo-accounts.js",
     "smoke:api": "node scripts/api-smoke.js",
+    "tenant:account-writes:audit": "node scripts/audit-account-writes.js",
+    "tenant:foundation:assert": "node scripts/tenant-foundation-check.js",
     "test": "node --test --test-concurrency=1 tests/**/*.test.js",
     "typecheck": "tsc --noEmit"
   }

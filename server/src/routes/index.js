@@ -6,6 +6,12 @@ const { realtimeMutations } = require('../realtime');
 const db = require('../../models');
 const cacheService = require('../services/cache.service');
 const { getOpenApiDocument } = require('../contracts/openapi');
+const {
+  classifyTenantFoundation,
+} = require('../services/tenant-foundation.service');
+const {
+  TENANT_FOUNDATION_STATES,
+} = require('../tenant-foundation/constants');
 const router = express.Router();
 
 const authRoutes = require('./auth');
@@ -49,6 +55,31 @@ router.get('/health', async (_req, res) => {
 
   try {
     await db.sequelize.authenticate();
+    const classification = await classifyTenantFoundation();
+    services.tenantFoundation = {
+      counts: classification.counts,
+      state: classification.state,
+    };
+    if (classification.state === TENANT_FOUNDATION_STATES.INVALID) {
+      return res.status(503).json({
+        bootstrapPending: false,
+        services,
+        status: 'degraded',
+        tenantFoundationState: classification.state,
+        timestamp: new Date().toISOString(),
+        uptimeSec: Math.round(process.uptime()),
+      });
+    }
+    const bootstrapPending =
+      classification.state === TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING;
+    return res.json({
+      bootstrapPending,
+      services,
+      status: 'ok',
+      tenantFoundationState: classification.state,
+      timestamp: new Date().toISOString(),
+      uptimeSec: Math.round(process.uptime()),
+    });
   } catch (error) {
     services.database = 'error';
     return res.status(503).json({
@@ -59,12 +90,6 @@ router.get('/health', async (_req, res) => {
     });
   }
 
-  return res.json({
-    services,
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-    uptimeSec: Math.round(process.uptime()),
-  });
 });
 
 router.get('/openapi.json', (_req, res) => {

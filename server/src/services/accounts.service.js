@@ -1,5 +1,7 @@
 const db = require('../../models');
 const authService = require('./auth.service');
+const accountLifecycle = require('./account-lifecycle.service');
+const accountMetadata = require('./account-metadata.service');
 const onboardingService = require('./onboarding.service');
 const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 
@@ -94,30 +96,6 @@ async function normalizeStaffId(staffId, accountId = null) {
   return normalizedStaffId;
 }
 
-async function assertActiveOwnerRemains(account, nextValues = {}) {
-  if (account.role !== 'owner') return;
-
-  const nextRole = nextValues.role ?? account.role;
-  const nextStatus = nextValues.status ?? account.status;
-  const affectsActiveOwner =
-    account.status === 'active' &&
-    (nextValues.delete || nextRole !== 'owner' || nextStatus !== 'active');
-
-  if (!affectsActiveOwner) return;
-
-  const activeOwners = await db.Account.count({
-    where: {
-      id: { [db.Sequelize.Op.ne]: account.id },
-      role: 'owner',
-      status: 'active',
-    },
-  });
-
-  if (activeOwners === 0) {
-    throw appError('Нельзя удалить или отключить последнего владельца', 409);
-  }
-}
-
 function getById(id) {
   return db.Account.findByPk(id, {
     attributes: ACCOUNT_ATTRIBUTES,
@@ -155,7 +133,7 @@ async function create(actor, data) {
   const staffId = await normalizeStaffId(data.staffId);
 
   try {
-    const account = await db.Account.create({
+    const account = await accountLifecycle.createAccount({
       email,
       passwordHash: authService.hashPassword(password),
       role,
@@ -218,10 +196,12 @@ async function update(actor, id, data) {
     payload.passwordHash = authService.hashPassword(data.password);
   }
 
-  await assertActiveOwnerRemains(account, payload);
-
   try {
-    await account.update(payload);
+    if ('role' in payload || 'status' in payload) {
+      await accountLifecycle.updateAccount(account.id, payload);
+    } else {
+      await accountMetadata.updateAccountMetadata(account.id, payload);
+    }
     return getById(account.id);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
@@ -237,8 +217,7 @@ async function remove(actor, id) {
   if (!account) throw appError('Пользователь не найден', 404);
 
   assertCanManageAccount(actor, account);
-  await assertActiveOwnerRemains(account, { status: 'archived' });
-  await account.update({ status: 'archived' });
+  await accountLifecycle.updateAccount(account.id, { status: 'archived' });
 
   return getById(account.id);
 }
@@ -248,7 +227,7 @@ async function restore(actor, id) {
   if (!account) throw appError('Пользователь не найден', 404);
 
   assertCanManageAccount(actor, account);
-  await account.update({ status: 'active' });
+  await accountLifecycle.updateAccount(account.id, { status: 'active' });
   return getById(account.id);
 }
 
@@ -263,40 +242,54 @@ async function removeArchived(actor, id) {
   if (actor?.id === account.id) {
     throw appError('Нельзя удалить собственный аккаунт', 409);
   }
-  await assertActiveOwnerRemains(account, { delete: true });
 
-  const references = await Promise.all([
-    db.Shift.count({ where: { approvedByAccountId: account.id } }),
-    db.TrainingNote.count({ where: { trainerAccountId: account.id } }),
-    db.ClientBase.count({
-      where: {
-        [db.Sequelize.Op.or]: [
-          { createdByAccountId: account.id },
-          { recurringAssignedToAccountId: account.id },
-        ],
-      },
-    }),
-    db.CallTask.count({
-      where: {
-        [db.Sequelize.Op.or]: [
-          { assignedToAccountId: account.id },
-          { createdByAccountId: account.id },
-        ],
-      },
-    }),
-    db.CallTaskAttempt.count({ where: { actorAccountId: account.id } }),
-    db.User.count({ where: { mergedByAccountId: account.id } }),
-  ]);
+  return accountLifecycle.permanentDeleteAccount(account.id, {
+    assertDeletable: async (lockedAccount, transaction) => {
+      const references = await Promise.all([
+        db.Shift.count({
+          transaction,
+          where: { approvedByAccountId: lockedAccount.id },
+        }),
+        db.TrainingNote.count({
+          transaction,
+          where: { trainerAccountId: lockedAccount.id },
+        }),
+        db.ClientBase.count({
+          transaction,
+          where: {
+            [db.Sequelize.Op.or]: [
+              { createdByAccountId: lockedAccount.id },
+              { recurringAssignedToAccountId: lockedAccount.id },
+            ],
+          },
+        }),
+        db.CallTask.count({
+          transaction,
+          where: {
+            [db.Sequelize.Op.or]: [
+              { assignedToAccountId: lockedAccount.id },
+              { createdByAccountId: lockedAccount.id },
+            ],
+          },
+        }),
+        db.CallTaskAttempt.count({
+          transaction,
+          where: { actorAccountId: lockedAccount.id },
+        }),
+        db.User.count({
+          transaction,
+          where: { mergedByAccountId: lockedAccount.id },
+        }),
+      ]);
 
-  if (references.some((count) => count > 0)) {
-    throw appError(
-      'Пользователя нельзя удалить безвозвратно: по нему уже есть связанные действия. Оставьте его в архиве.',
-      409,
-    );
-  }
-
-  await account.destroy();
-  return { success: true };
+      if (references.some((count) => count > 0)) {
+        throw appError(
+          'Пользователя нельзя удалить безвозвратно: по нему уже есть связанные действия. Оставьте его в архиве.',
+          409,
+        );
+      }
+    },
+  });
 }
 
 module.exports = {

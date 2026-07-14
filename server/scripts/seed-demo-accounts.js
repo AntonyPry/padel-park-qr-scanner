@@ -2,6 +2,9 @@
 
 const db = require('../models');
 const authService = require('../src/services/auth.service');
+const {
+  seedDemoAccounts,
+} = require('../src/services/account-seeder-adapter');
 
 const PASSWORD = process.env.DEMO_ACCOUNT_PASSWORD || 'Demo1234!';
 const ALLOW_NON_LOCAL = process.env.ALLOW_DEMO_ACCOUNT_SEED === 'true';
@@ -60,72 +63,37 @@ function assertSafeEnvironment() {
   }
 }
 
-async function upsertStaff(account, transaction) {
-  const payload = {
-    name: account.name,
-    phone: account.phone,
-    role: account.staffRole,
-    status: 'active',
-  };
-  const existing = await db.Staff.findOne({
-    transaction,
-    where: { phone: account.phone },
-  });
-
-  if (existing) {
-    await existing.update(payload, { transaction });
-    return existing;
-  }
-
-  return db.Staff.create(payload, { transaction });
-}
-
-async function upsertAccount(account, staff, transaction) {
-  const payload = {
-    email: account.email,
-    passwordHash: authService.hashPassword(PASSWORD),
-    role: account.role,
-    staffId: staff.id,
-    status: 'active',
-  };
-  const existing = await db.Account.findOne({
-    transaction,
-    where: { email: account.email },
-  });
-
-  if (existing) {
-    await existing.update(payload, { transaction });
-    return 'updated';
-  }
-
-  await db.Account.create(payload, { transaction });
-  return 'created';
-}
-
-async function main() {
+async function runDemoAccountSeed() {
   assertSafeEnvironment();
-
-  const results = [];
-  await db.sequelize.transaction(async (transaction) => {
-    for (const account of DEMO_ACCOUNTS) {
-      const staff = await upsertStaff(account, transaction);
-      const action = await upsertAccount(account, staff, transaction);
-      results.push({ action, email: account.email, role: account.role });
-    }
-  });
+  const passwordHash = authService.hashPassword(PASSWORD);
+  const results = await seedDemoAccounts(
+    DEMO_ACCOUNTS.map((account) => ({
+      ...account,
+      passwordHash,
+      status: 'active',
+    })),
+  );
 
   console.log('Demo role accounts are ready.');
   console.log(`Password: ${PASSWORD}`);
   for (const result of results) {
     console.log(`- ${result.email} (${result.role}) ${result.action}`);
   }
+  return results;
 }
 
-main()
-  .catch((error) => {
-    console.error(error.message || error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await db.sequelize.close();
-  });
+if (require.main === module) {
+  runDemoAccountSeed()
+    .catch((error) => {
+      console.error(error.message || error);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await db.sequelize.close();
+    });
+}
+
+module.exports = {
+  DEMO_ACCOUNTS,
+  runDemoAccountSeed,
+};

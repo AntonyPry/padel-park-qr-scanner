@@ -2223,7 +2223,7 @@ Product source:
 
 ## Epic - Multi-tenant CRM
 
-Статус: `QA green — ready for SaaS integration`.
+Статус: `Feature 2 implemented — feature QA green, independent QA pending`.
 
 Promotion rule выполнено: Feature 1 имеет статус `accepted for implementation planning`; можно создавать SaaS integration base и запускать Feature 2.
 
@@ -2233,6 +2233,8 @@ Promotion rule выполнено: Feature 1 имеет статус `accepted f
 - Feature 1 не содержит migrations/runtime/product changes. Следующий mergeable срез — additive tenant foundation (Feature 2).
 - QA findings добавили формальный bootstrap-pending contract, split Account writer contract, seeder parity и DB-backed lifecycle/concurrency acceptance; Feature 2 runtime/migrations еще не реализуются.
 - Повторный независимый QA завершен без P0–P3 findings; Feature 1 готов к созданию SaaS integration base.
+- Feature 2 реализована в `codex/multi-tenant-foundation-v2` строго от accepted Feature 1 SHA `fa183d850ad01b075e49f8ef787ffc10c3b378be`: additive Organization/Club/Membership/access foundation, deterministic backfill/rollback, bootstrap-pending gate и compatibility Account lifecycle bridge.
+- Feature-side verification Feature 2: DB-backed lifecycle/concurrency `19/19`, полный server suite `297/297`, server typecheck, Account direct-write audit, OpenAPI drift, client lint/test/build, initialized API smoke, все шесть ролей на desktop/mobile `390px` и fresh-install setup/bootstrap smoke. Независимый QA/release review обязателен до merge и до старта Feature 3.
 - SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
 
 ## Backlog - SaaS billing

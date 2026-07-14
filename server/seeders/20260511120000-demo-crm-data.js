@@ -1,6 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
+const {
+  runInitializedSeederBatch,
+} = require('../src/services/account-seeder-adapter');
 
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('base64url');
@@ -64,8 +67,11 @@ const DEMO_MOTIVATION_RULES = [
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    const now = new Date();
-    const passwordHash = hashPassword('Demo1234!');
+    return runInitializedSeederBatch(
+      queryInterface,
+      async (queryInterface, accountBatch) => {
+        const now = new Date();
+        const passwordHash = hashPassword('Demo1234!');
 
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
@@ -82,9 +88,7 @@ module.exports = {
     await queryInterface.bulkDelete('Shifts', {
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
-    await queryInterface.bulkDelete('Accounts', {
-      email: { [Sequelize.Op.like]: '%@padelpark.demo' },
-    });
+        await accountBatch.deleteAccountsByEmailLike('%@padelpark.demo');
     await queryInterface.bulkDelete('Staffs', {
       phone: { [Sequelize.Op.like]: '+790000001%' },
     });
@@ -270,7 +274,7 @@ module.exports = {
       staffRows.map((staff) => [staff.phone, staff.id]),
     );
 
-    await queryInterface.bulkInsert('Accounts', [
+        await accountBatch.insertAccounts([
       {
         staffId: staffByPhone['+79000000100'],
         email: 'owner@padelpark.demo',
@@ -524,12 +528,17 @@ module.exports = {
       });
     }
 
-    await queryInterface.bulkInsert('Utilizations', utilization, {
-      updateOnDuplicate: ['booked2', 'booked1', 'sessions2', 'sessions1', 'updatedAt'],
-    });
+        await queryInterface.bulkInsert('Utilizations', utilization, {
+          updateOnDuplicate: ['booked2', 'booked1', 'sessions2', 'sessions1', 'updatedAt'],
+        });
+      },
+    );
   },
 
   async down(queryInterface, Sequelize) {
+    return runInitializedSeederBatch(
+      queryInterface,
+      async (queryInterface, accountBatch) => {
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
     );
@@ -545,9 +554,7 @@ module.exports = {
     await queryInterface.bulkDelete('Shifts', {
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
-    await queryInterface.bulkDelete('Accounts', {
-      email: { [Sequelize.Op.like]: '%@padelpark.demo' },
-    });
+        await accountBatch.deleteAccountsByEmailLike('%@padelpark.demo');
     await queryInterface.bulkDelete('Staffs', {
       phone: { [Sequelize.Op.like]: '+790000001%' },
     });
@@ -563,10 +570,12 @@ module.exports = {
     await queryInterface.bulkDelete('MotivationBonusRules', {
       description: { [Sequelize.Op.like]: 'Демо:%' },
     });
-    await queryInterface.bulkDelete('CatalogRules', {
-      itemName: {
-        [Sequelize.Op.in]: DEMO_CATALOG_RULES.map(([itemName]) => itemName),
+        await queryInterface.bulkDelete('CatalogRules', {
+          itemName: {
+            [Sequelize.Op.in]: DEMO_CATALOG_RULES.map(([itemName]) => itemName),
+          },
+        });
       },
-    });
+    );
   },
 };

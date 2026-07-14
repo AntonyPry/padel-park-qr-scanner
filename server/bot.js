@@ -9,11 +9,18 @@ const { createTelegramBot } = require('./src/bots/telegram');
 const { createVkBot } = require('./src/bots/vk');
 const callTasksService = require('./src/services/call-tasks.service');
 const telephonyService = require('./src/services/telephony.service');
+const {
+  assertTenantFoundationInitialized,
+  assertTenantFoundationOperational,
+} = require('./src/services/tenant-foundation.service');
+const {
+  TENANT_FOUNDATION_STATES,
+} = require('./src/tenant-foundation/constants');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
 
-const app = createApp();
+const app = createApp({ onTenantInitialized: startBackgroundComponents });
 const server = http.createServer(app);
 const io = createSocketServer(server);
 
@@ -22,6 +29,7 @@ app.set('io', io);
 async function startDatabase() {
   await db.sequelize.authenticate();
   console.log('✅ БД подключена.');
+  return assertTenantFoundationOperational();
 }
 
 function startHttpServer() {
@@ -43,6 +51,8 @@ function isFeatureEnabled(envName, defaultValue = true) {
 }
 
 function startRecurringCallTasksRunner() {
+  if (startRecurringCallTasksRunner.started) return;
+  startRecurringCallTasksRunner.started = true;
   const intervalMs = Number(process.env.CALL_TASKS_RUNNER_INTERVAL_MS || 60000);
 
   const run = async () => {
@@ -78,6 +88,8 @@ function startRecurringCallTasksRunner() {
 }
 
 function startTelephonySubscriptionRunner() {
+  if (startTelephonySubscriptionRunner.started) return;
+  startTelephonySubscriptionRunner.started = true;
   const rawIntervalMs = Number(process.env.BEELINE_SUBSCRIPTION_RUNNER_INTERVAL_MS);
   const intervalMs =
     Number.isFinite(rawIntervalMs) && rawIntervalMs >= 60 * 1000
@@ -113,6 +125,7 @@ function startTelephonySubscriptionRunner() {
 }
 
 async function startTelegramBot() {
+  if (startTelegramBot.started) return;
   const telegramBot = createTelegramBot();
   if (!telegramBot) {
     console.log('✈️ Telegram Бот не запущен: BOT_TOKEN не задан.');
@@ -120,10 +133,12 @@ async function startTelegramBot() {
   }
 
   telegramBot.start();
+  startTelegramBot.started = true;
   console.log('✈️ Telegram Бот запущен.');
 }
 
 async function startVkBot() {
+  if (startVkBot.started) return;
   const vkBot = createVkBot();
   if (!vkBot) {
     console.log('🟦 ВКонтакте Бот не запущен: VK_TOKEN не задан.');
@@ -131,16 +146,12 @@ async function startVkBot() {
   }
 
   await vkBot.start();
+  startVkBot.started = true;
   console.log('🟦 ВКонтакте Бот запущен.');
 }
 
-async function startApp() {
-  try {
-    await startDatabase();
-  } catch (error) {
-    console.error('❌ Ошибка старта БД:', error);
-  }
-
+async function startBackgroundComponents() {
+  await assertTenantFoundationInitialized();
   if (isFeatureEnabled('BOTS_ENABLED')) {
     try {
       await startTelegramBot();
@@ -157,16 +168,41 @@ async function startApp() {
     console.log('🤖 Боты отключены через BOTS_ENABLED=false.');
   }
 
+  if (isFeatureEnabled('BACKGROUND_RUNNERS_ENABLED')) {
+    startRecurringCallTasksRunner();
+    startTelephonySubscriptionRunner();
+  } else {
+    console.log('⏱️ Фоновые runner-ы отключены через BACKGROUND_RUNNERS_ENABLED=false.');
+  }
+}
+
+async function startApp() {
+  let foundationState = null;
+  try {
+    foundationState = await startDatabase();
+  } catch (error) {
+    console.error('❌ Tenant foundation не прошел startup assertion:', error);
+  }
+
   try {
     startHttpServer();
-    if (isFeatureEnabled('BACKGROUND_RUNNERS_ENABLED')) {
-      startRecurringCallTasksRunner();
-      startTelephonySubscriptionRunner();
-    } else {
-      console.log('⏱️ Фоновые runner-ы отключены через BACKGROUND_RUNNERS_ENABLED=false.');
-    }
   } catch (error) {
     console.error('❌ Ошибка старта сервера:', error);
+    return;
+  }
+
+  if (foundationState?.state === TENANT_FOUNDATION_STATES.INITIALIZED) {
+    try {
+      await startBackgroundComponents();
+    } catch (error) {
+      console.error('❌ Ошибка старта фоновых компонентов:', error);
+    }
+  } else if (
+    foundationState?.state === TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING
+  ) {
+    console.log('🧱 Setly ожидает первичную настройку; bots/runners отключены.');
+  } else {
+    console.error('🛑 Business components заблокированы fail-closed.');
   }
 }
 

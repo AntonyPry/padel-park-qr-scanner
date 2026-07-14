@@ -3,7 +3,11 @@ const { sendError } = require('../utils/api-error');
 
 class AuthController {
   async status(req, res) {
-    res.json({ setupRequired: await authService.isSetupRequired() });
+    try {
+      res.json(await authService.getSetupStatus());
+    } catch (error) {
+      sendError(res, error, 'Ошибка проверки состояния системы');
+    }
   }
 
   async bootstrap(req, res) {
@@ -23,6 +27,10 @@ class AuthController {
         email,
         password,
       });
+      const onTenantInitialized = req.app.get('onTenantInitialized');
+      if (typeof onTenantInitialized === 'function') {
+        await onTenantInitialized();
+      }
       res.json(session);
     } catch (error) {
       sendError(res, error, 'Ошибка настройки аккаунта');
