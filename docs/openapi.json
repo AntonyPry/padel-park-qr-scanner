@@ -44242,6 +44242,30 @@
                       }
                     ]
                   },
+                  "categoryId": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d*$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "description": {
                     "type": "string",
                     "minLength": 1,
@@ -44438,6 +44462,30 @@
                       {
                         "type": "string",
                         "pattern": "^\\d+([.,]\\d+)?$"
+                      }
+                    ]
+                  },
+                  "categoryId": {
+                    "anyOf": [
+                      {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "exclusiveMinimum": 0,
+                            "maximum": 9007199254740991
+                          },
+                          {
+                            "type": "string",
+                            "pattern": "^[1-9]\\d*$"
+                          }
+                        ]
+                      },
+                      {
+                        "type": "string",
+                        "const": ""
+                      },
+                      {
+                        "type": "null"
                       }
                     ]
                   },

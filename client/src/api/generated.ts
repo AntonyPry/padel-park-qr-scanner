@@ -1893,6 +1893,7 @@ export type ShiftCashOpeningBody = {
 };
 export type ShiftCashExpenseCreateBody = {
   amount: number | string;
+  categoryId?: number | string | "" | null;
   description: string;
   spentAt?: string | "" | null;
 };
@@ -1901,6 +1902,7 @@ export type ShiftCashExpenseUpdateParams = {
 };
 export type ShiftCashExpenseUpdateBody = {
   amount: number | string;
+  categoryId?: number | string | "" | null;
   description: string;
   spentAt?: string | "" | null;
 };

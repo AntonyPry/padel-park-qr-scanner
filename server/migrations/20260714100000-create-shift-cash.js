@@ -108,6 +108,14 @@ module.exports = {
         onDelete: 'CASCADE',
       },
       amount: { allowNull: false, type: Sequelize.DECIMAL(12, 2) },
+      categoryId: {
+        allowNull: true,
+        type: Sequelize.INTEGER,
+        references: { model: 'Categories', key: 'id' },
+        onUpdate: 'CASCADE',
+        onDelete: 'SET NULL',
+      },
+      categoryName: { allowNull: false, type: Sequelize.STRING },
       description: { allowNull: false, type: Sequelize.TEXT },
       spentAt: { allowNull: false, type: Sequelize.DATE },
       createdByAccountId: {
