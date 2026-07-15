@@ -2273,7 +2273,7 @@ Repeat QA 15.07.2026:
 - реальный PNG-чек загружен через backend: upload `201`, protected attachment GET `200 image/png`;
 - карточка расхода показывает настоящее `<img>` `600x820` через blob URL, lightbox открывает то же фото;
 - backend checkpoint `shift_cash.attachment_uploaded` записан ровно один раз для загруженного `attachmentId`;
-- dark/light `expense-result-attached.png` пересняты после upload и размечены номерами/стрелками непосредственно на PNG;
+- dark/light `expense-result-attached.png` пересняты после upload и показывают реальное превью чека без графических аннотаций;
 - targeted onboarding tests: `42/42`; server typecheck: PASS; client tests: `22/22`; client build: PASS;
 - merged temp с `origin/codex/shift-cash`: strict audit PASS;
 - browser QA: `20/20` onboarding cases и `4/4` DB-backed product cases в dark/light на desktop `1440px` и mobile `390px`; broken images, console/page errors и horizontal overflow отсутствуют;

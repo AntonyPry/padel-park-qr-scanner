@@ -2510,7 +2510,7 @@ const roleInstructionLessons = {
         src: '/onboarding/shift-cash/expense-result-attached.png',
         alt: 'Сохраненный кассовый расход с прикрепленным чеком',
         caption:
-          '1 - сумма активных расходов, 2 - категория и Finance ID, 3 - прикрепленное фото, 4 - сумма расхода.',
+          'В карточке видны категория, Finance ID, сумма расхода и превью чека.',
       },
     ],
   }),
@@ -2570,7 +2570,7 @@ const roleInstructionLessons = {
         src: '/onboarding/shift-cash/expense-result-attached.png',
         alt: 'Расход смены с прикрепленным чеком',
         caption:
-          '1 - активные расходы, 2 - категория и Finance ID, 3 - фото чека, 4 - сумма.',
+          'Сохраненный расход показывает категорию, Finance ID, сумму и прикрепленный чек.',
       },
       {
         src: '/onboarding/shift-cash/close-dialog-variance-comment.png',
@@ -2630,7 +2630,7 @@ const roleInstructionLessons = {
         src: '/onboarding/shift-cash/expense-result-attached.png',
         alt: 'Расход смены с Finance ID и чеком',
         caption:
-          '1 - активные расходы, 2 - категория и Finance ID, 3 - фото чека, 4 - сумма расхода.',
+          'Карточка расхода связывает категорию, Finance ID, сумму и фото чека.',
       },
       {
         src: '/onboarding/shift-cash/close-dialog-variance-comment.png',
