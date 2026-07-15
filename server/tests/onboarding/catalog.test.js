@@ -5,6 +5,7 @@ const {
   findOnboardingTask,
   getOnboardingPath,
   listOnboardingPaths,
+  ONBOARDING_CLIENT_CHECKPOINT_EVENTS,
   validateOnboardingCatalog,
 } = require('../../src/onboarding/catalog');
 
@@ -830,4 +831,89 @@ test('prepayments role wording does not describe hidden dashboard sections', () 
   assert.equal(adminText.includes('сертификат'), true);
   assert.equal(accountantText.includes('корпоратив'), true);
   assert.equal(accountantText.includes('финансов'), true);
+});
+
+test('shift cash onboarding is wired by role with backend checkpoints', () => {
+  const adminOpening = findOnboardingTask(
+    'admin',
+    'admin.shift-cash.opening-record',
+  ).task;
+  assert.equal(adminOpening.route, '/admin/motivation');
+  assert.equal(adminOpening.kind, 'action');
+  assert.equal(adminOpening.checkpoint.event, 'shift_cash.opening_recorded');
+  assert.equal(adminOpening.trainingMode.recommended, true);
+
+  const adminExpense = findOnboardingTask(
+    'admin',
+    'admin.shift-cash.expense-with-photo',
+  ).task;
+  assert.equal(adminExpense.route, '/admin/motivation');
+  assert.equal(adminExpense.kind, 'action');
+  assert.equal(adminExpense.checkpoint.event, 'shift_cash.attachment_uploaded');
+  assert.equal(
+    getTaskVisibleText(adminExpense).includes('фото чека'),
+    true,
+  );
+
+  const managerClose = findOnboardingTask(
+    'manager',
+    'manager.shift-cash.reconciliation-review',
+  ).task;
+  assert.equal(managerClose.route, '/admin/motivation');
+  assert.equal(managerClose.checkpoint.event, 'shift_cash.closed');
+  assert.equal(managerClose.trainingMode.recommended, false);
+
+  const ownerControl = findOnboardingTask(
+    'owner',
+    'owner.shift-cash.control-review',
+  ).task;
+  assert.equal(ownerControl.route, '/admin/motivation');
+  assert.equal(ownerControl.checkpoint.event, 'shift_cash.closed');
+  assert.equal(
+    getTaskVisibleText(ownerControl).includes('Владелец может проходить обучение за роли'),
+    true,
+  );
+
+  const accountantReview = findOnboardingTask(
+    'accountant',
+    'accountant.shift-cash.finance-review',
+  ).task;
+  assert.equal(accountantReview.route, '/admin/finances');
+  assert.equal(accountantReview.checkpoint.event, 'finance.report_viewed');
+  assert.equal(accountantReview.trainingMode.recommended, false);
+  assert.equal(
+    getTaskVisibleText(accountantReview).includes('не управляет кассой смены как администратор'),
+    true,
+  );
+
+  for (const task of [
+    adminOpening,
+    adminExpense,
+    managerClose,
+    ownerControl,
+    accountantReview,
+  ]) {
+    assert.equal(task.lesson.format, 'section-first-cards');
+    assertFirstOpenScreenBlock(task);
+    assert.equal(task.lesson.screenshots.length >= 2, true, task.key);
+    assert.equal(
+      task.lesson.screenshots.every((screenshot) =>
+        screenshot.src.startsWith('/onboarding/'),
+      ),
+      true,
+      task.key,
+    );
+  }
+
+  for (const eventKey of [
+    'shift_cash.opening_recorded',
+    'shift_cash.attachment_uploaded',
+    'shift_cash.closed',
+  ]) {
+    assert.equal(
+      ONBOARDING_CLIENT_CHECKPOINT_EVENTS.includes(eventKey),
+      false,
+      `${eventKey} should require a backend product event`,
+    );
+  }
 });

@@ -208,6 +208,9 @@ Integrated product and route-review events:
 - `report.exported`
 - `report.viewed` (client-side route review event)
 - `shift.approved`
+- `shift_cash.attachment_uploaded`
+- `shift_cash.closed`
+- `shift_cash.opening_recorded`
 - `training_level.updated`
 - `training_note.created`
 - `training_note.updated`
