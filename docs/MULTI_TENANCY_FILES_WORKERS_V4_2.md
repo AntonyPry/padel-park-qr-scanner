@@ -1,6 +1,6 @@
 # Feature 4.2 — Files and workers isolation
 
-Статус: `implemented on feature branch — pending independent SaaS QA`.
+Статус: `accepted and promoted to SaaS integration`.
 
 Base: `a3129af5bab40864a4dd62f04b0203874277902f` from `origin/codex/saas-multitenancy-integration`.
 
@@ -16,6 +16,8 @@ Feature branch: `codex/multi-tenant-files-workers-v4-2`.
 | --- | --- | --- | --- |
 | Shift report photo upload/download/delete | club | local disk + JSON metadata in `ShiftReportAnswer.attachments` | migrated first production path; new tenant storage writes, controlled legacy dual-read |
 | Legacy `server/var/shift-report-attachments/<reportId>/<uuid>.<ext>` | default club only | local disk | read/delete only after exact legacy metadata + default tenant proof; no new writes when flag is on |
+| Shift cash receipt upload/download/delete | club | local disk + JSON metadata in `ShiftCashExpense.attachments` | reconciled from current `main`; new tenant storage writes, immutable tenant/expense/file metadata |
+| Legacy `server/var/shift-cash-attachments/<expenseId>/<uuid>.<ext>` | default club only | local disk | controlled dual-read/delete after exact metadata, regular-file/symlink checks and default tenant proof |
 | Tenant storage `server/var/tenant-storage` or `SETLY_STORAGE_ROOT` | organization/club | local disk | canonical atomic storage primitive |
 | Finance/payroll/visits/corporate XLSX exports | route scope of parent domain | in-memory response buffer | no persistent file; deferred tenant business filtering follows parent domain waves |
 | Node/Python transcription input, split channels and chunks | claimed job tenant | ephemeral | opaque tenant/claim namespace; attempt-owned cleanup |
@@ -26,7 +28,7 @@ Feature branch: `codex/multi-tenant-files-workers-v4-2`.
 | Worker stdout/dashboard lifecycle events | platform operational | operational logs/SQLite events | redacted; safe IDs/stage only, no credential, recording URL, phone, raw audio/transcript |
 | OpenAPI/QA/generated development outputs | developer tooling | generated outside runtime business storage | not a production business file path |
 
-No second generic attachment subsystem or `FileObject` model was introduced: production file persistence is currently limited to shift-report attachments. The common primitive is only the storage key/path implementation reused by that real integration point.
+No second generic attachment subsystem or `FileObject` model was introduced. Shift-report and shift-cash attachments keep their existing parent JSON metadata and share only the canonical tenant storage key/path implementation.
 
 ## Tenant storage contract
 
@@ -75,6 +77,12 @@ server npm run tenant:files-workers:attachments -- --rollback
 It is idempotent and reports schema/version/generatedAt, roots, per-tenant/domain counts/bytes/checksum, individual opaque storage keys/checksums, missing files, mismatches and hashed orphan paths. Apply copies/verifies before changing metadata. Rollback requires a checksum-matching legacy copy and changes metadata only. Neither direction deletes physical files automatically.
 
 `ShiftReport` is not tenant-scoped yet. Attachment metadata is therefore an additional immutable file boundary, not a substitute for Feature 8 scoped report reads.
+
+## Shift-cash reconciliation
+
+Current `origin/main` introduced shift-cash receipt photos after the Feature 4.2 base. Reconciliation keeps that workflow and classifies every Shift Cash endpoint as club-scoped. With `TENANT_FILES_WORKERS_ENABLED=true`, new receipt writes use domain `shift-cash-attachments` and store schema version, organization/club, expense/file identity, storage key, size and SHA-256 checksum in `ShiftCashExpense.attachments`; reads and deletes recompute and verify that identity before opening the file.
+
+Existing main-layout receipts remain readable only for the exact default tenant when metadata matches `<numeric expenseId>/<same UUID>.<MIME extension>`. The resolver rejects symlinked parent segments/files, non-regular files and realpath escape. New writes never use this legacy layout while the capability is enabled. The shift-report migration utility does not rewrite Shift Cash metadata; the legacy Shift Cash root is retained and must be backed up until a separate copy/verification decision.
 
 ## Transcription job attribution
 
@@ -147,8 +155,8 @@ Server-owned flag: `TENANT_FILES_WORKERS_ENABLED`.
 
 - requires both `TENANT_CONTEXT_ENABLED=true` and accepted Feature 4.1 `TENANT_CACHE_REALTIME_ENABLED=true`; invalid combinations fail at app construction;
 - it is intentionally not exposed to frontend auth capabilities because UX does not branch on it;
-- off: legacy attachment writes and worker v1 remain during the finite rollout window;
-- on: new tenant attachment writes, immutable job attribution, minimal worker payload and lease-aware API are mandatory;
+- off: legacy shift-report/shift-cash attachment writes and worker v1 remain during the finite rollout window;
+- on: new tenant shift-report/shift-cash attachment writes, immutable job attribution, minimal worker payload and lease-aware API are mandatory;
 - legacy attachment dual-read stays enabled for eligible default-tenant metadata;
 - rollback turns this flag off but never removes attribution columns, new files or transcript data.
 
@@ -160,7 +168,7 @@ Rollout order:
 4. wait for old worker processes to drain/stop;
 5. enable Feature 3, Feature 4.1 and Feature 4.2 flags together;
 6. apply attachment copy after dry-run review; retain legacy files until separate backup/copy verification decision;
-7. verify claim → audio → ASR/LLM → result and shift attachment upload/download.
+7. verify claim → audio → ASR/LLM → result plus shift-report and shift-cash attachment upload/download.
 
 Rollback order: disable `TENANT_FILES_WORKERS_ENABLED`, keep additive DB columns/new storage, restore previous binaries only after v2 requests stop, and use metadata rollback only when checksum-matching legacy copies are confirmed.
 
@@ -169,7 +177,7 @@ Rollback order: disable `TENANT_FILES_WORKERS_ENABLED`, keep additive DB columns
 A DB dump without tenant storage/legacy uploads is incomplete. Full installation backup contains:
 
 - DB dump;
-- legacy and tenant storage roots;
+- legacy shift-report/shift-cash roots and tenant storage root;
 - manifest with schema/version/generatedAt/root and per-tenant/domain counts/bytes/checksums;
 - no secrets, original names, phone numbers or transcript/audio content in the manifest.
 
@@ -198,7 +206,8 @@ Hardware ASR smoke against the laptop is optional. Local code acceptance uses mo
 
 ## Deferred limitations
 
-- Shift-report and TelephonyCall parent business rows remain single-default until their domain waves.
+- ShiftReport, ShiftCashExpense/Shift and TelephonyCall parent business rows remain single-default until their domain waves.
+- Legacy Shift Cash receipts have controlled default-tenant dual-read but no automatic copy/backfill utility; retain and include that root in installation-wide backup.
 - Provider connections, webhook routing/idempotency, Beeline subscription fanout/locks and bots remain Feature 4.3.
 - Recurring call-task tenant fanout remains Feature 5.
 - Exports remain in-memory and inherit their current parent-domain scope; no persistent export storage was added.
