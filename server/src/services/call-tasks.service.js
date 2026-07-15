@@ -3,6 +3,10 @@ const db = require('../../models');
 const clientsService = require('./clients.service');
 const clientBasesService = require('./client-bases.service');
 const onboardingService = require('./onboarding.service');
+const {
+  BACKGROUND_COMPONENTS,
+  assertBackgroundComponentCanRun,
+} = require('../files-workers/background-run-context');
 
 const TASK_STATUSES = new Set(['backlog', 'in_progress', 'done', 'archived']);
 const TASK_SCOPE_TYPES = new Set(['snapshot', 'dynamic']);
@@ -1271,6 +1275,7 @@ async function sync(actor, id) {
 }
 
 async function runDueRecurringTasks(now = new Date()) {
+  assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.CALL_TASKS_RECURRING);
   const bases = await db.ClientBase.findAll({
     where: {
       recurringEnabled: true,

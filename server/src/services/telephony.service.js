@@ -3,6 +3,21 @@ const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
 const {
+  isTenantFilesWorkersEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  normalizeTenantIds,
+  resolveTrustedTenantAttribution,
+  tenantRoutingMetadata,
+} = require('../files-workers/tenant-context');
+const {
+  WORKER_PROTOCOL_VERSION,
+  assertActiveLease,
+  createLease,
+  getLeaseDurationMs,
+  publicLease,
+} = require('../files-workers/transcription-lease');
+const {
   formatRussianPhone,
   getPhoneLookupDigits,
   normalizedPhoneColumn,
@@ -40,6 +55,28 @@ const DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS = 10 * 60;
 const DEFAULT_REPORT_DAYS = 30;
 const SUBSCRIPTION_LOCK_NAME = 'padel_park_beeline_xsi_subscription';
 const DEFAULT_TRANSCRIPTION_BACKFILL_LIMIT = 50;
+
+function tenantJobWhere(tenant) {
+  if (!isTenantFilesWorkersEnabled()) return {};
+  return normalizeTenantIds(tenant);
+}
+
+function withTenantJobWhere(where, tenant) {
+  return { ...(where || {}), ...tenantJobWhere(tenant) };
+}
+
+function assertPlatformWorker(worker) {
+  if (
+    worker?.scope !== 'platform' ||
+    !worker?.credentialId ||
+    Number(worker?.protocolVersion) !== WORKER_PROTOCOL_VERSION
+  ) {
+    const error = appError('Unauthorized worker', 401);
+    error.code = 'WORKER_CREDENTIAL_INVALID';
+    throw error;
+  }
+  return worker;
+}
 
 const RESULT_LABELS = {
   booked: 'Записался',
@@ -827,12 +864,14 @@ function mapTranscriptionJob(row, options = {}) {
   const raw = row.toJSON ? row.toJSON() : row;
   const mapped = {
     attemptCount: raw.attemptCount,
+    clubId: raw.clubId,
     claimedAt: raw.claimedAt,
     completedAt: raw.completedAt,
     createdAt: raw.createdAt,
     errorMessage: raw.errorMessage,
     failedAt: raw.failedAt,
     id: raw.id,
+    organizationId: raw.organizationId,
     language: raw.language,
     aiCorrections: Array.isArray(raw.aiCorrections) ? raw.aiCorrections : [],
     aiMetadata: raw.aiMetadata || null,
@@ -903,29 +942,53 @@ function mapWorkerTranscriptionJob(row, options = {}) {
   const raw = row.toJSON ? row.toJSON() : row;
   const mapped = mapTranscriptionJob(raw, options);
   mapped.workerId = raw.workerId || null;
+  if (isTenantFilesWorkersEnabled()) {
+    mapped.tenant = tenantRoutingMetadata(raw);
+  }
+  if (options.includeLeaseStatus) {
+    mapped.claim = {
+      attempt: Number(raw.attemptCount || 0),
+      claimId: raw.claimId || null,
+      expiresAt: raw.claimExpiresAt || null,
+      protocolVersion: raw.workerProtocolVersion || null,
+    };
+  }
+  if (options.minimal) {
+    delete mapped.aiCorrections;
+    delete mapped.aiMetadata;
+    delete mapped.aiTranscriptSegments;
+    delete mapped.aiTranscriptText;
+    delete mapped.corrections;
+    delete mapped.rawTranscriptText;
+    delete mapped.transcriptText;
+  }
   mapped.call = raw.call
     ? {
         callStatus: raw.call.callStatus,
-        client: raw.call.client
+        ...(options.includeSensitiveRelations
           ? {
-              id: raw.call.client.id,
-              name: raw.call.client.name,
-              phone: raw.call.client.phone,
-              status: raw.call.client.status,
+              client: raw.call.client
+                ? {
+                    id: raw.call.client.id,
+                    name: raw.call.client.name,
+                    phone: raw.call.client.phone,
+                    status: raw.call.client.status,
+                  }
+                : null,
+              clientPhone: raw.call.clientPhone,
+              staff: raw.call.staff
+                ? {
+                    id: raw.call.staff.id,
+                    name: raw.call.staff.name,
+                    role: raw.call.staff.role,
+                  }
+                : null,
             }
-          : null,
-        clientPhone: raw.call.clientPhone,
+          : {}),
         direction: raw.call.direction,
         durationSeconds: raw.call.durationSeconds,
         id: raw.call.id,
         recordingStatus: raw.call.recordingStatus,
-        staff: raw.call.staff
-          ? {
-              id: raw.call.staff.id,
-              name: raw.call.staff.name,
-              role: raw.call.staff.role,
-            }
-          : null,
         startedAt: raw.call.startedAt,
       }
     : null;
@@ -933,31 +996,34 @@ function mapWorkerTranscriptionJob(row, options = {}) {
   return mapped;
 }
 
-function workerQueueCallInclude() {
+function workerQueueCallInclude(options = {}) {
+  const includeSensitiveRelations = Boolean(options.includeSensitiveRelations);
   return {
     model: db.TelephonyCall,
     as: 'call',
     attributes: [
       'callStatus',
-      'clientPhone',
+      ...(includeSensitiveRelations ? ['clientPhone'] : []),
       'direction',
       'durationSeconds',
       'id',
       'recordingStatus',
       'startedAt',
     ],
-    include: [
-      {
-        model: db.User,
-        as: 'client',
-        attributes: ['id', 'name', 'phone', 'status'],
-      },
-      {
-        model: db.Staff,
-        as: 'staff',
-        attributes: ['id', 'name', 'role'],
-      },
-    ],
+    include: includeSensitiveRelations
+      ? [
+          {
+            model: db.User,
+            as: 'client',
+            attributes: ['id', 'name', 'phone', 'status'],
+          },
+          {
+            model: db.Staff,
+            as: 'staff',
+            attributes: ['id', 'name', 'role'],
+          },
+        ]
+      : [],
     required: true,
   };
 }
@@ -1595,7 +1661,7 @@ function applyActorScope(where, actor = null) {
   return where;
 }
 
-async function listCalls(actor, query = {}) {
+async function listCalls(actor, query = {}, tenant = null) {
   const page = Math.max(Number(query.page) || 1, 1);
   const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 100);
   const where = buildCallWhere(query, actor);
@@ -1613,6 +1679,7 @@ async function listCalls(actor, query = {}) {
   });
   const transcriptionJobs = await getLatestTranscriptionJobsForCallIds(
     rows.map((row) => row.id),
+    { tenant },
   );
 
   return {
@@ -1730,6 +1797,7 @@ function scopedTranscriptionJobInclude(actor, options = {}) {
 
 const TRANSCRIPTION_JOB_LIST_ATTRIBUTES = [
   'attemptCount',
+  'clubId',
   'claimedAt',
   'completedAt',
   'createdAt',
@@ -1738,9 +1806,18 @@ const TRANSCRIPTION_JOB_LIST_ATTRIBUTES = [
   'id',
   'language',
   'metadata',
+  'organizationId',
   'status',
   'telephonyCallId',
   'updatedAt',
+];
+
+const TRANSCRIPTION_WORKER_LIST_ATTRIBUTES = [
+  ...TRANSCRIPTION_JOB_LIST_ATTRIBUTES,
+  'claimExpiresAt',
+  'claimId',
+  'workerId',
+  'workerProtocolVersion',
 ];
 
 async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
@@ -1748,6 +1825,9 @@ async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
   const latest = new Map();
   if (ids.length === 0) return latest;
 
+  const tenant = isTenantFilesWorkersEnabled()
+    ? await resolveTrustedTenantAttribution(options.tenant)
+    : null;
   const jobs = await db.TelephonyTranscriptionJob.findAll({
     ...(options.includeSegments ? {} : { attributes: TRANSCRIPTION_JOB_LIST_ATTRIBUTES }),
     include: transcriptionJobInclude(options),
@@ -1755,7 +1835,10 @@ async function getLatestTranscriptionJobsForCallIds(callIds, options = {}) {
       ['createdAt', 'DESC'],
       ['id', 'DESC'],
     ],
-    where: { telephonyCallId: { [Op.in]: ids } },
+    where: withTenantJobWhere(
+      { telephonyCallId: { [Op.in]: ids } },
+      tenant,
+    ),
   });
 
   jobs.forEach((job) => {
@@ -1772,10 +1855,11 @@ async function getLatestTranscriptionJobForCallId(callId, options = {}) {
   return latest.get(Number(callId)) || null;
 }
 
-async function getCall(actor, id) {
+async function getCall(actor, id, tenant = null) {
   const call = await getCallOrFail(actor, id);
   const transcriptionJob = await getLatestTranscriptionJobForCallId(call.id, {
     includeSegments: true,
+    tenant,
   });
 
   return mapCall(call, actor, {
@@ -2693,7 +2777,20 @@ function buildRecordingReferencePath(call) {
   return null;
 }
 
-async function refreshRecordingReferenceForCall(call) {
+async function refreshRecordingReferenceForCall(call, options = {}) {
+  const currentExpiresAt = parseDate(call.recordingExpiresAt);
+  if (
+    normalizeText(call.recordingUrl) &&
+    currentExpiresAt &&
+    currentExpiresAt.getTime() > Date.now() + 30 * 1000
+  ) {
+    return {
+      downloadUrl: call.recordingUrl,
+      expiresAt: currentExpiresAt,
+      fileSize: call.recordingFileSize || null,
+      fileType: call.recordingFileType || null,
+    };
+  }
   const client = getBeelineClient();
   const path = buildRecordingReferencePath(call);
 
@@ -2711,7 +2808,7 @@ async function refreshRecordingReferenceForCall(call) {
     recordingSyncedAt: new Date(),
     recordingUrl: reference.recordingUrl,
   });
-  await autoEnqueueTranscriptionJob(call.id);
+  await autoEnqueueTranscriptionJob(call.id, { tenant: options.tenant });
 
   return {
     downloadUrl: reference.recordingUrl,
@@ -2789,14 +2886,14 @@ function subscriptionMatchesDesired(subscription, desired) {
   );
 }
 
-async function refreshRecordingReference(actor, id) {
+async function refreshRecordingReference(actor, id, tenant = null) {
   const call = await getCallOrFail(actor, id);
-  await refreshRecordingReferenceForCall(call);
+  await refreshRecordingReferenceForCall(call, { tenant });
 
-  return getCall(actor, call.id);
+  return getCall(actor, call.id, tenant);
 }
 
-async function createTranscriptionJob(actor, callId) {
+async function createTranscriptionJob(actor, callId, tenant = null) {
   const call = await getCallOrFail(actor, callId);
   if (call.recordingStatus !== 'available') {
     throw appError('Транскрибация доступна только для звонков с записью', 409);
@@ -2806,12 +2903,14 @@ async function createTranscriptionJob(actor, callId) {
     autoEnqueued: false,
     createdByAccountId: actor?.id || null,
     source: 'manual_fallback',
+    tenant,
   });
 
-  return getCall(actor, call.id);
+  return getCall(actor, call.id, tenant);
 }
 
 async function autoEnqueueTranscriptionJob(callId, options = {}) {
+  const tenant = await resolveTrustedTenantAttribution(options.tenant);
   return db.sequelize.transaction(async (transaction) => {
     const call = await db.TelephonyCall.findByPk(callId, {
       lock: transaction.LOCK.UPDATE,
@@ -2823,11 +2922,16 @@ async function autoEnqueueTranscriptionJob(callId, options = {}) {
       attributes: ['id', 'status'],
       order: [['createdAt', 'DESC'], ['id', 'DESC']],
       transaction,
-      where: { telephonyCallId: call.id },
+      where: {
+        clubId: tenant.clubId,
+        organizationId: tenant.organizationId,
+        telephonyCallId: call.id,
+      },
     });
     if (latestJob) return null;
 
     return db.TelephonyTranscriptionJob.create({
+      clubId: tenant.clubId,
       createdByAccountId: options.createdByAccountId || null,
       metadata: {
         autoEnqueued: options.autoEnqueued !== false,
@@ -2836,12 +2940,14 @@ async function autoEnqueueTranscriptionJob(callId, options = {}) {
       },
       status: 'queued',
       telephonyCallId: call.id,
+      organizationId: tenant.organizationId,
     }, { transaction });
   });
 }
 
-async function queueMissingTranscriptionJobs(actor, data = {}) {
+async function queueMissingTranscriptionJobs(actor, data = {}, tenant = null) {
   const limit = Math.min(Math.max(Number(data.limit) || DEFAULT_TRANSCRIPTION_BACKFILL_LIMIT, 1), 200);
+  const jobTenant = isTenantFilesWorkersEnabled() ? normalizeTenantIds(tenant) : null;
   const calls = await db.TelephonyCall.findAll({
     attributes: ['id'],
     include: [{
@@ -2849,6 +2955,7 @@ async function queueMissingTranscriptionJobs(actor, data = {}) {
       attributes: ['id'],
       model: db.TelephonyTranscriptionJob,
       required: false,
+      ...(jobTenant ? { where: jobTenant } : {}),
     }],
     limit,
     order: [['startedAt', 'DESC'], ['id', 'DESC']],
@@ -2863,6 +2970,7 @@ async function queueMissingTranscriptionJobs(actor, data = {}) {
     const job = await autoEnqueueTranscriptionJob(call.id, {
       createdByAccountId: actor?.id || null,
       source: 'manual_backfill',
+      tenant,
     });
     if (job) queued += 1;
   }
@@ -2892,7 +3000,7 @@ function normalizeTranscriptionJobQuery(query = {}) {
   return { page, pageSize, where };
 }
 
-async function listTranscriptionJobs(actor, query = {}) {
+async function listTranscriptionJobs(actor, query = {}, tenant = null) {
   const { page, pageSize, where } = normalizeTranscriptionJobQuery(query);
   const { count, rows } = await db.TelephonyTranscriptionJob.findAndCountAll({
     attributes: TRANSCRIPTION_JOB_LIST_ATTRIBUTES,
@@ -2907,7 +3015,7 @@ async function listTranscriptionJobs(actor, query = {}) {
       ['createdAt', 'DESC'],
       ['id', 'DESC'],
     ],
-    where,
+    where: withTenantJobWhere(where, tenant),
   });
 
   return {
@@ -2918,15 +3026,15 @@ async function listTranscriptionJobs(actor, query = {}) {
   };
 }
 
-async function listCallTranscriptionJobs(actor, callId, query = {}) {
+async function listCallTranscriptionJobs(actor, callId, query = {}, tenant = null) {
   const call = await getCallOrFail(actor, callId);
   return listTranscriptionJobs(actor, {
     ...query,
     callId: call.id,
-  });
+  }, tenant);
 }
 
-async function getTranscriptionJob(actor, id) {
+async function getTranscriptionJob(actor, id, tenant = null) {
   const jobId = Number(id);
   if (!Number.isInteger(jobId) || jobId <= 0) {
     throw appError('Некорректная задача транскрибации');
@@ -2937,14 +3045,14 @@ async function getTranscriptionJob(actor, id) {
       includeCallRelations: true,
       includeSegments: true,
     }),
-    where: { id: jobId },
+    where: withTenantJobWhere({ id: jobId }, tenant),
   });
   if (!job) throw appError('Задача транскрибации не найдена', 404);
 
   return { job: mapUserTranscriptionJob(job, { includeSegments: true }) };
 }
 
-async function getTranscriptionStats(actor) {
+async function getTranscriptionStats(actor, tenant = null) {
   const rows = await db.TelephonyTranscriptionJob.findAll({
     attributes: [
       'status',
@@ -2958,6 +3066,7 @@ async function getTranscriptionStats(actor) {
       }),
     ],
     raw: true,
+    where: withTenantJobWhere({}, tenant),
   });
   const totals = {
     completed: 0,
@@ -2983,6 +3092,7 @@ async function getTranscriptionStats(actor) {
 }
 
 async function getWorkerTranscriptionQueue(query = {}) {
+  const isolated = isTenantFilesWorkersEnabled();
   const pageSize = Math.min(Math.max(Number(query.pageSize) || 50, 1), 100);
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -3004,10 +3114,13 @@ async function getWorkerTranscriptionQueue(query = {}) {
       },
     }),
     db.TelephonyTranscriptionJob.findAll({
-      include: [
-        ...transcriptionJobInclude({ includeSegments: true }),
-        workerQueueCallInclude(),
-      ],
+      ...(isolated ? { attributes: TRANSCRIPTION_WORKER_LIST_ATTRIBUTES } : {}),
+      include: isolated
+        ? [workerQueueCallInclude()]
+        : [
+            ...transcriptionJobInclude({ includeSegments: true }),
+            workerQueueCallInclude({ includeSensitiveRelations: true }),
+          ],
       limit: pageSize,
       order: [
         ['createdAt', 'ASC'],
@@ -3052,7 +3165,12 @@ async function getWorkerTranscriptionQueue(query = {}) {
         if (statusDiff !== 0) return statusDiff;
         return Number(left.id || 0) - Number(right.id || 0);
       })
-      .map((job) => mapWorkerTranscriptionJob(job, { includeSegments: true })),
+      .map((job) => mapWorkerTranscriptionJob(job, {
+        includeLeaseStatus: isolated,
+        includeSegments: !isolated,
+        includeSensitiveRelations: !isolated,
+        minimal: isolated,
+      })),
     totals,
   };
 }
@@ -3063,7 +3181,9 @@ async function getTranscriptionJobOrFail(id, options = {}) {
         ...transcriptionJobInclude({
           includeSegments: options.includeSegments,
         }),
-        workerQueueCallInclude(),
+        workerQueueCallInclude({
+          includeSensitiveRelations: !isTenantFilesWorkersEnabled(),
+        }),
       ]
     : transcriptionJobInclude({
         includeCall: options.includeCall,
@@ -3079,14 +3199,25 @@ async function getTranscriptionJobOrFail(id, options = {}) {
 }
 
 async function getUserTranscriptionJobOrFail(actor, id, options = {}) {
-  const job = await getTranscriptionJobOrFail(id, options);
+  const job = isTenantFilesWorkersEnabled()
+    ? await db.TelephonyTranscriptionJob.findOne({
+        include: transcriptionJobInclude({
+          includeCall: options.includeCall,
+          includeSegments: options.includeSegments,
+        }),
+        lock: options.lock,
+        transaction: options.transaction,
+        where: withTenantJobWhere({ id }, options.tenant),
+      })
+    : await getTranscriptionJobOrFail(id, options);
+  if (!job) throw appError('Задача транскрибации не найдена', 404);
   await getCallOrFail(actor, job.telephonyCallId, {
     transaction: options.transaction,
   });
   return job;
 }
 
-async function claimTranscriptionJob(data = {}) {
+async function claimTranscriptionJobLegacy(data = {}) {
   const jobId = await db.sequelize.transaction(async (transaction) => {
     const job = await db.TelephonyTranscriptionJob.findOne({
       lock: transaction.LOCK.UPDATE,
@@ -3131,10 +3262,124 @@ async function claimTranscriptionJob(data = {}) {
   if (!jobId) return { job: null };
 
   const job = await getTranscriptionJobOrFail(jobId, { includeWorkerCall: true });
-  return { job: mapWorkerTranscriptionJob(job) };
+  return {
+    job: mapWorkerTranscriptionJob(job, { includeSensitiveRelations: true }),
+  };
 }
 
-async function updateTranscriptionJobProgress(jobId, data = {}) {
+function buildWorkerClaimResponse(job, lease) {
+  const tenant = tenantRoutingMetadata(job);
+  return {
+    job: mapWorkerTranscriptionJob(job, { minimal: true }),
+    lease: publicLease(lease, job.attemptCount),
+    protocolVersion: WORKER_PROTOCOL_VERSION,
+    tenant,
+  };
+}
+
+async function claimTranscriptionJob(data = {}, worker = null) {
+  if (!isTenantFilesWorkersEnabled()) return claimTranscriptionJobLegacy(data);
+  assertPlatformWorker(worker);
+
+  const now = new Date();
+  const lease = createLease(now);
+  const jobId = await db.sequelize.transaction(async (transaction) => {
+    const job = await db.TelephonyTranscriptionJob.findOne({
+      lock: transaction.LOCK.UPDATE,
+      order: [
+        ['organizationId', 'ASC'],
+        ['clubId', 'ASC'],
+        ['createdAt', 'ASC'],
+        ['id', 'ASC'],
+      ],
+      transaction,
+      where: {
+        [Op.or]: [
+          { status: 'queued' },
+          {
+            status: 'processing',
+            [Op.or]: [
+              { claimExpiresAt: { [Op.lt]: now } },
+              { claimExpiresAt: null },
+              { claimId: null },
+            ],
+          },
+        ],
+      },
+    });
+    if (!job) return null;
+
+    await job.update(
+      {
+        aiCorrections: null,
+        aiMetadata: null,
+        aiTranscriptSegments: null,
+        aiTranscriptText: null,
+        attemptCount: Number(job.attemptCount || 0) + 1,
+        claimedAt: now,
+        claimExpiresAt: lease.claimExpiresAt,
+        claimId: lease.claimId,
+        claimTokenHash: lease.claimTokenHash,
+        claimWorkerCredentialId: worker?.credentialId,
+        corrections: null,
+        errorMessage: null,
+        failedAt: null,
+        language: null,
+        metadata: {
+          ...asObject(job.metadata),
+          progress: {
+            message: 'Worker начал обработку',
+            percent: 5,
+            stage: 'claimed',
+            updatedAt: now.toISOString(),
+          },
+        },
+        rawAsrJson: null,
+        rawTranscriptText: null,
+        status: 'processing',
+        transcriptText: null,
+        workerId: worker?.instanceId || normalizeText(data.workerId),
+        workerProtocolVersion: WORKER_PROTOCOL_VERSION,
+      },
+      { transaction },
+    );
+    return job.id;
+  });
+
+  if (!jobId) {
+    return { job: null, protocolVersion: WORKER_PROTOCOL_VERSION };
+  }
+  const job = await getTranscriptionJobOrFail(jobId, { includeWorkerCall: true });
+  return buildWorkerClaimResponse(job, lease);
+}
+
+async function updateTranscriptionJobProgress(jobId, data = {}, worker = null) {
+  if (isTenantFilesWorkersEnabled()) {
+    const savedJobId = await db.sequelize.transaction(async (transaction) => {
+      const job = await getTranscriptionJobOrFail(jobId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      assertActiveLease(job, data, worker);
+      const metadata = asObject(job.metadata);
+      await job.update({
+        claimExpiresAt: new Date(Date.now() + getLeaseDurationMs()),
+        metadata: {
+          ...metadata,
+          progress: {
+            message: normalizeText(data.message),
+            percent: Number(data.progress),
+            stage: data.stage,
+            updatedAt: new Date().toISOString(),
+          },
+        },
+      }, { transaction });
+      return job.id;
+    });
+    const job = await getTranscriptionJobOrFail(savedJobId);
+    return { job: mapTranscriptionJob(job) };
+  }
+
   const job = await getTranscriptionJobOrFail(jobId);
   if (job.status !== 'processing') {
     throw appError('Прогресс можно обновлять только для задачи в обработке', 409);
@@ -3154,7 +3399,20 @@ async function updateTranscriptionJobProgress(jobId, data = {}) {
   return { job: mapTranscriptionJob(job) };
 }
 
-async function getTranscriptionJobAudioReference(jobId) {
+async function getTranscriptionJobAudioReference(jobId, data = {}, worker = null) {
+  if (isTenantFilesWorkersEnabled()) {
+    await db.sequelize.transaction(async (transaction) => {
+      const lockedJob = await getTranscriptionJobOrFail(jobId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      assertActiveLease(lockedJob, data, worker);
+      await lockedJob.update(
+        { claimExpiresAt: new Date(Date.now() + getLeaseDurationMs()) },
+        { transaction },
+      );
+    });
+  }
   const job = await getTranscriptionJobOrFail(jobId, { includeCall: true });
   if (job.status !== 'processing') {
     throw appError('Получить аудио можно только для задачи в обработке', 409);
@@ -3166,14 +3424,17 @@ async function getTranscriptionJobAudioReference(jobId) {
     throw appError('У звонка нет доступной записи для транскрибации', 409);
   }
 
-  const audio = await refreshRecordingReferenceForCall(call);
+  const audio = await refreshRecordingReferenceForCall(call, { tenant: job });
   return {
     audio,
-    job: mapWorkerTranscriptionJob(job),
+    job: mapWorkerTranscriptionJob(job, {
+      includeSensitiveRelations: !isTenantFilesWorkersEnabled(),
+      minimal: isTenantFilesWorkersEnabled(),
+    }),
   };
 }
 
-async function completeTranscriptionJob(jobId, data = {}) {
+async function completeTranscriptionJob(jobId, data = {}, worker = null) {
   const normalized = normalizeTranscriptSegments(data);
   if (!normalized.transcriptText && normalized.segments.length === 0) {
     throw appError('Передайте текст транскрибации или segments', 400);
@@ -3184,7 +3445,9 @@ async function completeTranscriptionJob(jobId, data = {}) {
       lock: transaction.LOCK.UPDATE,
       transaction,
     });
-    if (job.status !== 'processing') {
+    if (isTenantFilesWorkersEnabled()) {
+      assertActiveLease(job, data, worker);
+    } else if (job.status !== 'processing') {
       throw appError('Завершить можно только задачу в обработке', 409);
     }
 
@@ -3205,6 +3468,7 @@ async function completeTranscriptionJob(jobId, data = {}) {
 
     await job.update(
       {
+        claimExpiresAt: isTenantFilesWorkersEnabled() ? new Date() : job.claimExpiresAt,
         completedAt: new Date(),
         errorMessage: null,
         failedAt: null,
@@ -3228,12 +3492,36 @@ async function completeTranscriptionJob(jobId, data = {}) {
 
   const job = await getTranscriptionJobOrFail(savedJobId, {
     includeCall: true,
-    includeSegments: true,
+    includeSegments: !isTenantFilesWorkersEnabled(),
   });
-  return { job: mapWorkerTranscriptionJob(job, { includeSegments: true }) };
+  return {
+    job: mapWorkerTranscriptionJob(job, {
+      includeSegments: !isTenantFilesWorkersEnabled(),
+      minimal: isTenantFilesWorkersEnabled(),
+    }),
+  };
 }
 
-async function failTranscriptionJob(jobId, data = {}) {
+async function failTranscriptionJob(jobId, data = {}, worker = null) {
+  if (isTenantFilesWorkersEnabled()) {
+    const savedJobId = await db.sequelize.transaction(async (transaction) => {
+      const job = await getTranscriptionJobOrFail(jobId, {
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      assertActiveLease(job, data, worker);
+      await job.update({
+        claimExpiresAt: new Date(),
+        errorMessage: normalizeText(data.errorMessage || data.error) || 'Worker failed',
+        failedAt: new Date(),
+        status: 'failed',
+      }, { transaction });
+      return job.id;
+    });
+    const freshJob = await getTranscriptionJobOrFail(savedJobId, { includeCall: true });
+    return { job: mapWorkerTranscriptionJob(freshJob, { minimal: true }) };
+  }
+
   const job = await getTranscriptionJobOrFail(jobId);
   if (job.status !== 'processing') {
     throw appError('Пометить ошибку можно только для задачи в обработке', 409);
@@ -3249,15 +3537,16 @@ async function failTranscriptionJob(jobId, data = {}) {
   return { job: mapWorkerTranscriptionJob(freshJob) };
 }
 
-async function retryTranscriptionJob(actor, jobId) {
-  const job = await getUserTranscriptionJobOrFail(actor, jobId);
+async function retryTranscriptionJob(actor, jobId, tenant = null) {
+  const job = await getUserTranscriptionJobOrFail(actor, jobId, { tenant });
   if (job.status === 'queued' || job.status === 'processing') {
-    return getCall(actor, job.telephonyCallId);
+    return getCall(actor, job.telephonyCallId, tenant);
   }
 
   await db.sequelize.transaction(async (transaction) => {
     const lockedJob = await getUserTranscriptionJobOrFail(actor, job.id, {
       lock: transaction.LOCK.UPDATE,
+      tenant,
       transaction,
     });
     if (!['completed', 'failed'].includes(lockedJob.status)) {
@@ -3271,6 +3560,10 @@ async function retryTranscriptionJob(actor, jobId) {
     await lockedJob.update(
       {
         claimedAt: null,
+        claimExpiresAt: null,
+        claimId: null,
+        claimTokenHash: null,
+        claimWorkerCredentialId: null,
         completedAt: null,
         errorMessage: null,
         failedAt: null,
@@ -3286,15 +3579,16 @@ async function retryTranscriptionJob(actor, jobId) {
         status: 'queued',
         transcriptText: null,
         workerId: null,
+        workerProtocolVersion: null,
       },
       { transaction },
     );
   });
 
-  return getCall(actor, job.telephonyCallId);
+  return getCall(actor, job.telephonyCallId, tenant);
 }
 
-async function retryTranscriptionJobForWorker(jobId, data = {}) {
+async function retryTranscriptionJobForWorkerLegacy(jobId, data = {}) {
   const job = await getTranscriptionJobOrFail(jobId);
   if (job.status === 'processing') {
     return { job: mapWorkerTranscriptionJob(job) };
@@ -3344,6 +3638,69 @@ async function retryTranscriptionJobForWorker(jobId, data = {}) {
 
   const freshJob = await getTranscriptionJobOrFail(savedJobId, { includeCall: true });
   return { job: mapWorkerTranscriptionJob(freshJob) };
+}
+
+async function retryTranscriptionJobForWorker(jobId, data = {}, worker = null) {
+  if (!isTenantFilesWorkersEnabled()) {
+    return retryTranscriptionJobForWorkerLegacy(jobId, data);
+  }
+  assertPlatformWorker(worker);
+
+  const now = new Date();
+  const lease = createLease(now);
+  const savedJobId = await db.sequelize.transaction(async (transaction) => {
+    const job = await getTranscriptionJobOrFail(jobId, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (!['failed', 'queued'].includes(job.status)) {
+      const error = appError('Задача транскрибации не найдена', 404);
+      error.code = 'WORKER_JOB_NOT_FOUND';
+      throw error;
+    }
+    await db.TelephonyTranscriptSegment.destroy({
+      transaction,
+      where: { transcriptionJobId: job.id },
+    });
+    await job.update(
+      {
+        aiCorrections: null,
+        aiMetadata: null,
+        aiTranscriptSegments: null,
+        aiTranscriptText: null,
+        attemptCount: Number(job.attemptCount || 0) + 1,
+        claimedAt: now,
+        claimExpiresAt: lease.claimExpiresAt,
+        claimId: lease.claimId,
+        claimTokenHash: lease.claimTokenHash,
+        claimWorkerCredentialId: worker?.credentialId,
+        completedAt: null,
+        corrections: null,
+        errorMessage: null,
+        failedAt: null,
+        language: null,
+        metadata: {
+          progress: {
+            message: 'Worker повторно начал обработку',
+            percent: 5,
+            stage: 'claimed',
+            updatedAt: now.toISOString(),
+          },
+          source: 'worker_retry',
+        },
+        rawAsrJson: null,
+        rawTranscriptText: null,
+        status: 'processing',
+        transcriptText: null,
+        workerId: worker?.instanceId || normalizeText(data.workerId),
+        workerProtocolVersion: WORKER_PROTOCOL_VERSION,
+      },
+      { transaction },
+    );
+    return job.id;
+  });
+  const job = await getTranscriptionJobOrFail(savedJobId, { includeWorkerCall: true });
+  return buildWorkerClaimResponse(job, lease);
 }
 
 async function subscribeToEvents(data = {}) {

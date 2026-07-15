@@ -9,6 +9,8 @@
 - `server`: `npm run typecheck`
 - `server`: `npm run test`
 - `server`: `npm run onboarding:audit:strict`
+- `server`: `npm run tenant:files-workers:audit`
+- `server`: `npm run tenant:files-workers:attachments` and review missing/mismatch/orphan counts before any apply
 - `server`: `npm run openapi`
 - `client`: `npm run lint`
 - `client`: `npm run test`
@@ -22,7 +24,7 @@
 - For booking cleanup releases, verify onboarding covers schedule quick actions, payment/conflict/active-prepayment warnings, group participants and the client-card link from a booking.
 - For Visits Analytics releases, verify onboarding covers the four tabs of `/admin/visits-analytics`: overview, source quality, cohorts/lifecycle and revenue/LTV; owner/manager segment-to-client-base-to-call-task handoff; accountant/viewer read-only filters and exports; canonical clients, mature windows, Europe/Moscow timezone, LTV coverage and no extra checkpoint events beyond `report.viewed`.
 - Verify trainer-facing instructions and screens do not expose phones, external IDs, CRM sales notes, call history or full client-base management context.
-- Create and verify a database backup before switching traffic.
+- Create and verify a complete database + uploads + checksum manifest backup before switching traffic. A DB-only backup is incomplete.
 
 ## After deploy
 

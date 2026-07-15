@@ -47,7 +47,7 @@ class TelephonyController {
 
   async getCalls(req, res) {
     try {
-      res.json(await telephonyService.listCalls(req.account, req.query));
+      res.json(await telephonyService.listCalls(req.account, req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения звонков');
     }
@@ -55,7 +55,7 @@ class TelephonyController {
 
   async getCall(req, res) {
     try {
-      res.json(await telephonyService.getCall(req.account, req.params.id));
+      res.json(await telephonyService.getCall(req.account, req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения звонка');
     }
@@ -130,7 +130,7 @@ class TelephonyController {
   async refreshRecordingReference(req, res) {
     try {
       res.json(
-        await telephonyService.refreshRecordingReference(req.account, req.params.id),
+        await telephonyService.refreshRecordingReference(req.account, req.params.id, req.tenant),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения ссылки на запись звонка');
@@ -140,7 +140,7 @@ class TelephonyController {
   async createTranscriptionJob(req, res) {
     try {
       res.status(201).json(
-        await telephonyService.createTranscriptionJob(req.account, req.params.id),
+        await telephonyService.createTranscriptionJob(req.account, req.params.id, req.tenant),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка создания задачи транскрибации');
@@ -149,7 +149,11 @@ class TelephonyController {
 
   async queueMissingTranscriptionJobs(req, res) {
     try {
-      res.json(await telephonyService.queueMissingTranscriptionJobs(req.account, req.body || {}));
+      res.json(await telephonyService.queueMissingTranscriptionJobs(
+        req.account,
+        req.body || {},
+        req.tenant,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка массовой постановки транскрибаций');
     }
@@ -157,7 +161,11 @@ class TelephonyController {
 
   async listTranscriptionJobs(req, res) {
     try {
-      res.json(await telephonyService.listTranscriptionJobs(req.account, req.query));
+      res.json(await telephonyService.listTranscriptionJobs(
+        req.account,
+        req.query,
+        req.tenant,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка получения задач транскрибации');
     }
@@ -170,6 +178,7 @@ class TelephonyController {
           req.account,
           req.params.id,
           req.query,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -179,7 +188,7 @@ class TelephonyController {
 
   async getTranscriptionStats(req, res) {
     try {
-      res.json(await telephonyService.getTranscriptionStats(req.account));
+      res.json(await telephonyService.getTranscriptionStats(req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения статистики транскрибации');
     }
@@ -195,7 +204,11 @@ class TelephonyController {
 
   async getTranscriptionJob(req, res) {
     try {
-      res.json(await telephonyService.getTranscriptionJob(req.account, req.params.id));
+      res.json(await telephonyService.getTranscriptionJob(
+        req.account,
+        req.params.id,
+        req.tenant,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка получения задачи транскрибации');
     }
@@ -204,7 +217,7 @@ class TelephonyController {
   async retryTranscriptionJob(req, res) {
     try {
       res.json(
-        await telephonyService.retryTranscriptionJob(req.account, req.params.id),
+        await telephonyService.retryTranscriptionJob(req.account, req.params.id, req.tenant),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка повторной постановки транскрибации');
@@ -213,7 +226,10 @@ class TelephonyController {
 
   async claimTranscriptionJob(req, res) {
     try {
-      res.json(await telephonyService.claimTranscriptionJob(req.body || {}));
+      res.json(await telephonyService.claimTranscriptionJob(
+        req.body || {},
+        req.transcriptionWorker,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка выдачи задачи транскрибации');
     }
@@ -222,7 +238,11 @@ class TelephonyController {
   async getTranscriptionJobAudioReference(req, res) {
     try {
       res.json(
-        await telephonyService.getTranscriptionJobAudioReference(req.params.id),
+        await telephonyService.getTranscriptionJobAudioReference(
+          req.params.id,
+          req.body || {},
+          req.transcriptionWorker,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения аудио для транскрибации');
@@ -231,7 +251,11 @@ class TelephonyController {
 
   async updateTranscriptionJobProgress(req, res) {
     try {
-      res.json(await telephonyService.updateTranscriptionJobProgress(req.params.id, req.body || {}));
+      res.json(await telephonyService.updateTranscriptionJobProgress(
+        req.params.id,
+        req.body || {},
+        req.transcriptionWorker,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка обновления прогресса транскрибации');
     }
@@ -240,7 +264,11 @@ class TelephonyController {
   async completeTranscriptionJob(req, res) {
     try {
       res.json(
-        await telephonyService.completeTranscriptionJob(req.params.id, req.body || {}),
+        await telephonyService.completeTranscriptionJob(
+          req.params.id,
+          req.body || {},
+          req.transcriptionWorker,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка сохранения транскрибации');
@@ -250,7 +278,11 @@ class TelephonyController {
   async failTranscriptionJob(req, res) {
     try {
       res.json(
-        await telephonyService.failTranscriptionJob(req.params.id, req.body || {}),
+        await telephonyService.failTranscriptionJob(
+          req.params.id,
+          req.body || {},
+          req.transcriptionWorker,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка сохранения ошибки транскрибации');
@@ -260,7 +292,11 @@ class TelephonyController {
   async retryTranscriptionJobForWorker(req, res) {
     try {
       res.json(
-        await telephonyService.retryTranscriptionJobForWorker(req.params.id, req.body || {}),
+        await telephonyService.retryTranscriptionJobForWorker(
+          req.params.id,
+          req.body || {},
+          req.transcriptionWorker,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка повторной постановки транскрибации worker');

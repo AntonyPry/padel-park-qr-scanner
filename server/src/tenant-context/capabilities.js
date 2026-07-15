@@ -13,9 +13,16 @@ function isTenantCacheRealtimeEnabled() {
   return readBooleanEnv(process.env.TENANT_CACHE_REALTIME_ENABLED, false);
 }
 
-function capabilityDependencyError() {
+function isTenantFilesWorkersEnabled() {
+  return readBooleanEnv(process.env.TENANT_FILES_WORKERS_ENABLED, false);
+}
+
+function capabilityDependencyError(
+  capability = 'TENANT_CACHE_REALTIME_ENABLED',
+  dependency = 'TENANT_CONTEXT_ENABLED',
+) {
   const error = new Error(
-    'TENANT_CACHE_REALTIME_ENABLED requires TENANT_CONTEXT_ENABLED',
+    `${capability} requires ${dependency}`,
   );
   error.code = 'TENANT_CAPABILITY_DEPENDENCY_INVALID';
   error.statusCode = 503;
@@ -24,17 +31,31 @@ function capabilityDependencyError() {
 
 function assertTenantCapabilityDependencies() {
   if (isTenantCacheRealtimeEnabled() && !isTenantContextEnabled()) {
-    throw capabilityDependencyError();
+    throw capabilityDependencyError('TENANT_CACHE_REALTIME_ENABLED');
+  }
+  if (isTenantFilesWorkersEnabled() && !isTenantContextEnabled()) {
+    throw capabilityDependencyError('TENANT_FILES_WORKERS_ENABLED');
+  }
+  if (isTenantFilesWorkersEnabled() && !isTenantCacheRealtimeEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_FILES_WORKERS_ENABLED',
+      'TENANT_CACHE_REALTIME_ENABLED',
+    );
   }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
     tenantContext: isTenantContextEnabled(),
+    tenantFilesWorkers: isTenantFilesWorkersEnabled(),
   });
 }
 
 function tenantContextCapability() {
-  return { ...assertTenantCapabilityDependencies() };
+  const capabilities = assertTenantCapabilityDependencies();
+  return {
+    tenantCacheRealtime: capabilities.tenantCacheRealtime,
+    tenantContext: capabilities.tenantContext,
+  };
 }
 
 module.exports = {
@@ -42,6 +63,7 @@ module.exports = {
   capabilityDependencyError,
   isTenantCacheRealtimeEnabled,
   isTenantContextEnabled,
+  isTenantFilesWorkersEnabled,
   readBooleanEnv,
   tenantContextCapability,
 };

@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
+const path = require('node:path');
 const { afterEach, test } = require('node:test');
 const db = require('../../models');
 const shiftReportsService = require('../../src/services/shift-reports.service');
+const { buildTenantStorageKey } = require('../../src/storage/tenant-storage');
 
 const originalModels = {
   Account: db.Account,
@@ -389,6 +391,67 @@ test('uploadAttachment rejects more than 10 photos per answer', async () => {
       ),
     /до 10 фото/,
   );
+});
+
+test('tenant attachment metadata binds tenant, parent identity and canonical storage key', () => {
+  const tenant = { organizationId: 4, clubId: 9 };
+  const attachment = {
+    checksumSha256: 'a'.repeat(64),
+    clubId: tenant.clubId,
+    domain: 'shift-report-attachments',
+    id: '912c1a0e-9f21-4e43-8f26-278af61b3e58',
+    organizationId: tenant.organizationId,
+    record: {
+      answerId: 7,
+      fileId: '912c1a0e-9f21-4e43-8f26-278af61b3e58',
+      reportId: 42,
+    },
+    storageKey: buildTenantStorageKey({
+      ...tenant,
+      domain: 'shift-report-attachments',
+      fileId: '912c1a0e-9f21-4e43-8f26-278af61b3e58',
+      recordId: 'report:42:answer:7',
+    }),
+    storageSchemaVersion: 1,
+  };
+
+  assert.doesNotThrow(() =>
+    shiftReportsService.assertTenantAttachmentMetadata(attachment, 42, 7, tenant));
+  for (const invalid of [
+    [{ ...attachment, clubId: 10 }, 42, 7, tenant],
+    [{ ...attachment, storageKey: attachment.storageKey.replace(/file_[a-f0-9]+$/, 'file_bbbbbbbb') }, 42, 7, tenant],
+    [attachment, 43, 7, tenant],
+    [attachment, 42, 8, tenant],
+  ]) {
+    assert.throws(
+      () => shiftReportsService.assertTenantAttachmentMetadata(...invalid),
+      (error) => error.statusCode === 404,
+    );
+  }
+});
+
+test('legacy attachment fallback accepts only exact default layout metadata', () => {
+  const id = '912c1a0e-9f21-4e43-8f26-278af61b3e58';
+  const valid = {
+    id,
+    mimeType: 'image/heic',
+    relativePath: path.join('42', `${id}.heic`),
+  };
+  assert.equal(
+    shiftReportsService.assertLegacyAttachmentMetadata(valid, 42),
+    path.join('42', `${id}.heic`),
+  );
+  for (const attachment of [
+    { ...valid, relativePath: `../42/${id}.heic` },
+    { ...valid, relativePath: path.join('41', `${id}.heic`) },
+    { ...valid, id: '../../escape' },
+    { ...valid, organizationId: 1 },
+  ]) {
+    assert.throws(
+      () => shiftReportsService.assertLegacyAttachmentMetadata(attachment, 42),
+      (error) => error.statusCode === 404,
+    );
+  }
 });
 
 test('admin report list is limited to active shift scope', async () => {

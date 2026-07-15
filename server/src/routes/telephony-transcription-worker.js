@@ -29,7 +29,7 @@ router.post(
   '/telephony/transcription-jobs/:id/audio-reference',
   workerEndpoint,
   requireTranscriptionWorkerToken,
-  validate(apiSchemas.telephony.withId),
+  validate(apiSchemas.telephony.transcriptionAudioReference),
   telephonyController.getTranscriptionJobAudioReference,
 );
 router.post(

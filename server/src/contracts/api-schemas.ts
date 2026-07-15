@@ -174,6 +174,10 @@ const paginationQuery = z
   })
   .passthrough();
 const idParams = z.object({ id });
+const transcriptionWorkerLeaseFields = {
+  claimId: z.string().uuid().optional(),
+  claimToken: z.string().trim().min(32).max(256).optional(),
+};
 const redemptionIdParams = z.object({ id, redemptionId: id });
 const viewIdParams = z.object({ viewId: id });
 const clientIdParams = z.object({ clientId: id });
@@ -1363,8 +1367,13 @@ const apiSchemas = {
         workerId: optionalString,
       })
       .passthrough(),
+    transcriptionAudioReference: {
+      body: z.object(transcriptionWorkerLeaseFields).passthrough(),
+      params: idParams,
+    },
     transcriptionProgress: {
       body: z.object({
+        ...transcriptionWorkerLeaseFields,
         message: z.string().trim().max(500).optional(),
         progress: z.number().int().min(0).max(100),
         stage: z.enum([
@@ -1386,6 +1395,7 @@ const apiSchemas = {
     transcriptionFail: {
       body: z
         .object({
+          ...transcriptionWorkerLeaseFields,
           error: optionalString,
           errorMessage: optionalString,
         })
@@ -1395,6 +1405,7 @@ const apiSchemas = {
     transcriptionResult: {
       body: z
         .object({
+          ...transcriptionWorkerLeaseFields,
           aiCorrections: optionalJsonArray,
           aiMetadata: optionalJsonObject,
           aiSegments: optionalJsonArray,

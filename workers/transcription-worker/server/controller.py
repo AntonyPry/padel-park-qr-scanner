@@ -31,6 +31,16 @@ def _elapsed_ms(started_at: str | None) -> int | None:
     return int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
 
 
+def _runtime_job(claimed: dict[str, Any] | None) -> dict[str, Any] | None:
+    job = dict((claimed or {}).get("job") or {})
+    if not job:
+        return None
+    job["tenant"] = (claimed or {}).get("tenant") or job.get("tenant") or {}
+    job["protocolVersion"] = (claimed or {}).get("protocolVersion")
+    job["_lease"] = (claimed or {}).get("lease") or {}
+    return job
+
+
 CRM_PROGRESS = {
     "downloading_audio": 10,
     "ffmpeg_preprocess": 25,
@@ -61,7 +71,11 @@ class WorkerController:
         self.config = config
         self.store = store
         self.broker = broker
-        self.crm = crm_client or CrmClient(config.crm_api_url, config.crm_worker_token)
+        self.crm = crm_client or CrmClient(
+            config.crm_api_url,
+            config.crm_worker_token,
+            worker_instance_id=config.worker_id,
+        )
         self.pipeline = pipeline or PipelineRunner(config)
         self._busy = False
         self._busy_lock = threading.Lock()
@@ -81,6 +95,7 @@ class WorkerController:
             },
         }
         self._crm_queue_loaded_at = 0.0
+        self._active_jobs: dict[int, dict[str, Any]] = {}
         self.set_polling_running(not config.start_paused)
 
     def start_background_polling(self) -> None:
@@ -238,11 +253,11 @@ class WorkerController:
 
         self.store.update_job(local_job_id, **update)
         if stage in CRM_PROGRESS:
-            job = self.store.get_job(local_job_id) or {}
+            job = self._active_jobs.get(local_job_id) or {}
             crm_job_id = job.get("crmJobId")
-            if crm_job_id:
+            if job.get("id"):
                 try:
-                    self.crm.progress_job(crm_job_id, stage, CRM_PROGRESS[stage], message)
+                    self.crm.progress_job(job, stage, CRM_PROGRESS[stage], message)
                 except (CrmApiError, RuntimeError) as error:
                     safe_details["crmProgressError"] = str(error)
         payload = self.store.add_event(
@@ -270,7 +285,7 @@ class WorkerController:
             self._connect_crm()
             self._global_event("waiting_in_crm", "Checking CRM transcription queue", {"source": source})
             claimed = self.crm.claim_job(self.config.worker_id)
-            job = claimed.get("job") if claimed else None
+            job = _runtime_job(claimed)
             if not job:
                 self._global_event("waiting_in_crm", "No transcription jobs available", {"source": source})
                 self._get_crm_queue_snapshot(force=True)
@@ -279,14 +294,16 @@ class WorkerController:
             local_job = self.store.create_job(job, self.config.whisper_model, self.config.whisper_model_path)
             self._get_crm_queue_snapshot(force=True)
             local_job_id = local_job["id"]
+            self._active_jobs[local_job_id] = job
             self._job_event(
                 local_job_id,
                 "claimed",
                 "Job claimed",
                 {
-                    "callId": _call_id(job),
                     "crmJobId": job.get("id"),
-                    "recordingStatus": (job.get("call") or {}).get("recordingStatus"),
+                    "claimId": (job.get("_lease") or {}).get("claimId"),
+                    "organizationKey": (job.get("tenant") or {}).get("organizationKey"),
+                    "clubKey": (job.get("tenant") or {}).get("clubKey"),
                 },
             )
             self._process_claimed_job(local_job_id, job)
@@ -296,6 +313,8 @@ class WorkerController:
             else:
                 self._fail_local_job(local_job_id, error)
         finally:
+            if local_job_id is not None:
+                self._active_jobs.pop(local_job_id, None)
             with self._busy_lock:
                 self._busy = False
             self._publish_snapshot()
@@ -310,19 +329,26 @@ class WorkerController:
                 {"localJobId": failed_job["id"], "crmJobId": failed_job["crmJobId"]},
             )
             retry_payload = self.crm.retry_job(failed_job["crmJobId"], self.config.worker_id)
-            job = retry_payload.get("job") if retry_payload else None
+            job = _runtime_job(retry_payload)
             if not job:
                 claimed = self.crm.claim_job(self.config.worker_id)
-                job = claimed.get("job") if claimed else None
+                job = _runtime_job(claimed)
             if not job:
                 raise DashboardError("CRM retry did not return a job and claim returned no tasks", status=409)
             local_job = self.store.create_job(job, self.config.whisper_model, self.config.whisper_model_path)
             local_job_id = local_job["id"]
+            self._active_jobs[local_job_id] = job
             self._job_event(
                 local_job_id,
                 "claimed",
                 "Retried job claimed",
-                {"retryOfLocalJobId": failed_job["id"], "crmJobId": job.get("id"), "callId": _call_id(job)},
+                {
+                    "retryOfLocalJobId": failed_job["id"],
+                    "crmJobId": job.get("id"),
+                    "claimId": (job.get("_lease") or {}).get("claimId"),
+                    "organizationKey": (job.get("tenant") or {}).get("organizationKey"),
+                    "clubKey": (job.get("tenant") or {}).get("clubKey"),
+                },
             )
             self._process_claimed_job(local_job_id, job)
         except Exception as error:
@@ -331,20 +357,22 @@ class WorkerController:
             else:
                 self._fail_local_job(local_job_id, error)
         finally:
+            if local_job_id is not None:
+                self._active_jobs.pop(local_job_id, None)
             with self._busy_lock:
                 self._busy = False
             self._publish_snapshot()
 
     def _process_claimed_job(self, local_job_id: int, job: dict[str, Any]) -> None:
         self._job_event(local_job_id, "downloading_audio", "Requesting recording reference")
-        audio_reference = self.crm.audio_reference(job["id"])
+        audio_reference = self.crm.audio_reference(job)
         result = self.pipeline.run(
             job,
             audio_reference,
             lambda stage, message=None, details=None: self._job_event(local_job_id, stage, message, details),
         )
         self._job_event(local_job_id, "uploading_result", "Submitting transcript to CRM")
-        self.crm.complete_job(job["id"], result["transcript"])
+        self.crm.complete_job(job, result["transcript"])
         self._get_crm_queue_snapshot(force=True)
         self._job_event(local_job_id, "uploading_result", "Transcript submitted to CRM")
         self._job_event(local_job_id, "completed", "Job completed")
@@ -359,11 +387,10 @@ class WorkerController:
             status="failed",
         )
         self._job_event(local_job_id, "failed", "Job failed", {"error": summary})
-        job = self.store.get_job(local_job_id)
-        crm_job_id = job.get("crmJobId") if job else None
-        if crm_job_id:
+        job = self._active_jobs.get(local_job_id)
+        if job and job.get("id"):
             try:
-                self.crm.fail_job(crm_job_id, summary[:4000])
+                self.crm.fail_job(job, summary[:4000])
             except (CrmApiError, RuntimeError) as fail_error:
                 self._job_event(
                     local_job_id,

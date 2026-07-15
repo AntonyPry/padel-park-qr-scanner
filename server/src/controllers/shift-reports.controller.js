@@ -170,6 +170,7 @@ class ShiftReportsController {
           req.params.answerId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -185,6 +186,7 @@ class ShiftReportsController {
           req.params.answerId,
           req.params.attachmentId,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -199,6 +201,7 @@ class ShiftReportsController {
         req.params.answerId,
         req.params.attachmentId,
         req.account,
+        req.tenant,
       );
       res.setHeader('Content-Type', attachment.mimeType);
       res.setHeader(

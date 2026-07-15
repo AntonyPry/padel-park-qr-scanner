@@ -24,6 +24,14 @@ async function cleanupCall(call) {
   await call.destroy();
 }
 
+async function defaultTenantAttribution() {
+  const organization = await db.Organization.findOne({ where: { slug: 'padel-park' } });
+  const club = await db.Club.findOne({
+    where: { organizationId: organization.id, slug: 'padel-park' },
+  });
+  return { organizationId: organization.id, clubId: club.id };
+}
+
 test('DB-backed auto-enqueue stays idempotent across concurrency, statuses and queue-missing', async () => {
   await db.sequelize.authenticate();
   let call;
@@ -78,8 +86,10 @@ test('DB-backed call transcription list skips large transcript payloads', async 
   let call;
   try {
     call = await createRecordedCall('lightweight-list');
+    const tenant = await defaultTenantAttribution();
     const largeText = 'large transcript payload '.repeat(1_800);
     await db.TelephonyTranscriptionJob.create({
+      ...tenant,
       aiTranscriptSegments: Array.from({ length: 300 }, (_, index) => ({
         editedText: `${index}: ${largeText.slice(0, 200)}`,
         segmentId: `segment-${index}`,
@@ -129,8 +139,10 @@ test('DB-backed paginated call list skips large transcript payloads while detail
       );
     }
     const detailCall = calls[0];
+    const tenant = await defaultTenantAttribution();
     const largeText = 'large transcript payload '.repeat(1_800);
     await db.TelephonyTranscriptionJob.create({
+      ...tenant,
       aiTranscriptSegments: [{ editedText: largeText, segmentId: 'large-1' }],
       aiTranscriptText: largeText,
       metadata: { progress: { percent: 73, stage: 'asr_left' } },

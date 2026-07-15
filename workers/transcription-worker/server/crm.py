@@ -13,10 +13,11 @@ class CrmApiError(RuntimeError):
 
 
 class CrmClient:
-    def __init__(self, base_url: str, token: str | None, timeout_seconds: int = 30):
+    def __init__(self, base_url: str, token: str | None, timeout_seconds: int = 30, worker_instance_id: str | None = None):
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout_seconds = timeout_seconds
+        self.worker_instance_id = worker_instance_id or "python-worker"
 
     def _request(self, path: str, method: str = "GET", body: dict[str, Any] | None = None) -> Any:
         if not self.base_url:
@@ -28,6 +29,8 @@ class CrmClient:
         headers = {
             "Accept": "application/json",
             "Authorization": f"Bearer {self.token}",
+            "X-Worker-Instance-Id": self.worker_instance_id,
+            "X-Worker-Protocol-Version": "2",
         }
         if body is not None:
             data = json.dumps(body).encode("utf-8")
@@ -75,31 +78,48 @@ class CrmClient:
             method="GET",
         )
 
-    def audio_reference(self, job_id: str | int) -> dict[str, Any]:
+    @staticmethod
+    def _job_request(job: dict[str, Any] | str | int) -> tuple[str | int, dict[str, Any]]:
+        if not isinstance(job, dict):
+            return job, {}
+        lease = job.get("_lease") or {}
+        body = {
+            key: lease[key]
+            for key in ("claimId", "claimToken")
+            if lease.get(key)
+        }
+        return job.get("id"), body
+
+    def audio_reference(self, job: dict[str, Any] | str | int) -> dict[str, Any]:
+        job_id, lease = self._job_request(job)
         return self._request(
             f"/telephony/transcription-jobs/{job_id}/audio-reference",
             method="POST",
+            body=lease,
         )
 
-    def progress_job(self, job_id: str | int, stage: str, progress: int, message: str | None = None) -> dict[str, Any]:
+    def progress_job(self, job: dict[str, Any] | str | int, stage: str, progress: int, message: str | None = None) -> dict[str, Any]:
+        job_id, lease = self._job_request(job)
         return self._request(
             f"/telephony/transcription-jobs/{job_id}/progress",
             method="POST",
-            body={"stage": stage, "progress": progress, "message": message},
+            body={**lease, "stage": stage, "progress": progress, "message": message},
         )
 
-    def complete_job(self, job_id: str | int, payload: dict[str, Any]) -> dict[str, Any]:
+    def complete_job(self, job: dict[str, Any] | str | int, payload: dict[str, Any]) -> dict[str, Any]:
+        job_id, lease = self._job_request(job)
         return self._request(
             f"/telephony/transcription-jobs/{job_id}/result",
             method="POST",
-            body=payload,
+            body={**payload, **lease},
         )
 
-    def fail_job(self, job_id: str | int, error_message: str) -> dict[str, Any]:
+    def fail_job(self, job: dict[str, Any] | str | int, error_message: str) -> dict[str, Any]:
+        job_id, lease = self._job_request(job)
         return self._request(
             f"/telephony/transcription-jobs/{job_id}/fail",
             method="POST",
-            body={"errorMessage": error_message},
+            body={**lease, "errorMessage": error_message},
         )
 
     def retry_job(self, job_id: str | int, worker_id: str | None = None) -> dict[str, Any]:

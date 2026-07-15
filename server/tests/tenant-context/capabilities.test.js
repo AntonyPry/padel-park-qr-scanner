@@ -40,6 +40,29 @@ test('cache/realtime capability is server-owned and depends on tenant context', 
   }
 });
 
+test('files/workers capability depends on tenant context and Feature 4.1 isolation', () => {
+  const previousContext = process.env.TENANT_CONTEXT_ENABLED;
+  const previousCache = process.env.TENANT_CACHE_REALTIME_ENABLED;
+  const previousFiles = process.env.TENANT_FILES_WORKERS_ENABLED;
+  try {
+    process.env.TENANT_CONTEXT_ENABLED = 'true';
+    process.env.TENANT_CACHE_REALTIME_ENABLED = 'false';
+    process.env.TENANT_FILES_WORKERS_ENABLED = 'true';
+    assert.throws(
+      () => assertTenantCapabilityDependencies(),
+      (error) => error.code === 'TENANT_CAPABILITY_DEPENDENCY_INVALID'
+        && error.message.includes('TENANT_CACHE_REALTIME_ENABLED'),
+    );
+
+    process.env.TENANT_CACHE_REALTIME_ENABLED = 'true';
+    assert.equal(assertTenantCapabilityDependencies().tenantFilesWorkers, true);
+  } finally {
+    restore('TENANT_CONTEXT_ENABLED', previousContext);
+    restore('TENANT_CACHE_REALTIME_ENABLED', previousCache);
+    restore('TENANT_FILES_WORKERS_ENABLED', previousFiles);
+  }
+});
+
 test('application construction fails fast for an invalid capability combination', () => {
   const previousContext = process.env.TENANT_CONTEXT_ENABLED;
   const previousIsolation = process.env.TENANT_CACHE_REALTIME_ENABLED;

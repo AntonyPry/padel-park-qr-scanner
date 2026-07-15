@@ -16,6 +16,12 @@ const {
 const {
   TENANT_FOUNDATION_STATES,
 } = require('./src/tenant-foundation/constants');
+const {
+  BACKGROUND_COMPONENT_POLICIES,
+} = require('./src/files-workers/background-run-context');
+const {
+  isTenantFilesWorkersEnabled,
+} = require('./src/tenant-context/capabilities');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
@@ -152,6 +158,17 @@ async function startVkBot() {
 
 async function startBackgroundComponents() {
   await assertTenantFoundationInitialized();
+  if (isTenantFilesWorkersEnabled()) {
+    const deferred = Object.entries(BACKGROUND_COMPONENT_POLICIES)
+      .filter(([, policy]) => policy.classification === 'deferred')
+      .map(([component, policy]) => ({
+        component,
+        deferredTo: policy.deferredTo,
+        scope: 'global-scan-blocked',
+      }));
+    console.warn('TENANT_BACKGROUND_COMPONENTS_DEFERRED', JSON.stringify(deferred));
+    return;
+  }
   if (isFeatureEnabled('BOTS_ENABLED')) {
     try {
       await startTelegramBot();

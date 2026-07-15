@@ -1,10 +1,11 @@
 const fsp = require('node:fs/promises');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { createSpeechChunks, downloadAudio, prepareAudio, probeAudio } = require('./audio');
 const { transcribeHttpAsr } = require('./asr-http');
 const { runCommand } = require('./commands');
 const { readConfig } = require('./config');
-const { CrmClient } = require('./crm-client');
+const { attachClaimContext, CrmClient } = require('./crm-client');
 const { buildInitialPrompt, loadDomainGlossary } = require('./glossary');
 const { createLogger } = require('./logger');
 const { postprocessTranscriptWithLlm } = require('./llm-postprocess');
@@ -65,7 +66,7 @@ function progressStageForChannel(channelName, config) {
 
 async function reportProgress(crmClient, job, stage, message, logger) {
   try {
-    await crmClient.updateProgress(job.id, stage, PROGRESS_PERCENT[stage], message);
+    await crmClient.updateProgress(job, stage, PROGRESS_PERCENT[stage], message);
   } catch (error) {
     logger.warn('CRM progress heartbeat failed', {
       error: error.message,
@@ -88,15 +89,37 @@ async function loadQualityConfig(config, logger) {
 }
 
 async function createTempDir(config, job) {
-  const callId = getCallId(job) || 'unknown-call';
-  const prefix = path.join(config.tempRoot, `crm-transcription-${callId}-`);
-  return fsp.mkdtemp(prefix);
+  const tenant = job?.claimContext?.tenant || {};
+  const claimId = job?.claimContext?.claimId;
+  const fallback = crypto
+    .createHash('sha256')
+    .update(`legacy-job:${job?.id || 'unknown'}`)
+    .digest('hex')
+    .slice(0, 24);
+  const safe = (value, prefix) => {
+    const normalized = String(value || '').trim();
+    if (/^[a-z0-9][a-z0-9_-]{7,80}$/i.test(normalized)) return normalized;
+    return `${prefix}-${crypto.createHash('sha256').update(normalized || fallback).digest('hex').slice(0, 24)}`;
+  };
+  const root = path.resolve(config.tempRoot, 'setly-transcription');
+  const parent = path.resolve(
+    root,
+    safe(tenant.organizationKey, 'org'),
+    safe(tenant.clubKey, 'club'),
+  );
+  const attemptDir = path.resolve(parent, safe(claimId, 'attempt'));
+  if (!attemptDir.startsWith(`${root}${path.sep}`)) {
+    throw new Error('Unsafe transcription attempt namespace');
+  }
+  await fsp.mkdir(parent, { recursive: true });
+  await fsp.mkdir(attemptDir);
+  return attemptDir;
 }
 
 async function downloadJobAudio(crmClient, job, tempDir, config, logger) {
-  const targetPath = path.join(tempDir, `call-${getCallId(job) || job.id}.audio`);
+  const targetPath = path.join(tempDir, 'input.audio');
   const load = async () => {
-    const reference = await crmClient.getAudioReference(job.id);
+    const reference = await crmClient.getAudioReference(job);
     return downloadAudio(reference?.audio?.downloadUrl, targetPath, {
       timeoutMs: config.downloadTimeoutMs,
     });
@@ -134,7 +157,6 @@ async function processJob(crmClient, job, config, logger, dependencies = {}) {
     const downloaded = await deps.downloadJobAudio(crmClient, job, tempDir, config, logger);
     logger.info('Downloaded call recording', {
       bytes: downloaded.bytes,
-      callId: getCallId(job),
       contentType: downloaded.contentType,
       jobId: job.id,
     });
@@ -217,9 +239,8 @@ async function processJob(crmClient, job, config, logger, dependencies = {}) {
     result = await deps.postprocessTranscriptWithLlm(result, config, logger);
 
     await reportProgress(crmClient, job, 'uploading_result', 'Submitting transcript to CRM', logger);
-    await crmClient.completeJob(job.id, result);
+    await crmClient.completeJob(job, result);
     logger.info('Submitted transcription result to CRM', {
-      callId: getCallId(job),
       jobId: job.id,
       segments: result.segments.length,
     });
@@ -228,11 +249,10 @@ async function processJob(crmClient, job, config, logger, dependencies = {}) {
   } finally {
     if (tempDir && config.deleteAudioAfter) {
       await fsp.rm(tempDir, { force: true, recursive: true });
-      logger.info('Deleted temporary audio files', { jobId: job.id, tempDir });
+      logger.info('Deleted temporary audio files', { jobId: job.id });
     } else if (tempDir) {
       logger.warn('Temporary audio files were kept because DELETE_AUDIO_AFTER=false', {
         jobId: job.id,
-        tempDir,
       });
     }
   }
@@ -314,7 +334,7 @@ async function transcribePreparedChannel(channel, probe, tempDir, config, logger
 
 async function claimAndProcessOne(crmClient, config, logger) {
   const claimed = await crmClient.claimJob(config.workerId);
-  const job = claimed?.job || null;
+  const job = attachClaimContext(claimed?.job || null, claimed);
 
   if (!job) {
     logger.info('No transcription jobs available');
@@ -322,8 +342,10 @@ async function claimAndProcessOne(crmClient, config, logger) {
   }
 
   logger.info('Claimed transcription job', {
-    callId: getCallId(job),
+    claimId: job.claimContext?.claimId || null,
     jobId: job.id,
+    organizationKey: job.claimContext?.tenant?.organizationKey || null,
+    clubKey: job.claimContext?.tenant?.clubKey || null,
     workerId: config.workerId,
   });
 
@@ -337,7 +359,7 @@ async function claimAndProcessOne(crmClient, config, logger) {
     });
 
     try {
-      await crmClient.failJob(job.id, truncateErrorMessage(error));
+      await crmClient.failJob(job, truncateErrorMessage(error));
       logger.info('Submitted transcription failure to CRM', { jobId: job.id });
       return 'failed';
     } catch (failError) {
@@ -444,6 +466,7 @@ if (require.main === module) {
 
 module.exports = {
   claimAndProcessOne,
+  createTempDir,
   processJob,
   progressStageForChannel,
   reportProgress,

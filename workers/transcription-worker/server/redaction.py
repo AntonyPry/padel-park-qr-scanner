@@ -49,11 +49,14 @@ def redact_text(value: object, secrets: list[str] | None = None) -> str:
         text,
         flags=re.I,
     )
+    text = re.sub(r"(?<!\w)(?:\+?7|8)[\s()\-]*\d(?:[\s()\-]*\d){9}(?!\d)", "[redacted-phone]", text)
     text = re.sub(
         r"https?://[^\s'\"<>]+",
-        lambda match: redact_url(match.group(0)),
+        "[redacted-url]",
         text,
     )
+    text = re.sub(r"(?<![A-Za-z0-9._-])/(?:[^\s'\"<>/]+/)*[^\s'\"<>/]+", "[redacted-path]", text)
+    text = re.sub(r"\b[A-Za-z]:\\(?:[^\s'\"<>\\]+\\)*[^\s'\"<>\\]+", "[redacted-path]", text)
     return text
 
 
@@ -65,7 +68,11 @@ def redact_value(value: object, secrets: list[str] | None = None) -> object:
             if lowered in SENSITIVE_QUERY_KEYS or "token" in lowered or "secret" in lowered:
                 redacted[key] = "[redacted]" if item else item
             elif "url" in lowered and isinstance(item, str):
-                redacted[key] = redact_url(redact_text(item, secrets))
+                redacted[key] = "[redacted-url]"
+            elif "path" in lowered and isinstance(item, str):
+                redacted[key] = "[redacted-path]"
+            elif any(marker in lowered for marker in ("rawaudio", "rawtranscript", "transcripttext")):
+                redacted[key] = "[redacted-content]" if item else item
             else:
                 redacted[key] = redact_value(item, secrets)
         return redacted

@@ -1,5 +1,13 @@
 const crypto = require('crypto');
 const { sendError } = require('../utils/api-error');
+const {
+  isTenantFilesWorkersEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  WORKER_PROTOCOL_VERSION,
+  getWorkerCredentialId,
+  normalizeWorkerLabel,
+} = require('../files-workers/transcription-lease');
 
 function normalizeToken(value) {
   const token = String(value || '').trim();
@@ -48,10 +56,34 @@ function requireTranscriptionWorkerToken(req, res, next) {
     return sendError(res, { statusCode: 401 }, 'Unauthorized worker');
   }
 
-  req.transcriptionWorker = { authenticated: true };
+  const requestedProtocol = Number(req.headers['x-worker-protocol-version'] || 1);
+  if (
+    isTenantFilesWorkersEnabled() &&
+    requestedProtocol !== WORKER_PROTOCOL_VERSION
+  ) {
+    return sendError(
+      res,
+      {
+        code: 'WORKER_PROTOCOL_UPGRADE_REQUIRED',
+        message: `Worker protocol ${WORKER_PROTOCOL_VERSION} is required`,
+        statusCode: 426,
+      },
+      'Worker protocol upgrade is required',
+    );
+  }
+
+  req.transcriptionWorker = Object.freeze({
+    authenticated: true,
+    credentialId: getWorkerCredentialId(),
+    instanceId: normalizeWorkerLabel(req.headers['x-worker-instance-id']),
+    protocolVersion: requestedProtocol,
+    scope: 'platform',
+  });
   next();
 }
 
 module.exports = {
   requireTranscriptionWorkerToken,
+  getConfiguredWorkerToken,
+  readWorkerToken,
 };
