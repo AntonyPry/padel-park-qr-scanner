@@ -838,7 +838,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'admin',
     'admin.shift-cash.opening-record',
   ).task;
-  assert.equal(adminOpening.route, '/admin/motivation');
+  assert.equal(adminOpening.route, '/admin/shift-cash');
   assert.equal(adminOpening.kind, 'action');
   assert.equal(adminOpening.checkpoint.event, 'shift_cash.opening_recorded');
   assert.equal(adminOpening.trainingMode.recommended, true);
@@ -847,7 +847,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'admin',
     'admin.shift-cash.expense-with-photo',
   ).task;
-  assert.equal(adminExpense.route, '/admin/motivation');
+  assert.equal(adminExpense.route, '/admin/shift-cash');
   assert.equal(adminExpense.kind, 'action');
   assert.equal(adminExpense.checkpoint.event, 'shift_cash.attachment_uploaded');
   assert.equal(
@@ -859,7 +859,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'manager',
     'manager.shift-cash.reconciliation-review',
   ).task;
-  assert.equal(managerClose.route, '/admin/motivation');
+  assert.equal(managerClose.route, '/admin/shift-cash');
   assert.equal(managerClose.checkpoint.event, 'shift_cash.closed');
   assert.equal(managerClose.trainingMode.recommended, false);
 
@@ -867,7 +867,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'owner',
     'owner.shift-cash.control-review',
   ).task;
-  assert.equal(ownerControl.route, '/admin/motivation');
+  assert.equal(ownerControl.route, '/admin/shift-cash');
   assert.equal(ownerControl.checkpoint.event, 'shift_cash.closed');
   assert.equal(
     getTaskVisibleText(ownerControl).includes('Владелец может проходить обучение за роли'),
@@ -893,6 +893,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     ownerControl,
     accountantReview,
   ]) {
+    const taskText = getTaskVisibleText(task).toLowerCase();
     assert.equal(task.lesson.format, 'section-first-cards');
     assertFirstOpenScreenBlock(task);
     assert.equal(task.lesson.screenshots.length >= 2, true, task.key);
@@ -902,6 +903,11 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
       ),
       true,
       task.key,
+    );
+    assert.equal(
+      taskText.includes('категори'),
+      false,
+      `${task.key} should not ask to choose or reconcile expense category`,
     );
   }
 

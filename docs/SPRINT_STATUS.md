@@ -2225,12 +2225,12 @@ Product source:
 
 Цель: обновить onboarding после feature branch `codex/shift-cash` до feature freeze, не мержить в `main` и не деплоить продуктовую ветку.
 
-Общий статус: `ready for release` - onboarding sync, runtime checkpoint и repeat QA подтверждены в merged temp; `main` и deploy в этом срезе не менялись.
+Общий статус: `partial` - onboarding sync обновляется под product commits `289f04a` + `2441c8e`; `main` и deploy в этом срезе не менялись.
 
 Product source:
 
-- branch `origin/codex/shift-cash`;
-- commits `6a4b1ae feat: add shift cash reconciliation`, `f5f47c9 fix: resolve shift cash QA findings`, `ca8348f fix: emit shift cash attachment checkpoint`;
+- branch `origin/codex/shift-navigation-cash-ux`;
+- commits `289f04a feat: separate shift navigation and cash UX`, `2441c8e fix: preserve shift cash data during category migration`;
 - QA outcome: repeat QA PASS, без Blocker/P1/P2/P3, mobile 390 без overflow по KPI/dialog.
 
 Сделано:
@@ -2247,7 +2247,10 @@ Product source:
   - `shift_cash.attachment_uploaded`;
   - `shift_cash.closed`;
 - `shift_cash.*` не добавлены в client checkpoint allowlist, чтобы браузер не мог засчитать кассовые действия без реального backend-события;
-- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-cash`; в instructions-diff это не дублируется;
+- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-navigation-cash-ux`; в instructions-diff это не дублируется;
+- admin/manager/owner Shift Cash задачи ведут на `/admin/shift-cash`; бухгалтерский read-only сценарий остается на `/admin/finances`;
+- связанные Shift Reports уроки проверяются отдельно и должны вести на `/admin/shift-reports`; отдельных Shift Reports onboarding-задач в catalog на момент sync нет;
+- из Shift Cash инструкций убраны выбор и сверка категории расхода после migration `20260715190000-remove-shift-cash-expense-category.js`;
 - обновлены реальные CRM screenshots из feature QA в dark/light наборах:
   - `/onboarding/shift-cash/full-cash-metrics.png`;
   - `/onboarding/shift-cash/opening-form.png`;
@@ -2265,7 +2268,7 @@ Product source:
   - `/onboarding-light/shift-cash/close-dialog-variance-comment.png`;
   - `/onboarding-light/shift-cash/accountant-period-export.png`;
   - `/onboarding-light/shift-cash/accountant-linked-row-history.png`;
-- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/motivation`;
+- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/shift-cash`;
 - owner role override сохранен: владелец может проходить роль, но права владельца не снижаются.
 
 Repeat QA 15.07.2026:
@@ -2275,13 +2278,13 @@ Repeat QA 15.07.2026:
 - backend checkpoint `shift_cash.attachment_uploaded` записан ровно один раз для загруженного `attachmentId`;
 - dark/light `expense-result-attached.png` пересняты после upload и показывают реальное превью чека без графических аннотаций;
 - targeted onboarding tests: `42/42`; server typecheck: PASS; client tests: `22/22`; client build: PASS;
-- merged temp с `origin/codex/shift-cash`: strict audit PASS;
+- merged temp с product commits `289f04a` + `2441c8e`: strict audit требуется повторить после обновления screenshots;
 - browser QA: `20/20` onboarding cases и `4/4` DB-backed product cases в dark/light на desktop `1440px` и mobile `390px`; broken images, console/page errors и horizontal overflow отсутствуют;
-- DB-backed `/admin/motivation` показывает активную смену и настоящее превью чека; `/admin/finances` показывает связанный расход `Касса смены #56: Оплата помещения`.
+- DB-backed `/admin/shift-cash` должен показывать активную смену и настоящее превью чека; `/admin/finances` должен показывать связанный расход `Касса смены ...`; `/admin/shift-reports` должен открывать отчеты смен без возврата к кассовому экрану в мотивации.
 
 Осталось до release:
 
-- выполнить штатный merge проверенных `codex/shift-cash` и `codex/crm-instructions` в release target, затем production deploy/smoke по отдельному разрешению; незакрытых code/onboarding QA gates в Sprint 50 нет.
+- повторить strict audit, client build и browser QA по 5 Shift Cash задачам в dark/light desktop/mobile после переснятия screenshots; затем выполнить штатный merge проверенных product/onboarding веток в release target по отдельному разрешению.
 
 Критерии приемки:
 
