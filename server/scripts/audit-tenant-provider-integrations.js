@@ -72,6 +72,10 @@ function auditTenantProviderIntegrations() {
     /resolveLegacyProviderContext/u,
     /reconcileLegacyProviderRows/u,
     /integrationConnectionId IS NULL/u,
+    /IntegrationConnection\.unscoped\(\)\.findByPk/u,
+    /PROVIDER_PURPOSE\[authoritative\.provider\] !== authoritative\.purpose/u,
+    /authoritative\.connectionKey !== 'default'/u,
+    /PROVIDER_RECONCILIATION_AUTHORITY_MISMATCH/u,
   ]);
   requireText('migrations/20260716100000-harden-tenant-provider-integrations.js', [
     /BEFORE UPDATE ON IntegrationConnections/u,
@@ -80,6 +84,14 @@ function auditTenantProviderIntegrations() {
     /BEFORE UPDATE ON TelephonySubscriptions/u,
     /BEFORE UPDATE ON Receipts/u,
     /replaceForeignKeys\(queryInterface, 'RESTRICT'\)/u,
+  ]);
+  requireText('migrations/20260716120000-validate-provider-reconciliation-connections.js', [
+    /authoritativeConnection\.organizationId = NEW\.organizationId/u,
+    /authoritativeConnection\.clubId = NEW\.clubId/u,
+    /provider: 'beeline'[\s\S]*purpose: 'telephony'/u,
+    /provider: 'evotor'[\s\S]*purpose: 'point_of_sale'/u,
+    /authoritativeConnection\.connectionKey = 'default'/u,
+    /EXISTS \(/u,
   ]);
   requireText('src/provider-integrations/runner.js', [
     /Promise\.all/u,

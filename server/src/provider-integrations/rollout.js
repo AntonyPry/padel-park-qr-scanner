@@ -8,6 +8,9 @@ const {
   buildProviderIdempotencyKey,
   buildProviderNamespace,
 } = require('./idempotency');
+const { PROVIDER_PURPOSE } = require('./constants');
+
+const RECONCILABLE_PROVIDERS = Object.freeze(['beeline', 'evotor']);
 
 async function resolveLegacyProviderContext(provider) {
   const tenant = await resolveTrustedTenantAttribution();
@@ -23,14 +26,82 @@ function assertReconciliationConnection(connection) {
   if (
     !connection ||
     !Number.isInteger(Number(connection.connectionId)) ||
-    !Number.isInteger(Number(connection.organizationId)) ||
-    !Number.isInteger(Number(connection.clubId)) ||
-    !connection.provider
+    Number(connection.connectionId) <= 0
   ) {
     const error = new Error('Provider reconciliation context is invalid');
     error.code = 'PROVIDER_RECONCILIATION_CONTEXT_INVALID';
     throw error;
   }
+}
+
+function reconciliationError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
+function assertSnapshotMatchesAuthoritativeConnection(snapshot, authoritative) {
+  const identity = [
+    ['organizationId', authoritative.organizationId],
+    ['clubId', authoritative.clubId],
+    ['provider', authoritative.provider],
+    ['purpose', authoritative.purpose],
+    ['connectionKey', authoritative.connectionKey],
+  ];
+  for (const [field, authoritativeValue] of identity) {
+    if (
+      Object.prototype.hasOwnProperty.call(snapshot, field) &&
+      String(snapshot[field]) !== String(authoritativeValue)
+    ) {
+      throw reconciliationError(
+        'PROVIDER_RECONCILIATION_AUTHORITY_MISMATCH',
+        'Provider reconciliation snapshot does not match the authoritative connection',
+      );
+    }
+  }
+}
+
+async function loadAuthoritativeReconciliationConnection(snapshot, transaction) {
+  const row = await db.IntegrationConnection.unscoped().findByPk(
+    Number(snapshot.connectionId),
+    {
+      attributes: [
+        'id',
+        'organizationId',
+        'clubId',
+        'provider',
+        'purpose',
+        'connectionKey',
+      ],
+      transaction,
+    },
+  );
+  if (!row) {
+    throw reconciliationError(
+      'PROVIDER_RECONCILIATION_CONNECTION_NOT_FOUND',
+      'Provider reconciliation connection was not found',
+    );
+  }
+  const authoritative = Object.freeze({
+    clubId: Number(row.clubId),
+    connectionId: Number(row.id),
+    connectionKey: row.connectionKey,
+    organizationId: Number(row.organizationId),
+    provider: row.provider,
+    purpose: row.purpose,
+  });
+  assertSnapshotMatchesAuthoritativeConnection(snapshot, authoritative);
+  if (
+    !RECONCILABLE_PROVIDERS.includes(authoritative.provider) ||
+    PROVIDER_PURPOSE[authoritative.provider] !== authoritative.purpose ||
+    authoritative.connectionKey !== 'default'
+  ) {
+    throw reconciliationError(
+      'PROVIDER_RECONCILIATION_CONNECTION_INVALID',
+      'Provider reconciliation requires the authoritative default provider connection',
+    );
+  }
+  return authoritative;
 }
 
 async function updateRows(rows, sql, connection, transaction, externalIdField) {
@@ -153,17 +224,26 @@ async function reconcileEvotor(connection, transaction) {
 async function reconcileLegacyProviderRows(connection) {
   assertReconciliationConnection(connection);
   const defaultTenant = await resolveTrustedTenantAttribution();
-  if (
-    Number(connection.organizationId) !== defaultTenant.organizationId ||
-    Number(connection.clubId) !== defaultTenant.clubId
-  ) {
-    const error = new Error('Legacy provider rows can only be reconciled for the default tenant');
-    error.code = 'PROVIDER_RECONCILIATION_TENANT_MISMATCH';
-    throw error;
-  }
   return db.sequelize.transaction(async (transaction) => {
-    if (connection.provider === 'beeline') return reconcileBeeline(connection, transaction);
-    if (connection.provider === 'evotor') return reconcileEvotor(connection, transaction);
+    const authoritative = await loadAuthoritativeReconciliationConnection(
+      connection,
+      transaction,
+    );
+    if (
+      authoritative.organizationId !== defaultTenant.organizationId ||
+      authoritative.clubId !== defaultTenant.clubId
+    ) {
+      throw reconciliationError(
+        'PROVIDER_RECONCILIATION_TENANT_MISMATCH',
+        'Legacy provider rows can only be reconciled for the default tenant',
+      );
+    }
+    if (authoritative.provider === 'beeline') {
+      return reconcileBeeline(authoritative, transaction);
+    }
+    if (authoritative.provider === 'evotor') {
+      return reconcileEvotor(authoritative, transaction);
+    }
     return {};
   });
 }

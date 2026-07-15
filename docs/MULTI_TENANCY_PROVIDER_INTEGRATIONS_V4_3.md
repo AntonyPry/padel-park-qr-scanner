@@ -51,7 +51,7 @@ Namespace строится из `provider + organizationId + clubId + connection
 - Evotor `Receipt.idempotencyKey`;
 - MySQL advisory lock name.
 
-Одинаковый external ID допустим между connections. Replay внутри одной connection увеличивает delivery metadata существующего raw event и не переписывает original body/tenant identity. Instance и bulk application hooks запрещают смену attribution. DB `BEFORE UPDATE` triggers защищают identity `IntegrationConnection` и attribution всех четырёх provider roots от ORM bypass/raw SQL, а composite FKs с `ON UPDATE RESTRICT` блокируют forged relations и parent cascades. Единственное разрешённое DB-изменение provider identity существующей business row — контролируемая однонаправленная привязка legacy `NULL` connection к connection того же неизменяемого organization/club во время rollout reconciliation; повторная привязка и любое перемещение tenant запрещены.
+Одинаковый external ID допустим между connections. Replay внутри одной connection увеличивает delivery metadata существующего raw event и не переписывает original body/tenant identity. Instance и bulk application hooks запрещают смену attribution. DB `BEFORE UPDATE` triggers защищают identity `IntegrationConnection` и attribution всех четырёх provider roots от ORM bypass/raw SQL, а composite FKs с `ON UPDATE RESTRICT` блокируют forged relations и parent cascades. Единственное разрешённое DB-изменение provider identity существующей business row — контролируемая однонаправленная привязка legacy `NULL` connection к authoritative connection того же неизменяемого organization/club: `beeline + telephony + default` для telephony roots и `evotor + point_of_sale + default` для Receipt. Cross-provider и same-provider non-default attribution запрещены; runtime reconciliation повторно читает connection из DB внутри транзакции и не доверяет переданному serialized snapshot. Повторная привязка и любое перемещение tenant запрещены.
 
 Connection lock сериализует весь canonical webhook, manual statistics/recordings sync и subscription renewal одной connection. Reentrant lock context не создаёт второй advisory lock, когда manual sync передаёт строки во внутренний ingress. Connections разных clubs получают разные locks и работают параллельно. Beeline renewal перечисляет active connections отдельно через isolated `Promise.all`; failure одного provider context возвращает redacted result и не останавливает остальные.
 
@@ -73,9 +73,10 @@ Telegram/VK deliberately permit no multi-connection client registration yet: `Us
 Forward migrations:
 
 - `20260715160000-add-tenant-provider-integrations.js` — foundation/attribution/indexes;
-- `20260716100000-harden-tenant-provider-integrations.js` — `ON UPDATE RESTRICT` и DB immutable triggers.
+- `20260716100000-harden-tenant-provider-integrations.js` — `ON UPDATE RESTRICT` и DB immutable triggers;
+- `20260716120000-validate-provider-reconciliation-connections.js` — authoritative provider/purpose/default validation для разрешённого legacy binding.
 
-Первая migration требует exact active default organization/club, создаёт connection/diagnostic tables, добавляет nullable attribution к существующим provider roots, детерминированно backfill-ит существующие single-default rows, устанавливает composite tenant/connection FKs и заменяет global provider unique indexes connection namespaces. Вторая forward migration усиливает уже установленную Feature 4.3 schema без переписывания принятых migrations.
+Первая migration требует exact active default organization/club, создаёт connection/diagnostic tables, добавляет nullable attribution к существующим provider roots, детерминированно backfill-ит существующие single-default rows, устанавливает composite tenant/connection FKs и заменяет global provider unique indexes connection namespaces. Вторая forward migration добавляет immutable DB boundary, третья закрывает cross-provider/non-default исключение legacy reconciliation. Принятые migrations не переписываются.
 
 Schema down is a development/emergency pre-data operation only. It refuses rollback when connections, diagnostics or connection-attributed business rows exist. Runtime rollback does not down-migrate: disable the Feature 4.3 flag and retain additive attribution/ciphertext.
 

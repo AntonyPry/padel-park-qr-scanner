@@ -11,6 +11,9 @@ const SequelizePackage = require('sequelize');
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION = require('../../migrations/20260715160000-add-tenant-provider-integrations');
 const HARDENING_MIGRATION = require('../../migrations/20260716100000-harden-tenant-provider-integrations');
+const VALIDATION_MIGRATION = require(
+  '../../migrations/20260716120000-validate-provider-reconciliation-connections'
+);
 
 function databaseName() {
   return process.env.TENANT_PROVIDER_TEST_DB_NAME ||
@@ -145,6 +148,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     const { tenantFoundationGate } = require('../../src/middleware/tenant-foundation-gate');
 
     await t.test('migrations roll back and reapply before provider rows exist', async () => {
+      await VALIDATION_MIGRATION.down(queryInterface, SequelizePackage);
       await HARDENING_MIGRATION.down(queryInterface, SequelizePackage);
       await FEATURE_MIGRATION.down(queryInterface, SequelizePackage);
       assert.equal(
@@ -153,6 +157,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       );
       await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
       await HARDENING_MIGRATION.up(queryInterface, SequelizePackage);
+      await VALIDATION_MIGRATION.up(queryInterface, SequelizePackage);
       assert.equal(
         (await queryInterface.showAllTables()).includes('IntegrationConnections'),
         true,
@@ -204,6 +209,8 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     tenantFoundation.invalidateTenantFoundationGateCache();
     assert.equal((await tenantFoundation.assertTenantFoundationInitialized()).state, 'initialized');
 
+    let defaultBeelineConnectionRow;
+    let defaultEvotorConnectionRow;
     await t.test('HTTP ingress resolves connection and secret before parsing body; flag-off stays legacy', async () => {
       const tenant = {
         clubId: Number(defaultClub.id),
@@ -212,7 +219,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       const evotorPublicId = generatePublicId();
       const evotorSmoke = await createConnection({
         ...tenant,
-        connectionKey: 'http-smoke',
+        connectionKey: 'default',
         provider: 'evotor',
         publicId: evotorPublicId,
         secrets: { webhookSecret: 'evotor-http-secret' },
@@ -225,11 +232,13 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
           callbackUrl: `https://crm.example/api/integrations/beeline/events/${beelinePublicId}`,
           subscriptionAutoRenewEnabled: false,
         },
-        connectionKey: 'http-smoke',
+        connectionKey: 'default',
         provider: 'beeline',
         publicId: beelinePublicId,
         secrets: { apiToken: 'beeline-api-secret', webhookSecret: 'beeline-http-secret' },
       });
+      defaultBeelineConnectionRow = beelineSmoke;
+      defaultEvotorConnectionRow = evotorSmoke;
       const parallelBeelinePublicId = generatePublicId();
       await createConnection({
         ...tenant,
@@ -447,40 +456,6 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       apiServer = null;
     });
 
-    const [organizationInsert] = await db.sequelize.query(
-      `INSERT INTO Organizations(slug, name, status, createdAt, updatedAt)
-       VALUES ('provider-org-2', 'Provider Org 2', 'active', NOW(), NOW())`,
-    );
-    const organization2Id = Number(organizationInsert);
-    const [club2Insert] = await db.sequelize.query(
-      `INSERT INTO Clubs(organizationId, slug, name, timezone, status, createdAt, updatedAt)
-       VALUES (:organizationId, 'provider-club-2', 'Provider Club 2', 'Europe/Moscow', 'active', NOW(), NOW())`,
-      { replacements: { organizationId: organization2Id } },
-    );
-    const club2Id = Number(club2Insert);
-    const [club3Insert] = await db.sequelize.query(
-      `INSERT INTO Clubs(organizationId, slug, name, timezone, status, createdAt, updatedAt)
-       VALUES (:organizationId, 'provider-club-3', 'Provider Club 3', 'Europe/Moscow', 'active', NOW(), NOW())`,
-      { replacements: { organizationId: organization2Id } },
-    );
-    const club3Id = Number(club3Insert);
-
-    await t.test('invalid foundation blocks ingress with two organizations and three clubs', async () => {
-      tenantFoundation.invalidateTenantFoundationGateCache();
-      const response = fakeResponse();
-      await tenantFoundationGate(
-        { method: 'POST', path: '/integrations/beeline/events/ic_unknown' },
-        response,
-        () => assert.fail('invalid foundation must not continue'),
-      );
-      assert.equal(response.statusCode, 503);
-      assert.equal(response.body.code, 'TENANT_FOUNDATION_INVALID');
-      await assert.rejects(
-        telephonyService.maintainAllEventSubscriptions(),
-        (error) => error.code === 'TENANT_FOUNDATION_INVALID',
-      );
-    });
-
     async function connection(provider, tenant, connectionKey) {
       const publicId = generatePublicId();
       const isBeeline = provider === 'beeline';
@@ -507,12 +482,8 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       clubId: Number(defaultClub.id),
       organizationId: Number(defaultOrganization.id),
     };
-    const tenant2 = { clubId: club2Id, organizationId: organization2Id };
-    const tenant3 = { clubId: club3Id, organizationId: organization2Id };
     const beeline1Row = await connection('beeline', defaultTenant, 'primary');
     const beeline2Row = await connection('beeline', defaultTenant, 'secondary');
-    const beeline3Row = await connection('beeline', tenant2, 'club-2');
-    const beeline4Row = await connection('beeline', tenant3, 'club-3');
     const evotor1Row = await connection('evotor', defaultTenant, 'primary');
     const evotor2Row = await connection('evotor', defaultTenant, 'secondary');
     const storedBeeline = await db.IntegrationConnection.unscoped().findByPk(beeline1Row.id);
@@ -547,6 +518,300 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       provider: 'beeline',
       publicId: beeline2Row.publicId,
     });
+    const evotor1 = await resolveCreatedConnection({
+      provider: 'evotor',
+      publicId: evotor1Row.publicId,
+    });
+    const evotor2 = await resolveCreatedConnection({
+      provider: 'evotor',
+      publicId: evotor2Row.publicId,
+    });
+
+    await t.test('legacy NULL binding accepts only the authoritative default provider contract', async () => {
+      assert.ok(defaultBeelineConnectionRow);
+      assert.ok(defaultEvotorConnectionRow);
+      const defaultBeeline = serializeConnection(defaultBeelineConnectionRow);
+      const defaultEvotor = serializeConnection(defaultEvotorConnectionRow);
+      const legacyNamespace = buildProviderNamespace(null);
+      const suffix = `${process.pid}-${Date.now()}`;
+      const call = await db.TelephonyCall.create({
+        ...defaultTenant,
+        externalCallId: `legacy-contract-call-${suffix}`,
+        provider: 'beeline',
+        providerNamespace: legacyNamespace,
+      });
+      const rawEvent = await db.TelephonyRawEvent.create({
+        ...defaultTenant,
+        eventType: 'legacy-contract',
+        externalEventId: `legacy-contract-event-${suffix}`,
+        idempotencyKey: buildProviderIdempotencyKey(
+          null,
+          `legacy-contract-event-${suffix}`,
+        ),
+        payload: {},
+        provider: 'beeline',
+      });
+      const subscription = await db.TelephonySubscription.create({
+        ...defaultTenant,
+        callbackUrl: 'https://crm.example/legacy-contract',
+        provider: 'beeline',
+        providerNamespace: legacyNamespace,
+        status: 'active',
+        subscriptionId: `legacy-contract-subscription-${suffix}`,
+      });
+      const receipt = await db.Receipt.unscoped().create({
+        ...defaultTenant,
+        dateTime: new Date(),
+        evotorId: `legacy-contract-receipt-${suffix}`,
+        idempotencyKey: buildProviderIdempotencyKey(
+          null,
+          `legacy-contract-receipt-${suffix}`,
+        ),
+      });
+
+      const crossProviderUpdates = [
+        {
+          replacements: {
+            connectionId: defaultEvotor.connectionId,
+            id: call.id,
+            providerNamespace: buildProviderNamespace(defaultEvotor),
+          },
+          sql: `UPDATE TelephonyCalls
+                SET integrationConnectionId = :connectionId,
+                    providerNamespace = :providerNamespace
+                WHERE id = :id`,
+        },
+        {
+          replacements: {
+            connectionId: defaultEvotor.connectionId,
+            id: rawEvent.id,
+            idempotencyKey: buildProviderIdempotencyKey(
+              defaultEvotor,
+              rawEvent.externalEventId,
+            ),
+          },
+          sql: `UPDATE TelephonyRawEvents
+                SET integrationConnectionId = :connectionId,
+                    idempotencyKey = :idempotencyKey
+                WHERE id = :id`,
+        },
+        {
+          replacements: {
+            connectionId: defaultEvotor.connectionId,
+            id: subscription.id,
+            providerNamespace: buildProviderNamespace(defaultEvotor),
+          },
+          sql: `UPDATE TelephonySubscriptions
+                SET integrationConnectionId = :connectionId,
+                    providerNamespace = :providerNamespace
+                WHERE id = :id`,
+        },
+        {
+          replacements: {
+            connectionId: defaultBeeline.connectionId,
+            id: receipt.id,
+            idempotencyKey: buildProviderIdempotencyKey(
+              defaultBeeline,
+              receipt.evotorId,
+            ),
+          },
+          sql: `UPDATE Receipts
+                SET integrationConnectionId = :connectionId,
+                    idempotencyKey = :idempotencyKey
+                WHERE id = :id`,
+        },
+      ];
+      for (const update of crossProviderUpdates) {
+        await assert.rejects(
+          db.sequelize.query(update.sql, { replacements: update.replacements }),
+          /connection contract is invalid/iu,
+        );
+      }
+
+      await assert.rejects(
+        db.sequelize.query(
+          `UPDATE TelephonyRawEvents
+           SET integrationConnectionId = :connectionId,
+               idempotencyKey = :idempotencyKey
+           WHERE id = :id`,
+          {
+            replacements: {
+              connectionId: beeline1.connectionId,
+              id: rawEvent.id,
+              idempotencyKey: buildProviderIdempotencyKey(
+                beeline1,
+                rawEvent.externalEventId,
+              ),
+            },
+          },
+        ),
+        /connection contract is invalid/iu,
+      );
+      await assert.rejects(
+        db.sequelize.query(
+          `UPDATE Receipts
+           SET integrationConnectionId = :connectionId,
+               idempotencyKey = :idempotencyKey
+           WHERE id = :id`,
+          {
+            replacements: {
+              connectionId: evotor1.connectionId,
+              id: receipt.id,
+              idempotencyKey: buildProviderIdempotencyKey(evotor1, receipt.evotorId),
+            },
+          },
+        ),
+        /connection contract is invalid/iu,
+      );
+      await assert.rejects(
+        reconcileLegacyProviderRows(serializeConnection(beeline1Row)),
+        (error) => error.code === 'PROVIDER_RECONCILIATION_CONNECTION_INVALID',
+      );
+      await assert.rejects(
+        reconcileLegacyProviderRows({ ...defaultBeeline, provider: 'evotor' }),
+        (error) => error.code === 'PROVIDER_RECONCILIATION_AUTHORITY_MISMATCH',
+      );
+
+      const acceptedUpdates = [
+        {
+          replacements: {
+            connectionId: defaultBeeline.connectionId,
+            id: call.id,
+            providerNamespace: buildProviderNamespace(defaultBeeline),
+          },
+          sql: `UPDATE TelephonyCalls
+                SET integrationConnectionId = :connectionId,
+                    providerNamespace = :providerNamespace
+                WHERE id = :id`,
+        },
+        {
+          replacements: {
+            connectionId: defaultBeeline.connectionId,
+            id: rawEvent.id,
+            idempotencyKey: buildProviderIdempotencyKey(
+              defaultBeeline,
+              rawEvent.externalEventId,
+            ),
+          },
+          sql: `UPDATE TelephonyRawEvents
+                SET integrationConnectionId = :connectionId,
+                    idempotencyKey = :idempotencyKey
+                WHERE id = :id`,
+        },
+        {
+          replacements: {
+            connectionId: defaultBeeline.connectionId,
+            id: subscription.id,
+            providerNamespace: buildProviderNamespace(defaultBeeline),
+          },
+          sql: `UPDATE TelephonySubscriptions
+                SET integrationConnectionId = :connectionId,
+                    providerNamespace = :providerNamespace
+                WHERE id = :id`,
+        },
+        {
+          replacements: {
+            connectionId: defaultEvotor.connectionId,
+            id: receipt.id,
+            idempotencyKey: buildProviderIdempotencyKey(defaultEvotor, receipt.evotorId),
+          },
+          sql: `UPDATE Receipts
+                SET integrationConnectionId = :connectionId,
+                    idempotencyKey = :idempotencyKey
+                WHERE id = :id`,
+        },
+      ];
+      for (const update of acceptedUpdates) {
+        await db.sequelize.query(update.sql, { replacements: update.replacements });
+      }
+      await Promise.all([
+        call.reload(),
+        rawEvent.reload(),
+        subscription.reload(),
+        receipt.reload(),
+      ]);
+      assert.equal(Number(call.integrationConnectionId), defaultBeeline.connectionId);
+      assert.equal(Number(rawEvent.integrationConnectionId), defaultBeeline.connectionId);
+      assert.equal(Number(subscription.integrationConnectionId), defaultBeeline.connectionId);
+      assert.equal(Number(receipt.integrationConnectionId), defaultEvotor.connectionId);
+    });
+
+    await t.test('reconciliation collision rolls back, retries and becomes repeatable', async () => {
+      const defaultBeeline = serializeConnection(defaultBeelineConnectionRow);
+      const suffix = `${process.pid}-${Date.now()}`;
+      const firstExternalId = `legacy-collision-first-${suffix}`;
+      const collisionExternalId = `legacy-collision-target-${suffix}`;
+      const firstLegacy = await db.TelephonyRawEvent.create({
+        ...defaultTenant,
+        eventType: 'legacy-collision',
+        externalEventId: firstExternalId,
+        idempotencyKey: buildProviderIdempotencyKey(null, firstExternalId),
+        payload: {},
+        provider: 'beeline',
+      });
+      const collisionLegacy = await db.TelephonyRawEvent.create({
+        ...defaultTenant,
+        eventType: 'legacy-collision',
+        externalEventId: collisionExternalId,
+        idempotencyKey: buildProviderIdempotencyKey(null, collisionExternalId),
+        payload: {},
+        provider: 'beeline',
+      });
+      const connectedConflict = await db.TelephonyRawEvent.create({
+        ...defaultTenant,
+        eventType: 'connected-collision',
+        externalEventId: `already-connected-${suffix}`,
+        idempotencyKey: buildProviderIdempotencyKey(
+          defaultBeeline,
+          collisionExternalId,
+        ),
+        integrationConnectionId: defaultBeeline.connectionId,
+        payload: {},
+        provider: 'beeline',
+      });
+
+      await assert.rejects(
+        reconcileLegacyProviderRows(defaultBeeline),
+        (error) => error.original?.code === 'ER_DUP_ENTRY' || error.parent?.code === 'ER_DUP_ENTRY',
+      );
+      await Promise.all([firstLegacy.reload(), collisionLegacy.reload()]);
+      assert.equal(firstLegacy.integrationConnectionId, null);
+      assert.equal(collisionLegacy.integrationConnectionId, null);
+
+      await connectedConflict.destroy();
+      const retry = await reconcileLegacyProviderRows(defaultBeeline);
+      assert.equal(retry.rawEvents, 2);
+      await Promise.all([firstLegacy.reload(), collisionLegacy.reload()]);
+      assert.equal(Number(firstLegacy.integrationConnectionId), defaultBeeline.connectionId);
+      assert.equal(Number(collisionLegacy.integrationConnectionId), defaultBeeline.connectionId);
+
+      assert.deepEqual(
+        await reconcileLegacyProviderRows(defaultBeeline),
+        { rawEvents: 0, subscriptions: 0, telephonyCalls: 0 },
+      );
+    });
+
+    const [organizationInsert] = await db.sequelize.query(
+      `INSERT INTO Organizations(slug, name, status, createdAt, updatedAt)
+       VALUES ('provider-org-2', 'Provider Org 2', 'active', NOW(), NOW())`,
+    );
+    const organization2Id = Number(organizationInsert);
+    const [club2Insert] = await db.sequelize.query(
+      `INSERT INTO Clubs(organizationId, slug, name, timezone, status, createdAt, updatedAt)
+       VALUES (:organizationId, 'provider-club-2', 'Provider Club 2', 'Europe/Moscow', 'active', NOW(), NOW())`,
+      { replacements: { organizationId: organization2Id } },
+    );
+    const club2Id = Number(club2Insert);
+    const [club3Insert] = await db.sequelize.query(
+      `INSERT INTO Clubs(organizationId, slug, name, timezone, status, createdAt, updatedAt)
+       VALUES (:organizationId, 'provider-club-3', 'Provider Club 3', 'Europe/Moscow', 'active', NOW(), NOW())`,
+      { replacements: { organizationId: organization2Id } },
+    );
+    const club3Id = Number(club3Insert);
+    const tenant2 = { clubId: club2Id, organizationId: organization2Id };
+    const tenant3 = { clubId: club3Id, organizationId: organization2Id };
+    const beeline3Row = await connection('beeline', tenant2, 'club-2');
+    const beeline4Row = await connection('beeline', tenant3, 'club-3');
     const beeline3 = await resolveCreatedConnection({
       provider: 'beeline',
       publicId: beeline3Row.publicId,
@@ -555,13 +820,21 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       provider: 'beeline',
       publicId: beeline4Row.publicId,
     });
-    const evotor1 = await resolveCreatedConnection({
-      provider: 'evotor',
-      publicId: evotor1Row.publicId,
-    });
-    const evotor2 = await resolveCreatedConnection({
-      provider: 'evotor',
-      publicId: evotor2Row.publicId,
+
+    await t.test('invalid foundation blocks ingress with two organizations and three clubs', async () => {
+      tenantFoundation.invalidateTenantFoundationGateCache();
+      const response = fakeResponse();
+      await tenantFoundationGate(
+        { method: 'POST', path: '/integrations/beeline/events/ic_unknown' },
+        response,
+        () => assert.fail('invalid foundation must not continue'),
+      );
+      assert.equal(response.statusCode, 503);
+      assert.equal(response.body.code, 'TENANT_FOUNDATION_INVALID');
+      await assert.rejects(
+        telephonyService.maintainAllEventSubscriptions(),
+        (error) => error.code === 'TENANT_FOUNDATION_INVALID',
+      );
     });
 
     await t.test('encrypted credentials and public/error/diagnostic surfaces contain no secret', async () => {
