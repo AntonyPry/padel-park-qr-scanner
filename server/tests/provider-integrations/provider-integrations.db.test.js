@@ -10,6 +10,7 @@ const SequelizePackage = require('sequelize');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION = require('../../migrations/20260715160000-add-tenant-provider-integrations');
+const HARDENING_MIGRATION = require('../../migrations/20260716100000-harden-tenant-provider-integrations');
 
 function databaseName() {
   return process.env.TENANT_PROVIDER_TEST_DB_NAME ||
@@ -94,6 +95,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     DB_NAME: process.env.DB_NAME,
     BEELINE_WEBHOOK_REQUIRE_SECRET: process.env.BEELINE_WEBHOOK_REQUIRE_SECRET,
     BEELINE_WEBHOOK_SECRET: process.env.BEELINE_WEBHOOK_SECRET,
+    EVOTOR_WEBHOOK_LOG_RAW: process.env.EVOTOR_WEBHOOK_LOG_RAW,
     EVOTOR_WEBHOOK_SECRET: process.env.EVOTOR_WEBHOOK_SECRET,
     INTEGRATION_SECRETS_MASTER_KEY: process.env.INTEGRATION_SECRETS_MASTER_KEY,
     NODE_ENV: process.env.NODE_ENV,
@@ -125,6 +127,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       contextWithSecrets,
       generatePublicId,
       resolveIngressConnection,
+      serializeConnection,
     } = require('../../src/provider-integrations/connection-service');
     const {
       buildProviderIdempotencyKey,
@@ -133,18 +136,23 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     const {
       withProviderConnectionLock,
     } = require('../../src/provider-integrations/locks');
+    const {
+      reconcileLegacyProviderRows,
+    } = require('../../src/provider-integrations/rollout');
     const evotorService = require('../../src/services/evotor.service');
     const telephonyService = require('../../src/services/telephony.service');
     const tenantFoundation = require('../../src/services/tenant-foundation.service');
     const { tenantFoundationGate } = require('../../src/middleware/tenant-foundation-gate');
 
-    await t.test('migration rolls back and reapplies before provider rows exist', async () => {
+    await t.test('migrations roll back and reapply before provider rows exist', async () => {
+      await HARDENING_MIGRATION.down(queryInterface, SequelizePackage);
       await FEATURE_MIGRATION.down(queryInterface, SequelizePackage);
       assert.equal(
         (await queryInterface.showAllTables()).includes('IntegrationConnections'),
         false,
       );
       await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
+      await HARDENING_MIGRATION.up(queryInterface, SequelizePackage);
       assert.equal(
         (await queryInterface.showAllTables()).includes('IntegrationConnections'),
         true,
@@ -210,7 +218,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
         secrets: { webhookSecret: 'evotor-http-secret' },
       });
       const beelinePublicId = generatePublicId();
-      await createConnection({
+      const beelineSmoke = await createConnection({
         ...tenant,
         config: {
           apiBaseUrl: 'https://provider.example',
@@ -221,6 +229,19 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
         provider: 'beeline',
         publicId: beelinePublicId,
         secrets: { apiToken: 'beeline-api-secret', webhookSecret: 'beeline-http-secret' },
+      });
+      const parallelBeelinePublicId = generatePublicId();
+      await createConnection({
+        ...tenant,
+        config: {
+          apiBaseUrl: 'https://provider.example',
+          callbackUrl: `https://crm.example/api/integrations/beeline/events/${parallelBeelinePublicId}`,
+          subscriptionAutoRenewEnabled: false,
+        },
+        connectionKey: 'http-smoke-parallel',
+        provider: 'beeline',
+        publicId: parallelBeelinePublicId,
+        secrets: { apiToken: 'beeline-api-parallel', webhookSecret: 'beeline-http-parallel' },
       });
 
       const createApp = require('../../src/app');
@@ -258,26 +279,170 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       );
       assert.equal(beelineAccepted.status, 200);
 
-      delete process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED;
-      const legacyEvotor = await fetch(`${baseUrl}/webhooks/evotor`, {
-        body: JSON.stringify({ id: 'http-evotor-legacy', positions: [] }),
-        headers: {
-          'content-type': 'application/json',
-          'x-evotor-token': process.env.EVOTOR_WEBHOOK_SECRET,
+      await db.sequelize.query(
+        `CREATE TRIGGER provider_test_raw_insert_delay
+         BEFORE INSERT ON TelephonyRawEvents
+         FOR EACH ROW
+         BEGIN
+           DO SLEEP(0.18);
+         END`,
+      );
+      const postBeeline = (connectionPublicId, secret, eventId) => fetch(
+        `${baseUrl}/integrations/beeline/events/${connectionPublicId}`,
+        {
+          body: JSON.stringify({ eventId, eventType: 'subscription-heartbeat' }),
+          headers: {
+            'content-type': 'application/json',
+            'x-beeline-webhook-secret': secret,
+          },
+          method: 'POST',
         },
-        method: 'POST',
-      });
+      );
+      const sameStartedAt = Date.now();
+      const sameResponses = await Promise.all([
+        postBeeline(beelinePublicId, 'beeline-http-secret', 'http-lock-same-1'),
+        postBeeline(beelinePublicId, 'beeline-http-secret', 'http-lock-same-2'),
+      ]);
+      const sameElapsedMs = Date.now() - sameStartedAt;
+      assert.deepEqual(sameResponses.map((response) => response.status), [200, 200]);
+      const parallelStartedAt = Date.now();
+      const parallelResponses = await Promise.all([
+        postBeeline(beelinePublicId, 'beeline-http-secret', 'http-lock-parallel-1'),
+        postBeeline(parallelBeelinePublicId, 'beeline-http-parallel', 'http-lock-parallel-2'),
+      ]);
+      const parallelElapsedMs = Date.now() - parallelStartedAt;
+      assert.deepEqual(parallelResponses.map((response) => response.status), [200, 200]);
+      assert.ok(
+        sameElapsedMs >= parallelElapsedMs + 100,
+        `same connection ${sameElapsedMs}ms must serialize vs ${parallelElapsedMs}ms`,
+      );
+      await db.sequelize.query('DROP TRIGGER provider_test_raw_insert_delay');
+
+      delete process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED;
+      process.env.EVOTOR_WEBHOOK_LOG_RAW = 'true';
+      const evotorLogs = [];
+      const originalConsoleLog = console.log;
+      console.log = (...args) => evotorLogs.push(args.join(' '));
+      let legacyEvotor;
+      try {
+        legacyEvotor = await fetch(`${baseUrl}/webhooks/evotor`, {
+          body: JSON.stringify({
+            apiKey: 'evotor-api-key-value',
+            id: 'http-evotor-legacy',
+            positions: [],
+            private_key: 'evotor-private-key-value',
+          }),
+          headers: {
+            'content-type': 'application/json',
+            'x-evotor-token': process.env.EVOTOR_WEBHOOK_SECRET,
+          },
+          method: 'POST',
+        });
+      } finally {
+        console.log = originalConsoleLog;
+        delete process.env.EVOTOR_WEBHOOK_LOG_RAW;
+      }
       assert.equal(legacyEvotor.status, 200);
-      const legacyBeeline = await fetch(`${baseUrl}/integrations/beeline/events`, {
-        body: JSON.stringify({ eventId: 'http-beeline-legacy', eventType: 'unknown' }),
+      assert.equal(evotorLogs.join('\n').includes('evotor-api-key-value'), false);
+      assert.equal(evotorLogs.join('\n').includes('evotor-private-key-value'), false);
+      const legacyBeeline = await fetch(
+        `${baseUrl}/integrations/beeline/events?access-key=query-access-value&signingKey=query-sign-value`,
+        {
+        body: JSON.stringify({
+          apiKey: 'payload-api-key-value',
+          callId: 'http-beeline-legacy-call',
+          clientSecret: 'payload-client-secret-value',
+          eventId: 'http-beeline-legacy',
+          eventType: 'call.completed',
+          phone: '+79990000000',
+          private_key: 'payload-private-key-value',
+          startDate: '2026-07-15T10:00:00.000Z',
+        }),
         headers: {
           'content-type': 'application/json',
+          'x-api-key': 'header-api-key-value',
           'x-beeline-webhook-secret': process.env.BEELINE_WEBHOOK_SECRET,
         },
         method: 'POST',
       });
       assert.equal(legacyBeeline.status, 200);
+
+      const legacyRaw = await db.TelephonyRawEvent.findOne({
+        where: { externalEventId: 'http-beeline-legacy' },
+      });
+      const legacyCall = await db.TelephonyCall.findOne({
+        where: { externalCallId: 'http-beeline-legacy-call' },
+      });
+      const legacyReceipt = await db.Receipt.unscoped().findOne({
+        where: { evotorId: 'http-evotor-legacy' },
+      });
+      assert.ok(legacyRaw);
+      assert.ok(legacyCall);
+      assert.ok(legacyReceipt);
+      for (const row of [legacyRaw, legacyCall, legacyReceipt]) {
+        assert.equal(Number(row.organizationId), tenant.organizationId);
+        assert.equal(Number(row.clubId), tenant.clubId);
+        assert.equal(row.integrationConnectionId, null);
+      }
+      const storedIngress = JSON.stringify({
+        headers: legacyRaw.headers,
+        payload: legacyRaw.payload,
+        query: legacyRaw.query,
+      });
+      for (const secretValue of [
+        'header-api-key-value',
+        'payload-api-key-value',
+        'payload-client-secret-value',
+        'payload-private-key-value',
+        'query-access-value',
+        'query-sign-value',
+      ]) assert.equal(storedIngress.includes(secretValue), false);
+
+      const legacySubscription = await db.TelephonySubscription.create({
+        ...tenant,
+        callbackUrl: 'https://crm.example/api/integrations/beeline/events',
+        provider: 'beeline',
+        providerNamespace: buildProviderNamespace(null),
+        status: 'active',
+        subscriptionId: 'legacy-subscription',
+      });
       process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED = 'true';
+      await assert.rejects(
+        telephonyService.reprocessRawEvent(legacyRaw.id, tenant),
+        (error) => error.statusCode === 409 && /attribution is missing/u.test(error.message),
+      );
+      delete process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED;
+      const beelineReconciliation = await reconcileLegacyProviderRows(
+        serializeConnection(beelineSmoke),
+      );
+      const evotorReconciliation = await reconcileLegacyProviderRows(
+        serializeConnection(evotorSmoke),
+      );
+      assert.ok(beelineReconciliation.rawEvents >= 1);
+      assert.ok(beelineReconciliation.telephonyCalls >= 1);
+      assert.ok(beelineReconciliation.subscriptions >= 1);
+      assert.ok(evotorReconciliation.receipts >= 1);
+      await Promise.all([
+        legacyRaw.reload(),
+        legacyCall.reload(),
+        legacyReceipt.reload(),
+        legacySubscription.reload(),
+      ]);
+      assert.equal(Number(legacyRaw.integrationConnectionId), Number(beelineSmoke.id));
+      assert.equal(Number(legacyCall.integrationConnectionId), Number(beelineSmoke.id));
+      assert.equal(Number(legacySubscription.integrationConnectionId), Number(beelineSmoke.id));
+      assert.equal(Number(legacyReceipt.integrationConnectionId), Number(evotorSmoke.id));
+      assert.equal(
+        legacyRaw.idempotencyKey,
+        buildProviderIdempotencyKey(serializeConnection(beelineSmoke), 'http-beeline-legacy'),
+      );
+      assert.equal(
+        legacyReceipt.idempotencyKey,
+        buildProviderIdempotencyKey(serializeConnection(evotorSmoke), 'http-evotor-legacy'),
+      );
+      process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED = 'true';
+      const replay = await telephonyService.reprocessRawEvent(legacyRaw.id, tenant);
+      assert.equal(replay.status, 'processed');
       await closeServer(apiServer);
       apiServer = null;
     });
@@ -517,13 +682,109 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       assert.equal(Number(first.receipt.organizationId), defaultTenant.organizationId);
       assert.equal(Number(first.receipt.clubId), defaultTenant.clubId);
       assert.notEqual(first.receipt.id, other.receipt.id);
+    });
 
-      delete process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED;
-      const legacy = await evotorService.processReceipt({ id: 'legacy-evotor-id', positions: [] });
-      const legacyReplay = await evotorService.processReceipt({ id: 'legacy-evotor-id', positions: [] });
-      assert.equal(legacy.alreadyProcessed, false);
-      assert.equal(legacyReplay.alreadyProcessed, true);
-      process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED = 'true';
+    await t.test('ORM bulk updates, direct SQL and FK cascades cannot move provider attribution', async () => {
+      const call = await db.TelephonyCall.create({
+        ...defaultTenant,
+        externalCallId: 'immutable-call',
+        integrationConnectionId: beeline1.connectionId,
+        provider: 'beeline',
+        providerNamespace: buildProviderNamespace(beeline1),
+      });
+      const rawEvent = await db.TelephonyRawEvent.create({
+        ...defaultTenant,
+        eventType: 'immutable',
+        externalEventId: 'immutable-event',
+        idempotencyKey: buildProviderIdempotencyKey(beeline1, 'immutable-event'),
+        integrationConnectionId: beeline1.connectionId,
+        payload: {},
+        provider: 'beeline',
+      });
+      const subscription = await db.TelephonySubscription.create({
+        ...defaultTenant,
+        callbackUrl: 'https://crm.example/immutable',
+        integrationConnectionId: beeline1.connectionId,
+        provider: 'beeline',
+        providerNamespace: buildProviderNamespace(beeline1),
+        subscriptionId: 'immutable-subscription',
+      });
+      const receipt = await db.Receipt.unscoped().create({
+        ...defaultTenant,
+        dateTime: new Date(),
+        evotorId: 'immutable-receipt',
+        idempotencyKey: buildProviderIdempotencyKey(evotor1, 'immutable-receipt'),
+        integrationConnectionId: evotor1.connectionId,
+      });
+      const modelRows = [
+        [db.TelephonyCall, call],
+        [db.TelephonyRawEvent, rawEvent],
+        [db.TelephonySubscription, subscription],
+        [db.Receipt, receipt],
+      ];
+      for (const [Model, row] of modelRows) {
+        await assert.rejects(
+          Model.update(
+            { clubId: club2Id, organizationId: organization2Id },
+            { where: { id: row.id } },
+          ),
+          (error) => error.code === 'PROVIDER_ATTRIBUTION_IMMUTABLE',
+        );
+      }
+      await assert.rejects(
+        db.IntegrationConnection.update(
+          { clubId: club2Id, organizationId: organization2Id },
+          { where: { id: beeline1.connectionId } },
+        ),
+        (error) => error.code === 'PROVIDER_ATTRIBUTION_IMMUTABLE',
+      );
+
+      const directUpdates = [
+        ['TelephonyCalls', call.id],
+        ['TelephonyRawEvents', rawEvent.id],
+        ['TelephonySubscriptions', subscription.id],
+        ['Receipts', receipt.id],
+        ['IntegrationConnections', beeline1.connectionId],
+      ];
+      for (const [table, id] of directUpdates) {
+        await assert.rejects(
+          db.sequelize.query(
+            `UPDATE ${table}
+             SET organizationId = :organizationId, clubId = :clubId
+             WHERE id = :id`,
+            { replacements: { clubId: club2Id, id, organizationId: organization2Id } },
+          ),
+          /immutable/iu,
+        );
+      }
+      await assert.rejects(
+        db.sequelize.query(
+          `UPDATE TelephonyRawEvents
+           SET integrationConnectionId = :connectionId
+           WHERE id = :id`,
+          { replacements: { connectionId: beeline2.connectionId, id: rawEvent.id } },
+        ),
+        /immutable/iu,
+      );
+
+      const [rules] = await db.sequelize.query(
+        `SELECT CONSTRAINT_NAME, UPDATE_RULE
+         FROM information_schema.REFERENTIAL_CONSTRAINTS
+         WHERE CONSTRAINT_SCHEMA = DATABASE()
+           AND CONSTRAINT_NAME IN (
+             'integration_connections_tenant_club_fk',
+             'telephony_calls_connection_tenant_fk',
+             'telephony_calls_tenant_club_fk',
+             'telephony_raw_events_connection_tenant_fk',
+             'telephony_raw_events_tenant_club_fk',
+             'telephony_subscriptions_connection_tenant_fk',
+             'telephony_subscriptions_tenant_club_fk',
+             'receipts_integration_connection_tenant_fk',
+             'receipts_tenant_club_fk'
+           )`,
+      );
+      assert.equal(rules.length, 9);
+      assert.deepEqual([...new Set(rules.map((rule) => rule.UPDATE_RULE))], ['RESTRICT']);
     });
 
     await t.test('MySQL locks serialize webhook/runner for one connection and parallelize clubs', async () => {

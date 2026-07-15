@@ -1,10 +1,10 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { isProviderCredentialKey } = require('./credential-keys');
 
 const ALGORITHM = 'aes-256-gcm';
 const ENVELOPE_VERSION = 1;
-const SECRET_KEY_PATTERN = /(authorization|credential|password|secret|token)/i;
 
 function integrationSecretError(code = 'INTEGRATION_SECRET_CONFIGURATION_INVALID') {
   const error = new Error('Integration secret configuration is invalid');
@@ -37,7 +37,7 @@ function normalizeSecretBundle(value) {
   for (const [key, raw] of Object.entries(value)) {
     if (
       !/^[a-z][A-Za-z0-9]{1,63}$/u.test(key) ||
-      (!SECRET_KEY_PATTERN.test(key) && key !== 'proxyUrl')
+      (!isProviderCredentialKey(key) && key !== 'proxyUrl')
     ) {
       throw integrationSecretError('INTEGRATION_SECRET_PAYLOAD_INVALID');
     }

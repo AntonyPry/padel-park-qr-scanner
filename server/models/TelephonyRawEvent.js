@@ -1,3 +1,14 @@
+const {
+  assertBulkFieldsAreMutable,
+} = require('../src/provider-integrations/immutable-attribution');
+
+const IMMUTABLE_PROVIDER_FIELDS = Object.freeze([
+  'organizationId',
+  'clubId',
+  'integrationConnectionId',
+  'idempotencyKey',
+]);
+
 module.exports = (sequelize, DataTypes) => {
   const TelephonyRawEvent = sequelize.define('TelephonyRawEvent', {
     organizationId: {
@@ -74,9 +85,15 @@ module.exports = (sequelize, DataTypes) => {
     },
   }, {
     hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkFieldsAreMutable(
+          options,
+          IMMUTABLE_PROVIDER_FIELDS,
+          'Raw event provider attribution is immutable',
+        );
+      },
       beforeUpdate(event) {
-        const fields = ['organizationId', 'clubId', 'integrationConnectionId', 'idempotencyKey'];
-        if (fields.some((field) => event.changed(field))) {
+        if (IMMUTABLE_PROVIDER_FIELDS.some((field) => event.changed(field))) {
           const error = new Error('Raw event provider attribution is immutable');
           error.code = 'PROVIDER_ATTRIBUTION_IMMUTABLE';
           throw error;

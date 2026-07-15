@@ -9,11 +9,12 @@ const {
   PROVIDER_PURPOSE,
 } = require('./constants');
 const { recordRejectedIngress } = require('./diagnostics');
+const { isProviderCredentialKey } = require('./credential-keys');
 const { decryptSecretBundle, encryptSecretBundle } = require('./secrets');
 
 const PUBLIC_ID_PATTERN = /^ic_[a-f0-9]{32}$/u;
 const CONNECTION_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/u;
-const UNSAFE_CONFIG_KEY = /(authorization|cookie|credential|email|password|phone|secret|token)/i;
+const PRIVATE_CONTACT_KEY = /(email|phone)/iu;
 
 function connectionError(code, statusCode = 404, message = 'Integration connection was not found') {
   const error = new Error(message);
@@ -34,7 +35,7 @@ function normalizeSafeObject(value, label) {
   const visit = (current) => {
     if (!current || typeof current !== 'object') return;
     for (const [key, child] of Object.entries(current)) {
-      if (UNSAFE_CONFIG_KEY.test(key)) {
+      if (isProviderCredentialKey(key) || PRIVATE_CONTACT_KEY.test(key)) {
         throw connectionError(
           'INTEGRATION_CONNECTION_CONFIG_CONTAINS_SECRET',
           400,

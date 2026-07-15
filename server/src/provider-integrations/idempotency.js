@@ -18,7 +18,9 @@ function hashParts(parts) {
 }
 
 function buildProviderNamespace(context) {
-  if (!context) return hashParts(['legacy', 'single-default']);
+  if (!context || context.legacy) {
+    return hashParts(['legacy', 'single-default']);
+  }
   return hashParts([
     normalizeIdentityPart(context.provider, 'provider'),
     normalizeIdentityPart(context.connectionId, 'connection'),

@@ -1,3 +1,14 @@
+const {
+  assertBulkFieldsAreMutable,
+} = require('../src/provider-integrations/immutable-attribution');
+
+const IMMUTABLE_PROVIDER_FIELDS = Object.freeze([
+  'organizationId',
+  'clubId',
+  'integrationConnectionId',
+  'providerNamespace',
+]);
+
 module.exports = (sequelize, DataTypes) => {
   const TelephonyCall = sequelize.define('TelephonyCall', {
     organizationId: {
@@ -187,9 +198,15 @@ module.exports = (sequelize, DataTypes) => {
     },
   }, {
     hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkFieldsAreMutable(
+          options,
+          IMMUTABLE_PROVIDER_FIELDS,
+          'Telephony call provider attribution is immutable',
+        );
+      },
       beforeUpdate(call) {
-        const fields = ['organizationId', 'clubId', 'integrationConnectionId', 'providerNamespace'];
-        if (fields.some((field) => call.changed(field))) {
+        if (IMMUTABLE_PROVIDER_FIELDS.some((field) => call.changed(field))) {
           const error = new Error('Telephony call provider attribution is immutable');
           error.code = 'PROVIDER_ATTRIBUTION_IMMUTABLE';
           throw error;

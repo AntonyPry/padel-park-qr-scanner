@@ -39,6 +39,12 @@ const {
   runIsolatedProviderConnections,
 } = require('../provider-integrations/runner');
 const {
+  resolveLegacyProviderContext,
+} = require('../provider-integrations/rollout');
+const {
+  isProviderCredentialKey,
+} = require('../provider-integrations/credential-keys');
+const {
   BACKGROUND_COMPONENTS,
   assertBackgroundComponentCanRun,
 } = require('../files-workers/background-run-context');
@@ -175,20 +181,27 @@ function connectionAttribution(connection) {
   }
   return {
     clubId: connection.clubId,
-    integrationConnectionId: connection.connectionId,
+    integrationConnectionId: connection.connectionId || null,
     organizationId: connection.organizationId,
     providerNamespace: buildProviderNamespace(connection),
   };
 }
 
 function rawEventConnection(rawEvent) {
-  if (!rawEvent?.integrationConnectionId) return null;
+  if (!rawEvent?.organizationId || !rawEvent?.clubId) return null;
   return Object.freeze({
     clubId: Number(rawEvent.clubId),
-    connectionId: Number(rawEvent.integrationConnectionId),
+    connectionId: rawEvent.integrationConnectionId
+      ? Number(rawEvent.integrationConnectionId)
+      : null,
+    legacy: !rawEvent.integrationConnectionId,
     organizationId: Number(rawEvent.organizationId),
     provider: rawEvent.provider,
   });
+}
+
+async function resolveBeelineWriteContext(connection = null) {
+  return connection || resolveLegacyProviderContext('beeline');
 }
 
 async function resolveBeelineTenantConnection(tenant, supplied = null) {
@@ -271,12 +284,7 @@ function sanitizeHeaders(headers = {}) {
   const sanitized = {};
 
   Object.entries(headers).forEach(([key, value]) => {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey.includes('token') ||
-      lowerKey.includes('authorization') ||
-      lowerKey.includes('secret')
-    ) {
+    if (isProviderCredentialKey(key)) {
       sanitized[key] = '[hidden]';
       return;
     }
@@ -291,12 +299,7 @@ function sanitizeQuery(query = {}) {
   const sanitized = {};
 
   Object.entries(asObject(query)).forEach(([key, value]) => {
-    const lowerKey = key.toLowerCase();
-    if (
-      lowerKey.includes('token') ||
-      lowerKey.includes('authorization') ||
-      lowerKey.includes('secret')
-    ) {
+    if (isProviderCredentialKey(key)) {
       sanitized[key] = '[hidden]';
       return;
     }
@@ -1528,46 +1531,14 @@ async function saveRawEvent(rawEventPayload) {
   }
 }
 
-async function receiveBeelineEvent({
+async function persistBeelineEvent({
   body,
   connection = null,
   headers,
   ip,
   query,
-  publicId,
-  skipSecret = false,
 }) {
-  if (isTenantProviderIntegrationsEnabled() && !connection) {
-    const resolved = await resolveIngressConnection({
-      provider: 'beeline',
-      publicId,
-      requestId: headers?.['x-request-id'],
-      sourceIp: ip,
-    });
-    try {
-      assertWebhookAllowed(headers, query, resolved);
-    } catch (error) {
-      await recordRejectedIngress({
-        provider: 'beeline',
-        publicId,
-        reasonCode: 'CONNECTION_SECRET_MISMATCH',
-        requestId: headers?.['x-request-id'],
-        sourceIp: ip,
-      });
-      throw error;
-    }
-    await assertLegacyDownstreamReady(resolved);
-    return withProviderConnectionLock(resolved, () => receiveBeelineEvent({
-      body,
-      connection: resolved,
-      headers,
-      ip,
-      query,
-      skipSecret: true,
-    }));
-  }
-  if (!skipSecret) assertWebhookAllowed(headers, query, connection);
-
+  const writeContext = await resolveBeelineWriteContext(connection);
   const items = parseIncomingBeelinePayload(body, headers);
   const results = [];
 
@@ -1575,8 +1546,8 @@ async function receiveBeelineEvent({
     const payload = asObject(item);
     const normalized = normalizePayload(payload);
     const externalEventId = normalized.externalEventId || `delivery:${crypto.randomUUID()}`;
-    const idempotencyKey = buildProviderIdempotencyKey(connection, externalEventId);
-    const attribution = connectionAttribution(connection);
+    const idempotencyKey = buildProviderIdempotencyKey(writeContext, externalEventId);
+    const attribution = connectionAttribution(writeContext);
     const rawEventPayload = {
       clubId: attribution.clubId || null,
       integrationConnectionId: attribution.integrationConnectionId || null,
@@ -1605,7 +1576,7 @@ async function receiveBeelineEvent({
 
       if (result.callId) {
         await autoEnqueueTranscriptionJob(result.callId, {
-          tenant: connection || undefined,
+          tenant: writeContext,
         });
       }
       results.push(result);
@@ -1628,9 +1599,57 @@ async function receiveBeelineEvent({
   };
 }
 
+async function receiveBeelineEvent({
+  body,
+  connection = null,
+  headers,
+  ip,
+  query,
+  publicId,
+  skipSecret = false,
+}) {
+  if (isTenantProviderIntegrationsEnabled()) {
+    let resolved = connection;
+    if (!resolved) {
+      resolved = await resolveIngressConnection({
+        provider: 'beeline',
+        publicId,
+        requestId: headers?.['x-request-id'],
+        sourceIp: ip,
+      });
+      try {
+        assertWebhookAllowed(headers, query, resolved);
+      } catch (error) {
+        await recordRejectedIngress({
+          provider: 'beeline',
+          publicId,
+          reasonCode: 'CONNECTION_SECRET_MISMATCH',
+          requestId: headers?.['x-request-id'],
+          sourceIp: ip,
+        });
+        throw error;
+      }
+    }
+    await assertLegacyDownstreamReady(resolved);
+    return withProviderConnectionLock(resolved, () => persistBeelineEvent({
+      body,
+      connection: resolved,
+      headers,
+      ip,
+      query,
+    }));
+  }
+  if (!skipSecret) assertWebhookAllowed(headers, query, connection);
+  return persistBeelineEvent({ body, connection, headers, ip, query });
+}
+
 async function processRawEvent(rawEvent, transaction = undefined) {
   const payload = asObject(parseJsonField(rawEvent.payload));
   const normalized = normalizePayload(payload);
+  const connection = rawEventConnection(rawEvent);
+  if (isTenantProviderIntegrationsEnabled() && !connection?.connectionId) {
+    throw appError('Provider attribution is missing', 409);
+  }
 
   if (!hasStableCallIdentity(normalized) && isServiceXsiEvent(normalized, payload)) {
     await rawEvent.update(
@@ -1652,10 +1671,6 @@ async function processRawEvent(rawEvent, transaction = undefined) {
     };
   }
 
-  const connection = rawEventConnection(rawEvent);
-  if (isTenantProviderIntegrationsEnabled() && !connection) {
-    throw appError('Provider attribution is missing', 409);
-  }
   const call = await upsertCallFromNormalized(normalized, transaction, connection);
 
   await rawEvent.update(
@@ -2551,13 +2566,10 @@ function unwrapApiList(data) {
   return [];
 }
 
-async function syncStatistics(
+async function syncStatisticsForConnection(
   { dateFrom, dateTo, pageSize = 100 } = {},
-  tenant = null,
-  suppliedConnection = null,
+  connection = null,
 ) {
-  const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
-  if (connection) await assertLegacyDownstreamReady(connection);
   const client = getBeelineClient(connection);
   const statisticsPath = normalizeText(connectionConfig(
     connection,
@@ -2613,13 +2625,21 @@ async function syncStatistics(
   };
 }
 
-async function syncRecordings(
-  { dateFrom, dateTo, id, userId } = {},
-  tenant = null,
-  suppliedConnection = null,
-) {
+async function syncStatistics(data = {}, tenant = null, suppliedConnection = null) {
   const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
-  if (connection) await assertLegacyDownstreamReady(connection);
+  if (!connection) return syncStatisticsForConnection(data);
+  await assertLegacyDownstreamReady(connection);
+  return withProviderConnectionLock(
+    connection,
+    () => syncStatisticsForConnection(data, connection),
+  );
+}
+
+async function syncRecordingsForConnection(
+  { dateFrom, dateTo, id, userId } = {},
+  connection = null,
+) {
+  const writeContext = await resolveBeelineWriteContext(connection);
   const client = getBeelineClient(connection);
   const recordsPath = normalizeText(connectionConfig(
     connection,
@@ -2646,13 +2666,13 @@ async function syncRecordings(
     try {
       const recording = normalizeRecordingPayload(row);
       const callId = await db.sequelize.transaction(async (transaction) => {
-        const call = await upsertCallFromRecording(recording, transaction, connection);
+        const call = await upsertCallFromRecording(recording, transaction, writeContext);
         if (call) linked += 1;
         return call?.id || null;
       });
       if (callId) {
         await autoEnqueueTranscriptionJob(callId, {
-          tenant: connection || undefined,
+          tenant: writeContext,
         });
       }
       imported += 1;
@@ -2671,6 +2691,16 @@ async function syncRecordings(
     imported,
     linked,
   };
+}
+
+async function syncRecordings(data = {}, tenant = null, suppliedConnection = null) {
+  const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  if (!connection) return syncRecordingsForConnection(data);
+  await assertLegacyDownstreamReady(connection);
+  return withProviderConnectionLock(
+    connection,
+    () => syncRecordingsForConnection(data, connection),
+  );
 }
 
 function normalizeRecordingReference(data) {
@@ -3968,6 +3998,7 @@ async function retryTranscriptionJobForWorker(jobId, data = {}, worker = null) {
 
 async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = null) {
   const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  const writeContext = await resolveBeelineWriteContext(connection);
   const client = getBeelineClient(connection);
   const subscriptionPath = normalizeText(connectionConfig(
     connection,
@@ -3977,7 +4008,7 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
   ));
   const requestPayload = buildSubscriptionRequestPayload(data, connection);
   const callbackUrl = requestPayload.url;
-  const attribution = connectionAttribution(connection);
+  const attribution = connectionAttribution(writeContext);
 
   if (connection) {
     requireConnectionSecret(connection, 'webhookSecret');
@@ -4047,6 +4078,7 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
 
 async function checkEventSubscription(tenant = null, suppliedConnection = null) {
   const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  const writeContext = await resolveBeelineWriteContext(connection);
   const client = getBeelineClient(connection);
   const subscriptionPath = normalizeText(connectionConfig(
     connection,
@@ -4061,7 +4093,7 @@ async function checkEventSubscription(tenant = null, suppliedConnection = null) 
     '',
   ));
   const latest = await getLatestSubscription({ connection, preferActive: true });
-  const attribution = connectionAttribution(connection);
+  const attribution = connectionAttribution(writeContext);
 
   if (!latest?.subscriptionId) {
     throw appError('Сначала создайте XSI-подписку: у CRM пока нет subscriptionId для проверки', 409);

@@ -43,6 +43,15 @@ function auditTenantProviderIntegrations() {
     /buildProviderIdempotencyKey/u,
     /maintainAllEventSubscriptions/u,
     /withProviderConnectionLock/u,
+    /syncStatistics[\s\S]*withProviderConnectionLock/u,
+    /syncRecordings[\s\S]*withProviderConnectionLock/u,
+  ]);
+  requireText('src/provider-integrations/credential-keys.js', [
+    /apiKey|apikey/u,
+    /privatekey/u,
+    /signingkey/u,
+    /accesskey/u,
+    /clientsecret/u,
   ]);
   requireText('src/provider-integrations/secrets.js', [
     /aes-256-gcm/u,
@@ -55,8 +64,22 @@ function auditTenantProviderIntegrations() {
     /PROVIDER_CONNECTION_REJECTED/u,
   ]);
   requireText('src/provider-integrations/locks.js', [
+    /AsyncLocalStorage/u,
     /buildProviderNamespace/u,
     /GET_LOCK/u,
+  ]);
+  requireText('src/provider-integrations/rollout.js', [
+    /resolveLegacyProviderContext/u,
+    /reconcileLegacyProviderRows/u,
+    /integrationConnectionId IS NULL/u,
+  ]);
+  requireText('migrations/20260716100000-harden-tenant-provider-integrations.js', [
+    /BEFORE UPDATE ON IntegrationConnections/u,
+    /BEFORE UPDATE ON TelephonyCalls/u,
+    /BEFORE UPDATE ON TelephonyRawEvents/u,
+    /BEFORE UPDATE ON TelephonySubscriptions/u,
+    /BEFORE UPDATE ON Receipts/u,
+    /replaceForeignKeys\(queryInterface, 'RESTRICT'\)/u,
   ]);
   requireText('src/provider-integrations/runner.js', [
     /Promise\.all/u,

@@ -6,15 +6,15 @@ const {
 const {
   withProviderConnectionLock,
 } = require('../provider-integrations/locks');
+const {
+  isProviderCredentialKey,
+} = require('../provider-integrations/credential-keys');
 
 const SENSITIVE_LOG_KEYS = new Set([
-  'authorization',
   'client_email',
   'client_phone',
   'email',
   'phone',
-  'token',
-  'x-evotor-token',
 ]);
 const PAYMENT_LOG_KEY_PATTERN =
   /(payment|pay|cash|cashless|card|electron|sbp|amount|sum|total)/i;
@@ -22,7 +22,9 @@ const RAW_PAYLOAD_LOG_LIMIT = 20000;
 
 function sanitizeForLog(value, key = '', depth = 0) {
   const normalizedKey = String(key).toLowerCase();
-  if (SENSITIVE_LOG_KEYS.has(normalizedKey)) return '[redacted]';
+  if (SENSITIVE_LOG_KEYS.has(normalizedKey) || isProviderCredentialKey(key)) {
+    return '[redacted]';
+  }
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
     return value.length > 300 ? `${value.slice(0, 300)}...` : value;

@@ -7,7 +7,11 @@ const db = require('../models');
 const {
   createConnection,
   generatePublicId,
+  serializeConnection,
 } = require('../src/provider-integrations/connection-service');
+const {
+  reconcileLegacyProviderRows,
+} = require('../src/provider-integrations/rollout');
 const {
   getExactDefaultTenant,
 } = require('../src/files-workers/tenant-context');
@@ -103,7 +107,13 @@ async function main() {
       },
     });
     if (existing) {
-      results.push({ action: 'exists', provider: definition.provider, publicId: existing.publicId });
+      const reconciliation = await reconcileLegacyProviderRows(serializeConnection(existing));
+      results.push({
+        action: 'exists',
+        provider: definition.provider,
+        publicId: existing.publicId,
+        reconciliation,
+      });
       continue;
     }
     const row = await createConnection({
@@ -114,7 +124,13 @@ async function main() {
       publicId: definition.publicId,
       secrets: definition.secrets,
     });
-    results.push({ action: 'created', provider: definition.provider, publicId: row.publicId });
+    const reconciliation = await reconcileLegacyProviderRows(serializeConnection(row));
+    results.push({
+      action: 'created',
+      provider: definition.provider,
+      publicId: row.publicId,
+      reconciliation,
+    });
   }
   console.log(JSON.stringify({ connections: results }, null, 2));
 }

@@ -79,25 +79,54 @@ test('public serialization and safe config reject credential-shaped fields', () 
   });
   assert.equal(JSON.stringify(serialized).includes('must-not-leak'), false);
   assert.equal(Object.hasOwn(serialized, 'secretCiphertext'), false);
-  assert.throws(
-    () => normalizeSafeObject({ nested: { apiToken: 'forged' } }, 'config'),
-    (error) => error.code === 'INTEGRATION_CONNECTION_CONFIG_CONTAINS_SECRET',
-  );
+  for (const key of [
+    'apiKey',
+    'api_key',
+    'x-api-key',
+    'auth',
+    'privateKey',
+    'private_key',
+    'signing-key',
+    'accessKey',
+    'access_key',
+    'clientSecret',
+    'credential',
+  ]) {
+    assert.throws(
+      () => normalizeSafeObject({ nested: { [key]: 'forged' } }, 'config'),
+      (error) => error.code === 'INTEGRATION_CONNECTION_CONFIG_CONTAINS_SECRET',
+    );
+  }
 });
 
 test('raw provider redaction removes credentials without destroying business contact fields', () => {
   const redacted = redactProviderCredentials({
     authorization: 'Bearer provider-secret',
     client: { email: 'client@example.test', phone: '+79990000000' },
-    nested: { apiToken: 'provider-token', eventId: 'evt-1' },
+    nested: {
+      access_key: 'provider-access-key',
+      apiKey: 'provider-api-key',
+      clientSecret: 'provider-client-secret',
+      eventId: 'evt-1',
+      privateKey: 'provider-private-key',
+      'signing-key': 'provider-signing-key',
+    },
   });
   assert.deepEqual(redacted, {
     authorization: '[redacted]',
     client: { email: 'client@example.test', phone: '+79990000000' },
-    nested: { apiToken: '[redacted]', eventId: 'evt-1' },
+    nested: {
+      access_key: '[redacted]',
+      apiKey: '[redacted]',
+      clientSecret: '[redacted]',
+      eventId: 'evt-1',
+      privateKey: '[redacted]',
+      'signing-key': '[redacted]',
+    },
   });
   assert.equal(JSON.stringify(redacted).includes('provider-secret'), false);
-  assert.equal(JSON.stringify(redacted).includes('provider-token'), false);
+  assert.equal(JSON.stringify(redacted).includes('provider-api-key'), false);
+  assert.equal(JSON.stringify(redacted).includes('provider-private-key'), false);
 });
 
 test('idempotency and lock namespaces include provider, tenant and connection', () => {
@@ -110,6 +139,10 @@ test('idempotency and lock namespaces include provider, tenant and connection', 
   assert.notEqual(buildProviderNamespace(first), buildProviderNamespace(otherConnection));
   assert.notEqual(providerLockName(first), providerLockName(otherClub));
   assert.ok(providerLockName(first).length <= 64);
+  assert.throws(
+    () => buildProviderNamespace({ ...first, connectionId: null }),
+    (error) => error.code === 'PROVIDER_IDEMPOTENCY_CONTEXT_INVALID',
+  );
 });
 
 test('same connection serializes while different clubs can progress independently', async () => {

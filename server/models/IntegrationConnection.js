@@ -5,6 +5,18 @@ const {
   INTEGRATION_PROVIDERS,
   INTEGRATION_PURPOSES,
 } = require('../src/provider-integrations/constants');
+const {
+  assertBulkFieldsAreMutable,
+} = require('../src/provider-integrations/immutable-attribution');
+
+const IMMUTABLE_IDENTITY_FIELDS = Object.freeze([
+  'publicId',
+  'organizationId',
+  'clubId',
+  'provider',
+  'purpose',
+  'connectionKey',
+]);
 
 module.exports = (sequelize, DataTypes) => {
   const IntegrationConnection = sequelize.define(
@@ -68,16 +80,15 @@ module.exports = (sequelize, DataTypes) => {
         attributes: { exclude: ['secretCiphertext', 'secretKeyVersion'] },
       },
       hooks: {
+        beforeBulkUpdate(options) {
+          assertBulkFieldsAreMutable(
+            options,
+            IMMUTABLE_IDENTITY_FIELDS,
+            'Integration connection identity is immutable',
+          );
+        },
         beforeUpdate(connection) {
-          const immutable = [
-            'publicId',
-            'organizationId',
-            'clubId',
-            'provider',
-            'purpose',
-            'connectionKey',
-          ];
-          if (immutable.some((field) => connection.changed(field))) {
+          if (IMMUTABLE_IDENTITY_FIELDS.some((field) => connection.changed(field))) {
             const error = new Error('Integration connection identity is immutable');
             error.code = 'INTEGRATION_CONNECTION_IDENTITY_IMMUTABLE';
             throw error;

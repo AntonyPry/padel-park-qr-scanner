@@ -1,3 +1,14 @@
+const {
+  assertBulkFieldsAreMutable,
+} = require('../src/provider-integrations/immutable-attribution');
+
+const IMMUTABLE_PROVIDER_FIELDS = Object.freeze([
+  'organizationId',
+  'clubId',
+  'integrationConnectionId',
+  'idempotencyKey',
+]);
+
 module.exports = (sequelize, DataTypes) => {
   const Receipt = sequelize.define('Receipt', {
     organizationId: {
@@ -74,9 +85,15 @@ module.exports = (sequelize, DataTypes) => {
       attributes: { exclude: ['idempotencyKey', 'integrationConnectionId'] },
     },
     hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkFieldsAreMutable(
+          options,
+          IMMUTABLE_PROVIDER_FIELDS,
+          'Receipt provider attribution is immutable',
+        );
+      },
       beforeUpdate(receipt) {
-        const fields = ['organizationId', 'clubId', 'integrationConnectionId', 'idempotencyKey'];
-        if (fields.some((field) => receipt.changed(field))) {
+        if (IMMUTABLE_PROVIDER_FIELDS.some((field) => receipt.changed(field))) {
           const error = new Error('Receipt provider attribution is immutable');
           error.code = 'PROVIDER_ATTRIBUTION_IMMUTABLE';
           throw error;

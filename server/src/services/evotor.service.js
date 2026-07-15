@@ -4,6 +4,12 @@ const pendingSaleService = require('./pending-sale.service');
 const {
   buildProviderIdempotencyKey,
 } = require('../provider-integrations/idempotency');
+const {
+  resolveLegacyProviderContext,
+} = require('../provider-integrations/rollout');
+const {
+  isTenantProviderIntegrationsEnabled,
+} = require('../tenant-context/capabilities');
 
 function normalizePaymentType(value) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -229,6 +235,13 @@ class EvotorService {
    * @returns {Object} { alreadyProcessed: boolean, receipt: Object }
    */
   async processReceipt(payload, { connection } = {}) {
+    if (isTenantProviderIntegrationsEnabled() && !connection) {
+      const error = new Error('Provider connection is not configured');
+      error.code = 'PROVIDER_CONNECTION_REQUIRED';
+      error.statusCode = 503;
+      throw error;
+    }
+    const writeContext = connection || await resolveLegacyProviderContext('evotor');
     // 1. Извлекаем данные чека
     const receiptData =
       payload.data && payload.type?.toLowerCase().includes('receipt')
@@ -239,11 +252,11 @@ class EvotorService {
     const evotorId = String(
       receiptData.id || receiptData.receiptId || receiptData.uuid || Date.now(),
     );
-    const idempotencyKey = buildProviderIdempotencyKey(connection || null, evotorId);
+    const idempotencyKey = buildProviderIdempotencyKey(writeContext, evotorId);
 
     // 2. Проверяем дубликаты
     const existing = await db.Receipt.findOne({
-      where: connection ? { idempotencyKey } : { evotorId },
+      where: { idempotencyKey },
     });
     if (existing) {
       return { alreadyProcessed: true, receipt: existing };
@@ -264,9 +277,9 @@ class EvotorService {
       // 4. Сохраняем заголовок чека
       const newReceipt = await db.Receipt.create(
         {
-          organizationId: connection?.organizationId || null,
-          clubId: connection?.clubId || null,
-          integrationConnectionId: connection?.connectionId || null,
+          organizationId: writeContext.organizationId,
+          clubId: writeContext.clubId,
+          integrationConnectionId: writeContext.connectionId || null,
           idempotencyKey,
           evotorId,
           dateTime: receiptData.dateTime || receiptData.closeDate || new Date(),

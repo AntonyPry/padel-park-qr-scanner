@@ -1,6 +1,6 @@
 # Feature 4.3 — Tenant-aware provider integrations
 
-Статус: `implemented; independent QA required before promotion`.
+Статус: `QA fixes implemented; independent re-QA required before promotion`.
 
 Exact base: `d24021d9d88f685983ba9bebfd5e5c05888aa5b2` from `codex/saas-multitenancy-integration`.
 
@@ -16,7 +16,7 @@ Feature branch: `codex/multi-tenant-providers-v4-3`.
 - immutable `organizationId`, `clubId`, `provider`, `purpose`, `connectionKey` и public ID;
 - статусы `active`, `disabled`, `revoked`; ingress и runners используют только active connection с active organization/club chain;
 - tenant slot unique: `(organizationId, clubId, provider, purpose, connectionKey)`;
-- composite FK `(integrationConnectionId, organizationId, clubId)` не позволяет связать provider row с чужим tenant;
+- composite FK `(integrationConnectionId, organizationId, clubId)` не позволяет связать provider row с чужим tenant; все provider tenant/connection FKs используют `ON UPDATE RESTRICT`;
 - config/metadata принимают только JSON без credential-shaped keys; secret fields живут только в encrypted bundle;
 - default model scope и public serializer никогда не возвращают ciphertext, key version или decrypted secrets.
 
@@ -51,9 +51,9 @@ Namespace строится из `provider + organizationId + clubId + connection
 - Evotor `Receipt.idempotencyKey`;
 - MySQL advisory lock name.
 
-Одинаковый external ID допустим между connections. Replay внутри одной connection увеличивает delivery metadata существующего raw event и не переписывает original body/tenant identity. Application hooks запрещают смену attribution, а composite FKs блокируют forged cross-tenant connection relations.
+Одинаковый external ID допустим между connections. Replay внутри одной connection увеличивает delivery metadata существующего raw event и не переписывает original body/tenant identity. Instance и bulk application hooks запрещают смену attribution. DB `BEFORE UPDATE` triggers защищают identity `IntegrationConnection` и attribution всех четырёх provider roots от ORM bypass/raw SQL, а composite FKs с `ON UPDATE RESTRICT` блокируют forged relations и parent cascades. Единственное разрешённое DB-изменение provider identity существующей business row — контролируемая однонаправленная привязка legacy `NULL` connection к connection того же неизменяемого organization/club во время rollout reconciliation; повторная привязка и любое перемещение tenant запрещены.
 
-Connection lock сериализует webhook/manual sync/subscription renewal одной connection. Connections разных clubs получают разные locks и работают параллельно. Beeline renewal перечисляет active connections отдельно через isolated `Promise.all`; failure одного provider context возвращает redacted result и не останавливает остальные.
+Connection lock сериализует весь canonical webhook, manual statistics/recordings sync и subscription renewal одной connection. Reentrant lock context не создаёт второй advisory lock, когда manual sync передаёт строки во внутренний ingress. Connections разных clubs получают разные locks и работают параллельно. Beeline renewal перечисляет active connections отдельно через isolated `Promise.all`; failure одного provider context возвращает redacted result и не останавливает остальные.
 
 ## Existing provider adaptation
 
@@ -70,9 +70,12 @@ Telegram/VK deliberately permit no multi-connection client registration yet: `Us
 
 ## Migration
 
-Forward migration: `20260715160000-add-tenant-provider-integrations.js`.
+Forward migrations:
 
-It requires the exact active default organization/club, creates connection/diagnostic tables, adds nullable attribution to existing provider roots, deterministically backfills existing single-default rows, installs composite tenant/connection FKs and replaces global provider unique indexes with connection namespaces. Accepted prior migrations are unchanged.
+- `20260715160000-add-tenant-provider-integrations.js` — foundation/attribution/indexes;
+- `20260716100000-harden-tenant-provider-integrations.js` — `ON UPDATE RESTRICT` и DB immutable triggers.
+
+Первая migration требует exact active default organization/club, создаёт connection/diagnostic tables, добавляет nullable attribution к существующим provider roots, детерминированно backfill-ит существующие single-default rows, устанавливает composite tenant/connection FKs и заменяет global provider unique indexes connection namespaces. Вторая forward migration усиливает уже установленную Feature 4.3 schema без переписывания принятых migrations.
 
 Schema down is a development/emergency pre-data operation only. It refuses rollback when connections, diagnostics or connection-attributed business rows exist. Runtime rollback does not down-migrate: disable the Feature 4.3 flag and retain additive attribution/ciphertext.
 
@@ -92,9 +95,9 @@ Rollout sequence:
 
 1. DB backup; deploy migration with provider flag off;
 2. set protected master key/key version on server;
-3. run `npm run tenant:providers:bootstrap` in `server` to create exact-default connections from existing env without printing secrets;
+3. остановить provider ingress/loops на короткое rollout-окно и run `npm run tenant:providers:bootstrap` in `server`: команда создаёт/находит exact-default connections, затем детерминированно связывает flag-off rows с default connection, не печатая secrets;
 4. configure provider callbacks with returned opaque public IDs and verify secret headers;
-5. run provider audit and flag-off webhook smoke;
+5. до включения flag повторно run bootstrap/reconciliation после drain, затем provider audit и flag-off webhook smoke; новые flag-off Beeline/Evotor rows уже имеют default organization/club, но до reconciliation сохраняют legacy connection namespace;
 6. enable Features 3 → 4.1 → 4.2 → 4.3 server flags;
 7. verify canonical Beeline/Evotor ingress, Beeline renewal and one Telegram/VK instance.
 

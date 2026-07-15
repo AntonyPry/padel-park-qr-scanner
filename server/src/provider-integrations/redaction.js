@@ -1,10 +1,11 @@
 'use strict';
 
-const SENSITIVE_KEY_PATTERN = /(authorization|cookie|credential|email|password|phone|secret|token)/i;
-const PROVIDER_CREDENTIAL_KEY_PATTERN = /(authorization|cookie|credential|password|secret|token)/i;
+const { isProviderCredentialKey } = require('./credential-keys');
+
+const PRIVATE_CONTACT_KEY = /(email|phone)/iu;
 
 function redactProviderCredentials(value, key = '', depth = 0) {
-  if (PROVIDER_CREDENTIAL_KEY_PATTERN.test(String(key))) return '[redacted]';
+  if (isProviderCredentialKey(key)) return '[redacted]';
   if (value === null || value === undefined) return value;
   if (depth >= 8) return Array.isArray(value) ? `[array:${value.length}]` : '[object]';
   if (Array.isArray(value)) {
@@ -22,7 +23,7 @@ function redactProviderCredentials(value, key = '', depth = 0) {
 }
 
 function redactProviderValue(value, key = '', depth = 0) {
-  if (SENSITIVE_KEY_PATTERN.test(String(key))) return '[redacted]';
+  if (isProviderCredentialKey(key) || PRIVATE_CONTACT_KEY.test(String(key))) return '[redacted]';
   if (value === null || value === undefined) return value;
   if (depth >= 4) return Array.isArray(value) ? `[array:${value.length}]` : '[object]';
   if (Array.isArray(value)) {
