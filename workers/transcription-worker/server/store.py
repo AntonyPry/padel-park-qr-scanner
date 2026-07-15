@@ -19,6 +19,10 @@ def _json(value: Any) -> str:
 def _load_json(value: str | None, default: Any = None) -> Any:
     if not value:
         return default
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return default
 
 
 def _safe_crm_job(job_payload: dict[str, Any]) -> dict[str, Any]:
@@ -34,10 +38,6 @@ def _safe_crm_job(job_payload: dict[str, Any]) -> dict[str, Any]:
             "clubKey": tenant.get("clubKey"),
         },
     }
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return default
 
 
 class WorkerStore:

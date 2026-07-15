@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
-const { test } = require('node:test');
+const { after, before, test } = require('node:test');
 const db = require('../../models');
+const authService = require('../../src/services/auth.service');
+const tenantFoundation = require('../../src/services/tenant-foundation.service');
 const {
   autoEnqueueTranscriptionJob,
   getCall,
@@ -8,6 +10,89 @@ const {
   listCallTranscriptionJobs,
   queueMissingTranscriptionJobs,
 } = require('../../src/services/telephony.service');
+
+const capabilityEnvNames = [
+  'TENANT_CONTEXT_ENABLED',
+  'TENANT_CACHE_REALTIME_ENABLED',
+  'TENANT_FILES_WORKERS_ENABLED',
+  'TENANT_FOUNDATION_GATE_CACHE_MS',
+];
+const previousCapabilityEnv = Object.fromEntries(
+  capabilityEnvNames.map((name) => [name, process.env[name]]),
+);
+let createdBootstrapAccount = null;
+let testTenant = null;
+
+async function initializeDefaultTenantForTest() {
+  tenantFoundation.invalidateTenantFoundationGateCache();
+  let classification = await tenantFoundation.classifyTenantFoundation();
+  if (classification.state === 'bootstrap-pending') {
+    const session = await authService.bootstrapOwner({
+      email: `feature-4-2-auto-enqueue-${process.pid}@setly.test`,
+      name: 'Feature 4.2 Auto Enqueue Owner',
+      password: 'Feature42AutoEnqueue!',
+      phone: null,
+    });
+    createdBootstrapAccount = {
+      accountId: Number(session.account.id),
+      staffId: Number(session.account.staffId),
+    };
+  }
+  tenantFoundation.invalidateTenantFoundationGateCache();
+  classification = await tenantFoundation.classifyTenantFoundation();
+  assert.equal(classification.state, 'initialized');
+  return {
+    organizationId: Number(classification.defaultOrganizationId),
+    clubId: Number(classification.defaultClubId),
+  };
+}
+
+async function cleanupCreatedBootstrapOwner() {
+  if (!createdBootstrapAccount) return;
+  await db.sequelize.transaction(async (transaction) => {
+    const membership = await db.Membership.findOne({
+      transaction,
+      where: { accountId: createdBootstrapAccount.accountId },
+    });
+    if (membership) {
+      await db.MembershipClubAccess.destroy({
+        transaction,
+        where: { membershipId: membership.id },
+      });
+      await membership.destroy({ transaction });
+    }
+    await db.Account.destroy({
+      transaction,
+      where: { id: createdBootstrapAccount.accountId },
+    });
+    await db.Staff.destroy({
+      transaction,
+      where: { id: createdBootstrapAccount.staffId },
+    });
+  });
+  tenantFoundation.invalidateTenantFoundationGateCache();
+  const classification = await tenantFoundation.classifyTenantFoundation();
+  assert.equal(classification.state, 'bootstrap-pending');
+}
+
+before(async () => {
+  assert.ok(process.env.DB_USER, 'DB_USER is required for DB-backed auto-enqueue tests');
+  process.env.TENANT_CONTEXT_ENABLED = 'true';
+  process.env.TENANT_CACHE_REALTIME_ENABLED = 'true';
+  process.env.TENANT_FILES_WORKERS_ENABLED = 'true';
+  process.env.TENANT_FOUNDATION_GATE_CACHE_MS = '0';
+  await db.sequelize.authenticate();
+  testTenant = await initializeDefaultTenantForTest();
+});
+
+after(async () => {
+  await cleanupCreatedBootstrapOwner();
+  for (const [name, value] of Object.entries(previousCapabilityEnv)) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  tenantFoundation.invalidateTenantFoundationGateCache();
+});
 
 async function createRecordedCall(suffix, startedAt = new Date()) {
   return db.TelephonyCall.create({
@@ -25,11 +110,7 @@ async function cleanupCall(call) {
 }
 
 async function defaultTenantAttribution() {
-  const organization = await db.Organization.findOne({ where: { slug: 'padel-park' } });
-  const club = await db.Club.findOne({
-    where: { organizationId: organization.id, slug: 'padel-park' },
-  });
-  return { organizationId: organization.id, clubId: club.id };
+  return { ...testTenant };
 }
 
 test('DB-backed auto-enqueue stays idempotent across concurrency, statuses and queue-missing', async () => {
@@ -39,13 +120,13 @@ test('DB-backed auto-enqueue stays idempotent across concurrency, statuses and q
   try {
     call = await createRecordedCall('concurrent');
     await Promise.all([
-      autoEnqueueTranscriptionJob(call.id),
-      autoEnqueueTranscriptionJob(call.id),
+      autoEnqueueTranscriptionJob(call.id, { tenant: testTenant }),
+      autoEnqueueTranscriptionJob(call.id, { tenant: testTenant }),
     ]);
     assert.equal(await db.TelephonyTranscriptionJob.count({ where: { telephonyCallId: call.id } }), 1);
 
-    await autoEnqueueTranscriptionJob(call.id);
-    await autoEnqueueTranscriptionJob(call.id);
+    await autoEnqueueTranscriptionJob(call.id, { tenant: testTenant });
+    await autoEnqueueTranscriptionJob(call.id, { tenant: testTenant });
     assert.equal(await db.TelephonyTranscriptionJob.count({ where: { telephonyCallId: call.id } }), 1);
 
     const job = await db.TelephonyTranscriptionJob.findOne({
@@ -54,7 +135,7 @@ test('DB-backed auto-enqueue stays idempotent across concurrency, statuses and q
     });
     for (const status of ['queued', 'processing', 'completed', 'failed']) {
       await job.update({ status });
-      await autoEnqueueTranscriptionJob(call.id);
+      await autoEnqueueTranscriptionJob(call.id, { tenant: testTenant });
       assert.equal(
         await db.TelephonyTranscriptionJob.count({ where: { telephonyCallId: call.id } }),
         1,
@@ -68,8 +149,8 @@ test('DB-backed auto-enqueue stays idempotent across concurrency, statuses and q
 
     missingCall = await createRecordedCall('queue-missing', new Date('2099-01-01T00:00:00.000Z'));
     await Promise.all([
-      queueMissingTranscriptionJobs({ id: null, role: 'owner' }, { limit: 1 }),
-      queueMissingTranscriptionJobs({ id: null, role: 'owner' }, { limit: 1 }),
+      queueMissingTranscriptionJobs({ id: null, role: 'owner' }, { limit: 1 }, testTenant),
+      queueMissingTranscriptionJobs({ id: null, role: 'owner' }, { limit: 1 }, testTenant),
     ]);
     assert.equal(
       await db.TelephonyTranscriptionJob.count({ where: { telephonyCallId: missingCall.id } }),
@@ -107,6 +188,7 @@ test('DB-backed call transcription list skips large transcript payloads', async 
       { id: null, role: 'owner' },
       call.id,
       { pageSize: 5 },
+      testTenant,
     );
 
     assert.equal(result.total, 1);
@@ -167,6 +249,7 @@ test('DB-backed paginated call list skips large transcript payloads while detail
     const page = await listCalls(
       { id: null, role: 'owner' },
       { page: 3, pageSize: 1, search: phoneSuffix.slice(0, 5), status: 'active' },
+      testTenant,
     );
     assert.equal(page.total, 3);
     assert.equal(page.page, 3);
@@ -180,7 +263,7 @@ test('DB-backed paginated call list skips large transcript payloads while detail
     assert.equal(page.items[0].transcription.transcriptText, undefined);
     assert.deepEqual(page.items[0].transcription.aiTranscriptSegments, []);
 
-    const detail = await getCall({ id: null, role: 'owner' }, detailCall.id);
+    const detail = await getCall({ id: null, role: 'owner' }, detailCall.id, testTenant);
     assert.ok(detail.transcription.transcriptText.startsWith('large transcript payload'));
     assert.ok(detail.transcription.transcriptText.length > 40_000);
     assert.ok(detail.transcription.rawTranscriptText.startsWith('large transcript payload'));

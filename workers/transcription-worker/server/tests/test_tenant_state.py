@@ -39,7 +39,52 @@ class TenantWorkerStateTest(unittest.TestCase):
             self.assertEqual(saved["attempt"], 3)
             self.assertEqual(saved["claimId"], "160dca15-56e8-41df-885f-b91793733f5c")
             self.assertEqual(saved["callId"], "")
+            self.assertEqual(
+                saved["crmJob"],
+                {
+                    "id": 77,
+                    "status": "processing",
+                    "progress": None,
+                    "progressStage": None,
+                    "attempts": None,
+                    "tenant": {
+                        "organizationKey": "org_12345678",
+                        "clubKey": "club_12345678",
+                    },
+                },
+            )
             self.assertNotIn("clientPhone", json.dumps(saved["crmJob"]))
+
+            event_details = {
+                "attempt": 3,
+                "internalStage": "ffprobe",
+                "streams": 2,
+            }
+            event = store.add_event(
+                "probe_completed",
+                "Audio metadata ready",
+                event_details,
+                saved["id"],
+            )
+            self.assertEqual(event["details"], event_details)
+            self.assertEqual(store.get_events(saved["id"])[0]["details"], event_details)
+
+            ffprobe = {
+                "format": {"duration": "12.5", "format_name": "wav"},
+                "streams": [{"channels": 2, "codec_name": "pcm_s16le", "index": 0}],
+            }
+            channel_mapping = {
+                "left": "administrator",
+                "right": "client",
+                "sourceChannels": [0, 1],
+            }
+            updated = store.update_job(
+                saved["id"],
+                ffprobe_json=ffprobe,
+                channel_mapping_json=channel_mapping,
+            )
+            self.assertEqual(updated["ffprobe"], ffprobe)
+            self.assertEqual(updated["channelMapping"], channel_mapping)
 
             raw_db = Path(db_path).read_bytes()
             for private in [

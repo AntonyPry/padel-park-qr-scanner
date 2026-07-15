@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('node:fs/promises');
+const { constants: fsConstants } = require('node:fs');
 const path = require('node:path');
 const db = require('../../models');
 const {
@@ -26,6 +27,14 @@ const {
 const MANIFEST_SCHEMA = 'setly.shift-report-attachments';
 const MANIFEST_VERSION = 1;
 
+class LegacyAttachmentPathError extends Error {
+  constructor(message = 'Unsafe legacy attachment path') {
+    super(message);
+    this.name = 'LegacyAttachmentPathError';
+    this.code = 'UNSAFE_LEGACY_ATTACHMENT_PATH';
+  }
+}
+
 function readAttachments(value) {
   if (Array.isArray(value)) return value;
   if (!value) return [];
@@ -40,6 +49,131 @@ function readAttachments(value) {
 async function readFileChecksum(filePath) {
   const buffer = await fs.readFile(filePath);
   return { buffer, checksumSha256: checksumBuffer(buffer), size: buffer.length };
+}
+
+function isPathContained(rootPath, candidatePath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return (
+    relative !== '' &&
+    relative !== '..' &&
+    !relative.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relative)
+  );
+}
+
+async function canonicalLegacyRoot(rootPath) {
+  const configuredPath = path.resolve(rootPath);
+  let rootStat;
+  try {
+    rootStat = await fs.lstat(configuredPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return Object.freeze({ configuredPath, exists: false, realPath: null });
+    }
+    throw error;
+  }
+  if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+    throw new LegacyAttachmentPathError('Legacy attachment root must be a real directory');
+  }
+  const realPath = await fs.realpath(configuredPath);
+  const realStat = await fs.lstat(realPath);
+  if (realStat.isSymbolicLink() || !realStat.isDirectory()) {
+    throw new LegacyAttachmentPathError('Legacy attachment root is unsafe');
+  }
+  return Object.freeze({ configuredPath, exists: true, realPath });
+}
+
+function legacyPathSegments(relativePath) {
+  if (
+    typeof relativePath !== 'string' ||
+    relativePath.length === 0 ||
+    relativePath.includes('\0') ||
+    relativePath.includes('\\') ||
+    path.isAbsolute(relativePath)
+  ) {
+    throw new LegacyAttachmentPathError();
+  }
+  const segments = relativePath.split('/');
+  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
+    throw new LegacyAttachmentPathError();
+  }
+  return segments;
+}
+
+async function assertSafeLegacySegments(root, segments) {
+  let currentPath = root.realPath;
+  let finalStat = null;
+  for (let index = 0; index < segments.length; index += 1) {
+    currentPath = path.join(currentPath, segments[index]);
+    const segmentStat = await fs.lstat(currentPath);
+    if (segmentStat.isSymbolicLink()) {
+      throw new LegacyAttachmentPathError();
+    }
+    const isFile = index === segments.length - 1;
+    if ((!isFile && !segmentStat.isDirectory()) || (isFile && !segmentStat.isFile())) {
+      throw new LegacyAttachmentPathError();
+    }
+    if (isFile) finalStat = segmentStat;
+  }
+  return { candidatePath: currentPath, finalStat };
+}
+
+async function resolveSafeLegacyFile(root, relativePath) {
+  if (!root.exists) {
+    const error = new Error('Legacy attachment root does not exist');
+    error.code = 'ENOENT';
+    throw error;
+  }
+  const segments = legacyPathSegments(relativePath);
+  const { candidatePath, finalStat } = await assertSafeLegacySegments(root, segments);
+  const realPath = await fs.realpath(candidatePath);
+  if (!isPathContained(root.realPath, realPath)) {
+    throw new LegacyAttachmentPathError();
+  }
+  const realStat = await fs.lstat(realPath);
+  if (realStat.isSymbolicLink() || !realStat.isFile()) {
+    throw new LegacyAttachmentPathError();
+  }
+  if (realStat.dev !== finalStat.dev || realStat.ino !== finalStat.ino) {
+    throw new LegacyAttachmentPathError('Legacy attachment changed during resolution');
+  }
+  return { candidatePath, realPath, segments, stat: realStat };
+}
+
+async function readSafeLegacyFileChecksum(root, relativePath) {
+  const resolved = await resolveSafeLegacyFile(root, relativePath);
+  let handle;
+  try {
+    handle = await fs.open(
+      resolved.realPath,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0),
+    );
+    const openStat = await handle.stat();
+    if (
+      !openStat.isFile() ||
+      openStat.dev !== resolved.stat.dev ||
+      openStat.ino !== resolved.stat.ino
+    ) {
+      throw new LegacyAttachmentPathError('Legacy attachment changed before open');
+    }
+    const verified = await assertSafeLegacySegments(root, resolved.segments);
+    const verifiedRealPath = await fs.realpath(verified.candidatePath);
+    if (
+      verifiedRealPath !== resolved.realPath ||
+      !isPathContained(root.realPath, verifiedRealPath)
+    ) {
+      throw new LegacyAttachmentPathError('Legacy attachment changed before read');
+    }
+    const buffer = await handle.readFile();
+    return {
+      absolutePath: resolved.realPath,
+      buffer,
+      checksumSha256: checksumBuffer(buffer),
+      size: buffer.length,
+    };
+  } finally {
+    await handle?.close();
+  }
 }
 
 async function atomicWriteOrVerify({ storageKey, buffer, storageRoot }) {
@@ -63,7 +197,7 @@ async function atomicWriteOrVerify({ storageKey, buffer, storageRoot }) {
   }
 }
 
-async function listRegularFiles(rootPath) {
+async function listRegularFiles(rootPath, options = {}) {
   const files = [];
   async function visit(directory) {
     let entries;
@@ -77,7 +211,19 @@ async function listRegularFiles(rootPath) {
       const entryPath = path.join(directory, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) await visit(entryPath);
-      if (entry.isFile() && !entry.name.startsWith('.tmp-')) files.push(entryPath);
+      if (entry.isFile() && !entry.name.startsWith('.tmp-')) {
+        if (options.legacyRoot) {
+          const relativePath = path.relative(options.legacyRoot.realPath, entryPath);
+          try {
+            const resolved = await resolveSafeLegacyFile(options.legacyRoot, relativePath);
+            files.push(resolved.realPath);
+          } catch (error) {
+            if (!(error instanceof LegacyAttachmentPathError)) throw error;
+          }
+        } else {
+          files.push(entryPath);
+        }
+      }
     }
   }
   await visit(rootPath);
@@ -124,7 +270,7 @@ async function migrateShiftReportAttachments(options = {}) {
   const apply = Boolean(options.apply || options.rollback);
   const rollback = Boolean(options.rollback);
   const storageRoot = normalizeStorageRoot(options.storageRoot);
-  const legacyRoot = path.resolve(options.legacyRoot || LEGACY_UPLOAD_ROOT);
+  const legacyRoot = await canonicalLegacyRoot(options.legacyRoot || LEGACY_UPLOAD_ROOT);
   const tenant = options.tenant || await getExactDefaultTenant();
   const answers = await models.ShiftReportAnswer.findAll({
     attributes: ['id', 'reportId', 'attachments'],
@@ -182,11 +328,10 @@ async function migrateShiftReportAttachments(options = {}) {
               },
               answer.reportId,
             );
-            const legacyPath = path.resolve(legacyRoot, legacyRelativePath);
-            referencedLegacyPaths.add(legacyPath);
             if (rollback) {
               try {
-                const legacy = await readFileChecksum(legacyPath);
+                const legacy = await readSafeLegacyFileChecksum(legacyRoot, legacyRelativePath);
+                referencedLegacyPaths.add(legacy.absolutePath);
                 if (legacy.checksumSha256 !== attachment.checksumSha256) {
                   counts.checksumMismatch += 1;
                   next.push(attachment);
@@ -227,14 +372,18 @@ async function migrateShiftReportAttachments(options = {}) {
         continue;
       }
       counts.eligibleLegacy += 1;
-      const legacyPath = path.resolve(legacyRoot, relativePath);
-      referencedLegacyPaths.add(legacyPath);
       let legacy;
       try {
-        legacy = await readFileChecksum(legacyPath);
+        legacy = await readSafeLegacyFileChecksum(legacyRoot, relativePath);
+        referencedLegacyPaths.add(legacy.absolutePath);
       } catch (error) {
         if (error.code === 'ENOENT') {
           counts.missingLegacy += 1;
+          next.push(attachment);
+          continue;
+        }
+        if (error instanceof LegacyAttachmentPathError) {
+          counts.invalidMetadata += 1;
           next.push(attachment);
           continue;
         }
@@ -277,7 +426,9 @@ async function migrateShiftReportAttachments(options = {}) {
   }
 
   const [legacyFiles, storageFiles] = await Promise.all([
-    listRegularFiles(legacyRoot),
+    legacyRoot.exists
+      ? listRegularFiles(legacyRoot.realPath, { legacyRoot })
+      : Promise.resolve([]),
     listRegularFiles(storageRoot),
   ]);
   const legacyOrphans = legacyFiles.filter((file) => !referencedLegacyPaths.has(file));
@@ -289,7 +440,7 @@ async function migrateShiftReportAttachments(options = {}) {
     generatedAt: (options.now || new Date()).toISOString(),
     mode: rollback ? 'rollback' : apply ? 'apply' : 'dry-run',
     storageRoot,
-    legacyRoot,
+    legacyRoot: legacyRoot.realPath || legacyRoot.configuredPath,
     tenants: [
       {
         organizationId: tenant.organizationId,
@@ -315,10 +466,11 @@ async function migrateShiftReportAttachments(options = {}) {
     files: entries,
     orphans: {
       legacy: await Promise.all(legacyOrphans.map(async (file) => {
-        const value = await readFileChecksum(file);
+        const relativePath = path.relative(legacyRoot.realPath, file);
+        const value = await readSafeLegacyFileChecksum(legacyRoot, relativePath);
         return {
           checksumSha256: value.checksumSha256,
-          pathHash: checksumBuffer(Buffer.from(path.relative(legacyRoot, file))),
+          pathHash: checksumBuffer(Buffer.from(path.relative(legacyRoot.realPath, file))),
           size: value.size,
         };
       })),
@@ -335,6 +487,7 @@ async function migrateShiftReportAttachments(options = {}) {
 }
 
 module.exports = {
+  LegacyAttachmentPathError,
   MANIFEST_SCHEMA,
   MANIFEST_VERSION,
   migrateShiftReportAttachments,

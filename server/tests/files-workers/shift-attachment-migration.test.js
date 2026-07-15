@@ -32,6 +32,88 @@ function fakeAnswer(initial) {
   };
 }
 
+function legacyAttachment(attachmentId, relativePath) {
+  return {
+    id: attachmentId,
+    mimeType: 'image/png',
+    originalName: 'qa.png',
+    relativePath,
+    size: 19,
+    uploadedAt: '2026-07-01T00:00:00.000Z',
+  };
+}
+
+async function regularFiles(root) {
+  const files = [];
+  async function visit(directory) {
+    for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.isDirectory()) await visit(entryPath);
+      if (entry.isFile()) files.push(entryPath);
+    }
+  }
+  await visit(root);
+  return files.sort();
+}
+
+async function assertUnsafeLegacyLink({ linkKind, mode }) {
+  const legacyRoot = await makeRoot(`setly-legacy-${linkKind}-${mode}-`);
+  const storageRoot = await makeRoot(`setly-storage-${linkKind}-${mode}-`);
+  const outsideRoot = await makeRoot(`setly-outside-${linkKind}-${mode}-`);
+  const attachmentId = 'b12c1a0e-9f21-4e43-8f26-278af61b3e58';
+  const relativePath = path.join('42', `${attachmentId}.png`);
+  const legacyPath = path.join(legacyRoot, relativePath);
+  const reportDirectory = path.dirname(legacyPath);
+  const outsidePath = linkKind === 'directory'
+    ? path.join(outsideRoot, path.basename(legacyPath))
+    : path.join(outsideRoot, 'outside.png');
+  const answer = fakeAnswer([legacyAttachment(attachmentId, relativePath)]);
+  const db = { ShiftReportAnswer: { async findAll() { return [answer]; } } };
+  const options = {
+    db,
+    legacyRoot,
+    storageRoot,
+    tenant: { organizationId: 10, clubId: 20 },
+  };
+
+  if (mode === 'rollback') {
+    await fs.mkdir(reportDirectory, { recursive: true });
+    await fs.writeFile(legacyPath, Buffer.from('outside-safe-target'));
+    const applied = await migrateShiftReportAttachments({ ...options, apply: true });
+    assert.equal(applied.counts.copied, 1);
+    assert.ok(answer.attachments[0].storageKey);
+  }
+
+  if (linkKind === 'directory') {
+    await fs.rm(reportDirectory, { force: true, recursive: true });
+    await fs.writeFile(outsidePath, Buffer.from('outside-safe-target'));
+    await fs.symlink(outsideRoot, reportDirectory, 'dir');
+  } else {
+    await fs.mkdir(reportDirectory, { recursive: true });
+    await fs.rm(legacyPath, { force: true });
+    await fs.writeFile(outsidePath, Buffer.from('outside-safe-target'));
+    await fs.symlink(outsidePath, legacyPath, 'file');
+  }
+
+  const metadataBefore = JSON.stringify(answer.attachments);
+  const storageFilesBefore = await regularFiles(storageRoot);
+  const result = await migrateShiftReportAttachments({
+    ...options,
+    apply: mode === 'apply',
+    rollback: mode === 'rollback',
+  });
+
+  assert.equal(result.mode, mode);
+  assert.equal(result.counts.invalidMetadata, 1);
+  assert.equal(result.counts.copied, 0);
+  assert.equal(result.counts.rolledBack, 0);
+  assert.equal(result.counts.dbRowsChanged, 0);
+  assert.deepEqual(result.files, []);
+  assert.equal(JSON.stringify(answer.attachments), metadataBefore);
+  assert.deepEqual(await regularFiles(storageRoot), storageFilesBefore);
+  assert.equal(await fs.readFile(outsidePath, 'utf8'), 'outside-safe-target');
+}
+
 test('attachment migration dry-run/apply/rollback/reapply is idempotent and never removes files', async () => {
   const legacyRoot = await makeRoot('setly-legacy-');
   const storageRoot = await makeRoot('setly-tenant-storage-');
@@ -119,4 +201,16 @@ test('rollback rejects a tampered legacy fallback path even when its checksum ma
   assert.equal(rollback.counts.invalidMetadata, 1);
   assert.ok(answer.attachments[0].storageKey);
   assert.equal(answer.attachments[0].relativePath, undefined);
+});
+
+test('dry-run/apply/rollback reject a symlinked report directory outside legacy root', async (t) => {
+  for (const mode of ['dry-run', 'apply', 'rollback']) {
+    await t.test(mode, () => assertUnsafeLegacyLink({ linkKind: 'directory', mode }));
+  }
+});
+
+test('dry-run/apply/rollback reject a symlinked legacy file outside legacy root', async (t) => {
+  for (const mode of ['dry-run', 'apply', 'rollback']) {
+    await t.test(mode, () => assertUnsafeLegacyLink({ linkKind: 'file', mode }));
+  }
 });
