@@ -22,13 +22,7 @@
 - For booking cleanup releases, verify onboarding covers schedule quick actions, payment/conflict/active-prepayment warnings, group participants and the client-card link from a booking.
 - For Visits Analytics releases, verify onboarding covers the four tabs of `/admin/visits-analytics`: overview, source quality, cohorts/lifecycle and revenue/LTV; owner/manager segment-to-client-base-to-call-task handoff; accountant/viewer read-only filters and exports; canonical clients, mature windows, Europe/Moscow timezone, LTV coverage and no extra checkpoint events beyond `report.viewed`.
 - For Shift Cash releases, verify onboarding covers `/admin/shift-cash`, opening cash, cash expense with receipt photo, closing reconciliation, variance comment, the separate `/admin/shift-reports` route, linked `Finance` expense in P&L/export and training cleanup for `ShiftCashSession`, `ShiftCashExpense`, attachments and linked finance rows.
-- For the Shift Cash schema recreation release gate:
-  1. Create and verify a database dump.
-  2. Confirm that both `ShiftCashSessions` and `ShiftCashExpenses` contain zero rows. If either table is non-empty, destructive rollback is prohibited and the release must stop.
-  3. Stop the backend.
-  4. Run `npx sequelize-cli db:migrate:undo --name 20260714100000-create-shift-cash.js` from `server`.
-  5. Run `npx sequelize-cli db:migrate` from `server`.
-  6. Start the backend and verify health, API smoke and browser smoke before switching traffic.
+- For the Shift Cash category cleanup, create and verify the regular database backup, then run `npx sequelize-cli db:migrate` from `server` to apply `20260715190000-remove-shift-cash-expense-category.js` in place. Never roll back `20260714100000-create-shift-cash.js`: existing sessions, expenses, attachments and linked Finance rows must be preserved. Verify health, API smoke and browser smoke before switching traffic.
 - Verify trainer-facing instructions and screens do not expose phones, external IDs, CRM sales notes, call history or full client-base management context.
 - Create and verify a database backup before switching traffic.
 

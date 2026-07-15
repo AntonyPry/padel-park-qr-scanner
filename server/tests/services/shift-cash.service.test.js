@@ -353,8 +353,8 @@ test('shift cash migration creates indexed session and expense tables and rolls 
     (item) => item[0] === 'create' && item[1] === 'ShiftCashExpenses',
   );
   assert.ok(expenseTable);
-  assert.equal(expenseTable[2].categoryId, undefined);
-  assert.equal(expenseTable[2].categoryName, undefined);
+  assert.ok(expenseTable[2].categoryId);
+  assert.ok(expenseTable[2].categoryName);
   assert.equal(
     operations.some((item) => item[3]?.name === 'shift_cash_expenses_finance_idx'),
     true,

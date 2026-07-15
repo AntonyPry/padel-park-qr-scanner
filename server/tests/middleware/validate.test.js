@@ -61,7 +61,7 @@ test('passes valid payloads and preserves query strings used by controllers', ()
   assert.equal(req.query.includeArchived, 'true');
 });
 
-test('shift cash expense contract accepts category-free payload and rejects unknown fields', () => {
+test('shift cash expense contract strips legacy categoryId before strict validation', () => {
   const valid = runValidation(
     { body: apiSchemas.shiftCash.expenseBody },
     {
@@ -71,6 +71,26 @@ test('shift cash expense contract accepts category-free payload and rejects unkn
     },
   );
   assert.equal(valid.nextCalled, true);
+
+  const legacyRequest = {
+    body: {
+      amount: 900,
+      categoryId: 12,
+      description: 'Хозяйственный расход',
+    },
+    params: {},
+    query: {},
+  };
+  const legacy = runValidation(
+    { body: apiSchemas.shiftCash.expenseBody },
+    legacyRequest,
+  );
+  assert.equal(legacy.nextCalled, true);
+  assert.equal(legacy.res.statusCode, null);
+  assert.deepEqual(legacyRequest.body, {
+    amount: 900,
+    description: 'Хозяйственный расход',
+  });
 
   const unknownFieldRequest = {
     body: {
