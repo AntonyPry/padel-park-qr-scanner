@@ -43,6 +43,10 @@ module.exports = (sequelize, DataTypes) => {
       as: 'createdBy',
       foreignKey: 'createdByAccountId',
     });
+    Finance.hasOne(models.ShiftCashExpense, {
+      as: 'shiftCashExpense',
+      foreignKey: 'financeId',
+    });
   };
 
   return Finance;

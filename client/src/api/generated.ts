@@ -224,6 +224,15 @@ export const apiEndpoints = {
   "shifts.active": { method: "GET", path: "/shifts/active", responseType: "json", tenantScope: "club" },
   "shifts.start": { method: "POST", path: "/shifts/start", responseType: "json", tenantScope: "club" },
   "shifts.end": { method: "POST", path: "/shifts/end", responseType: "json", tenantScope: "club" },
+  "shiftCash.active": { method: "GET", path: "/shifts/active/cash", responseType: "json", tenantScope: "club" },
+  "shiftCash.getByShift": { method: "GET", path: "/shifts/{shiftId}/cash", responseType: "json", tenantScope: "club" },
+  "shiftCash.opening": { method: "PUT", path: "/shifts/active/cash/opening", responseType: "json", tenantScope: "club" },
+  "shiftCash.expenseCreate": { method: "POST", path: "/shifts/active/cash/expenses", responseType: "json", tenantScope: "club" },
+  "shiftCash.expenseUpdate": { method: "PUT", path: "/shifts/active/cash/expenses/{expenseId}", responseType: "json", tenantScope: "club" },
+  "shiftCash.expenseCancel": { method: "POST", path: "/shifts/active/cash/expenses/{expenseId}/cancel", responseType: "json", tenantScope: "club" },
+  "shiftCash.attachmentUpload": { method: "POST", path: "/shifts/active/cash/expenses/{expenseId}/attachments", responseType: "json", tenantScope: "club" },
+  "shiftCash.attachmentRemove": { method: "DELETE", path: "/shifts/active/cash/expenses/{expenseId}/attachments/{attachmentId}", responseType: "json", tenantScope: "club" },
+  "shiftCash.attachment": { method: "GET", path: "/shifts/cash/expenses/{expenseId}/attachments/{attachmentId}", responseType: "blob", tenantScope: "club" },
   "shifts.create": { method: "POST", path: "/shifts", responseType: "json", tenantScope: "club" },
   "shifts.update": { method: "PUT", path: "/shifts", responseType: "json", tenantScope: "club" },
   "shifts.archive": { method: "DELETE", path: "/shifts", responseType: "json", tenantScope: "club" },
@@ -1908,6 +1917,65 @@ export type StaffDeletePermanentParams = {
 export type StaffArchiveParams = {
   id: number | string;
 };
+export type ShiftsEndBody = {
+  cash: {
+    banknotes: number | string;
+    coins: number | string;
+    comment?: string | null;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+};
+export type ShiftCashGetByShiftParams = {
+  shiftId: number | string;
+};
+export type ShiftCashOpeningBody = {
+  banknotes: number | string;
+  coins: number | string;
+  comment?: string | null;
+  [key: string]: unknown;
+};
+export type ShiftCashExpenseCreateBody = {
+  amount: number | string;
+  categoryId: number | string;
+  description: string;
+  spentAt?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ShiftCashExpenseUpdateParams = {
+  expenseId: number | string;
+};
+export type ShiftCashExpenseUpdateBody = {
+  amount: number | string;
+  categoryId: number | string;
+  description: string;
+  spentAt?: string | "" | null;
+  [key: string]: unknown;
+};
+export type ShiftCashExpenseCancelParams = {
+  expenseId: number | string;
+};
+export type ShiftCashExpenseCancelBody = {
+  reason: string;
+  [key: string]: unknown;
+};
+export type ShiftCashAttachmentUploadParams = {
+  expenseId: number | string;
+};
+export type ShiftCashAttachmentUploadBody = {
+  data: string;
+  fileName?: string | "" | null;
+  mimeType: "image/gif" | "image/heic" | "image/heif" | "image/jpeg" | "image/png" | "image/webp";
+  [key: string]: unknown;
+};
+export type ShiftCashAttachmentRemoveParams = {
+  attachmentId: string;
+  expenseId: number | string;
+};
+export type ShiftCashAttachmentParams = {
+  attachmentId: string;
+  expenseId: number | string;
+};
 export type ShiftsCreateBody = {
   adminName?: string | "" | null;
   comment?: string | "" | null;
@@ -2616,7 +2684,16 @@ export interface ApiEndpointRequestMap {
   "staff.archive": ApiEndpointRequest<StaffArchiveParams, undefined, undefined>;
   "shifts.active": ApiEndpointRequest<undefined, undefined, undefined>;
   "shifts.start": ApiEndpointRequest<undefined, undefined, undefined>;
-  "shifts.end": ApiEndpointRequest<undefined, undefined, undefined>;
+  "shifts.end": ApiEndpointRequest<undefined, undefined, ShiftsEndBody>;
+  "shiftCash.active": ApiEndpointRequest<undefined, undefined, undefined>;
+  "shiftCash.getByShift": ApiEndpointRequest<ShiftCashGetByShiftParams, undefined, undefined>;
+  "shiftCash.opening": ApiEndpointRequest<undefined, undefined, ShiftCashOpeningBody>;
+  "shiftCash.expenseCreate": ApiEndpointRequest<undefined, undefined, ShiftCashExpenseCreateBody>;
+  "shiftCash.expenseUpdate": ApiEndpointRequest<ShiftCashExpenseUpdateParams, undefined, ShiftCashExpenseUpdateBody>;
+  "shiftCash.expenseCancel": ApiEndpointRequest<ShiftCashExpenseCancelParams, undefined, ShiftCashExpenseCancelBody>;
+  "shiftCash.attachmentUpload": ApiEndpointRequest<ShiftCashAttachmentUploadParams, undefined, ShiftCashAttachmentUploadBody>;
+  "shiftCash.attachmentRemove": ApiEndpointRequest<ShiftCashAttachmentRemoveParams, undefined, undefined>;
+  "shiftCash.attachment": ApiEndpointRequest<ShiftCashAttachmentParams, undefined, undefined>;
   "shifts.create": ApiEndpointRequest<undefined, undefined, ShiftsCreateBody>;
   "shifts.update": ApiEndpointRequest<undefined, undefined, ShiftsUpdateBody>;
   "shifts.archive": ApiEndpointRequest<undefined, undefined, ShiftsArchiveBody>;
@@ -2892,6 +2969,15 @@ export interface ApiEndpointResponseMap {
   "shifts.active": unknown;
   "shifts.start": unknown;
   "shifts.end": unknown;
+  "shiftCash.active": unknown;
+  "shiftCash.getByShift": unknown;
+  "shiftCash.opening": unknown;
+  "shiftCash.expenseCreate": unknown;
+  "shiftCash.expenseUpdate": unknown;
+  "shiftCash.expenseCancel": unknown;
+  "shiftCash.attachmentUpload": unknown;
+  "shiftCash.attachmentRemove": unknown;
+  "shiftCash.attachment": unknown;
   "shifts.create": unknown;
   "shifts.update": unknown;
   "shifts.archive": unknown;

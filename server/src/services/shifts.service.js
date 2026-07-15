@@ -2,6 +2,7 @@ const db = require('../../models');
 const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
 const shiftReportsService = require('./shift-reports.service');
+const shiftCashService = require('./shift-cash.service');
 
 const SHIFT_INCLUDE = [{ model: db.Staff, attributes: ['id', 'name', 'role'] }];
 
@@ -247,39 +248,73 @@ async function startActive(account) {
   return shift;
 }
 
-async function endActive(account) {
-  const activeShift = await getActive();
-  if (!activeShift) {
-    const error = new Error('Активная смена не найдена');
-    error.statusCode = 404;
+async function endActive(account, data = {}) {
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  if (trainingMarker.isTraining) {
+    const error = new Error(
+      'Завершение реальной смены недоступно в режиме тренировки. Выключите режим тренировки и повторите действие.',
+    );
+    error.statusCode = 409;
     throw error;
   }
 
-  const endedAt = new Date();
-  const startedAt = activeShift.startedAt
-    ? new Date(activeShift.startedAt)
-    : new Date(activeShift.createdAt);
-  const actualHours =
-    Math.round(Math.max(0, (endedAt.getTime() - startedAt.getTime()) / 3600000) * 10) /
-    10;
+  const result = await db.sequelize.transaction(async (transaction) => {
+    const activeShift = await db.Shift.findOne({
+      lock: transaction.LOCK.UPDATE,
+      order: [['startedAt', 'DESC']],
+      transaction,
+      where: { status: 'active', archivedAt: null },
+    });
+    if (!activeShift) {
+      const error = new Error('Активная смена не найдена');
+      error.statusCode = 404;
+      throw error;
+    }
 
-  const before = activeShift.toJSON();
-  await activeShift.update({
-    endedAt,
-    hours: actualHours,
-    actualHours,
-    status: 'closed',
-    approvedByAccountId: account.id,
+    const endedAt = new Date();
+    const startedAt = activeShift.startedAt
+      ? new Date(activeShift.startedAt)
+      : new Date(activeShift.createdAt);
+    const actualHours =
+      Math.round(
+        Math.max(0, (endedAt.getTime() - startedAt.getTime()) / 3600000) * 10,
+      ) / 10;
+    const cash = await shiftCashService.closeCashSession({
+      account,
+      data: data.cash || {},
+      endedAt,
+      shift: activeShift,
+      transaction,
+    });
+
+    const before = activeShift.toJSON();
+    await activeShift.update(
+      {
+        endedAt,
+        hours: actualHours,
+        actualHours,
+        status: 'closed',
+        approvedByAccountId: account.id,
+      },
+      { transaction },
+    );
+
+    await payrollService.recordChange({
+      action: 'shift.close',
+      entityType: 'shift',
+      entityId: activeShift.id,
+      account,
+      date: activeShift.date,
+      beforeData: before,
+      afterData: activeShift.toJSON(),
+      transaction,
+    });
+
+    return { cash, shiftId: activeShift.id };
   });
 
-  await payrollService.recordChange({
-    action: 'shift.close',
-    entityType: 'shift',
-    entityId: activeShift.id,
-    account,
-    date: activeShift.date,
-    beforeData: before,
-    afterData: activeShift.toJSON(),
+  const activeShift = await db.Shift.findByPk(result.shiftId, {
+    include: SHIFT_INCLUDE,
   });
 
   await onboardingService.recordEventSafe(account, 'shift.approved', {
@@ -292,9 +327,18 @@ async function endActive(account) {
     },
   });
 
+  await onboardingService.recordEventSafe(account, 'shift_cash.closed', {
+    entityId: result.cash.id,
+    entityType: 'shift_cash_session',
+    payload: {
+      shiftId: activeShift.id,
+      variance: result.cash.variance,
+    },
+  });
+
   await shiftReportsService.ensureReportsForShift(activeShift);
 
-  return db.Shift.findByPk(activeShift.id, { include: SHIFT_INCLUDE });
+  return { cash: result.cash, shift: activeShift };
 }
 
 module.exports = {

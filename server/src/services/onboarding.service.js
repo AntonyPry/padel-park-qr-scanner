@@ -7,6 +7,7 @@ const {
   listOnboardingPaths,
   ONBOARDING_CLIENT_CHECKPOINT_EVENTS,
 } = require('../onboarding/catalog');
+const shiftCashAttachmentStorage = require('./shift-cash-attachments');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -14,6 +15,16 @@ const TRAINING_DATA_ENTITIES = [
   { key: 'bookings', label: 'Брони', modelName: 'Booking' },
   { key: 'bookingSeries', label: 'Серии броней', modelName: 'BookingSeries' },
   { key: 'finances', label: 'Финансовые операции', modelName: 'Finance' },
+  {
+    key: 'shiftCashSessions',
+    label: 'Кассовые сверки смен',
+    modelName: 'ShiftCashSession',
+  },
+  {
+    key: 'shiftCashExpenses',
+    label: 'Кассовые расходы смен',
+    modelName: 'ShiftCashExpense',
+  },
   { key: 'clientBases', label: 'Клиентские базы', modelName: 'ClientBase' },
   { key: 'callTasks', label: 'Задачи обзвона', modelName: 'CallTask' },
   { key: 'callTaskClients', label: 'Клиенты в обзвонах', modelName: 'CallTaskClient' },
@@ -1014,6 +1025,7 @@ async function cleanupTrainingData(actor, query = {}) {
   assertOwner(actor);
   const role = resolveOptionalTrainingRole(query.role);
   const deleted = {};
+  const shiftCashAttachments = [];
 
   await db.sequelize.transaction(async (transaction) => {
     const bookingWhere = getTrainingEntityWhere(
@@ -1026,6 +1038,30 @@ async function cleanupTrainingData(actor, query = {}) {
       listTrainingIds(db.Booking, bookingWhere, transaction),
       listTrainingIds(db.Visit, visitWhere, transaction),
     ]);
+
+    if (db.ShiftCashExpense) {
+      const cashExpenses = await db.ShiftCashExpense.findAll({
+        attributes: ['attachments'],
+        raw: true,
+        transaction,
+        where: getTrainingEntityWhere(
+          { modelName: 'ShiftCashExpense' },
+          role,
+        ),
+      });
+      cashExpenses.forEach((expense) => {
+        const attachments = Array.isArray(expense.attachments)
+          ? expense.attachments
+          : (() => {
+              try {
+                return JSON.parse(expense.attachments || '[]');
+              } catch {
+                return [];
+              }
+            })();
+        shiftCashAttachments.push(...attachments);
+      });
+    }
 
     if (bookingIds.length > 0 && db.BookingChangeLog) {
       deleted.bookingChangeLogs = await db.BookingChangeLog.destroy({
@@ -1065,6 +1101,8 @@ async function cleanupTrainingData(actor, query = {}) {
       { key: 'trainingNotes', modelName: 'TrainingNote' },
       { key: 'bookings', modelName: 'Booking' },
       { key: 'bookingSeries', modelName: 'BookingSeries' },
+      { key: 'shiftCashExpenses', modelName: 'ShiftCashExpense' },
+      { key: 'shiftCashSessions', modelName: 'ShiftCashSession' },
       { key: 'finances', modelName: 'Finance' },
       { key: 'visits', modelName: 'Visit' },
       { key: 'clients', modelName: 'User' },
@@ -1078,6 +1116,8 @@ async function cleanupTrainingData(actor, query = {}) {
       );
     }
   });
+
+  await shiftCashAttachmentStorage.deleteAttachmentFiles(shiftCashAttachments);
 
   return {
     deleted,

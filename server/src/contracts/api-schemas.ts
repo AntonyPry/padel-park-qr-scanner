@@ -881,6 +881,28 @@ const shiftReportAttachmentBody = z
   })
   .passthrough();
 
+const shiftCashBalanceBody = z
+  .object({
+    banknotes: nonNegativeNumberValue,
+    coins: nonNegativeNumberValue,
+    comment: z
+      .union([z.string().trim().max(1000, 'Комментарий слишком длинный'), z.null()])
+      .optional(),
+  })
+  .passthrough();
+const shiftCashExpenseBody = z
+  .object({
+    amount: positiveNumberValue,
+    categoryId: id,
+    description: z
+      .string()
+      .trim()
+      .min(1, 'Описание расхода обязательно')
+      .max(1000, 'Описание расхода слишком длинное'),
+    spentAt: optionalHttpDateTime,
+  })
+  .passthrough();
+
 const bookingUpdateBody = z
   .object(bookingShape)
   .partial()
@@ -1754,6 +1776,27 @@ const apiSchemas = {
     templateUpdateBody: shiftReportTemplateBody.partial().passthrough(),
     withId: { params: idParams },
   },
+  shiftCash: {
+    attachmentBody: shiftReportAttachmentBody,
+    attachmentParams: z.object({
+      attachmentId: z.string().trim().min(8).max(80),
+      expenseId: id,
+    }),
+    cancelBody: z
+      .object({
+        reason: z
+          .string()
+          .trim()
+          .min(1, 'Причина отмены обязательна')
+          .max(1000, 'Причина отмены слишком длинная'),
+      })
+      .passthrough(),
+    closingBody: shiftCashBalanceBody,
+    expenseBody: shiftCashExpenseBody,
+    expenseParams: z.object({ expenseId: id }),
+    openingBody: shiftCashBalanceBody,
+    shiftParams: z.object({ shiftId: id }),
+  },
   shifts: {
     body: z
       .object({
@@ -1768,6 +1811,7 @@ const apiSchemas = {
       })
       .passthrough(),
     deleteBody: z.object({ id, reason: optionalString }).passthrough(),
+    endBody: z.object({ cash: shiftCashBalanceBody }).passthrough(),
     updateBody: z
       .object({
         adminName: optionalString,

@@ -2225,7 +2225,7 @@ Product source:
 
 Статус: `Feature 4.2 accepted and promoted to SaaS integration — Feature 4.3 not started`.
 
-Promotion rule выполнено: Features 1–4.2 приняты в SaaS integration chain. Feature 4.2 принята точным SHA `8d1e3140b25f44348e84f663fa15d104db7cebe6` и fast-forwarded от integration base `a3129af5bab40864a4dd62f04b0203874277902f`; `origin/main` уже находится в ancestry, поэтому reconciliation merge не потребовался. Merge в `main`, deploy и Feature 4.3 остаются отдельными решениями.
+Promotion rule выполнено: Features 1–4.2 приняты в SaaS integration chain. Feature 4.2 принята точным SHA `8d1e3140b25f44348e84f663fa15d104db7cebe6` и fast-forwarded от integration base `a3129af5bab40864a4dd62f04b0203874277902f`; после продвижения актуальный `origin/main` `4e60ba4a48fee8f7cbd3766273a2297b8e07e718` объединён отдельным reconciliation merge с сохранением runtime обеих веток. Merge в `main`, deploy и Feature 4.3 остаются отдельными решениями.
 
 - Принята целевая модель `Organization → Clubs → Memberships`; текущий Padel Park станет default organization/club без изменения UX.
 - Inventory всех 67 Sequelize models и ключевых HTTP/realtime/worker/file/integration поверхностей зафиксирован в [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md).
@@ -2240,8 +2240,78 @@ Promotion rule выполнено: Features 1–4.2 приняты в SaaS integ
 - Оставшийся P2 mixed-page mount закрыт поверх accepted fix SHA `c49989ab1cbd8db4b778753e73070d7825fa6384`: все `24` protected client routes имеют `single`, `composite` или `partial` authorization contract. Неразделимые bookings, clients, trainer workspace, motivation, catalog, shift reports и finances требуют все organization/club authority до mount; reception, call tasks, client bases, corporate clients, staff, onboarding и telephony оставляют основной flow доступным, но не монтируют cross-scope query/section/mutation без role authority её server `tenantScope`. Typed inventory и audit покрывают `14` mixed pages, generated endpoint scopes, named partial guards и exhaustive non-owner override matrix обязательных страниц. Повторный независимый SaaS QA завершён без P0–P3 findings.
 - Integration promotion fast-forwarded accepted Feature 3 history, затем объединил актуальный `origin/main` `11a051a6664afb8dce0aca695699baa9946f5bf4` merge commit `ba290fc3b42280420e870e1a4e3bec5aa0b2a46b` с parents `a79f83281130ca9476e02d0d70b7fdec307e665f` и `11a051a6664afb8dce0aca695699baa9946f5bf4`. Integration gate: migrations `80 down → 80 up` на чистой test DB, client `121/121`, server unit/contract `22/22`, DB-backed override/IDOR `10/10`, full server `342/342`, typecheck, Account/route/strict onboarding audits, OpenAPI no-drift, lint/build и six-role flag-on/off API/Socket.IO/browser smoke — green. Merge в `main` и deploy не выполнялись.
 - Feature 4.1 принята в `codex/multi-tenant-cache-realtime-v4-1` точным SHA `a3129af5bab40864a4dd62f04b0203874277902f` после реализации от integration SHA `7d2185b15f31213babca4aa42f829bc313a205b6`: typed tenant TanStack Query keys/lifecycle cleanup, namespaced Redis для реальных references/catalog call sites, validated Socket.IO rooms/envelopes/revalidation и AST cache/realtime audit. Server-owned `TENANT_CACHE_REALTIME_ENABLED` зависит от `TENANT_CONTEXT_ENABLED`; flag off сохраняет legacy path. Files/workers/provider routing остаются в Features 4.2/4.3; production hard-rollout gate не снят. Merge в `main` и deploy не выполнялись.
-- Feature 4.2 принята точным SHA `8d1e3140b25f44348e84f663fa15d104db7cebe6` в `codex/multi-tenant-files-workers-v4-2` и fast-forwarded в SaaS integration от base `a3129af5bab40864a4dd62f04b0203874277902f`: opaque atomic tenant storage для shift-report attachments, controlled legacy dual-read/backfill manifest, immutable transcription job attribution, audited platform-worker protocol v2 с expiring claim lease, parity Node/Python temp/state/logging и fail-closed classification unscoped background loops. `TENANT_FILES_WORKERS_ENABLED` зависит от Feature 3 и Feature 4.1 capabilities; parent `ShiftReport`/`TelephonyCall`, provider routing и hard single-default gate не переписаны. Integration gate green: fresh DB `81 up → 80 down → 81 up`, targeted files/workers/migration/lease `45/45`, full server `390/390`, Node worker `34/34`, Python worker `21/21`, client `134/134`, typecheck/lint/build, tenant audits, strict onboarding и OpenAPI no-drift. Feature 4.3 не начата; merge в `main` и deploy не выполнялись.
+- Feature 4.2 принята точным SHA `8d1e3140b25f44348e84f663fa15d104db7cebe6` в `codex/multi-tenant-files-workers-v4-2` и fast-forwarded в SaaS integration от base `a3129af5bab40864a4dd62f04b0203874277902f`: opaque atomic tenant storage для shift-report attachments, controlled legacy dual-read/backfill manifest, immutable transcription job attribution, audited platform-worker protocol v2 с expiring claim lease, parity Node/Python temp/state/logging и fail-closed classification unscoped background loops. `TENANT_FILES_WORKERS_ENABLED` зависит от Feature 3 и Feature 4.1 capabilities; parent `ShiftReport`/`TelephonyCall`, provider routing и hard single-default gate не переписаны. После reconciliation с `origin/main` Shift Cash endpoints объявлены club-scoped, а receipt attachments используют тот же tenant storage/metadata contract с default-tenant legacy fallback. Итоговый integration gate green: fresh DB `82 up → 81 down → 82 up`, full server `408/408`, Node worker `34/34`, Python worker `21/21`, client `142/142`, typecheck/lint/build, tenant audits, strict onboarding и OpenAPI no-drift. Feature 4.3 не начата; merge в `main` и deploy не выполнялись.
 - SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
+
+## Sprint 50 - Shift Cash onboarding sync
+
+Цель: обновить onboarding после feature branch `codex/shift-cash` до feature freeze, не мержить в `main` и не деплоить продуктовую ветку.
+
+Общий статус: `ready for release` - onboarding sync, runtime checkpoint и repeat QA подтверждены в merged temp; `main` и deploy в этом срезе не менялись.
+
+Product source:
+
+- branch `origin/codex/shift-cash`;
+- commits `6a4b1ae feat: add shift cash reconciliation`, `f5f47c9 fix: resolve shift cash QA findings`, `ca8348f fix: emit shift cash attachment checkpoint`;
+- QA outcome: repeat QA PASS, без Blocker/P1/P2/P3, mobile 390 без overflow по KPI/dialog.
+
+Сделано:
+
+- добавлены action-задачи администратора:
+  - `admin.shift-cash.opening-record`;
+  - `admin.shift-cash.expense-with-photo`;
+- добавлены review/control-задачи:
+  - `manager.shift-cash.reconciliation-review`;
+  - `owner.shift-cash.control-review`;
+  - `accountant.shift-cash.finance-review`;
+- checkpoint events добавлены как backend-action events:
+  - `shift_cash.opening_recorded`;
+  - `shift_cash.attachment_uploaded`;
+  - `shift_cash.closed`;
+- `shift_cash.*` не добавлены в client checkpoint allowlist, чтобы браузер не мог засчитать кассовые действия без реального backend-события;
+- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-cash`; в instructions-diff это не дублируется;
+- обновлены реальные CRM screenshots из feature QA в dark/light наборах:
+  - `/onboarding/shift-cash/full-cash-metrics.png`;
+  - `/onboarding/shift-cash/opening-form.png`;
+  - `/onboarding/shift-cash/opening-saved.png`;
+  - `/onboarding/shift-cash/expense-form.png`;
+  - `/onboarding/shift-cash/expense-result-attached.png`;
+  - `/onboarding/shift-cash/close-dialog-variance-comment.png`;
+  - `/onboarding/shift-cash/accountant-period-export.png`;
+  - `/onboarding/shift-cash/accountant-linked-row-history.png`;
+  - `/onboarding-light/shift-cash/full-cash-metrics.png`;
+  - `/onboarding-light/shift-cash/opening-form.png`;
+  - `/onboarding-light/shift-cash/opening-saved.png`;
+  - `/onboarding-light/shift-cash/expense-form.png`;
+  - `/onboarding-light/shift-cash/expense-result-attached.png`;
+  - `/onboarding-light/shift-cash/close-dialog-variance-comment.png`;
+  - `/onboarding-light/shift-cash/accountant-period-export.png`;
+  - `/onboarding-light/shift-cash/accountant-linked-row-history.png`;
+- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/motivation`;
+- owner role override сохранен: владелец может проходить роль, но права владельца не снижаются.
+
+Repeat QA 15.07.2026:
+
+- реальный PNG-чек загружен через backend: upload `201`, protected attachment GET `200 image/png`;
+- карточка расхода показывает настоящее `<img>` `600x820` через blob URL, lightbox открывает то же фото;
+- backend checkpoint `shift_cash.attachment_uploaded` записан ровно один раз для загруженного `attachmentId`;
+- dark/light `expense-result-attached.png` пересняты после upload и показывают реальное превью чека без графических аннотаций;
+- targeted onboarding tests: `42/42`; server typecheck: PASS; client tests: `22/22`; client build: PASS;
+- merged temp с `origin/codex/shift-cash`: strict audit PASS;
+- browser QA: `20/20` onboarding cases и `4/4` DB-backed product cases в dark/light на desktop `1440px` и mobile `390px`; broken images, console/page errors и horizontal overflow отсутствуют;
+- DB-backed `/admin/motivation` показывает активную смену и настоящее превью чека; `/admin/finances` показывает связанный расход `Касса смены #56: Оплата помещения`.
+
+Осталось до release:
+
+- выполнить штатный merge проверенных `codex/shift-cash` и `codex/crm-instructions` в release target, затем production deploy/smoke по отдельному разрешению; незакрытых code/onboarding QA gates в Sprint 50 нет.
+
+Критерии приемки:
+
+- admin может пройти инструкции по стартовому остатку и кассовому расходу с фото;
+- manager/owner понимают закрытие кассы, фактические суммы, расхождение и обязательный комментарий;
+- accountant сверяет связанный расход через P&L/export, не управляя активной кассой;
+- учебные кассовые сессии, расходы, фото и linked Finance очищаются без production-данных;
+- screenshots являются реальными CRM screenshots, без generated/mock assets.
 
 ## Backlog - SaaS billing
 

@@ -32,6 +32,21 @@ function normalizeFinanceType(type) {
   return type;
 }
 
+function assertTrainingScopeMatches(record, marker) {
+  const raw = record?.toJSON ? record.toJSON() : record;
+  if (!raw) return;
+  if (Boolean(raw.isTraining) !== Boolean(marker?.isTraining)) {
+    throw appError('Финансовая запись не соответствует текущему режиму данных', 409);
+  }
+  if (
+    marker?.isTraining &&
+    (Number(raw.trainingAccountId) !== Number(marker.trainingAccountId) ||
+      raw.trainingRole !== marker.trainingRole)
+  ) {
+    throw appError('Финансовая запись не соответствует текущему режиму обучения', 409);
+  }
+}
+
 class FinanceService {
   // 1. Определение категории
   async getCategoryName(itemName, rulesMap) {
@@ -452,6 +467,143 @@ class FinanceService {
     });
 
     return record;
+  }
+
+  async createLinkedExpenseRecord(data, account, options = {}) {
+    const amount = Number(data.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw appError('Сумма расхода должна быть положительным числом');
+    }
+
+    const categoryId = Number(data.categoryId);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      throw appError('Выберите категорию расхода');
+    }
+
+    const date = normalizeDateOnly(data.date);
+    await payrollService.assertDateEditable(date, 'кассовый расход');
+    const trainingMarker =
+      options.trainingMarker ||
+      (await onboardingService.getTrainingDataMarker(account));
+    const category = await db.Category.findOne({
+      transaction: options.transaction,
+      where: { id: categoryId, isActive: true, type: 'expense' },
+    });
+    if (!category) throw appError('Категория расхода не найдена', 404);
+
+    const record = await db.Finance.create(
+      {
+        amount: Number(amount.toFixed(2)),
+        category: category.name,
+        comment: data.comment ? String(data.comment).trim() : null,
+        createdByAccountId: account?.id || null,
+        date,
+        type: 'expense',
+        ...trainingMarker,
+      },
+      options.transaction ? { transaction: options.transaction } : undefined,
+    );
+
+    await payrollService.recordChange({
+      action: options.auditAction || 'shift_cash_expense.finance_created',
+      entityType: 'finance',
+      entityId: record.id,
+      account,
+      date,
+      reason: data.comment,
+      afterData: record.toJSON(),
+      transaction: options.transaction,
+    });
+
+    return { category, record };
+  }
+
+  async updateLinkedExpenseRecord(financeId, data, account, options = {}) {
+    const amount = Number(data.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw appError('Сумма расхода должна быть положительным числом');
+    }
+    const categoryId = Number(data.categoryId);
+    if (!Number.isInteger(categoryId) || categoryId <= 0) {
+      throw appError('Выберите категорию расхода');
+    }
+
+    const transaction = options.transaction;
+    const record = await db.Finance.findByPk(financeId, {
+      transaction,
+      lock: transaction?.LOCK?.UPDATE,
+    });
+    if (!record || record.type !== 'expense') {
+      throw appError('Связанный финансовый расход не найден', 404);
+    }
+    const trainingMarker =
+      options.trainingMarker ||
+      (await onboardingService.getTrainingDataMarker(account));
+    assertTrainingScopeMatches(record, trainingMarker);
+
+    const date = normalizeDateOnly(data.date || record.date);
+    await payrollService.assertDateEditable(record.date, 'кассовый расход');
+    if (date !== record.date) {
+      await payrollService.assertDateEditable(date, 'кассовый расход');
+    }
+    const category = await db.Category.findOne({
+      transaction,
+      where: { id: categoryId, isActive: true, type: 'expense' },
+    });
+    if (!category) throw appError('Категория расхода не найдена', 404);
+
+    const beforeData = record.toJSON();
+    await record.update(
+      {
+        amount: Number(amount.toFixed(2)),
+        category: category.name,
+        comment: data.comment ? String(data.comment).trim() : null,
+        date,
+      },
+      transaction ? { transaction } : undefined,
+    );
+    await payrollService.recordChange({
+      action: options.auditAction || 'shift_cash_expense.finance_updated',
+      entityType: 'finance',
+      entityId: record.id,
+      account,
+      date,
+      reason: data.comment,
+      beforeData,
+      afterData: record.toJSON(),
+      transaction,
+    });
+
+    return { category, record };
+  }
+
+  async deleteLinkedExpenseRecord(financeId, account, options = {}) {
+    if (!financeId) return null;
+    const transaction = options.transaction;
+    const record = await db.Finance.findByPk(financeId, {
+      transaction,
+      lock: transaction?.LOCK?.UPDATE,
+    });
+    if (!record) return null;
+    const trainingMarker =
+      options.trainingMarker ||
+      (await onboardingService.getTrainingDataMarker(account));
+    assertTrainingScopeMatches(record, trainingMarker);
+    await payrollService.assertDateEditable(record.date, 'отмену кассового расхода');
+
+    const beforeData = record.toJSON();
+    await record.destroy(transaction ? { transaction } : undefined);
+    await payrollService.recordChange({
+      action: options.auditAction || 'shift_cash_expense.finance_deleted',
+      entityType: 'finance',
+      entityId: record.id,
+      account,
+      date: beforeData.date,
+      reason: options.reason,
+      beforeData,
+      transaction,
+    });
+    return beforeData;
   }
 
   buildFinanceExport(report, from, to) {

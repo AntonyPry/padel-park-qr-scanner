@@ -29,6 +29,10 @@ import {
 import { DataTable } from '@/components/data-table';
 import { ErrorState } from '@/components/error-state';
 import { ShiftReportDialog } from '@/components/shift-report-dialog';
+import {
+  ShiftCashCloseDialog,
+  ShiftCashPanel,
+} from '@/components/shift-cash-panel';
 import { toast } from '@/components/ui/toast';
 import {
   Dialog,
@@ -66,6 +70,11 @@ import {
   type ShiftReport,
   type ShiftReportStatus,
 } from '@/api/shift-reports';
+import type {
+  ShiftCashBalancePayload,
+  ShiftCashSession,
+  ShiftCashSummary,
+} from '@/api/shift-cash';
 
 interface FinanceRecord {
   categoryId?: number | null;
@@ -433,7 +442,11 @@ function calculateShiftStatsSnapshot({
   };
 }
 
-function buildShiftReport(shift: ShiftSession, stats: ShiftStats) {
+function buildShiftReport(
+  shift: ShiftSession,
+  stats: ShiftStats,
+  cash?: ShiftCashSession | null,
+) {
   const bonusLines = stats.ruleBreakdown
     .filter((rule) => rule.revenue !== 0 || rule.quantity !== 0 || rule.bonus !== 0)
     .map((rule) => {
@@ -461,6 +474,19 @@ function buildShiftReport(shift: ShiftSession, stats: ShiftStats) {
     `- Нал: ${formatMoney(stats.paymentSummary.cash)}`,
     `- Безнал: ${formatMoney(stats.paymentSummary.cashless)}`,
     `- Всего по оплатам: ${formatMoney(stats.paymentSummary.total)}`,
+    ...(cash
+      ? [
+          '',
+          'Кассовая сверка:',
+          `- На начало: ${formatMoney(cash.openingTotal || 0)}`,
+          `- Наличная выручка: ${formatMoney(cash.cashSalesSnapshot || 0)}`,
+          `- Расходы: ${formatMoney(cash.expensesSnapshot || 0)}`,
+          `- Ожидаемый остаток: ${formatMoney(cash.expectedClosingCash || 0)}`,
+          `- Фактический остаток: ${formatMoney(cash.closingTotal || 0)}`,
+          `- Расхождение: ${formatMoney(cash.variance || 0)}`,
+          ...(cash.closingComment ? [`- Комментарий: ${cash.closingComment}`] : []),
+        ]
+      : []),
     'По категориям:',
     ...stats.categoryStats.map(
       (item) =>
@@ -860,6 +886,8 @@ export default function AdminMotivationPage() {
   const [now, setNow] = useState(Date.now());
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const [cashCloseOpen, setCashCloseOpen] = useState(false);
+  const [cashCloseLoading, setCashCloseLoading] = useState(false);
 
   const rulesMap = useMemo(() => rulesToMap(rules), [rules]);
   const assignedRuleByCategoryId = useMemo(() => {
@@ -1083,7 +1111,10 @@ export default function AdminMotivationPage() {
     }
   };
 
-  const executeEndShift = async () => {
+  const executeEndShift = async (
+    cash: ShiftCashBalancePayload,
+    cashSummary: ShiftCashSummary,
+  ) => {
     if (!activeShift || !shiftStart) return false;
 
     let latestStats = shiftStats;
@@ -1108,14 +1139,23 @@ export default function AdminMotivationPage() {
     if (!latestStats) return false;
 
     try {
-      const res = await apiFetch('/api/shifts/end', { method: 'POST' });
+      setCashCloseLoading(true);
+      const res = await apiFetch('/api/shifts/end', {
+        body: JSON.stringify({ cash }),
+        method: 'POST',
+      });
       if (!res.ok) {
         toast.error(await readError(res, 'Не удалось завершить смену'));
         return false;
       }
 
-      const data = (await res.json()) as { shift: ShiftSession };
-      setShiftReport(buildShiftReport(data.shift, latestStats));
+      const data = (await res.json()) as {
+        cash: ShiftCashSession;
+        shift: ShiftSession;
+      };
+      setShiftReport(
+        buildShiftReport(data.shift, latestStats, data.cash || cashSummary.session),
+      );
       setReportCopied(false);
       setActiveShift(null);
       setActiveShiftReports([]);
@@ -1125,20 +1165,15 @@ export default function AdminMotivationPage() {
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Не удалось завершить смену'));
       return false;
+    } finally {
+      setCashCloseLoading(false);
     }
   };
 
   const handleEndShift = async () => {
     if (!activeShift || !shiftStart) return;
 
-    setPendingAction({
-      confirmLabel: 'Завершить смену',
-      description:
-        'Перед закрытием CRM обновит продажи смены, рассчитает мотивацию и сформирует текстовый отчет для копирования.',
-      isDestructive: true,
-      onConfirm: executeEndShift,
-      title: 'Завершить текущую смену?',
-    });
+    setCashCloseOpen(true);
   };
 
   const handleSaveRule = async (rule: MotivationRule) => {
@@ -1550,6 +1585,10 @@ export default function AdminMotivationPage() {
           onRetry={() => void fetchActiveShift()}
           title="Статус смены не загрузился"
         />
+      )}
+
+      {isShiftActive && activeShift && (
+        <ShiftCashPanel activeShiftId={activeShift.id} />
       )}
 
       {isShiftActive && (
@@ -2123,6 +2162,13 @@ export default function AdminMotivationPage() {
         onUpdated={handleShiftReportUpdated}
         open={shiftReportDialogOpen}
         report={selectedShiftReport}
+      />
+
+      <ShiftCashCloseDialog
+        loading={cashCloseLoading}
+        onClose={() => setCashCloseOpen(false)}
+        onConfirm={executeEndShift}
+        open={cashCloseOpen}
       />
 
       <ConfirmActionDialog

@@ -11,8 +11,10 @@ const runtimeRoots = [
 ];
 const FILE_IO_PATTERN = /(writeFile|createWriteStream|sendFile|unlink\s*\(|\.rm\s*\(|mkdtemp|tempfile\.mkdtemp|sqlite3\.connect|readFile\s*\()/;
 const ALLOWED_FILE_IO = Object.freeze({
+  'server/src/controllers/shift-cash.controller.js': 'club: authorized shift cash attachment download',
   'server/src/controllers/shift-reports.controller.js': 'club: authorized attachment download',
   'server/src/files-workers/shift-attachment-migration.js': 'club: controlled legacy dual-read/backfill manifest',
+  'server/src/services/shift-cash-attachments.js': 'club: tenant storage with controlled default-tenant legacy read',
   'server/src/services/shift-reports.service.js': 'club: tenant storage plus flag-off/default legacy compatibility',
   'server/src/storage/tenant-storage.js': 'club/organization: canonical atomic tenant storage primitive',
   'workers/transcription-worker/server/pipeline.py': 'ephemeral: tenant/job/attempt audio namespace',
@@ -73,6 +75,13 @@ function runAudit() {
     'assertTenantAttachmentMetadata',
     'resolveLegacyAttachmentPath',
     'buildTenantStorageKey',
+  ], findings);
+  assertContains('server/src/services/shift-cash-attachments.js', [
+    'requireDefaultTenantContext(requestTenant)',
+    'assertTenantAttachmentMetadata',
+    'resolveLegacyAttachmentPath',
+    'buildTenantStorageKey',
+    'atomicWriteStorageObject',
   ], findings);
   assertContains('server/src/services/telephony.service.js', [
     'assertActiveLease',
