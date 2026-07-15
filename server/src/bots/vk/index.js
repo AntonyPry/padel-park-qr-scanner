@@ -13,6 +13,9 @@ const {
   isValidWord,
 } = require('../shared/registration');
 const clientsService = require('../../services/clients.service');
+const {
+  assertLegacyDownstreamReady,
+} = require('../../provider-integrations/runtime');
 
 async function buildSourceKeyboard() {
   const keyboard = VkKeyboard.builder();
@@ -59,12 +62,24 @@ function createVkConsentKeyboard(consents) {
   return keyboard.inline();
 }
 
-function createVkBot({ token = process.env.VK_TOKEN } = {}) {
+function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
   if (!token) return null;
+
+  const logError = (label, error) => {
+    if (connection) console.error(label, 'PROVIDER_HANDLER_FAILED');
+    else console.error(label, error);
+  };
 
   const vk = new VK({ token });
   const sessionManager = new VkSessionManager();
   const sceneManager = new VkSceneManager();
+
+  if (connection) {
+    vk.updates.use(async (_ctx, next) => {
+      await assertLegacyDownstreamReady(connection);
+      return next();
+    });
+  }
 
   const mainMenu = VkKeyboard.builder()
     .textButton({
@@ -96,7 +111,7 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
         keyboard: mainMenu,
       });
     } catch (error) {
-      console.error('Ошибка QR ВК:', error);
+      logError('Ошибка QR ВК:', error);
       await ctx.send('Ошибка генерации QR.');
     }
   }
@@ -167,7 +182,7 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
         await ctx.send('✅ Регистрация завершена!');
         await sendQrCode(ctx, vkId);
       } catch (error) {
-        console.error('Ошибка БД ВК:', error);
+        logError('Ошибка БД ВК:', error);
         await ctx.send(
           error.statusCode === 409
             ? `❌ ${error.message}`

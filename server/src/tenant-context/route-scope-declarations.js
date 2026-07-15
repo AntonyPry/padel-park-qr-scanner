@@ -25,7 +25,9 @@ const GLOBAL_ENDPOINT_IDS = new Set([
 ]);
 
 const PROVIDER_INGRESS_ENDPOINT_IDS = new Set([
+  'telephony.beelineConnectionWebhook',
   'webhooks.evotor',
+  'webhooks.evotorConnection',
   'telephony.beelineWebhook',
 ]);
 
@@ -170,7 +172,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '060b3617fc1975d454a2bb35d3d5b06d5a0e58f2d1f7e7cdd04527d864df560e';
+  'a22f1483727a8c2d1cf67814901eb5e890fa5107c892819b430d4542d330e03a';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

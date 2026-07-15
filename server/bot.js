@@ -21,7 +21,14 @@ const {
 } = require('./src/files-workers/background-run-context');
 const {
   isTenantFilesWorkersEnabled,
+  isTenantProviderIntegrationsEnabled,
 } = require('./src/tenant-context/capabilities');
+const {
+  listActiveConnections,
+} = require('./src/provider-integrations/connection-service');
+const {
+  assertLegacyDownstreamReady,
+} = require('./src/provider-integrations/runtime');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
@@ -104,9 +111,14 @@ function startTelephonySubscriptionRunner() {
 
   const run = async () => {
     try {
-      const result = await telephonyService.maintainEventSubscription();
-      if (['created', 'renewed'].includes(result.action)) {
-        console.log(`☎️ XSI-подписка Билайна: ${result.action}.`);
+      const aggregate = isTenantProviderIntegrationsEnabled()
+        ? await telephonyService.maintainAllEventSubscriptions()
+        : { results: [await telephonyService.maintainEventSubscription()] };
+      const changed = aggregate.results.filter((result) =>
+        ['created', 'renewed'].includes(result.action),
+      );
+      if (changed.length > 0) {
+        console.log(`☎️ XSI-подписки Билайна обновлены: ${changed.length}.`);
         await publishLegacyRealtimeChange(io, {
           domain: 'telephony',
           entity: 'telephony_subscription',
@@ -118,8 +130,9 @@ function startTelephonySubscriptionRunner() {
           },
         });
       }
-      if (result.action === 'failed') {
-        console.error('❌ Ошибка автопродления XSI-подписки:', result.error);
+      const failed = aggregate.results.filter((result) => result.action === 'failed');
+      if (failed.length > 0) {
+        console.error(`❌ Ошибка автопродления XSI-подписок: ${failed.length}.`);
       }
     } catch (error) {
       console.error('❌ Ошибка runner XSI-подписки:', error);
@@ -132,6 +145,35 @@ function startTelephonySubscriptionRunner() {
 
 async function startTelegramBot() {
   if (startTelegramBot.started) return;
+  if (isTenantProviderIntegrationsEnabled()) {
+    const connections = await listActiveConnections({ provider: 'telegram' });
+    const instances = [];
+    if (connections.length > 1) {
+      console.error('TELEGRAM_CONNECTION_START_FAILED', 'multiple-connections-until-client-wave');
+      startTelegramBot.instances = instances;
+      startTelegramBot.started = true;
+      return;
+    }
+    for (const connection of connections) {
+      try {
+        await assertLegacyDownstreamReady(connection);
+        const telegramBot = createTelegramBot({
+          connection,
+          proxyUrl: connection.secrets.proxyUrl,
+          token: connection.secrets.botToken,
+        });
+        if (!telegramBot) throw new Error('connection token missing');
+        telegramBot.start();
+        instances.push(telegramBot);
+      } catch {
+        console.error('TELEGRAM_CONNECTION_START_FAILED', connection.publicId);
+      }
+    }
+    startTelegramBot.instances = instances;
+    startTelegramBot.started = true;
+    console.log(`✈️ Telegram connections запущено: ${instances.length}.`);
+    return;
+  }
   const telegramBot = createTelegramBot();
   if (!telegramBot) {
     console.log('✈️ Telegram Бот не запущен: BOT_TOKEN не задан.');
@@ -145,6 +187,34 @@ async function startTelegramBot() {
 
 async function startVkBot() {
   if (startVkBot.started) return;
+  if (isTenantProviderIntegrationsEnabled()) {
+    const connections = await listActiveConnections({ provider: 'vk' });
+    const instances = [];
+    if (connections.length > 1) {
+      console.error('VK_CONNECTION_START_FAILED', 'multiple-connections-until-client-wave');
+      startVkBot.instances = instances;
+      startVkBot.started = true;
+      return;
+    }
+    for (const connection of connections) {
+      try {
+        await assertLegacyDownstreamReady(connection);
+        const vkBot = createVkBot({
+          connection,
+          token: connection.secrets.botToken,
+        });
+        if (!vkBot) throw new Error('connection token missing');
+        await vkBot.start();
+        instances.push(vkBot);
+      } catch {
+        console.error('VK_CONNECTION_START_FAILED', connection.publicId);
+      }
+    }
+    startVkBot.instances = instances;
+    startVkBot.started = true;
+    console.log(`🟦 VK connections запущено: ${instances.length}.`);
+    return;
+  }
   const vkBot = createVkBot();
   if (!vkBot) {
     console.log('🟦 ВКонтакте Бот не запущен: VK_TOKEN не задан.');
@@ -158,7 +228,7 @@ async function startVkBot() {
 
 async function startBackgroundComponents() {
   await assertTenantFoundationInitialized();
-  if (isTenantFilesWorkersEnabled()) {
+  if (isTenantFilesWorkersEnabled() && !isTenantProviderIntegrationsEnabled()) {
     const deferred = Object.entries(BACKGROUND_COMPONENT_POLICIES)
       .filter(([, policy]) => policy.classification === 'deferred')
       .map(([component, policy]) => ({
@@ -168,6 +238,16 @@ async function startBackgroundComponents() {
       }));
     console.warn('TENANT_BACKGROUND_COMPONENTS_DEFERRED', JSON.stringify(deferred));
     return;
+  }
+  if (isTenantFilesWorkersEnabled()) {
+    const deferred = Object.entries(BACKGROUND_COMPONENT_POLICIES)
+      .filter(([, policy]) => policy.classification === 'deferred')
+      .map(([component, policy]) => ({
+        component,
+        deferredTo: policy.deferredTo,
+        scope: 'global-scan-blocked',
+      }));
+    console.warn('TENANT_BACKGROUND_COMPONENTS_DEFERRED', JSON.stringify(deferred));
   }
   if (isFeatureEnabled('BOTS_ENABLED')) {
     try {
@@ -186,7 +266,7 @@ async function startBackgroundComponents() {
   }
 
   if (isFeatureEnabled('BACKGROUND_RUNNERS_ENABLED')) {
-    startRecurringCallTasksRunner();
+    if (!isTenantFilesWorkersEnabled()) startRecurringCallTasksRunner();
     startTelephonySubscriptionRunner();
   } else {
     console.log('⏱️ Фоновые runner-ы отключены через BACKGROUND_RUNNERS_ENABLED=false.');

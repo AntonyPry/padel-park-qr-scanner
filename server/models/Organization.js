@@ -26,6 +26,7 @@ module.exports = (sequelize, DataTypes) => {
 
   Organization.associate = (models) => {
     Organization.hasMany(models.Club, { foreignKey: 'organizationId' });
+    Organization.hasMany(models.IntegrationConnection, { foreignKey: 'organizationId' });
     Organization.hasMany(models.Membership, { foreignKey: 'organizationId' });
   };
 

@@ -21,7 +21,6 @@ const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const router = express.Router();
 
 const authRoutes = require('./auth');
-const webhookRoutes = require('./webhooks');
 const auditRoutes = require('./audit');
 const bookingsRoutes = require('./bookings');
 const callTasksRoutes = require('./call-tasks');
@@ -109,7 +108,6 @@ router.get('/openapi.json', globalEndpoint, (_req, res) => {
 
 router.use('/auth', authRoutes);
 router.use(realtimeMutations());
-router.use('/webhooks', webhookRoutes);
 router.use(telephonyTranscriptionWorkerRoutes);
 
 router.use(requireAuth);

@@ -51,7 +51,12 @@ test('all OpenAPI endpoints have an audited tenant scope declaration', () => {
 test('public provider and worker endpoints are strict explicit exceptions', () => {
   assert.deepEqual(
     [...PROVIDER_INGRESS_ENDPOINT_IDS].sort(),
-    ['telephony.beelineWebhook', 'webhooks.evotor'],
+    [
+      'telephony.beelineConnectionWebhook',
+      'telephony.beelineWebhook',
+      'webhooks.evotor',
+      'webhooks.evotorConnection',
+    ],
   );
   assert.equal(WORKER_ENDPOINT_IDS.size, 7);
   for (const id of PROVIDER_INGRESS_ENDPOINT_IDS) {

@@ -42,6 +42,9 @@ const apiError = z.object({
   error: z.string(),
   status: z.number(),
 });
+const integrationConnectionParams = z.object({
+  connectionPublicId: z.string().regex(/^ic_[a-f0-9]{32}$/u),
+});
 
 const rawEndpointContracts: EndpointContract[] = [
   { id: 'system.health', method: 'get', path: '/health', public: true, summary: 'Service health check', tags: ['System'] },
@@ -53,6 +56,7 @@ const rawEndpointContracts: EndpointContract[] = [
   { id: 'auth.me', method: 'get', path: '/auth/me', summary: 'Current account', tags: ['Auth'] },
   { id: 'auth.memberships', method: 'get', path: '/auth/me/memberships', response: apiSchemas.auth.membershipsResponse, summary: 'Current account tenant memberships', tags: ['Auth'] },
   { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
+  { id: 'webhooks.evotorConnection', method: 'post', params: integrationConnectionParams, path: '/webhooks/evotor/{connectionPublicId}', public: true, summary: 'Receive Evotor webhook through an integration connection', tags: ['Integrations'] },
 
   { id: 'access.search', method: 'get', path: '/search', query: apiSchemas.access.searchQuery, summary: 'Search clients for access monitor', tags: ['Access'] },
   { ...apiSchemas.access.manualVisit, id: 'access.manualVisit', method: 'post', path: '/manual-visit', summary: 'Create manual visit', tags: ['Access'] },
@@ -230,6 +234,7 @@ const rawEndpointContracts: EndpointContract[] = [
   { id: 'telephony.rawEvents', method: 'get', path: '/telephony/raw-events', query: apiSchemas.telephony.rawEventsQuery, summary: 'List raw Beeline events', tags: ['Telephony'] },
   { id: 'telephony.reprocessRawEvent', method: 'post', path: '/telephony/raw-events/{id}/reprocess', params: apiSchemas.telephony.withId.params, summary: 'Reprocess raw Beeline event', tags: ['Telephony'] },
   { id: 'telephony.beelineWebhook', method: 'post', path: '/integrations/beeline/events', public: true, summary: 'Receive Beeline webhook event', tags: ['Telephony'] },
+  { id: 'telephony.beelineConnectionWebhook', method: 'post', params: integrationConnectionParams, path: '/integrations/beeline/events/{connectionPublicId}', public: true, summary: 'Receive Beeline webhook through an integration connection', tags: ['Telephony'] },
 
   { id: 'clients.list', method: 'get', path: '/clients', query: apiSchemas.clients.listQuery, summary: 'List clients', tags: ['Clients'] },
   { id: 'clients.lookup', method: 'get', path: '/clients/lookup', query: apiSchemas.clients.lookupQuery, summary: 'Lookup client by phone', tags: ['Clients'] },

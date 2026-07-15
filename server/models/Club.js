@@ -37,6 +37,7 @@ module.exports = (sequelize, DataTypes) => {
 
   Club.associate = (models) => {
     Club.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    Club.hasMany(models.IntegrationConnection, { foreignKey: 'clubId' });
     Club.hasMany(models.MembershipClubAccess, { foreignKey: 'clubId' });
   };
 

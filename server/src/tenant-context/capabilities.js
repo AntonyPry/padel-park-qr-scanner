@@ -17,6 +17,10 @@ function isTenantFilesWorkersEnabled() {
   return readBooleanEnv(process.env.TENANT_FILES_WORKERS_ENABLED, false);
 }
 
+function isTenantProviderIntegrationsEnabled() {
+  return readBooleanEnv(process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED, false);
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -42,11 +46,27 @@ function assertTenantCapabilityDependencies() {
       'TENANT_CACHE_REALTIME_ENABLED',
     );
   }
+  if (isTenantProviderIntegrationsEnabled() && !isTenantContextEnabled()) {
+    throw capabilityDependencyError('TENANT_PROVIDER_INTEGRATIONS_ENABLED');
+  }
+  if (isTenantProviderIntegrationsEnabled() && !isTenantCacheRealtimeEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+      'TENANT_CACHE_REALTIME_ENABLED',
+    );
+  }
+  if (isTenantProviderIntegrationsEnabled() && !isTenantFilesWorkersEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+      'TENANT_FILES_WORKERS_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
     tenantContext: isTenantContextEnabled(),
     tenantFilesWorkers: isTenantFilesWorkersEnabled(),
+    tenantProviderIntegrations: isTenantProviderIntegrationsEnabled(),
   });
 }
 
@@ -64,6 +84,7 @@ module.exports = {
   isTenantCacheRealtimeEnabled,
   isTenantContextEnabled,
   isTenantFilesWorkersEnabled,
+  isTenantProviderIntegrationsEnabled,
   readBooleanEnv,
   tenantContextCapability,
 };

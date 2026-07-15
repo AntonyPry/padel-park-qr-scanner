@@ -10,6 +10,7 @@ export const apiEndpoints = {
   "auth.me": { method: "GET", path: "/auth/me", responseType: "json", tenantScope: "global" },
   "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
   "webhooks.evotor": { method: "POST", path: "/webhooks/evotor", responseType: "json", tenantScope: "provider_ingress" },
+  "webhooks.evotorConnection": { method: "POST", path: "/webhooks/evotor/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "access.search": { method: "GET", path: "/search", responseType: "json", tenantScope: "club" },
   "access.manualVisit": { method: "POST", path: "/manual-visit", responseType: "json", tenantScope: "club" },
   "access.issueKey": { method: "POST", path: "/key", responseType: "json", tenantScope: "club" },
@@ -174,6 +175,7 @@ export const apiEndpoints = {
   "telephony.rawEvents": { method: "GET", path: "/telephony/raw-events", responseType: "json", tenantScope: "club" },
   "telephony.reprocessRawEvent": { method: "POST", path: "/telephony/raw-events/{id}/reprocess", responseType: "json", tenantScope: "club" },
   "telephony.beelineWebhook": { method: "POST", path: "/integrations/beeline/events", responseType: "json", tenantScope: "provider_ingress" },
+  "telephony.beelineConnectionWebhook": { method: "POST", path: "/integrations/beeline/events/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "clients.list": { method: "GET", path: "/clients", responseType: "json", tenantScope: "organization" },
   "clients.lookup": { method: "GET", path: "/clients/lookup", responseType: "json", tenantScope: "organization" },
   "clients.duplicates": { method: "GET", path: "/clients/duplicates", responseType: "json", tenantScope: "organization" },
@@ -334,6 +336,9 @@ export type AuthMembershipsResponse = {
     membershipId: number;
     organizationId: number;
   } | null;
+};
+export type WebhooksEvotorConnectionParams = {
+  connectionPublicId: string;
 };
 export type AccessSearchQuery = {
   q?: string | "" | null;
@@ -1540,6 +1545,9 @@ export type TelephonyRawEventsQuery = {
 export type TelephonyReprocessRawEventParams = {
   id: number | string;
 };
+export type TelephonyBeelineConnectionWebhookParams = {
+  connectionPublicId: string;
+};
 export type ClientsListQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
@@ -2471,6 +2479,7 @@ export interface ApiEndpointRequestMap {
   "auth.me": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
   "webhooks.evotor": ApiEndpointRequest<undefined, undefined, undefined>;
+  "webhooks.evotorConnection": ApiEndpointRequest<WebhooksEvotorConnectionParams, undefined, undefined>;
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
   "access.manualVisit": ApiEndpointRequest<undefined, undefined, AccessManualVisitBody>;
   "access.issueKey": ApiEndpointRequest<undefined, undefined, AccessIssueKeyBody>;
@@ -2635,6 +2644,7 @@ export interface ApiEndpointRequestMap {
   "telephony.rawEvents": ApiEndpointRequest<undefined, TelephonyRawEventsQuery, undefined>;
   "telephony.reprocessRawEvent": ApiEndpointRequest<TelephonyReprocessRawEventParams, undefined, undefined>;
   "telephony.beelineWebhook": ApiEndpointRequest<undefined, undefined, undefined>;
+  "telephony.beelineConnectionWebhook": ApiEndpointRequest<TelephonyBeelineConnectionWebhookParams, undefined, undefined>;
   "clients.list": ApiEndpointRequest<undefined, ClientsListQuery, undefined>;
   "clients.lookup": ApiEndpointRequest<undefined, ClientsLookupQuery, undefined>;
   "clients.duplicates": ApiEndpointRequest<undefined, undefined, undefined>;
@@ -2755,6 +2765,7 @@ export interface ApiEndpointResponseMap {
   "auth.me": unknown;
   "auth.memberships": AuthMembershipsResponse;
   "webhooks.evotor": unknown;
+  "webhooks.evotorConnection": unknown;
   "access.search": unknown;
   "access.manualVisit": unknown;
   "access.issueKey": unknown;
@@ -2919,6 +2930,7 @@ export interface ApiEndpointResponseMap {
   "telephony.rawEvents": unknown;
   "telephony.reprocessRawEvent": unknown;
   "telephony.beelineWebhook": unknown;
+  "telephony.beelineConnectionWebhook": unknown;
   "clients.list": unknown;
   "clients.lookup": unknown;
   "clients.duplicates": unknown;

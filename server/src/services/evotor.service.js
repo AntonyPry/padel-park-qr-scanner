@@ -1,6 +1,9 @@
 // src/services/evotor.service.js
 const db = require('../../models');
 const pendingSaleService = require('./pending-sale.service');
+const {
+  buildProviderIdempotencyKey,
+} = require('../provider-integrations/idempotency');
 
 function normalizePaymentType(value) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -225,7 +228,7 @@ class EvotorService {
    * @param {Object} payload - req.body от Эвотора
    * @returns {Object} { alreadyProcessed: boolean, receipt: Object }
    */
-  async processReceipt(payload) {
+  async processReceipt(payload, { connection } = {}) {
     // 1. Извлекаем данные чека
     const receiptData =
       payload.data && payload.type?.toLowerCase().includes('receipt')
@@ -236,11 +239,14 @@ class EvotorService {
     const evotorId = String(
       receiptData.id || receiptData.receiptId || receiptData.uuid || Date.now(),
     );
+    const idempotencyKey = buildProviderIdempotencyKey(connection || null, evotorId);
 
     // 2. Проверяем дубликаты
-    const existing = await db.Receipt.findOne({ where: { evotorId } });
+    const existing = await db.Receipt.findOne({
+      where: connection ? { idempotencyKey } : { evotorId },
+    });
     if (existing) {
-      return { alreadyProcessed: true };
+      return { alreadyProcessed: true, receipt: existing };
     }
 
     return db.sequelize.transaction(async (transaction) => {
@@ -258,6 +264,10 @@ class EvotorService {
       // 4. Сохраняем заголовок чека
       const newReceipt = await db.Receipt.create(
         {
+          organizationId: connection?.organizationId || null,
+          clubId: connection?.clubId || null,
+          integrationConnectionId: connection?.connectionId || null,
+          idempotencyKey,
           evotorId,
           dateTime: receiptData.dateTime || receiptData.closeDate || new Date(),
           type: receiptData.type || 'SELL',

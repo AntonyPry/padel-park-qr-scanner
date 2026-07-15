@@ -79,3 +79,30 @@ test('application construction fails fast for an invalid capability combination'
     restore('TENANT_CACHE_REALTIME_ENABLED', previousIsolation);
   }
 });
+
+test('provider integration capability depends on Features 3, 4.1 and 4.2', () => {
+  const names = [
+    'TENANT_CONTEXT_ENABLED',
+    'TENANT_CACHE_REALTIME_ENABLED',
+    'TENANT_FILES_WORKERS_ENABLED',
+    'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    process.env.TENANT_CONTEXT_ENABLED = 'true';
+    process.env.TENANT_CACHE_REALTIME_ENABLED = 'true';
+    process.env.TENANT_FILES_WORKERS_ENABLED = 'false';
+    process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED = 'true';
+    assert.throws(
+      () => assertTenantCapabilityDependencies(),
+      (error) => error.code === 'TENANT_CAPABILITY_DEPENDENCY_INVALID'
+        && error.message.includes('TENANT_FILES_WORKERS_ENABLED'),
+    );
+
+    process.env.TENANT_FILES_WORKERS_ENABLED = 'true';
+    const capabilities = assertTenantCapabilityDependencies();
+    assert.equal(capabilities.tenantProviderIntegrations, true);
+  } finally {
+    for (const name of names) restore(name, previous[name]);
+  }
+});

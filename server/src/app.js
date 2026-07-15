@@ -4,6 +4,11 @@ const cors = require('cors');
 const apiRoutes = require('./routes');
 const { requestTiming } = require('./middleware/performance');
 const telephonyController = require('./controllers/telephony.controller');
+const webhookController = require('./controllers/webhook.controller');
+const {
+  beelineConnectionFirstIngress,
+  evotorConnectionFirstIngress,
+} = require('./middleware/provider-ingress');
 const {
   tenantFoundationGate,
 } = require('./middleware/tenant-foundation-gate');
@@ -26,11 +31,36 @@ function createApp({ onTenantInitialized } = {}) {
   app.use(cors());
   app.use(requestTiming);
   app.use('/api', tenantFoundationGate);
-  app.post(
-    '/api/integrations/beeline/events',
-    express.text({ type: '*/*' }),
+  const providerIngress = [
     attachRouteDeclaration,
     requireRouteClassification(ENDPOINT_CLASSIFICATIONS.PROVIDER_INGRESS),
+  ];
+  app.post(
+    '/api/webhooks/evotor/:connectionPublicId',
+    ...providerIngress,
+    evotorConnectionFirstIngress,
+    express.raw({ limit: '6mb', type: '*/*' }),
+    webhookController.handleEvotor,
+  );
+  app.post(
+    '/api/webhooks/evotor',
+    ...providerIngress,
+    evotorConnectionFirstIngress,
+    express.raw({ limit: '6mb', type: '*/*' }),
+    webhookController.handleEvotor,
+  );
+  app.post(
+    '/api/integrations/beeline/events/:connectionPublicId',
+    ...providerIngress,
+    beelineConnectionFirstIngress,
+    express.text({ limit: '6mb', type: '*/*' }),
+    telephonyController.receiveBeelineEvent,
+  );
+  app.post(
+    '/api/integrations/beeline/events',
+    ...providerIngress,
+    beelineConnectionFirstIngress,
+    express.text({ limit: '6mb', type: '*/*' }),
     telephonyController.receiveBeelineEvent,
   );
   app.use(express.json({ limit: '6mb' }));

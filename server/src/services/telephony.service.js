@@ -1,10 +1,47 @@
 const axios = require('axios');
+const crypto = require('node:crypto');
 const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
 const {
+  assertTenantFoundationInitialized,
+} = require('./tenant-foundation.service');
+const {
   isTenantFilesWorkersEnabled,
+  isTenantProviderIntegrationsEnabled,
 } = require('../tenant-context/capabilities');
+const {
+  listActiveConnections,
+  resolveConnectionForTenantById,
+  resolveIngressConnection,
+  resolveTenantConnection,
+} = require('../provider-integrations/connection-service');
+const {
+  recordRejectedIngress,
+} = require('../provider-integrations/diagnostics');
+const {
+  buildProviderIdempotencyKey,
+  buildProviderNamespace,
+} = require('../provider-integrations/idempotency');
+const {
+  withProviderConnectionLock,
+} = require('../provider-integrations/locks');
+const {
+  assertIngressSecret,
+  assertLegacyDownstreamReady,
+  requireConnectionSecret,
+} = require('../provider-integrations/runtime');
+const {
+  redactProviderCredentials,
+  redactProviderValue,
+} = require('../provider-integrations/redaction');
+const {
+  runIsolatedProviderConnections,
+} = require('../provider-integrations/runner');
+const {
+  BACKGROUND_COMPONENTS,
+  assertBackgroundComponentCanRun,
+} = require('../files-workers/background-run-context');
 const {
   normalizeTenantIds,
   resolveTrustedTenantAttribution,
@@ -123,22 +160,70 @@ function readBooleanEnv(name, defaultValue = false) {
   return ['1', 'true', 'yes', 'on'].includes(String(value).toLowerCase());
 }
 
-function getSubscriptionExpiresSeconds() {
-  const value = Number(process.env.BEELINE_SUBSCRIPTION_EXPIRES || 3600);
+function connectionConfig(connection, key, envName, fallback = null) {
+  if (connection) {
+    const value = connection.config?.[key];
+    return value === undefined || value === null || value === '' ? fallback : value;
+  }
+  const value = process.env[envName];
+  return value === undefined || value === null || value === '' ? fallback : value;
+}
+
+function connectionAttribution(connection) {
+  if (!connection) {
+    return { providerNamespace: buildProviderNamespace(null) };
+  }
+  return {
+    clubId: connection.clubId,
+    integrationConnectionId: connection.connectionId,
+    organizationId: connection.organizationId,
+    providerNamespace: buildProviderNamespace(connection),
+  };
+}
+
+function rawEventConnection(rawEvent) {
+  if (!rawEvent?.integrationConnectionId) return null;
+  return Object.freeze({
+    clubId: Number(rawEvent.clubId),
+    connectionId: Number(rawEvent.integrationConnectionId),
+    organizationId: Number(rawEvent.organizationId),
+    provider: rawEvent.provider,
+  });
+}
+
+async function resolveBeelineTenantConnection(tenant, supplied = null) {
+  if (!isTenantProviderIntegrationsEnabled()) return null;
+  if (supplied) return supplied;
+  return resolveTenantConnection({ provider: 'beeline', tenant });
+}
+
+function getSubscriptionExpiresSeconds(connection = null) {
+  const value = Number(connectionConfig(
+    connection,
+    'subscriptionExpiresSeconds',
+    'BEELINE_SUBSCRIPTION_EXPIRES',
+    3600,
+  ));
   return Number.isFinite(value) && value > 0 ? value : 3600;
 }
 
-function getSubscriptionRenewBeforeSeconds() {
-  const value = Number(process.env.BEELINE_SUBSCRIPTION_RENEW_BEFORE_SECONDS);
+function getSubscriptionRenewBeforeSeconds(connection = null) {
+  const value = Number(connectionConfig(
+    connection,
+    'subscriptionRenewBeforeSeconds',
+    'BEELINE_SUBSCRIPTION_RENEW_BEFORE_SECONDS',
+    null,
+  ));
   if (Number.isFinite(value) && value >= 60) return value;
 
   return Math.min(
     DEFAULT_SUBSCRIPTION_RENEW_BEFORE_SECONDS,
-    Math.max(60, Math.floor(getSubscriptionExpiresSeconds() / 3)),
+    Math.max(60, Math.floor(getSubscriptionExpiresSeconds(connection) / 3)),
   );
 }
 
-function isSubscriptionAutoRenewEnabled() {
+function isSubscriptionAutoRenewEnabled(connection = null) {
+  if (connection) return Boolean(connection.config?.subscriptionAutoRenewEnabled);
   return readBooleanEnv('BEELINE_SUBSCRIPTION_AUTORENEW_ENABLED', false);
 }
 
@@ -403,7 +488,25 @@ function parseIncomingBeelinePayload(body, headers = {}) {
   }
 }
 
-async function getConfig() {
+async function getConfig(tenant = null) {
+  const connection = await resolveBeelineTenantConnection(tenant);
+  if (connection) {
+    return {
+      apiBaseUrl: connection.config.apiBaseUrl || null,
+      apiTokenConfigured: Boolean(connection.secrets.apiToken),
+      callbackUrl: connection.config.callbackUrl || null,
+      connectionConfigured: true,
+      connectionPublicId: connection.publicId,
+      latestSubscription: await getLatestSubscription({ connection }),
+      recordsPath: connection.config.recordsPath || '/records',
+      statisticsPath: connection.config.statisticsPath || '/v2/statistics',
+      subscriptionAutoRenewEnabled: isSubscriptionAutoRenewEnabled(connection),
+      subscriptionRenewBeforeSeconds: getSubscriptionRenewBeforeSeconds(connection),
+      subscriptionPath: connection.config.subscriptionPath || '/subscription',
+      webhookSecretRequired: true,
+      webhookSecretConfigured: Boolean(connection.secrets.webhookSecret),
+    };
+  }
   return {
     apiBaseUrl: normalizeText(process.env.BEELINE_API_BASE_URL),
     apiTokenConfigured: Boolean(normalizeText(process.env.BEELINE_API_TOKEN)),
@@ -419,7 +522,15 @@ async function getConfig() {
   };
 }
 
-function assertWebhookAllowed(headers = {}, query = {}) {
+function assertWebhookAllowed(headers = {}, query = {}, connection = null) {
+  if (connection) {
+    const provided =
+      normalizeText(headers['x-beeline-webhook-secret']) ||
+      normalizeText(headers['x-webhook-secret']) ||
+      normalizeText(headers['x-integration-secret']);
+    assertIngressSecret(connection, provided);
+    return;
+  }
   const secret = normalizeText(process.env.BEELINE_WEBHOOK_SECRET);
   if (!secret) {
     if (isWebhookSecretRequired()) {
@@ -1047,6 +1158,8 @@ function mapCall(row, actor = null, options = {}) {
   };
 
   delete mapped.rawSnapshot;
+  delete mapped.providerNamespace;
+  delete mapped.integrationConnectionId;
   delete mapped.transcriptionJobs;
   delete mapped.transcriptSegments;
   if (!canAccessRecordingUrl(actor)) {
@@ -1074,12 +1187,15 @@ function mapRawEvent(row) {
   if (!row) return null;
   const raw = row.toJSON ? row.toJSON() : row;
 
-  return {
+  const mapped = {
     ...raw,
     headers: parseJsonField(raw.headers),
     payload: parseJsonField(raw.payload),
     query: parseJsonField(raw.query),
   };
+  delete mapped.idempotencyKey;
+  delete mapped.integrationConnectionId;
+  return mapped;
 }
 
 async function findClientByPhone(clientPhoneNormalized) {
@@ -1106,7 +1222,7 @@ async function findStaffByPayload(normalized) {
   return null;
 }
 
-async function findExistingCall(normalized, transaction = undefined) {
+async function findExistingCall(normalized, transaction = undefined, connection = null) {
   const or = [];
   if (normalized.externalTrackingId) {
     or.push({ externalTrackingId: normalized.externalTrackingId });
@@ -1130,7 +1246,10 @@ async function findExistingCall(normalized, transaction = undefined) {
   if (or.length === 0) return null;
 
   return db.TelephonyCall.findOne({
-    where: { [Op.or]: or },
+    where: {
+      [Op.or]: or,
+      providerNamespace: buildProviderNamespace(connection),
+    },
     transaction,
   });
 }
@@ -1239,7 +1358,11 @@ async function createMissedCallTask(call, transaction = undefined) {
   return task;
 }
 
-async function upsertCallFromNormalized(normalized, transaction = undefined) {
+async function upsertCallFromNormalized(
+  normalized,
+  transaction = undefined,
+  connection = null,
+) {
   if (!hasStableCallIdentity(normalized)) {
     throw appError(
       'В событии Билайна нет стабильного идентификатора звонка или пары телефон+время',
@@ -1247,7 +1370,7 @@ async function upsertCallFromNormalized(normalized, transaction = undefined) {
     );
   }
 
-  const existing = await findExistingCall(normalized, transaction);
+  const existing = await findExistingCall(normalized, transaction, connection);
   const client = await findClientByPhone(normalized.clientPhoneNormalized);
   const staff = await findStaffByPayload(normalized);
   const payload = compactCallPayload(
@@ -1264,6 +1387,7 @@ async function upsertCallFromNormalized(normalized, transaction = undefined) {
       endedAt: normalized.endedAt,
       externalCallId: normalized.externalCallId,
       externalTrackingId: normalized.externalTrackingId,
+      ...connectionAttribution(connection),
       provider: 'beeline',
       rawSnapshot: normalized,
       recordExternalId: normalized.recordExternalId,
@@ -1289,7 +1413,7 @@ async function upsertCallFromNormalized(normalized, transaction = undefined) {
   } catch (error) {
     if (error.name !== 'SequelizeUniqueConstraintError') throw error;
 
-    const duplicate = await findExistingCall(normalized, transaction);
+    const duplicate = await findExistingCall(normalized, transaction, connection);
     if (!duplicate) throw error;
     const updatePayload = compactCallPayload(payload, { forUpdate: true });
     if (duplicate.userId) {
@@ -1302,7 +1426,11 @@ async function upsertCallFromNormalized(normalized, transaction = undefined) {
   return call;
 }
 
-async function findLikelyCallForRecording(recording, transaction = undefined) {
+async function findLikelyCallForRecording(
+  recording,
+  transaction = undefined,
+  connection = null,
+) {
   if (!recording.clientPhoneNormalized || !recording.startedAt) return null;
 
   const from = new Date(recording.startedAt.getTime() - 10 * 60 * 1000);
@@ -1310,6 +1438,7 @@ async function findLikelyCallForRecording(recording, transaction = undefined) {
   const where = {
     clientPhoneNormalized: recording.clientPhoneNormalized,
     provider: 'beeline',
+    providerNamespace: buildProviderNamespace(connection),
     startedAt: { [Op.between]: [from, to] },
   };
   if (recording.direction !== 'unknown') where.direction = recording.direction;
@@ -1339,10 +1468,14 @@ async function findLikelyCallForRecording(recording, transaction = undefined) {
   return scored[0]?.score <= 900 ? scored[0].call : null;
 }
 
-async function upsertCallFromRecording(recording, transaction = undefined) {
+async function upsertCallFromRecording(
+  recording,
+  transaction = undefined,
+  connection = null,
+) {
   const existing =
-    (await findExistingCall(recording, transaction)) ||
-    (await findLikelyCallForRecording(recording, transaction));
+    (await findExistingCall(recording, transaction, connection)) ||
+    (await findLikelyCallForRecording(recording, transaction, connection));
 
   if (existing) {
     await existing.update(
@@ -1366,20 +1499,19 @@ async function upsertCallFromRecording(recording, transaction = undefined) {
     return existing;
   }
 
-  return upsertCallFromNormalized(recording, transaction);
+  return upsertCallFromNormalized(recording, transaction, connection);
 }
 
 async function saveRawEvent(rawEventPayload) {
-  if (!rawEventPayload.externalEventId) {
-    return db.TelephonyRawEvent.create(rawEventPayload);
-  }
-
-  const where = {
-    externalEventId: rawEventPayload.externalEventId,
-    provider: 'beeline',
-  };
+  const where = { idempotencyKey: rawEventPayload.idempotencyKey };
   const existing = await db.TelephonyRawEvent.findOne({ where });
-  if (existing) return existing.update(rawEventPayload);
+  if (existing) {
+    await existing.update({
+      deliveryCount: Number(existing.deliveryCount || 1) + 1,
+      lastReceivedAt: rawEventPayload.receivedAt,
+    });
+    return existing;
+  }
 
   try {
     return await db.TelephonyRawEvent.create(rawEventPayload);
@@ -1388,18 +1520,53 @@ async function saveRawEvent(rawEventPayload) {
 
     const duplicate = await db.TelephonyRawEvent.findOne({ where });
     if (!duplicate) throw error;
-    return duplicate.update(rawEventPayload);
+    await duplicate.update({
+      deliveryCount: Number(duplicate.deliveryCount || 1) + 1,
+      lastReceivedAt: rawEventPayload.receivedAt,
+    });
+    return duplicate;
   }
 }
 
 async function receiveBeelineEvent({
   body,
+  connection = null,
   headers,
   ip,
   query,
+  publicId,
   skipSecret = false,
 }) {
-  if (!skipSecret) assertWebhookAllowed(headers, query);
+  if (isTenantProviderIntegrationsEnabled() && !connection) {
+    const resolved = await resolveIngressConnection({
+      provider: 'beeline',
+      publicId,
+      requestId: headers?.['x-request-id'],
+      sourceIp: ip,
+    });
+    try {
+      assertWebhookAllowed(headers, query, resolved);
+    } catch (error) {
+      await recordRejectedIngress({
+        provider: 'beeline',
+        publicId,
+        reasonCode: 'CONNECTION_SECRET_MISMATCH',
+        requestId: headers?.['x-request-id'],
+        sourceIp: ip,
+      });
+      throw error;
+    }
+    await assertLegacyDownstreamReady(resolved);
+    return withProviderConnectionLock(resolved, () => receiveBeelineEvent({
+      body,
+      connection: resolved,
+      headers,
+      ip,
+      query,
+      skipSecret: true,
+    }));
+  }
+  if (!skipSecret) assertWebhookAllowed(headers, query, connection);
 
   const items = parseIncomingBeelinePayload(body, headers);
   const results = [];
@@ -1407,15 +1574,26 @@ async function receiveBeelineEvent({
   for (const item of items) {
     const payload = asObject(item);
     const normalized = normalizePayload(payload);
+    const externalEventId = normalized.externalEventId || `delivery:${crypto.randomUUID()}`;
+    const idempotencyKey = buildProviderIdempotencyKey(connection, externalEventId);
+    const attribution = connectionAttribution(connection);
     const rawEventPayload = {
+      clubId: attribution.clubId || null,
+      integrationConnectionId: attribution.integrationConnectionId || null,
+      organizationId: attribution.organizationId || null,
+      idempotencyKey,
+      deliveryCount: 1,
       eventType: normalized.eventType || 'beeline.event',
       externalEventId: normalized.externalEventId,
       headers: sanitizeHeaders(headers),
-      payload,
+      // Phone and email are downstream call-matching data; only provider
+      // credentials are stripped before the immutable raw event is stored.
+      payload: redactProviderCredentials(payload),
       processingStatus: 'new',
       provider: 'beeline',
       query: sanitizeQuery(query),
       receivedAt: new Date(),
+      lastReceivedAt: new Date(),
       sourceIp: ip || null,
     };
     const rawEvent = await saveRawEvent(rawEventPayload);
@@ -1425,7 +1603,11 @@ async function receiveBeelineEvent({
         return processRawEvent(rawEvent, transaction);
       });
 
-      if (result.callId) await autoEnqueueTranscriptionJob(result.callId);
+      if (result.callId) {
+        await autoEnqueueTranscriptionJob(result.callId, {
+          tenant: connection || undefined,
+        });
+      }
       results.push(result);
     } catch (error) {
       await rawEvent.update({
@@ -1470,7 +1652,11 @@ async function processRawEvent(rawEvent, transaction = undefined) {
     };
   }
 
-  const call = await upsertCallFromNormalized(normalized, transaction);
+  const connection = rawEventConnection(rawEvent);
+  if (isTenantProviderIntegrationsEnabled() && !connection) {
+    throw appError('Provider attribution is missing', 409);
+  }
+  const call = await upsertCallFromNormalized(normalized, transaction, connection);
 
   await rawEvent.update(
     {
@@ -1486,9 +1672,17 @@ async function processRawEvent(rawEvent, transaction = undefined) {
   return { callId: call?.id || null, rawEventId: rawEvent.id, status: 'processed' };
 }
 
-async function reprocessRawEvent(id) {
-  const rawEvent = await db.TelephonyRawEvent.findByPk(id);
+async function reprocessRawEvent(id, tenant = null) {
+  const where = { id };
+  if (isTenantProviderIntegrationsEnabled()) {
+    where.organizationId = Number(tenant?.organizationId);
+    where.clubId = Number(tenant?.clubId);
+  }
+  const rawEvent = await db.TelephonyRawEvent.findOne({ where });
   if (!rawEvent) throw appError('Webhook-событие не найдено', 404);
+  if (isTenantProviderIntegrationsEnabled()) {
+    await assertLegacyDownstreamReady(rawEventConnection(rawEvent));
+  }
 
   try {
     const result = await db.sequelize.transaction(async (transaction) => {
@@ -2321,9 +2515,16 @@ async function getReport(actor = null, query = {}) {
   };
 }
 
-function getBeelineClient() {
-  const token = normalizeText(process.env.BEELINE_API_TOKEN);
-  const baseURL = normalizeText(process.env.BEELINE_API_BASE_URL);
+function getBeelineClient(connection = null) {
+  const token = connection
+    ? normalizeText(requireConnectionSecret(connection, 'apiToken'))
+    : normalizeText(process.env.BEELINE_API_TOKEN);
+  const baseURL = normalizeText(connectionConfig(
+    connection,
+    'apiBaseUrl',
+    'BEELINE_API_BASE_URL',
+    null,
+  ));
 
   if (!token) throw appError('BEELINE_API_TOKEN не настроен', 409);
   if (!baseURL) throw appError('BEELINE_API_BASE_URL не настроен', 409);
@@ -2333,7 +2534,12 @@ function getBeelineClient() {
     headers: {
       'X-MPBX-API-AUTH-TOKEN': token,
     },
-    timeout: Number(process.env.BEELINE_API_TIMEOUT_MS || 15000),
+    timeout: Number(connectionConfig(
+      connection,
+      'apiTimeoutMs',
+      'BEELINE_API_TIMEOUT_MS',
+      15000,
+    )),
   });
 }
 
@@ -2345,9 +2551,20 @@ function unwrapApiList(data) {
   return [];
 }
 
-async function syncStatistics({ dateFrom, dateTo, pageSize = 100 } = {}) {
-  const client = getBeelineClient();
-  const statisticsPath = normalizeText(process.env.BEELINE_STATISTICS_PATH) || '/v2/statistics';
+async function syncStatistics(
+  { dateFrom, dateTo, pageSize = 100 } = {},
+  tenant = null,
+  suppliedConnection = null,
+) {
+  const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  if (connection) await assertLegacyDownstreamReady(connection);
+  const client = getBeelineClient(connection);
+  const statisticsPath = normalizeText(connectionConfig(
+    connection,
+    'statisticsPath',
+    'BEELINE_STATISTICS_PATH',
+    '/v2/statistics',
+  ));
   const from = parseDate(dateFrom) || new Date(Date.now() - 24 * 60 * 60 * 1000);
   const to = parseDate(dateTo) || new Date();
   const normalizedPageSize = Math.min(
@@ -2377,6 +2594,7 @@ async function syncStatistics({ dateFrom, dateTo, pageSize = 100 } = {}) {
         },
         headers: {},
         ip: null,
+        connection,
         query: { source: 'manual-sync' },
         skipSecret: true,
       });
@@ -2395,9 +2613,20 @@ async function syncStatistics({ dateFrom, dateTo, pageSize = 100 } = {}) {
   };
 }
 
-async function syncRecordings({ dateFrom, dateTo, id, userId } = {}) {
-  const client = getBeelineClient();
-  const recordsPath = normalizeText(process.env.BEELINE_RECORDS_PATH) || '/records';
+async function syncRecordings(
+  { dateFrom, dateTo, id, userId } = {},
+  tenant = null,
+  suppliedConnection = null,
+) {
+  const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  if (connection) await assertLegacyDownstreamReady(connection);
+  const client = getBeelineClient(connection);
+  const recordsPath = normalizeText(connectionConfig(
+    connection,
+    'recordsPath',
+    'BEELINE_RECORDS_PATH',
+    '/records',
+  ));
   const from = parseDate(dateFrom) || new Date(Date.now() - 24 * 60 * 60 * 1000);
   const to = parseDate(dateTo) || new Date();
   const response = await client.get(recordsPath, {
@@ -2417,11 +2646,15 @@ async function syncRecordings({ dateFrom, dateTo, id, userId } = {}) {
     try {
       const recording = normalizeRecordingPayload(row);
       const callId = await db.sequelize.transaction(async (transaction) => {
-        const call = await upsertCallFromRecording(recording, transaction);
+        const call = await upsertCallFromRecording(recording, transaction, connection);
         if (call) linked += 1;
         return call?.id || null;
       });
-      if (callId) await autoEnqueueTranscriptionJob(callId);
+      if (callId) {
+        await autoEnqueueTranscriptionJob(callId, {
+          tenant: connection || undefined,
+        });
+      }
       imported += 1;
     } catch (error) {
       errors.push({
@@ -2791,7 +3024,17 @@ async function refreshRecordingReferenceForCall(call, options = {}) {
       fileType: call.recordingFileType || null,
     };
   }
-  const client = getBeelineClient();
+  let connection = null;
+  if (isTenantProviderIntegrationsEnabled()) {
+    connection = call.integrationConnectionId
+      ? await resolveConnectionForTenantById({
+          connectionId: call.integrationConnectionId,
+          provider: 'beeline',
+          tenant: options.tenant,
+        })
+      : await resolveBeelineTenantConnection(options.tenant);
+  }
+  const client = getBeelineClient(connection);
   const path = buildRecordingReferencePath(call);
 
   if (!path) {
@@ -2862,15 +3105,35 @@ function normalizeSubscriptionType(value) {
   return SUBSCRIPTION_TYPES.has(normalized) ? normalized : 'BASIC_CALL';
 }
 
-function buildSubscriptionRequestPayload(data = {}) {
-  const callbackUrl = normalizeText(data.url) || normalizeText(process.env.BEELINE_CALLBACK_URL);
+function buildSubscriptionRequestPayload(data = {}, connection = null) {
+  const callbackUrl = normalizeText(data.url) || normalizeText(connectionConfig(
+    connection,
+    'callbackUrl',
+    'BEELINE_CALLBACK_URL',
+    null,
+  ));
   if (!callbackUrl) throw appError('BEELINE_CALLBACK_URL не настроен', 409);
+  if (connection && !callbackUrl.includes(`/${connection.publicId}`)) {
+    const error = appError('Provider connection is not configured', 409);
+    error.code = 'PROVIDER_CALLBACK_CONNECTION_MISMATCH';
+    throw error;
+  }
 
   return {
-    expires: data.expires || getSubscriptionExpiresSeconds(),
-    pattern: normalizeText(data.pattern || process.env.BEELINE_SUBSCRIPTION_PATTERN) || undefined,
+    expires: data.expires || getSubscriptionExpiresSeconds(connection),
+    pattern: normalizeText(data.pattern || connectionConfig(
+      connection,
+      'subscriptionPattern',
+      'BEELINE_SUBSCRIPTION_PATTERN',
+      null,
+    )) || undefined,
     subscriptionType:
-      normalizeSubscriptionType(data.subscriptionType || process.env.BEELINE_SUBSCRIPTION_TYPE),
+      normalizeSubscriptionType(data.subscriptionType || connectionConfig(
+        connection,
+        'subscriptionType',
+        'BEELINE_SUBSCRIPTION_TYPE',
+        null,
+      )),
     url: callbackUrl,
   };
 }
@@ -3703,13 +3966,22 @@ async function retryTranscriptionJobForWorker(jobId, data = {}, worker = null) {
   return buildWorkerClaimResponse(job, lease);
 }
 
-async function subscribeToEvents(data = {}) {
-  const client = getBeelineClient();
-  const subscriptionPath = normalizeText(process.env.BEELINE_SUBSCRIPTION_PATH) || '/subscription';
-  const requestPayload = buildSubscriptionRequestPayload(data);
+async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = null) {
+  const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  const client = getBeelineClient(connection);
+  const subscriptionPath = normalizeText(connectionConfig(
+    connection,
+    'subscriptionPath',
+    'BEELINE_SUBSCRIPTION_PATH',
+    '/subscription',
+  ));
+  const requestPayload = buildSubscriptionRequestPayload(data, connection);
   const callbackUrl = requestPayload.url;
+  const attribution = connectionAttribution(connection);
 
-  if (isWebhookSecretRequired() && !normalizeText(process.env.BEELINE_WEBHOOK_SECRET)) {
+  if (connection) {
+    requireConnectionSecret(connection, 'webhookSecret');
+  } else if (isWebhookSecretRequired() && !normalizeText(process.env.BEELINE_WEBHOOK_SECRET)) {
     throw appError('BEELINE_WEBHOOK_SECRET не настроен для XSI callback', 409);
   }
 
@@ -3719,7 +3991,7 @@ async function subscribeToEvents(data = {}) {
     const existing = normalized.subscriptionId
       ? await db.TelephonySubscription.findOne({
           where: {
-            provider: 'beeline',
+            providerNamespace: attribution.providerNamespace,
             subscriptionId: normalized.subscriptionId,
           },
         })
@@ -3727,7 +3999,7 @@ async function subscribeToEvents(data = {}) {
           order: [['createdAt', 'DESC']],
           where: {
             callbackUrl,
-            provider: 'beeline',
+            providerNamespace: attribution.providerNamespace,
           },
         });
 
@@ -3738,42 +4010,58 @@ async function subscribeToEvents(data = {}) {
           lastCheckedAt: new Date(),
           lastError: null,
           lastRequest: requestPayload,
-          lastResponse: response.data,
+          lastResponse: redactProviderValue(response.data),
           provider: 'beeline',
         })
       : await db.TelephonySubscription.create({
           ...normalized,
+          ...attribution,
           callbackUrl,
           lastCheckedAt: new Date(),
           lastRequest: requestPayload,
-          lastResponse: response.data,
+          lastResponse: redactProviderValue(response.data),
           provider: 'beeline',
         });
 
     return mapSubscription(row);
   } catch (error) {
-    const message = getBeelineErrorMessage(error, 'Билайн не создал XSI-подписку');
+    const message = connection
+      ? 'Билайн не создал XSI-подписку'
+      : getBeelineErrorMessage(error, 'Билайн не создал XSI-подписку');
     await db.TelephonySubscription.create({
+      ...attribution,
       callbackUrl,
       expiresSeconds: requestPayload.expires,
       lastCheckedAt: new Date(),
       lastError: message,
       lastRequest: requestPayload,
-      lastResponse: error.response?.data || null,
+      lastResponse: redactProviderValue(error.response?.data || null),
       pattern: normalizeText(requestPayload.pattern),
       provider: 'beeline',
       status: 'failed',
       subscriptionType: requestPayload.subscriptionType,
     });
-    throw appError(message, 409, error.response?.data);
+    throw appError(message, 409);
   }
 }
 
-async function checkEventSubscription() {
-  const client = getBeelineClient();
-  const subscriptionPath = normalizeText(process.env.BEELINE_SUBSCRIPTION_PATH) || '/subscription';
-  const callbackUrl = normalizeText(process.env.BEELINE_CALLBACK_URL) || '';
-  const latest = await getLatestSubscription({ preferActive: true });
+async function checkEventSubscription(tenant = null, suppliedConnection = null) {
+  const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  const client = getBeelineClient(connection);
+  const subscriptionPath = normalizeText(connectionConfig(
+    connection,
+    'subscriptionPath',
+    'BEELINE_SUBSCRIPTION_PATH',
+    '/subscription',
+  ));
+  const callbackUrl = normalizeText(connectionConfig(
+    connection,
+    'callbackUrl',
+    'BEELINE_CALLBACK_URL',
+    '',
+  ));
+  const latest = await getLatestSubscription({ connection, preferActive: true });
+  const attribution = connectionAttribution(connection);
 
   if (!latest?.subscriptionId) {
     throw appError('Сначала создайте XSI-подписку: у CRM пока нет subscriptionId для проверки', 409);
@@ -3786,16 +4074,26 @@ async function checkEventSubscription() {
       },
     });
     const normalized = normalizeSubscriptionResponse(response.data, {
-      expires: latest?.expiresSeconds || Number(process.env.BEELINE_SUBSCRIPTION_EXPIRES || 3600),
-      pattern: latest?.pattern || process.env.BEELINE_SUBSCRIPTION_PATTERN || undefined,
+      expires: latest?.expiresSeconds || getSubscriptionExpiresSeconds(connection),
+      pattern: latest?.pattern || connectionConfig(
+        connection,
+        'subscriptionPattern',
+        'BEELINE_SUBSCRIPTION_PATTERN',
+        undefined,
+      ),
       subscriptionType:
-        latest?.subscriptionType || process.env.BEELINE_SUBSCRIPTION_TYPE || 'BASIC_CALL',
+        latest?.subscriptionType || connectionConfig(
+          connection,
+          'subscriptionType',
+          'BEELINE_SUBSCRIPTION_TYPE',
+          'BASIC_CALL',
+        ),
     });
     const where = normalized.subscriptionId
-      ? { provider: 'beeline', subscriptionId: normalized.subscriptionId }
+      ? { providerNamespace: attribution.providerNamespace, subscriptionId: normalized.subscriptionId }
       : latest?.id
         ? { id: latest.id }
-        : { callbackUrl, provider: 'beeline' };
+        : { callbackUrl, providerNamespace: attribution.providerNamespace };
     const existing = await db.TelephonySubscription.findOne({ where });
     const row = existing
       ? await existing.update({
@@ -3803,52 +4101,60 @@ async function checkEventSubscription() {
           callbackUrl: existing.callbackUrl || callbackUrl || latest?.callbackUrl,
           lastCheckedAt: new Date(),
           lastError: null,
-          lastResponse: response.data,
+          lastResponse: redactProviderValue(response.data),
           provider: 'beeline',
         })
       : await db.TelephonySubscription.create({
           ...normalized,
+          ...attribution,
           callbackUrl: callbackUrl || latest?.callbackUrl || 'unknown',
           lastCheckedAt: new Date(),
-          lastResponse: response.data,
+          lastResponse: redactProviderValue(response.data),
           provider: 'beeline',
         });
 
     return mapSubscription(row);
   } catch (error) {
-    const message = getBeelineErrorMessage(error, 'Билайн не проверил XSI-подписку');
+    const message = connection
+      ? 'Билайн не проверил XSI-подписку'
+      : getBeelineErrorMessage(error, 'Билайн не проверил XSI-подписку');
     if (latest?.id) {
       const row = await db.TelephonySubscription.findByPk(latest.id);
       if (row) {
         await row.update({
           lastCheckedAt: new Date(),
           lastError: message,
-          lastResponse: error.response?.data || null,
+          lastResponse: redactProviderValue(error.response?.data || null),
           status: 'failed',
         });
       }
     }
-    throw appError(message, 409, error.response?.data);
+    throw appError(message, 409);
   }
 }
 
-async function maintainEventSubscription({ force = false } = {}) {
-  if (!isSubscriptionAutoRenewEnabled()) {
+async function maintainEventSubscription({ force = false, connection = null } = {}) {
+  if (isTenantProviderIntegrationsEnabled() && !connection) {
+    const error = appError('Provider connection is not configured', 503);
+    error.code = 'PROVIDER_CONNECTION_REQUIRED';
+    throw error;
+  }
+  if (!isSubscriptionAutoRenewEnabled(connection)) {
     return { action: 'skipped', reason: 'disabled' };
   }
 
-  if (
+  if (!connection && (
     !normalizeText(process.env.BEELINE_API_TOKEN) ||
     !normalizeText(process.env.BEELINE_API_BASE_URL) ||
     !normalizeText(process.env.BEELINE_CALLBACK_URL)
-  ) {
+  )) {
     return { action: 'skipped', reason: 'not_configured' };
   }
 
-  return withSubscriptionMaintenanceLock(async () => {
-    const latest = await getLatestSubscription({ preferActive: true });
-    const desired = buildSubscriptionRequestPayload({});
-    const renewBeforeMs = getSubscriptionRenewBeforeSeconds() * 1000;
+  return withSubscriptionMaintenanceLock(connection, async () => {
+    const latest = await getLatestSubscription({ connection, preferActive: true });
+    const desired = buildSubscriptionRequestPayload({}, connection);
+    const renewBeforeMs = getSubscriptionRenewBeforeSeconds(connection) * 1000;
     const expiresAt = latest?.expiresAt ? new Date(latest.expiresAt) : null;
     const expiresInMs = expiresAt && !Number.isNaN(expiresAt.getTime())
       ? expiresAt.getTime() - Date.now()
@@ -3871,7 +4177,7 @@ async function maintainEventSubscription({ force = false } = {}) {
     }
 
     try {
-      const subscription = await subscribeToEvents({});
+      const subscription = await subscribeToEvents({}, null, connection);
       return {
         action: latest?.subscriptionId ? 'renewed' : 'created',
         subscription,
@@ -3879,14 +4185,29 @@ async function maintainEventSubscription({ force = false } = {}) {
     } catch (error) {
       return {
         action: 'failed',
-        error: error.message,
-        details: error.details,
+        error: connection ? 'Provider subscription maintenance failed' : error.message,
       };
     }
   });
 }
 
-async function withSubscriptionMaintenanceLock(callback) {
+async function maintainAllEventSubscriptions({ force = false } = {}) {
+  await assertTenantFoundationInitialized();
+  assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.TELEPHONY_SUBSCRIPTION);
+  if (!isTenantProviderIntegrationsEnabled()) {
+    return { processed: 1, results: [await maintainEventSubscription({ force })] };
+  }
+  const connections = await listActiveConnections({ provider: 'beeline' });
+  const settled = await runIsolatedProviderConnections(
+    connections,
+    (connection) => maintainEventSubscription({ connection, force }),
+    { failureMessage: 'Provider subscription maintenance failed' },
+  );
+  return { processed: settled.length, results: settled };
+}
+
+async function withSubscriptionMaintenanceLock(connection, callback) {
+  if (connection) return withProviderConnectionLock(connection, callback);
   if (db.sequelize.getDialect() !== 'mysql') {
     return callback();
   }
@@ -3910,11 +4231,12 @@ async function withSubscriptionMaintenanceLock(callback) {
   });
 }
 
-async function getActiveSubscriptionCandidate() {
+async function getActiveSubscriptionCandidate(connection = null) {
   const activeRow = await db.TelephonySubscription.findOne({
     order: [['updatedAt', 'DESC']],
     where: {
       provider: 'beeline',
+      providerNamespace: buildProviderNamespace(connection),
       status: 'active',
       subscriptionId: { [Op.ne]: null },
     },
@@ -3923,9 +4245,9 @@ async function getActiveSubscriptionCandidate() {
   return mapSubscription(activeRow);
 }
 
-async function getLatestSubscription({ preferActive = false } = {}) {
+async function getLatestSubscription({ connection = null, preferActive = false } = {}) {
   if (preferActive) {
-    const active = await getActiveSubscriptionCandidate();
+    const active = await getActiveSubscriptionCandidate(connection);
     if (active) return active;
   }
 
@@ -3933,6 +4255,7 @@ async function getLatestSubscription({ preferActive = false } = {}) {
     order: [['updatedAt', 'DESC']],
     where: {
       provider: 'beeline',
+      providerNamespace: buildProviderNamespace(connection),
     },
   });
 
@@ -3959,12 +4282,16 @@ function mapSubscription(row) {
   };
 }
 
-async function listRawEvents(query = {}) {
+async function listRawEvents(query = {}, tenant = null) {
   const page = Math.max(Number(query.page) || 1, 1);
   const pageSize = Math.min(Math.max(Number(query.pageSize) || 20, 1), 100);
   const where = {};
   if (query.status && query.status !== 'all') {
     where.processingStatus = query.status;
+  }
+  if (isTenantProviderIntegrationsEnabled()) {
+    where.organizationId = Number(tenant?.organizationId);
+    where.clubId = Number(tenant?.clubId);
   }
 
   const { count, rows } = await db.TelephonyRawEvent.findAndCountAll({
@@ -4010,6 +4337,7 @@ module.exports = {
   listTranscriptionJobs,
   mapTranscriptionJob,
   maintainEventSubscription,
+  maintainAllEventSubscriptions,
   parseIncomingBeelinePayload,
   normalizeTranscriptSegments,
   normalizeRecordingPayload,

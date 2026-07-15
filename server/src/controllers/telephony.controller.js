@@ -11,9 +11,12 @@ class TelephonyController {
       res.status(200).json(
         await telephonyService.receiveBeelineEvent({
           body: req.body,
+          connection: req.providerConnection || null,
           headers: req.headers,
           ip: req.ip,
+          publicId: req.params.connectionPublicId,
           query: req.query,
+          skipSecret: Boolean(req.providerConnection),
         }),
       );
     } catch (error) {
@@ -23,7 +26,7 @@ class TelephonyController {
 
   async getConfig(_req, res) {
     try {
-      res.json(await telephonyService.getConfig());
+      res.json(await telephonyService.getConfig(_req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения настроек телефонии');
     }
@@ -113,7 +116,7 @@ class TelephonyController {
 
   async syncStatistics(req, res) {
     try {
-      res.json(await telephonyService.syncStatistics(req.body || {}));
+      res.json(await telephonyService.syncStatistics(req.body || {}, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка синхронизации статистики Билайна');
     }
@@ -121,7 +124,7 @@ class TelephonyController {
 
   async syncRecordings(req, res) {
     try {
-      res.json(await telephonyService.syncRecordings(req.body || {}));
+      res.json(await telephonyService.syncRecordings(req.body || {}, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка синхронизации записей Билайна');
     }
@@ -305,7 +308,7 @@ class TelephonyController {
 
   async subscribe(req, res) {
     try {
-      res.json(await telephonyService.subscribeToEvents(req.body || {}));
+      res.json(await telephonyService.subscribeToEvents(req.body || {}, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка создания подписки Билайна');
     }
@@ -313,7 +316,7 @@ class TelephonyController {
 
   async checkSubscription(_req, res) {
     try {
-      res.json(await telephonyService.checkEventSubscription());
+      res.json(await telephonyService.checkEventSubscription(_req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка проверки подписки Билайна');
     }
@@ -321,7 +324,7 @@ class TelephonyController {
 
   async getRawEvents(req, res) {
     try {
-      res.json(await telephonyService.listRawEvents(req.query));
+      res.json(await telephonyService.listRawEvents(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения событий телефонии');
     }
@@ -329,7 +332,7 @@ class TelephonyController {
 
   async reprocessRawEvent(req, res) {
     try {
-      res.json(await telephonyService.reprocessRawEvent(req.params.id));
+      res.json(await telephonyService.reprocessRawEvent(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка повторной обработки события телефонии');
     }

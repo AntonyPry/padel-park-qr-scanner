@@ -1,8 +1,23 @@
 module.exports = (sequelize, DataTypes) => {
   const Receipt = sequelize.define('Receipt', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    integrationConnectionId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    idempotencyKey: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
     evotorId: {
       type: DataTypes.STRING,
-      unique: true,
       allowNull: false,
     },
     dateTime: {
@@ -54,9 +69,27 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
     },
+  }, {
+    defaultScope: {
+      attributes: { exclude: ['idempotencyKey', 'integrationConnectionId'] },
+    },
+    hooks: {
+      beforeUpdate(receipt) {
+        const fields = ['organizationId', 'clubId', 'integrationConnectionId', 'idempotencyKey'];
+        if (fields.some((field) => receipt.changed(field))) {
+          const error = new Error('Receipt provider attribution is immutable');
+          error.code = 'PROVIDER_ATTRIBUTION_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   Receipt.associate = (models) => {
+    Receipt.belongsTo(models.IntegrationConnection, {
+      as: 'integrationConnection',
+      foreignKey: 'integrationConnectionId',
+    });
     Receipt.hasMany(models.ReceiptItem, {
       as: 'items',
       foreignKey: 'receiptId',

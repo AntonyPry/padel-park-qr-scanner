@@ -20,6 +20,9 @@ const {
   isValidWord,
 } = require('../shared/registration');
 const clientsService = require('../../services/clients.service');
+const {
+  assertLegacyDownstreamReady,
+} = require('../../provider-integrations/runtime');
 
 function createProxyAgent(proxyUrl) {
   if (!proxyUrl) return undefined;
@@ -37,10 +40,16 @@ async function createSourceKeyboard(includeBack = false) {
 }
 
 function createTelegramBot({
+  connection = null,
   token = process.env.BOT_TOKEN,
   proxyUrl = process.env.TG_PROXY_CREDS,
 } = {}) {
   if (!token) return null;
+
+  const logError = (label, error) => {
+    if (connection) console.error(label, 'PROVIDER_HANDLER_FAILED');
+    else console.error(label, error);
+  };
 
   const agent = createProxyAgent(proxyUrl);
   const bot = new TgBot(token, {
@@ -51,6 +60,13 @@ function createTelegramBot({
       }),
     },
   });
+
+  if (connection) {
+    bot.use(async (_ctx, next) => {
+      await assertLegacyDownstreamReady(connection);
+      return next();
+    });
+  }
 
   bot.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
   bot.use(tgConversations());
@@ -100,7 +116,7 @@ function createTelegramBot({
         reply_markup: mainMenu,
       });
     } catch (error) {
-      console.error(error);
+      logError('Ошибка QR Tg:', error);
       await ctx.reply('Ошибка генерации QR.');
     }
   }
@@ -188,7 +204,7 @@ function createTelegramBot({
         }),
       );
     } catch (error) {
-      console.error('Ошибка регистрации Tg:', error);
+      logError('Ошибка регистрации Tg:', error);
       await ctx.reply(
         error.statusCode === 409
           ? `❌ ${error.message}`

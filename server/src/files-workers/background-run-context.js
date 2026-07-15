@@ -2,6 +2,7 @@
 
 const {
   isTenantFilesWorkersEnabled,
+  isTenantProviderIntegrationsEnabled,
 } = require('../tenant-context/capabilities');
 const { tenantRoutingMetadata } = require('./tenant-context');
 
@@ -20,19 +21,16 @@ const BACKGROUND_COMPONENT_POLICIES = Object.freeze({
     reason: 'ClientBase and CallTask are not tenant-scoped yet',
   }),
   [BACKGROUND_COMPONENTS.TELEPHONY_SUBSCRIPTION]: Object.freeze({
-    classification: 'deferred',
-    deferredTo: 'Feature 4.3',
-    reason: 'Provider connection routing and per-tenant locks are not implemented yet',
+    classification: 'provider-routed',
+    reason: 'Feature 4.3 resolves each connection before tenant-scoped subscription work',
   }),
   [BACKGROUND_COMPONENTS.TELEGRAM_BOT]: Object.freeze({
-    classification: 'deferred',
-    deferredTo: 'Feature 4.3',
-    reason: 'Bot/provider connection routing is not tenant-scoped yet',
+    classification: 'provider-routed',
+    reason: 'Feature 4.3 binds bot bootstrap to one immutable provider connection',
   }),
   [BACKGROUND_COMPONENTS.VK_BOT]: Object.freeze({
-    classification: 'deferred',
-    deferredTo: 'Feature 4.3',
-    reason: 'Bot/provider connection routing is not tenant-scoped yet',
+    classification: 'provider-routed',
+    reason: 'Feature 4.3 binds bot bootstrap to one immutable provider connection',
   }),
   [BACKGROUND_COMPONENTS.TRANSCRIPTION_WORKER]: Object.freeze({
     classification: 'tenant-routed',
@@ -54,7 +52,17 @@ function backgroundIsolationError(component) {
 function assertBackgroundComponentCanRun(component) {
   const policy = BACKGROUND_COMPONENT_POLICIES[component];
   if (!policy) throw new Error(`Unknown background component: ${component}`);
-  if (isTenantFilesWorkersEnabled() && policy.classification !== 'tenant-routed') {
+  if (
+    isTenantFilesWorkersEnabled() &&
+    policy.classification === 'deferred'
+  ) {
+    throw backgroundIsolationError(component);
+  }
+  if (
+    isTenantFilesWorkersEnabled() &&
+    policy.classification === 'provider-routed' &&
+    !isTenantProviderIntegrationsEnabled()
+  ) {
     throw backgroundIsolationError(component);
   }
   return policy;
