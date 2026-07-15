@@ -2,6 +2,8 @@ const assert = require('node:assert/strict');
 const { afterEach, test } = require('node:test');
 const db = require('../../models');
 const financeService = require('../../src/services/finance.service');
+const onboardingService = require('../../src/services/onboarding.service');
+const payrollService = require('../../src/services/payroll.service');
 const shiftCashService = require('../../src/services/shift-cash.service');
 const attachmentStorage = require('../../src/services/shift-cash-attachments');
 const migration = require('../../migrations/20260714100000-create-shift-cash');
@@ -12,11 +14,102 @@ const originalModels = {
   FinanceChangeLog: db.FinanceChangeLog,
   PayrollPeriod: db.PayrollPeriod,
   Receipt: db.Receipt,
+  ShiftCashExpense: db.ShiftCashExpense,
+};
+const originalFunctions = {
+  deleteAttachmentFile: attachmentStorage.deleteAttachmentFile,
+  getTrainingDataMarker: onboardingService.getTrainingDataMarker,
+  recordChange: payrollService.recordChange,
+  recordEventSafe: onboardingService.recordEventSafe,
+  storeAttachment: attachmentStorage.storeAttachment,
 };
 
 afterEach(() => {
   Object.assign(db, originalModels);
+  attachmentStorage.deleteAttachmentFile = originalFunctions.deleteAttachmentFile;
+  attachmentStorage.storeAttachment = originalFunctions.storeAttachment;
+  onboardingService.getTrainingDataMarker = originalFunctions.getTrainingDataMarker;
+  onboardingService.recordEventSafe = originalFunctions.recordEventSafe;
+  payrollService.recordChange = originalFunctions.recordChange;
 });
+
+function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {
+  const attachment = {
+    id: 'attachment-1',
+    mimeType: 'image/png',
+    originalName: 'receipt.png',
+    relativePath: 'shift-cash/91/attachment-1.png',
+    size: 123,
+  };
+  const deleted = [];
+  const events = [];
+  const history = [];
+  const shift = {
+    date: '2026-07-15',
+    id: 12,
+    status: 'active',
+  };
+  const expense = {
+    amount: 900,
+    attachments: [],
+    categoryId: 9,
+    categoryName: 'Хозяйственные расходы',
+    createdByAccountId: 7,
+    description: 'Фото чека',
+    financeId: 55,
+    id: 91,
+    isTraining: false,
+    shift,
+    shiftId: shift.id,
+    status: 'active',
+    async update(data) {
+      if (updateError) throw updateError;
+      this.attachments = data.attachments;
+      return this;
+    },
+    toJSON() {
+      return {
+        amount: this.amount,
+        attachments: this.attachments,
+        categoryId: this.categoryId,
+        categoryName: this.categoryName,
+        createdByAccountId: this.createdByAccountId,
+        description: this.description,
+        financeId: this.financeId,
+        id: this.id,
+        isTraining: this.isTraining,
+        shiftId: this.shiftId,
+        status: this.status,
+      };
+    },
+  };
+
+  db.ShiftCashExpense = {
+    async findByPk() {
+      return expense;
+    },
+  };
+  attachmentStorage.storeAttachment = async () => {
+    if (storeError) throw storeError;
+    return attachment;
+  };
+  attachmentStorage.deleteAttachmentFile = async (value) => {
+    deleted.push(value);
+  };
+  onboardingService.getTrainingDataMarker = async () => ({
+    isTraining: false,
+    trainingAccountId: null,
+    trainingRole: null,
+  });
+  onboardingService.recordEventSafe = async (actor, eventKey, options) => {
+    events.push({ actor, eventKey, options });
+  };
+  payrollService.recordChange = async (payload) => {
+    history.push(payload);
+  };
+
+  return { attachment, deleted, events, expense, history };
+}
 
 test('cash reconciliation uses cash sales only and subtracts active expenses', () => {
   assert.deepEqual(
@@ -184,6 +277,57 @@ test('attachment storage rejects unsupported files before writing', async () => 
       ),
     /только JPEG, PNG, WEBP, GIF или HEIC/,
   );
+});
+
+test('failed attachment store does not emit onboarding checkpoint', async () => {
+  const storeError = new Error('storage unavailable');
+  const fixture = mockAttachmentUpload({ storeError });
+
+  await assert.rejects(
+    () => shiftCashService.uploadAttachment(91, {}, { id: 7, role: 'admin' }),
+    storeError,
+  );
+  assert.equal(fixture.events.length, 0);
+  assert.equal(fixture.history.length, 0);
+  assert.deepEqual(fixture.deleted, []);
+});
+
+test('failed attachment model update removes stored file and does not emit checkpoint', async () => {
+  const updateError = new Error('database update failed');
+  const fixture = mockAttachmentUpload({ updateError });
+
+  await assert.rejects(
+    () => shiftCashService.uploadAttachment(91, {}, { id: 7, role: 'admin' }),
+    updateError,
+  );
+  assert.equal(fixture.events.length, 0);
+  assert.equal(fixture.history.length, 0);
+  assert.deepEqual(fixture.deleted, [fixture.attachment]);
+});
+
+test('successful attachment upload emits exactly one backend onboarding checkpoint', async () => {
+  const fixture = mockAttachmentUpload();
+  const account = { id: 7, role: 'admin' };
+
+  const result = await shiftCashService.uploadAttachment(91, {}, account);
+
+  assert.equal(result.attachments.length, 1);
+  assert.equal(fixture.history.length, 1);
+  assert.deepEqual(fixture.events, [
+    {
+      actor: account,
+      eventKey: 'shift_cash.attachment_uploaded',
+      options: {
+        entityId: 'attachment-1',
+        entityType: 'shift_cash_attachment',
+        payload: {
+          attachmentId: 'attachment-1',
+          expenseId: 91,
+          shiftId: 12,
+        },
+      },
+    },
+  ]);
 });
 
 test('shift cash migration creates indexed session and expense tables and rolls back', async () => {
