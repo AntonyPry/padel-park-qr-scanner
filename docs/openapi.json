@@ -44242,19 +44242,6 @@
                       }
                     ]
                   },
-                  "categoryId": {
-                    "anyOf": [
-                      {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "^[1-9]\\d*$"
-                      }
-                    ]
-                  },
                   "description": {
                     "type": "string",
                     "minLength": 1,
@@ -44277,10 +44264,9 @@
                 },
                 "required": [
                   "amount",
-                  "categoryId",
                   "description"
                 ],
-                "additionalProperties": {}
+                "additionalProperties": false
               }
             }
           },
@@ -44455,19 +44441,6 @@
                       }
                     ]
                   },
-                  "categoryId": {
-                    "anyOf": [
-                      {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
-                      },
-                      {
-                        "type": "string",
-                        "pattern": "^[1-9]\\d*$"
-                      }
-                    ]
-                  },
                   "description": {
                     "type": "string",
                     "minLength": 1,
@@ -44490,10 +44463,9 @@
                 },
                 "required": [
                   "amount",
-                  "categoryId",
                   "description"
                 ],
-                "additionalProperties": {}
+                "additionalProperties": false
               }
             }
           },

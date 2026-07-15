@@ -1893,20 +1893,16 @@ export type ShiftCashOpeningBody = {
 };
 export type ShiftCashExpenseCreateBody = {
   amount: number | string;
-  categoryId: number | string;
   description: string;
   spentAt?: string | "" | null;
-  [key: string]: unknown;
 };
 export type ShiftCashExpenseUpdateParams = {
   expenseId: number | string;
 };
 export type ShiftCashExpenseUpdateBody = {
   amount: number | string;
-  categoryId: number | string;
   description: string;
   spentAt?: string | "" | null;
-  [key: string]: unknown;
 };
 export type ShiftCashExpenseCancelParams = {
   expenseId: number | string;

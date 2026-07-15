@@ -29,6 +29,7 @@ const UtilizationPage = lazy(() => import('./pages/UtilizationPage'));
 const CatalogPage = lazy(() => import('./pages/CatalogPage'));
 const AdminMotivationPage = lazy(() => import('./pages/AdminMotivationPage'));
 const ShiftReportsPage = lazy(() => import('./pages/ShiftReportsPage'));
+const ShiftCashPage = lazy(() => import('./pages/ShiftCashPage'));
 const SystemUsersPage = lazy(() => import('./pages/SystemUsersPage'));
 const ClientBasesPage = lazy(() => import('./pages/ClientBasesPage'));
 const CallTasksPage = lazy(() => import('./pages/CallTasksPage'));
@@ -270,6 +271,14 @@ function App() {
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/shift-reports']}>
                           <ShiftReportsPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift-cash"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift-cash']}>
+                          <ShiftCashPage />
                         </RequireRoles>
                       }
                     />

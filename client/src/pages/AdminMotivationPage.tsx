@@ -3,15 +3,11 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import {
   AlertTriangle,
-  CheckCircle2,
   Clock,
-  Copy,
-  FileCheck2,
   Pencil,
   Percent,
   Play,
   Plus,
-  RotateCcw,
   Save,
   Square,
   Tags,
@@ -28,10 +24,8 @@ import {
 } from '@/components/confirm-action-dialog';
 import { DataTable } from '@/components/data-table';
 import { ErrorState } from '@/components/error-state';
-import { ShiftReportDialog } from '@/components/shift-report-dialog';
 import {
   ShiftCashCloseDialog,
-  ShiftCashPanel,
 } from '@/components/shift-cash-panel';
 import { toast } from '@/components/ui/toast';
 import {
@@ -65,11 +59,7 @@ import {
 import { canManageMotivation } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
-import {
-  listActiveShiftReports,
-  type ShiftReport,
-  type ShiftReportStatus,
-} from '@/api/shift-reports';
+import { saveCompletedShiftReport } from '@/lib/completed-shift-report';
 import type {
   ShiftCashBalancePayload,
   ShiftCashSession,
@@ -105,23 +95,6 @@ interface CurrentSalesResponse {
 
 type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<boolean | void> | boolean | void;
-};
-
-const shiftReportStatusLabels: Record<ShiftReportStatus, string> = {
-  draft: 'Черновик',
-  overdue: 'Просрочен',
-  pending: 'Ожидается',
-  submitted: 'Сдан',
-};
-
-const shiftReportStatusVariants: Record<
-  ShiftReportStatus,
-  'default' | 'destructive' | 'outline' | 'secondary'
-> = {
-  draft: 'secondary',
-  overdue: 'destructive',
-  pending: 'outline',
-  submitted: 'default',
 };
 
 interface BonusRecord extends FinanceRecord {
@@ -875,12 +848,6 @@ export default function AdminMotivationPage() {
     null,
   );
   const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
-  const [activeShiftReports, setActiveShiftReports] = useState<ShiftReport[]>([]);
-  const [shiftReportsError, setShiftReportsError] = useState('');
-  const [selectedShiftReport, setSelectedShiftReport] = useState<ShiftReport | null>(null);
-  const [shiftReportDialogOpen, setShiftReportDialogOpen] = useState(false);
-  const [shiftReport, setShiftReport] = useState('');
-  const [reportCopied, setReportCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -965,20 +932,6 @@ export default function AdminMotivationPage() {
     }
   }, []);
 
-  const fetchActiveShiftReports = useCallback(async () => {
-    try {
-      const data = await listActiveShiftReports();
-      setActiveShiftReports(data.reports);
-      setShiftReportsError('');
-    } catch (error) {
-      console.error(error);
-      setActiveShiftReports([]);
-      setShiftReportsError(
-        getApiErrorMessage(error, 'Не удалось загрузить отчеты активной смены'),
-      );
-    }
-  }, []);
-
   const fetchMotivationSettings = useCallback(async () => {
     setRulesLoading(true);
     setHourlyRulesError('');
@@ -1051,14 +1004,12 @@ export default function AdminMotivationPage() {
   useEffect(() => {
     void fetchMotivationSettings();
     void fetchActiveShift();
-    void fetchActiveShiftReports();
     void fetchFinances();
-  }, [fetchActiveShift, fetchActiveShiftReports, fetchFinances, fetchMotivationSettings]);
+  }, [fetchActiveShift, fetchFinances, fetchMotivationSettings]);
 
-  useRealtimeRefresh(['motivation', 'shifts', 'shiftReports', 'finance', 'catalog'], () => {
+  useRealtimeRefresh(['motivation', 'shifts', 'finance', 'catalog'], () => {
     void fetchMotivationSettings();
     void fetchActiveShift();
-    void fetchActiveShiftReports();
     void fetchFinances();
   });
 
@@ -1101,11 +1052,8 @@ export default function AdminMotivationPage() {
       const data = (await res.json()) as { shift: ShiftSession };
       setActiveShift(data.shift);
       setPaymentSummary(emptyPaymentSummary);
-      setShiftReport('');
-      setReportCopied(false);
       toast.success('Смена начата');
       void fetchFinances();
-      void fetchActiveShiftReports();
     } catch (error) {
       toast.error(getApiErrorMessage(error, 'Не удалось начать смену'));
     }
@@ -1153,13 +1101,13 @@ export default function AdminMotivationPage() {
         cash: ShiftCashSession;
         shift: ShiftSession;
       };
-      setShiftReport(
-        buildShiftReport(data.shift, latestStats, data.cash || cashSummary.session),
-      );
-      setReportCopied(false);
+      saveCompletedShiftReport({
+        createdAt: new Date().toISOString(),
+        shiftId: data.shift.id,
+        text: buildShiftReport(data.shift, latestStats, data.cash || cashSummary.session),
+      });
       setActiveShift(null);
-      setActiveShiftReports([]);
-      toast.success('Смена завершена, отчет сформирован');
+      toast.success('Смена завершена, отчет доступен в разделе «Отчеты»');
       void fetchFinances();
       return true;
     } catch (error) {
@@ -1333,29 +1281,6 @@ export default function AdminMotivationPage() {
     } finally {
       setPendingActionLoading(false);
     }
-  };
-
-  const handleCopyReport = async () => {
-    try {
-      await navigator.clipboard.writeText(shiftReport);
-      setReportCopied(true);
-      toast.success('Отчет скопирован');
-      window.setTimeout(() => setReportCopied(false), 1500);
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, 'Не удалось скопировать отчет'));
-    }
-  };
-
-  const openShiftReport = (report: ShiftReport) => {
-    setSelectedShiftReport(report);
-    setShiftReportDialogOpen(true);
-  };
-
-  const handleShiftReportUpdated = (report: ShiftReport) => {
-    setActiveShiftReports((current) =>
-      current.map((item) => (item.id === report.id ? report : item)),
-    );
-    setSelectedShiftReport(report);
   };
 
   const hourlyRuleColumns: ColumnDef<MotivationRule>[] = [
@@ -1587,80 +1512,6 @@ export default function AdminMotivationPage() {
         />
       )}
 
-      {isShiftActive && activeShift && (
-        <ShiftCashPanel activeShiftId={activeShift.id} />
-      )}
-
-      {isShiftActive && (
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-3 border-b pb-3">
-            <div>
-              <CardTitle className="text-lg">Отчеты смены</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {activeShiftReports.length > 0
-                  ? `${activeShiftReports.length} ожидаемых отчетов`
-                  : 'Нет ожидаемых отчетов'}
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void fetchActiveShiftReports()}
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Обновить
-            </Button>
-          </CardHeader>
-          <CardContent className="grid gap-3 pt-4">
-            {shiftReportsError ? (
-              <ErrorState
-                compact
-                message={shiftReportsError}
-                onRetry={() => void fetchActiveShiftReports()}
-                title="Отчеты смены не загрузились"
-              />
-            ) : activeShiftReports.length === 0 ? (
-              <div className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">
-                Для активной смены нет отчетов по включенным шаблонам.
-              </div>
-            ) : (
-              <div className="grid gap-3 xl:grid-cols-2">
-                {activeShiftReports.map((report) => (
-                  <button
-                    key={report.id}
-                    className="min-w-0 rounded-lg border p-3 text-left transition hover:bg-muted/50"
-                    type="button"
-                    onClick={() => openShiftReport(report)}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <FileCheck2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate font-medium">
-                            {report.templateSnapshot.name}
-                          </span>
-                        </div>
-                        {report.templateSnapshot.description && (
-                          <div className="mt-1 line-clamp-2 text-sm text-foreground">
-                            {report.templateSnapshot.description}
-                          </div>
-                        )}
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Дедлайн: {formatDateTime(report.deadlineAt)}
-                        </div>
-                      </div>
-                      <Badge variant={shiftReportStatusVariants[report.computedStatus]}>
-                        {shiftReportStatusLabels[report.computedStatus]}
-                      </Badge>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
       {canEditMotivation && (
         <>
           <Card>
@@ -1858,27 +1709,6 @@ export default function AdminMotivationPage() {
             </DialogContent>
           </Dialog>
         </>
-      )}
-
-      {shiftReport && (
-        <Card className="border-primary/30">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-            <CardTitle className="text-lg">Отчет по завершенной смене</CardTitle>
-            <Button variant="outline" size="sm" onClick={handleCopyReport}>
-              {reportCopied ? (
-                <CheckCircle2 className="w-4 h-4 mr-2" />
-              ) : (
-                <Copy className="w-4 h-4 mr-2" />
-              )}
-              {reportCopied ? 'Скопировано' : 'Скопировать'}
-            </Button>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <pre className="whitespace-pre-wrap rounded-md bg-muted p-4 text-sm font-mono">
-              {shiftReport}
-            </pre>
-          </CardContent>
-        </Card>
       )}
 
       {!isShiftActive ? (
@@ -2156,13 +1986,6 @@ export default function AdminMotivationPage() {
 
         </>
       )}
-
-      <ShiftReportDialog
-        onOpenChange={setShiftReportDialogOpen}
-        onUpdated={handleShiftReportUpdated}
-        open={shiftReportDialogOpen}
-        report={selectedShiftReport}
-      />
 
       <ShiftCashCloseDialog
         loading={cashCloseLoading}

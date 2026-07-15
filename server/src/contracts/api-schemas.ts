@@ -889,7 +889,6 @@ const shiftCashBalanceBody = z
 const shiftCashExpenseBody = z
   .object({
     amount: positiveNumberValue,
-    categoryId: id,
     description: z
       .string()
       .trim()
@@ -897,7 +896,7 @@ const shiftCashExpenseBody = z
       .max(1000, 'Описание расхода слишком длинное'),
     spentAt: optionalHttpDateTime,
   })
-  .passthrough();
+  .strict();
 
 const bookingUpdateBody = z
   .object(bookingShape)

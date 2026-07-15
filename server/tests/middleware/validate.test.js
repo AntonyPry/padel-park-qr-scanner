@@ -61,6 +61,33 @@ test('passes valid payloads and preserves query strings used by controllers', ()
   assert.equal(req.query.includeArchived, 'true');
 });
 
+test('shift cash expense contract rejects legacy category fields', () => {
+  const valid = runValidation(
+    { body: apiSchemas.shiftCash.expenseBody },
+    {
+      body: { amount: 900, description: 'Хозяйственный расход' },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(valid.nextCalled, true);
+
+  const legacy = runValidation(
+    { body: apiSchemas.shiftCash.expenseBody },
+    {
+      body: {
+        amount: 900,
+        categoryId: 12,
+        description: 'Хозяйственный расход',
+      },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(legacy.nextCalled, false);
+  assert.equal(legacy.res.statusCode, 400);
+});
+
 test('accepts whitespace clients list numeric query values as empty', () => {
   const req = {
     body: {},

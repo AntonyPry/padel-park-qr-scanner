@@ -11,7 +11,6 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
   const suffix = `${Date.now()}`;
   const receiptIds = [];
   let account;
-  let category;
   let expenseId;
   let financeId;
   let shift;
@@ -31,13 +30,6 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       staffId: staff.id,
       status: 'active',
     });
-    category = await db.Category.create({
-      group: 'OPEX',
-      isActive: true,
-      name: `Shift cash lifecycle expense ${suffix}`,
-      type: 'expense',
-    });
-
     const startedAt = new Date(Date.now() - 1000);
     shift = await db.Shift.create({
       actualHours: null,
@@ -93,7 +85,6 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     const expenseSummary = await shiftCashService.createExpense(
       {
         amount: 900,
-        categoryId: category.id,
         description: 'DB-backed linked cash expense',
         spentAt: new Date(),
       },
@@ -157,7 +148,12 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     const linkedFinance = await db.Finance.findByPk(financeId);
     assert.equal(linkedFinance.type, 'expense');
     assert.equal(Number(linkedFinance.amount), 900);
+    assert.equal(
+      linkedFinance.category,
+      shiftCashService.SHIFT_CASH_EXPENSE_CATEGORY,
+    );
     assert.match(linkedFinance.comment, new RegExp(`Касса смены #${shift.id}`));
+    assert.match(linkedFinance.comment, /DB-backed linked cash expense/);
 
     const canceledSummary = await shiftCashService.cancelExpense(
       expenseId,
@@ -242,6 +238,5 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     if (shift?.id) await db.Shift.destroy({ where: { id: shift.id } });
     if (account?.id) await db.Account.destroy({ force: true, where: { id: account.id } });
     if (staff?.id) await db.Staff.destroy({ where: { id: staff.id } });
-    if (category?.id) await db.Category.destroy({ where: { id: category.id } });
   }
 });

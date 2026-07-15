@@ -150,6 +150,8 @@ test('shift cash mutations refresh shifts, motivation, and finance without respo
   assert.equal(created.action, 'created');
   assert.equal(created.hints.queryGroups.includes('motivation'), true);
   assert.equal(created.hints.queryGroups.includes('finance'), true);
+  assert.equal(created.hints.queryGroups.includes('shiftCash'), true);
+  assert.equal(created.hints.routes.includes('/admin/shift-cash'), true);
   assert.equal(JSON.stringify(created).includes('private receipt note'), false);
   assert.equal(canceled.entityId, '91');
   assert.equal(canceled.action, 'archived');

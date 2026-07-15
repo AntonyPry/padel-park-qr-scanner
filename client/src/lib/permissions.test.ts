@@ -140,7 +140,9 @@ describe('permissions', () => {
   it('allows owners and managers to manage shift report templates', () => {
     expect(canAccessPath('owner', '/admin/shift-reports')).toBe(true);
     expect(canAccessPath('manager', '/admin/shift-reports')).toBe(true);
-    expect(canAccessPath('admin', '/admin/shift-reports')).toBe(false);
+    expect(canAccessPath('admin', '/admin/shift-reports')).toBe(true);
+    expect(canAccessPath('admin', '/admin/shift-cash')).toBe(true);
+    expect(canAccessPath('accountant', '/admin/shift-cash')).toBe(false);
     expect(canManageShiftReportTemplates('owner')).toBe(true);
     expect(canManageShiftReportTemplates('manager')).toBe(true);
     expect(canManageShiftReportTemplates('admin')).toBe(false);
