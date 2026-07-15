@@ -70,6 +70,7 @@ function renderProtected(
                 organizationId: 11,
               }
             : null,
+          tenantCacheRealtimeEnabled: false,
           tenantContextEnabled,
           tenantReady: true,
         }}

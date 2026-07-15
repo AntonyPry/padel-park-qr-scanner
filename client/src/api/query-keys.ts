@@ -4,109 +4,295 @@ import type {
   MethodologySkillFilters,
 } from '@/api/methodology';
 import type { MethodologyAnalyticsFilters } from '@/api/methodology-analytics';
+import {
+  getActiveTenantContext,
+  isTenantCacheRealtimeCapabilityEnabled,
+  type ActiveTenantContext,
+} from '@/lib/tenant-context';
 import type { ReferenceStatus, ReferenceType } from '@/lib/references';
 
+export type TenantQueryScope = 'global' | 'membership' | 'organization' | 'club';
+export type TenantQueryKey = readonly unknown[];
+
+export interface TenantQueryAuthority {
+  context: ActiveTenantContext | null;
+  enabled: boolean;
+}
+
+export const TENANT_QUERY_DOMAINS = new Set([
+  'access',
+  'accounts',
+  'audit',
+  'bookings',
+  'callTasks',
+  'catalog',
+  'certificates',
+  'clientBases',
+  'clientSubscriptions',
+  'clients',
+  'corporateClients',
+  'finance',
+  'manager-control-dashboard',
+  'methodology',
+  'motivation',
+  'onboarding',
+  'payroll',
+  'prepayments',
+  'references',
+  'reports',
+  'shiftReports',
+  'shifts',
+  'staff',
+  'subscriptionTypes',
+  'telephony',
+  'trainingNotes',
+  'training-plans',
+  'utilization',
+  'visits-analytics',
+]);
+
+function requireContext(authority: TenantQueryAuthority) {
+  if (authority.context) return authority.context;
+  throw new Error('Tenant query key requested before tenant context is ready');
+}
+
+export function createTenantQueryKey(
+  authority: TenantQueryAuthority,
+  scope: TenantQueryScope,
+  domain: string,
+  ...parts: readonly unknown[]
+): TenantQueryKey {
+  if (scope === 'global' || !authority.enabled) return [domain, ...parts] as const;
+
+  const context = requireContext(authority);
+  if (scope === 'organization') {
+    return ['tenant', context.organizationId, 'org', domain, ...parts] as const;
+  }
+  if (scope === 'membership') {
+    return [
+      'tenant',
+      context.organizationId,
+      'membership',
+      context.membershipId,
+      domain,
+      ...parts,
+    ] as const;
+  }
+  return [
+    'tenant',
+    context.organizationId,
+    context.clubId,
+    domain,
+    ...parts,
+  ] as const;
+}
+
+export function isTenantQueryReady(authority: TenantQueryAuthority) {
+  return !authority.enabled || authority.context !== null;
+}
+
+function currentAuthority(): TenantQueryAuthority {
+  return {
+    context: getActiveTenantContext(),
+    enabled: isTenantCacheRealtimeCapabilityEnabled(),
+  };
+}
+
+function key(scope: TenantQueryScope, domain: string, ...parts: readonly unknown[]) {
+  return createTenantQueryKey(currentAuthority(), scope, domain, ...parts);
+}
+
+function domainKeys(scope: TenantQueryScope, domain: string) {
+  return {
+    get all() {
+      return key(scope, domain);
+    },
+  };
+}
+
 export const queryKeys = {
+  access: domainKeys('club', 'access'),
+  accounts: domainKeys('organization', 'accounts'),
   audit: {
-    all: ['audit'] as const,
+    get all() {
+      return key('organization', 'audit');
+    },
     list: (params: { action: AuditAction; page: number; pageSize: number }) =>
-      [...queryKeys.audit.all, 'list', params] as const,
+      key('organization', 'audit', 'list', params),
   },
   bookings: {
-    all: ['bookings'] as const,
+    get all() {
+      return key('club', 'bookings');
+    },
     analytics: (params: { from: string; to: string }) =>
-      [...queryKeys.bookings.all, 'analytics', params] as const,
-    blocks: (date: string) => [...queryKeys.bookings.all, 'blocks', date] as const,
-    exceptions: () => [...queryKeys.bookings.all, 'exceptions'] as const,
-    history: (id: number | null) => [...queryKeys.bookings.all, 'history', id] as const,
-    priceRules: () => [...queryKeys.bookings.all, 'price-rules'] as const,
-    responsibles: () => [...queryKeys.bookings.all, 'responsibles'] as const,
-    resources: () => [...queryKeys.bookings.all, 'resources'] as const,
-    schedule: (date: string) => [...queryKeys.bookings.all, 'schedule', date] as const,
-    series: () => [...queryKeys.bookings.all, 'series'] as const,
-    settings: () => [...queryKeys.bookings.all, 'settings'] as const,
+      key('club', 'bookings', 'analytics', params),
+    blocks: (date: string) => key('club', 'bookings', 'blocks', date),
+    exceptions: () => key('club', 'bookings', 'exceptions'),
+    history: (id: number | null) => key('club', 'bookings', 'history', id),
+    priceRules: () => key('club', 'bookings', 'price-rules'),
+    responsibles: () => key('club', 'bookings', 'responsibles'),
+    resources: () => key('club', 'bookings', 'resources'),
+    schedule: (date: string) => key('club', 'bookings', 'schedule', date),
+    series: () => key('club', 'bookings', 'series'),
+    settings: () => key('club', 'bookings', 'settings'),
   },
+  callTasks: domainKeys('club', 'callTasks'),
+  catalog: {
+    get club() {
+      return key('club', 'catalog');
+    },
+    get organization() {
+      return key('organization', 'catalog');
+    },
+  },
+  certificates: domainKeys('club', 'certificates'),
+  clientBases: domainKeys('club', 'clientBases'),
+  clientSubscriptions: domainKeys('club', 'clientSubscriptions'),
   clients: {
-    all: ['clients'] as const,
+    get all() {
+      return key('organization', 'clients');
+    },
     detail: (clientId: number | null) =>
-      [...queryKeys.clients.all, 'detail', clientId] as const,
+      key('organization', 'clients', 'detail', clientId),
     list: (params: Record<string, unknown>) =>
-      [...queryKeys.clients.all, 'list', params] as const,
+      key('organization', 'clients', 'list', params),
     trainingRecommendation: (
       clientId: number | null,
       params: { date?: string; goal?: string },
-    ) => [...queryKeys.clients.all, 'training-recommendation', clientId, params] as const,
+    ) => key('organization', 'clients', 'training-recommendation', clientId, params),
+  },
+  corporateClients: {
+    get club() {
+      return key('club', 'corporateClients');
+    },
+    get organization() {
+      return key('organization', 'corporateClients');
+    },
+  },
+  finance: {
+    get club() {
+      return key('club', 'finance');
+    },
+    get organization() {
+      return key('organization', 'finance');
+    },
+  },
+  managerControl: {
+    get all() {
+      return key('club', 'manager-control-dashboard');
+    },
+    detail: (filters: Record<string, unknown>) =>
+      key('club', 'manager-control-dashboard', filters),
   },
   methodology: {
-    all: ['methodology'] as const,
+    get all() {
+      return key('organization', 'methodology');
+    },
     analytics: (params: MethodologyAnalyticsFilters) =>
-      [...queryKeys.methodology.all, 'analytics', params] as const,
+      key('organization', 'methodology', 'analytics', params),
     exercises: (params: MethodologyExerciseFilters) =>
-      [...queryKeys.methodology.all, 'exercises', params] as const,
+      key('organization', 'methodology', 'exercises', params),
     skills: (params: MethodologySkillFilters) =>
-      [...queryKeys.methodology.all, 'skills', params] as const,
+      key('organization', 'methodology', 'skills', params),
+  },
+  motivation: {
+    get club() {
+      return key('club', 'motivation');
+    },
+    get organization() {
+      return key('organization', 'motivation');
+    },
   },
   onboarding: {
-    all: ['onboarding'] as const,
+    get all() {
+      return key('membership', 'onboarding');
+    },
+    get clubAll() {
+      return key('club', 'onboarding');
+    },
+    get organizationAll() {
+      return key('organization', 'onboarding');
+    },
     detail: (role?: string | null) =>
-      [...queryKeys.onboarding.all, 'detail', role || 'current'] as const,
+      key('membership', 'onboarding', 'detail', role || 'current'),
     task: (taskKey: string, role?: string | null) =>
-      [...queryKeys.onboarding.all, 'task', role || 'current', taskKey] as const,
-    metrics: () => [...queryKeys.onboarding.all, 'metrics'] as const,
+      key('membership', 'onboarding', 'task', role || 'current', taskKey),
+    metrics: () => key('organization', 'onboarding', 'metrics'),
     trainingData: (role?: string | null) =>
-      [...queryKeys.onboarding.all, 'training-data', role || 'all'] as const,
-    trainingMode: () => [...queryKeys.onboarding.all, 'training-mode'] as const,
+      key('club', 'onboarding', 'training-data', role || 'all'),
+    trainingMode: () => key('membership', 'onboarding', 'training-mode'),
   },
+  payroll: domainKeys('organization', 'payroll'),
+  prepayments: domainKeys('club', 'prepayments'),
   references: {
-    all: ['references'] as const,
+    get all() {
+      return key('organization', 'references');
+    },
     list: (type: ReferenceType, status: ReferenceStatus | 'all') =>
-      [...queryKeys.references.all, 'list', type, status] as const,
+      key('organization', 'references', 'list', type, status),
   },
+  reports: domainKeys('club', 'reports'),
   shiftReports: {
-    all: ['shiftReports'] as const,
-    active: () => [...queryKeys.shiftReports.all, 'active'] as const,
+    get all() {
+      return key('club', 'shiftReports');
+    },
+    active: () => key('club', 'shiftReports', 'active'),
     list: (params: Record<string, unknown>) =>
-      [...queryKeys.shiftReports.all, 'list', params] as const,
+      key('club', 'shiftReports', 'list', params),
     templates: (status: string) =>
-      [...queryKeys.shiftReports.all, 'templates', status] as const,
+      key('organization', 'shiftReports', 'templates', status),
+    get templatesAll() {
+      return key('organization', 'shiftReports');
+    },
   },
+  shifts: domainKeys('club', 'shifts'),
+  staff: domainKeys('organization', 'staff'),
+  subscriptionTypes: domainKeys('organization', 'subscriptionTypes'),
   telephony: {
-    all: ['telephony'] as const,
-    call: (id: number | null) => [...queryKeys.telephony.all, 'call', id] as const,
-    calls: (params: Record<string, unknown>) =>
-      [...queryKeys.telephony.all, 'calls', params] as const,
-    config: () => [...queryKeys.telephony.all, 'config'] as const,
+    get all() {
+      return key('club', 'telephony');
+    },
+    call: (id: number | null) => key('club', 'telephony', 'call', id),
+    calls: (params: Record<string, unknown>) => key('club', 'telephony', 'calls', params),
+    config: () => key('club', 'telephony', 'config'),
     rawEvents: (params: Record<string, unknown>) =>
-      [...queryKeys.telephony.all, 'raw-events', params] as const,
+      key('club', 'telephony', 'raw-events', params),
     report: (params: Record<string, unknown>) =>
-      [...queryKeys.telephony.all, 'report', params] as const,
-    stats: () => [...queryKeys.telephony.all, 'stats'] as const,
+      key('club', 'telephony', 'report', params),
+    stats: () => key('club', 'telephony', 'stats'),
     transcriptionJob: (id: number | null) =>
-      [...queryKeys.telephony.all, 'transcription-job', id] as const,
+      key('club', 'telephony', 'transcription-job', id),
     transcriptionJobs: (params: Record<string, unknown>) =>
-      [...queryKeys.telephony.all, 'transcription-jobs', params] as const,
-    transcriptionStats: () => [...queryKeys.telephony.all, 'transcription-stats'] as const,
+      key('club', 'telephony', 'transcription-jobs', params),
+    transcriptionStats: () => key('club', 'telephony', 'transcription-stats'),
   },
+  trainingNotes: domainKeys('club', 'trainingNotes'),
   trainingPlans: {
-    all: ['training-plans'] as const,
+    get all() {
+      return key('club', 'training-plans');
+    },
     detail: (planId: number | null) =>
-      [...queryKeys.trainingPlans.all, 'detail', planId] as const,
+      key('club', 'training-plans', 'detail', planId),
     list: (params: Record<string, unknown>) =>
-      [...queryKeys.trainingPlans.all, 'list', params] as const,
+      key('club', 'training-plans', 'list', params),
   },
   utilization: {
-    all: ['utilization'] as const,
-    list: () => [...queryKeys.utilization.all, 'list'] as const,
+    get all() {
+      return key('club', 'utilization');
+    },
+    list: () => key('club', 'utilization', 'list'),
   },
   visitsAnalytics: {
-    all: ['visits-analytics'] as const,
+    get all() {
+      return key('club', 'visits-analytics');
+    },
     detail: (params: { from: string; to: string }) =>
-      [...queryKeys.visitsAnalytics.all, params] as const,
+      key('club', 'visits-analytics', params),
     sourceQuality: (params: { from: string; to: string; sources?: string[] }) =>
-      [...queryKeys.visitsAnalytics.all, 'source-quality', params] as const,
+      key('club', 'visits-analytics', 'source-quality', params),
     cohortsLifecycle: (params: { from: string; to: string; sources?: string[] }) =>
-      [...queryKeys.visitsAnalytics.all, 'cohorts-lifecycle', params] as const,
+      key('club', 'visits-analytics', 'cohorts-lifecycle', params),
     revenueLtv: (params: { from: string; to: string; sources?: string[] }) =>
-      [...queryKeys.visitsAnalytics.all, 'revenue-ltv', params] as const,
+      key('club', 'visits-analytics', 'revenue-ltv', params),
   },
 };

@@ -32,6 +32,8 @@ Missing headers return `400 TENANT_CONTEXT_REQUIRED`; malformed, duplicate or no
 
 `GET /api/auth/status` and login/bootstrap sessions expose `capabilities.tenantContext`, so the server is the feature-flag source of truth. When enabled, the client completes `session → discovery → validated selection` before mounting domain queries, realtime or training providers. The generated endpoint contract drives header injection: membership/organization requests receive only Organization, club requests receive both IDs, and global discovery receives neither.
 
+Feature 4.1 extends this contract with server-owned `capabilities.tenantCacheRealtime`. It may be enabled only when `tenantContext` is enabled and reuses the same validated active context for query keys, Redis keys and Socket.IO handshake; see [`MULTI_TENANCY_CACHE_REALTIME_V4_1.md`](./MULTI_TENANCY_CACHE_REALTIME_V4_1.md).
+
 The current hard rollout gate permits one club. The client auto-selects that club and renders no switcher. `setly_tenant_context_preference` stores only a UI preference; every restore is checked against fresh discovery. No Account tenant columns or server-side cross-organization preference were added. Persisted cross-organization selection and visible switching remain Feature 10.
 
 ## Audited route inventory

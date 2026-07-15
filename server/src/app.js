@@ -14,8 +14,12 @@ const {
 const {
   ENDPOINT_CLASSIFICATIONS,
 } = require('./tenant-context/route-scope-declarations');
+const {
+  assertTenantCapabilityDependencies,
+} = require('./tenant-context/capabilities');
 
 function createApp({ onTenantInitialized } = {}) {
+  assertTenantCapabilityDependencies();
   const app = express();
 
   app.set('onTenantInitialized', onTenantInitialized);

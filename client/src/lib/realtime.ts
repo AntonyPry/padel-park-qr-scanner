@@ -5,7 +5,10 @@ import {
   useEffect,
   useMemo,
 } from 'react';
-import type { CrmChangedEvent } from '@/lib/realtime-invalidation';
+import {
+  isRealtimeEventForActiveTenant,
+  type CrmChangedEvent,
+} from '@/lib/realtime-invalidation';
 
 export const REALTIME_BROWSER_EVENT_PREFIX = 'realtime:';
 export const CRM_CHANGED_EVENT = 'crm:changed';
@@ -70,6 +73,7 @@ export function useRealtimeRefresh(
 
   const handleChanged = useCallback(
     (event: CrmChangedEvent) => {
+      if (!isRealtimeEventForActiveTenant(event)) return;
       const hintedGroups = event.hints?.queryGroups || [];
       if (
         targetSet.has(event.domain) ||

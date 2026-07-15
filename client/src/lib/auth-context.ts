@@ -35,6 +35,7 @@ export interface AuthContextValue {
   loading: boolean;
   setupRequired: boolean;
   tenantContext: ActiveTenantContext | null;
+  tenantCacheRealtimeEnabled: boolean;
   tenantContextEnabled: boolean;
   tenantReady: boolean;
   login: (credentials: Credentials) => Promise<void>;

@@ -7,22 +7,14 @@ const {
   TENANT_SCOPES,
 } = require('../tenant-context/route-scope-declarations');
 const { resolveRouteDeclaration } = require('../tenant-context/route-registry');
+const {
+  isTenantContextEnabled,
+  readBooleanEnv,
+  tenantContextCapability,
+} = require('../tenant-context/capabilities');
 
 const ORGANIZATION_HEADER = 'x-organization-id';
 const CLUB_HEADER = 'x-club-id';
-
-function readBooleanEnv(value, fallback = false) {
-  if (value === undefined || value === null || value === '') return fallback;
-  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
-}
-
-function isTenantContextEnabled() {
-  return readBooleanEnv(process.env.TENANT_CONTEXT_ENABLED, false);
-}
-
-function tenantContextCapability() {
-  return { tenantContext: isTenantContextEnabled() };
-}
 
 function getRawHeaderValues(req, headerName) {
   const values = [];

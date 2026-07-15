@@ -657,7 +657,7 @@ export default function TelephonyPage() {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.telephony.all });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clients.all });
-    void queryClient.invalidateQueries({ queryKey: ['callTasks'] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.callTasks.all });
   };
 
   const completeMutation = useMutation({
@@ -744,7 +744,7 @@ export default function TelephonyPage() {
   const queueMissingTranscriptionsMutation = useMutation({
     mutationFn: () => queueMissingTelephonyTranscriptionJobs(50),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['telephony'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.telephony.all });
       toast.success(`Поставлено в очередь: ${result.queued}${result.hasMore ? '. Есть еще звонки — повторите батч.' : ''}`);
     },
     onError: (error: Error) => toast.error(error.message),

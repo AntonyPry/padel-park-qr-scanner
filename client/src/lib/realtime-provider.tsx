@@ -18,6 +18,7 @@ import {
 } from '@/lib/realtime';
 import {
   getRealtimeQueryKeys,
+  isRealtimeEventForActiveTenant,
   type CrmChangedEvent,
 } from '@/lib/realtime-invalidation';
 import { useAuth } from '@/lib/useAuth';
@@ -25,11 +26,17 @@ import { useAuth } from '@/lib/useAuth';
 const REALTIME_DISABLED = import.meta.env.VITE_DISABLE_REALTIME === 'true';
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {
-  const { account } = useAuth();
+  const {
+    account,
+    tenantCacheRealtimeEnabled,
+    tenantContext,
+    tenantReady,
+  } = useAuth();
   const queryClient = useQueryClient();
   const socketRef = useRef<Socket | null>(null);
   const connectTimerRef = useRef<number | null>(null);
   const invalidationTimerRef = useRef<number | null>(null);
+  const reconnectRefreshTimerRef = useRef<number | null>(null);
   const pendingKeysRef = useRef<Map<string, readonly unknown[]>>(new Map());
   const [status, setStatus] = useState<RealtimeStatus>('idle');
 
@@ -58,7 +65,8 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
-    if (REALTIME_DISABLED || !account || !getAuthToken()) {
+    const pendingKeys = pendingKeysRef.current;
+    if (REALTIME_DISABLED || !account || !getAuthToken() || !tenantReady) {
       if (connectTimerRef.current) {
         window.clearTimeout(connectTimerRef.current);
         connectTimerRef.current = null;
@@ -71,7 +79,15 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
     const socket = io(API_URL, {
       autoConnect: false,
-      auth: { token: getAuthToken() },
+      auth: {
+        token: getAuthToken(),
+        ...(tenantCacheRealtimeEnabled && tenantContext
+          ? {
+              clubId: tenantContext.clubId,
+              organizationId: tenantContext.organizationId,
+            }
+          : {}),
+      },
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 500,
@@ -81,11 +97,20 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
     socketRef.current = socket;
     window.queueMicrotask(() => setStatus('connecting'));
+    let hasConnected = false;
 
     socket.on('connect', () => {
       setStatus('connected');
-      void queryClient.refetchQueries({ type: 'active' });
-      emitRealtimeBrowserEvent('crm:reconnected', { at: new Date().toISOString() });
+      if (hasConnected && reconnectRefreshTimerRef.current === null) {
+        reconnectRefreshTimerRef.current = window.setTimeout(() => {
+          reconnectRefreshTimerRef.current = null;
+          void queryClient.refetchQueries({ type: 'active' });
+          emitRealtimeBrowserEvent('crm:reconnected', {
+            at: new Date().toISOString(),
+          });
+        }, 250);
+      }
+      hasConnected = true;
     });
 
     socket.on('disconnect', () => {
@@ -97,11 +122,17 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     });
 
     socket.on(CRM_CHANGED_EVENT, (event: CrmChangedEvent) => {
+      if (!isRealtimeEventForActiveTenant(event)) return;
       queueInvalidations(event);
       emitRealtimeBrowserEvent(CRM_CHANGED_EVENT, event);
     });
 
     socket.on('scan_result', (event) => {
+      if (tenantCacheRealtimeEnabled) {
+        if (!isRealtimeEventForActiveTenant(event)) return;
+        emitRealtimeBrowserEvent('scan_result', event.data);
+        return;
+      }
       emitRealtimeBrowserEvent('scan_result', event);
     });
 
@@ -121,13 +152,25 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
         window.clearTimeout(invalidationTimerRef.current);
         invalidationTimerRef.current = null;
       }
+      if (reconnectRefreshTimerRef.current) {
+        window.clearTimeout(reconnectRefreshTimerRef.current);
+        reconnectRefreshTimerRef.current = null;
+      }
+      pendingKeys.clear();
       socket.removeAllListeners();
       socket.disconnect();
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
     };
-  }, [account, queryClient, queueInvalidations]);
+  }, [
+    account,
+    queryClient,
+    queueInvalidations,
+    tenantCacheRealtimeEnabled,
+    tenantContext,
+    tenantReady,
+  ]);
 
   const value = useMemo(() => ({ status }), [status]);
 

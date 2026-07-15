@@ -62,13 +62,33 @@ function mapReference(row) {
   };
 }
 
-function getListCacheKey(type, query = {}) {
+function getListCacheKey(type, query = {}, tenant = null) {
+  if (cacheService.isTenantIsolationEnabled()) {
+    return cacheService.tenantCacheKey(
+      {
+        domain: 'references',
+        scope: 'organization',
+        suffix: `${type}:list`,
+        tenant,
+      },
+      { status: query.status || 'active' },
+    );
+  }
   return cacheService.cacheKey(`references:${type}:list`, {
     status: query.status || 'active',
   });
 }
 
-async function invalidateReferenceCache(type) {
+async function invalidateReferenceCache(type, tenant = null) {
+  if (cacheService.isTenantIsolationEnabled()) {
+    await cacheService.deleteTenantByPrefix({
+      domain: 'references',
+      scope: 'organization',
+      suffix: type,
+      tenant,
+    });
+    return;
+  }
   await cacheService.deleteByPrefix(`references:${type}:`);
 }
 
@@ -120,16 +140,32 @@ async function listFromDb(type, query = {}) {
   return rows.map(mapReference);
 }
 
-async function list(type, query = {}) {
+async function list(type, query = {}, tenant = null) {
   getConfig(type);
+  if (cacheService.isTenantIsolationEnabled() && !tenant) {
+    return listFromDb(type, query);
+  }
+  if (cacheService.isTenantIsolationEnabled()) {
+    return cacheService.rememberTenantJson(
+      {
+        domain: 'references',
+        scope: 'organization',
+        suffix: `${type}:list`,
+        tenant,
+      },
+      { status: query.status || 'active' },
+      () => listFromDb(type, query),
+      { ttlSeconds: 300 },
+    );
+  }
   return cacheService.rememberJson(
-    getListCacheKey(type, query),
+    getListCacheKey(type, query, tenant),
     () => listFromDb(type, query),
     { ttlSeconds: 300 },
   );
 }
 
-async function create(type, data) {
+async function create(type, data, tenant = null) {
   const config = getConfig(type);
   const Model = getModel(type);
   const name = normalizeName(data.name, config.label);
@@ -145,11 +181,11 @@ async function create(type, data) {
         : Number(data.sortOrder) || 0,
   });
 
-  await invalidateReferenceCache(type);
+  await invalidateReferenceCache(type, tenant);
   return mapReference(row);
 }
 
-async function update(type, id, data) {
+async function update(type, id, data, tenant = null) {
   const config = getConfig(type);
   const Model = getModel(type);
   const row = await Model.findByPk(Number(id));
@@ -169,16 +205,16 @@ async function update(type, id, data) {
   }
 
   await row.update(payload);
-  await invalidateReferenceCache(type);
+  await invalidateReferenceCache(type, tenant);
   return mapReference(row);
 }
 
-async function archive(type, id) {
-  return update(type, id, { status: 'archived' });
+async function archive(type, id, tenant = null) {
+  return update(type, id, { status: 'archived' }, tenant);
 }
 
-async function restore(type, id) {
-  return update(type, id, { status: 'active' });
+async function restore(type, id, tenant = null) {
+  return update(type, id, { status: 'active' }, tenant);
 }
 
 async function assertReferenceNotUsed(type, row) {
@@ -221,7 +257,7 @@ async function assertReferenceNotUsed(type, row) {
   }
 }
 
-async function removeArchived(type, id) {
+async function removeArchived(type, id, tenant = null) {
   const Model = getModel(type);
   const row = await Model.findByPk(Number(id));
   if (!row) throw appError('Значение справочника не найдено', 404);
@@ -234,7 +270,7 @@ async function removeArchived(type, id) {
 
   await assertReferenceNotUsed(type, row);
   await row.destroy();
-  await invalidateReferenceCache(type);
+  await invalidateReferenceCache(type, tenant);
   return { success: true };
 }
 

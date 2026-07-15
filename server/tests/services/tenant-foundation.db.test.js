@@ -196,7 +196,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       assert.equal(status.status, 200);
       assert.deepEqual(await status.json(), {
         bootstrapPending: true,
-        capabilities: { tenantContext: false },
+        capabilities: { tenantCacheRealtime: false, tenantContext: false },
         setupRequired: true,
         tenantFoundationState: 'bootstrap-pending',
       });

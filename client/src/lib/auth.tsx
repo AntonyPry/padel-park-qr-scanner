@@ -19,11 +19,24 @@ import {
 } from '@/lib/auth-context';
 import {
   clearActiveTenantContext,
+  getActiveTenantContext,
+  isTenantCacheRealtimeCapabilityEnabled,
   selectTenantContext,
+  setTenantCacheRealtimeCapability,
   setTenantContextCapability,
   type ActiveTenantContext,
   type TenantDiscoveryResponse,
 } from '@/lib/tenant-context';
+import {
+  clearTenantSensitiveQueryCache,
+  queryClient,
+  transitionTenantQueryCache,
+} from '@/lib/query-client';
+
+interface ServerCapabilities {
+  tenantCacheRealtime?: boolean;
+  tenantContext?: boolean;
+}
 
 async function readError(response: Response, fallback: string) {
   try {
@@ -39,14 +52,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [setupRequired, setSetupRequired] = useState(false);
   const [tenantContext, setTenantContext] = useState<ActiveTenantContext | null>(null);
+  const [tenantCacheRealtimeEnabled, setTenantCacheRealtimeEnabled] = useState(false);
   const [tenantContextEnabled, setTenantContextEnabled] = useState(false);
   const [tenantReady, setTenantReady] = useState(true);
 
   const initializeTenantContext = useCallback(
-    async (identityAccount: Account, enabled: boolean) => {
-      setTenantContextCapability(enabled);
-      setTenantContextEnabled(enabled);
-      if (!enabled) {
+    async (identityAccount: Account, capabilities: ServerCapabilities = {}) => {
+      const contextEnabled = Boolean(capabilities.tenantContext);
+      const cacheRealtimeEnabled = Boolean(capabilities.tenantCacheRealtime);
+      const previousContext = getActiveTenantContext();
+      const previousCacheRealtimeEnabled = isTenantCacheRealtimeCapabilityEnabled();
+      setTenantContextCapability(contextEnabled);
+      setTenantCacheRealtimeCapability(cacheRealtimeEnabled);
+      setTenantContextEnabled(contextEnabled);
+      setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
+      if (!contextEnabled) {
+        if (previousCacheRealtimeEnabled !== cacheRealtimeEnabled) {
+          clearTenantSensitiveQueryCache(queryClient);
+        } else {
+          await transitionTenantQueryCache(queryClient, previousContext, null);
+        }
         clearActiveTenantContext();
         setTenantContext(null);
         setTenantReady(true);
@@ -60,6 +85,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       const discovery = (await response.json()) as TenantDiscoveryResponse;
       const selected = selectTenantContext(discovery);
+      if (previousCacheRealtimeEnabled !== cacheRealtimeEnabled) {
+        clearTenantSensitiveQueryCache(queryClient);
+      } else {
+        await transitionTenantQueryCache(queryClient, previousContext, selected);
+      }
       setTenantContext(selected);
       setTenantReady(true);
       return identityAccount;
@@ -69,9 +99,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     clearAuthToken();
+    clearTenantSensitiveQueryCache(queryClient);
     clearActiveTenantContext();
+    setTenantContextCapability(false);
     setAccount(null);
     setTenantContext(null);
+    setTenantCacheRealtimeEnabled(false);
     setTenantContextEnabled(false);
     setTenantReady(true);
   }, []);
@@ -82,22 +115,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const statusRes = await apiFetch('/api/auth/status');
       const status = (await statusRes.json()) as {
-        capabilities?: { tenantContext?: boolean };
+        capabilities?: ServerCapabilities;
         setupRequired: boolean;
       };
       const contextEnabled = Boolean(status.capabilities?.tenantContext);
-      setTenantContextCapability(contextEnabled);
-      setTenantContextEnabled(contextEnabled);
+      const cacheRealtimeEnabled = Boolean(status.capabilities?.tenantCacheRealtime);
+      if (cacheRealtimeEnabled && !contextEnabled) {
+        throw new Error('Tenant cache/realtime capability requires tenant context');
+      }
       setSetupRequired(Boolean(status.setupRequired));
 
       if (status.setupRequired) {
+        setTenantContextCapability(contextEnabled);
+        setTenantCacheRealtimeCapability(cacheRealtimeEnabled);
+        setTenantContextEnabled(contextEnabled);
+        setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
         clearAuthToken();
+        clearTenantSensitiveQueryCache(queryClient);
         setAccount(null);
         setTenantReady(true);
         return;
       }
 
       if (!getAuthToken()) {
+        setTenantContextCapability(contextEnabled);
+        setTenantCacheRealtimeCapability(cacheRealtimeEnabled);
+        setTenantContextEnabled(contextEnabled);
+        setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
         setAccount(null);
         setTenantReady(true);
         return;
@@ -106,17 +150,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const meRes = await apiFetch('/api/auth/me');
       if (!meRes.ok) {
         clearAuthToken();
+        clearTenantSensitiveQueryCache(queryClient);
         setAccount(null);
         return;
       }
 
       const data = (await meRes.json()) as { account: Account };
-      setAccount(await initializeTenantContext(data.account, contextEnabled));
+      setAccount(await initializeTenantContext(data.account, status.capabilities));
     } catch (error) {
       console.error('Auth refresh failed:', error);
       clearActiveTenantContext();
+      clearTenantSensitiveQueryCache(queryClient);
+      setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
+      setTenantCacheRealtimeEnabled(false);
+      setTenantContextEnabled(false);
       setTenantReady(false);
     } finally {
       setLoading(false);
@@ -130,8 +179,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handleExpired = () => {
       clearActiveTenantContext();
+      clearTenantSensitiveQueryCache(queryClient);
+      setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
+      setTenantCacheRealtimeEnabled(false);
       setTenantContextEnabled(false);
       setTenantReady(true);
     };
@@ -153,17 +205,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = (await response.json()) as {
       token: string;
       account: Account;
-      capabilities?: { tenantContext?: boolean };
+      capabilities?: ServerCapabilities;
     };
 
     setAuthToken(data.token);
-    const contextEnabled = Boolean(data.capabilities?.tenantContext);
     try {
-      setAccount(await initializeTenantContext(data.account, contextEnabled));
+      setAccount(await initializeTenantContext(data.account, data.capabilities));
     } catch (error) {
       clearAuthToken();
+      clearTenantSensitiveQueryCache(queryClient);
+      setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
+      setTenantCacheRealtimeEnabled(false);
+      setTenantContextEnabled(false);
       setTenantReady(false);
       throw error;
     }
@@ -183,17 +238,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const session = (await response.json()) as {
       token: string;
       account: Account;
-      capabilities?: { tenantContext?: boolean };
+      capabilities?: ServerCapabilities;
     };
 
     setAuthToken(session.token);
-    const contextEnabled = Boolean(session.capabilities?.tenantContext);
     try {
-      setAccount(await initializeTenantContext(session.account, contextEnabled));
+      setAccount(await initializeTenantContext(session.account, session.capabilities));
     } catch (error) {
       clearAuthToken();
+      clearTenantSensitiveQueryCache(queryClient);
+      setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
+      setTenantCacheRealtimeEnabled(false);
+      setTenantContextEnabled(false);
       setTenantReady(false);
       throw error;
     }
@@ -206,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       setupRequired,
       tenantContext,
+      tenantCacheRealtimeEnabled,
       tenantContextEnabled,
       tenantReady,
       login,
@@ -220,6 +279,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       setupRequired,
       tenantContext,
+      tenantCacheRealtimeEnabled,
       tenantContextEnabled,
       tenantReady,
     ],

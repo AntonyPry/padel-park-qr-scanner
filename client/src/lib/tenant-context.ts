@@ -41,6 +41,7 @@ export interface ActiveTenantContext {
 }
 
 let tenantCapabilityEnabled = false;
+let tenantCacheRealtimeCapabilityEnabled = false;
 let activeTenantContext: ActiveTenantContext | null = null;
 
 function readPreference() {
@@ -74,11 +75,25 @@ function persistPreference(context: ActiveTenantContext) {
 
 export function setTenantContextCapability(enabled: boolean) {
   tenantCapabilityEnabled = enabled;
-  if (!enabled) activeTenantContext = null;
+  if (!enabled) {
+    tenantCacheRealtimeCapabilityEnabled = false;
+    activeTenantContext = null;
+  }
 }
 
 export function isTenantContextCapabilityEnabled() {
   return tenantCapabilityEnabled;
+}
+
+export function setTenantCacheRealtimeCapability(enabled: boolean) {
+  if (enabled && !tenantCapabilityEnabled) {
+    throw new Error('Tenant cache/realtime capability requires tenant context');
+  }
+  tenantCacheRealtimeCapabilityEnabled = enabled;
+}
+
+export function isTenantCacheRealtimeCapabilityEnabled() {
+  return tenantCacheRealtimeCapabilityEnabled;
 }
 
 export function getActiveTenantContext() {

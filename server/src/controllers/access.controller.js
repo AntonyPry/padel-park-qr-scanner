@@ -1,6 +1,10 @@
 const accessService = require('../services/access.service');
 const scannerEventsService = require('../services/scanner-events.service');
 const { ACCESS_SOCKET_ROOM } = require('../sockets');
+const { publishTenantSocketEvent } = require('../realtime');
+const {
+  isTenantCacheRealtimeEnabled,
+} = require('../tenant-context/capabilities');
 const { sendError } = require('../utils/api-error');
 
 function getIo(req) {
@@ -8,6 +12,18 @@ function getIo(req) {
 }
 
 function emitAccessEvent(req, event) {
+  if (isTenantCacheRealtimeEnabled()) {
+    void publishTenantSocketEvent(
+      getIo(req),
+      'scan_result',
+      'access',
+      event,
+      req.tenant,
+    ).catch((error) => {
+      console.error('[realtime] access event publish failed', error.code || error.message);
+    });
+    return;
+  }
   getIo(req).to(ACCESS_SOCKET_ROOM).emit('scan_result', event);
 }
 

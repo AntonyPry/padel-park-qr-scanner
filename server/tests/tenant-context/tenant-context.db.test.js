@@ -98,7 +98,10 @@ test('Feature 3 tenant context DB-backed API and authorization gate', async (t) 
       const status = await api('/auth/status');
       const payload = await status.json();
       assert.equal(payload.bootstrapPending, true);
-      assert.deepEqual(payload.capabilities, { tenantContext: true });
+      assert.deepEqual(payload.capabilities, {
+        tenantCacheRealtime: false,
+        tenantContext: true,
+      });
     });
 
     const ownerSession = await authService.bootstrapOwner({
@@ -296,7 +299,10 @@ test('Feature 3 tenant context DB-backed API and authorization gate', async (t) 
       });
       assert.equal(clubResponse.status, 200);
       const status = await api('/auth/status');
-      assert.deepEqual((await status.json()).capabilities, { tenantContext: false });
+      assert.deepEqual((await status.json()).capabilities, {
+        tenantCacheRealtime: false,
+        tenantContext: false,
+      });
       process.env.TENANT_CONTEXT_ENABLED = 'true';
     });
 

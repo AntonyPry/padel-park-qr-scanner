@@ -4,7 +4,7 @@ const http = require('http');
 const db = require('./models');
 const createApp = require('./src/app');
 const { createSocketServer } = require('./src/sockets');
-const { publishRealtimeChange } = require('./src/realtime');
+const { publishLegacyRealtimeChange } = require('./src/realtime');
 const { createTelegramBot } = require('./src/bots/telegram');
 const { createVkBot } = require('./src/bots/vk');
 const callTasksService = require('./src/services/call-tasks.service');
@@ -62,7 +62,7 @@ function startRecurringCallTasksRunner() {
         console.log(
           `📞 Автозадачи обзвона: обработано баз ${result.processed}.`,
         );
-        publishRealtimeChange(io, {
+        await publishLegacyRealtimeChange(io, {
           domain: 'call_tasks',
           entity: 'call_task',
           action: 'synced',
@@ -101,7 +101,7 @@ function startTelephonySubscriptionRunner() {
       const result = await telephonyService.maintainEventSubscription();
       if (['created', 'renewed'].includes(result.action)) {
         console.log(`☎️ XSI-подписка Билайна: ${result.action}.`);
-        publishRealtimeChange(io, {
+        await publishLegacyRealtimeChange(io, {
           domain: 'telephony',
           entity: 'telephony_subscription',
           action: 'synced',

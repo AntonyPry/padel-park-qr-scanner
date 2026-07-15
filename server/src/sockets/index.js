@@ -4,7 +4,17 @@ const {
   assertTenantFoundationInitialized,
 } = require('../services/tenant-foundation.service');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
-const { getRealtimeRoomsForRole } = require('../realtime');
+const tenantContextService = require('../services/tenant-context.service');
+const {
+  assertTenantCapabilityDependencies,
+  isTenantCacheRealtimeEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  GLOBAL_SYSTEM_ROOM,
+  getRealtimeRoomsForRole,
+  getTenantRoomsForContext,
+  revalidateSocket,
+} = require('../realtime');
 
 const ACCESS_SOCKET_ROOM = 'access';
 
@@ -20,7 +30,11 @@ function parseAllowedOrigin(value) {
   return origins.length === 1 ? origins[0] : origins;
 }
 
-function createSocketServer(httpServer) {
+function createSocketServer(
+  httpServer,
+  { assertFoundationInitialized = assertTenantFoundationInitialized } = {},
+) {
+  assertTenantCapabilityDependencies();
   const allowedOrigin = parseAllowedOrigin(
     process.env.CLIENT_ORIGIN || process.env.CORS_ORIGIN,
   );
@@ -33,7 +47,7 @@ function createSocketServer(httpServer) {
 
   io.use(async (socket, next) => {
     try {
-      await assertTenantFoundationInitialized();
+      await assertFoundationInitialized();
     } catch (error) {
       const code = error.code || 'TENANT_FOUNDATION_UNAVAILABLE';
       const handshakeError = new Error(code);
@@ -59,13 +73,55 @@ function createSocketServer(httpServer) {
         return next(new Error('Unauthorized'));
       }
       socket.data.account = account;
+      if (isTenantCacheRealtimeEnabled()) {
+        const organizationId = Number(socket.handshake.auth?.organizationId);
+        const clubId = Number(socket.handshake.auth?.clubId);
+        if (
+          !Number.isSafeInteger(organizationId) ||
+          organizationId <= 0 ||
+          !Number.isSafeInteger(clubId) ||
+          clubId <= 0
+        ) {
+          const contextError = new Error('TENANT_CONTEXT_REQUIRED');
+          contextError.data = { code: 'TENANT_CONTEXT_REQUIRED', status: 400 };
+          return next(contextError);
+        }
+        socket.data.tenant = await tenantContextService.resolveTenantContext({
+          accountId: account.id,
+          clubId,
+          organizationId,
+          scope: 'club',
+        });
+      }
       return next();
-    } catch {
-      return next(new Error('Unauthorized'));
+    } catch (error) {
+      const handshakeError = new Error(error.code || 'Unauthorized');
+      handshakeError.data = {
+        code: error.code || 'UNAUTHORIZED',
+        status: error.statusCode || 401,
+      };
+      return next(handshakeError);
     }
   });
 
   io.on('connection', (socket) => {
+    if (isTenantCacheRealtimeEnabled()) {
+      socket.join(GLOBAL_SYSTEM_ROOM);
+      getTenantRoomsForContext(socket.data.tenant).forEach((room) => socket.join(room));
+      const configuredInterval = Number(
+        process.env.TENANT_SOCKET_REVALIDATE_MS || 30000,
+      );
+      const intervalMs = Number.isFinite(configuredInterval)
+        ? Math.max(1000, configuredInterval)
+        : 30000;
+      const revalidationTimer = setInterval(async () => {
+        if (await revalidateSocket(socket)) return;
+        socket.disconnect(true);
+      }, intervalMs);
+      revalidationTimer.unref?.();
+      socket.once('disconnect', () => clearInterval(revalidationTimer));
+      return;
+    }
     const role = socket.data.account?.role;
     if (ACCESS_MATRIX.accessOperate.includes(role)) {
       socket.join(ACCESS_SOCKET_ROOM);
