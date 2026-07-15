@@ -61,7 +61,7 @@ test('passes valid payloads and preserves query strings used by controllers', ()
   assert.equal(req.query.includeArchived, 'true');
 });
 
-test('shift cash expense contract accepts and strips legacy categoryId', () => {
+test('shift cash expense contract accepts category-free payload and rejects unknown fields', () => {
   const valid = runValidation(
     { body: apiSchemas.shiftCash.expenseBody },
     {
@@ -72,26 +72,21 @@ test('shift cash expense contract accepts and strips legacy categoryId', () => {
   );
   assert.equal(valid.nextCalled, true);
 
-  const legacyRequest = {
+  const unknownFieldRequest = {
     body: {
       amount: 900,
-      categoryId: 12,
       description: 'Хозяйственный расход',
+      unexpectedField: true,
     },
     params: {},
     query: {},
   };
-  const legacy = runValidation(
+  const unknownField = runValidation(
     { body: apiSchemas.shiftCash.expenseBody },
-    legacyRequest,
+    unknownFieldRequest,
   );
-  assert.equal(legacy.nextCalled, true);
-  assert.equal(legacy.res.statusCode, null);
-  assert.equal(legacyRequest.body.categoryId, undefined);
-  assert.deepEqual(legacyRequest.body, {
-    amount: 900,
-    description: 'Хозяйственный расход',
-  });
+  assert.equal(unknownField.nextCalled, false);
+  assert.equal(unknownField.res.statusCode, 400);
 });
 
 test('accepts whitespace clients list numeric query values as empty', () => {
