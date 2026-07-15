@@ -710,7 +710,19 @@ async function uploadAttachment(expenseId, payload, account) {
     date: shift.date,
     afterData: { attachmentId: attachment.id, fileName: attachment.originalName },
   });
-  return serializeExpense(await db.ShiftCashExpense.findByPk(expense.id, { include: EXPENSE_INCLUDE }));
+  const result = serializeExpense(
+    await db.ShiftCashExpense.findByPk(expense.id, { include: EXPENSE_INCLUDE }),
+  );
+  await onboardingService.recordEventSafe(account, 'shift_cash.attachment_uploaded', {
+    entityId: attachment.id,
+    entityType: 'shift_cash_attachment',
+    payload: {
+      attachmentId: attachment.id,
+      expenseId: expense.id,
+      shiftId: shift.id,
+    },
+  });
+  return result;
 }
 
 async function removeAttachment(expenseId, attachmentId, account) {

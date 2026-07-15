@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
 const shiftCashService = require('../../src/services/shift-cash.service');
+const attachmentStorage = require('../../src/services/shift-cash-attachments');
 const shiftsService = require('../../src/services/shifts.service');
 
 test('DB-backed shift cash lifecycle closes cash and shift atomically after rollback-safe variance validation', async () => {
@@ -15,6 +16,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
   let financeId;
   let shift;
   let staff;
+  const originalStoreAttachment = attachmentStorage.storeAttachment;
 
   try {
     staff = await db.Staff.create({
@@ -104,6 +106,54 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(expenseSummary.activeExpensesTotal, 900);
     assert.equal(expenseSummary.expectedClosingCash, 3300);
     assert.ok(financeId);
+    assert.equal(
+      await db.OnboardingEvent.count({
+        where: {
+          accountId: account.id,
+          eventKey: 'shift_cash.attachment_uploaded',
+        },
+      }),
+      0,
+    );
+    attachmentStorage.storeAttachment = async () => ({
+      id: `lifecycle-attachment-${suffix}`,
+      mimeType: 'image/png',
+      originalName: 'lifecycle-receipt.png',
+      relativePath: `lifecycle/${suffix}.png`,
+      size: 123,
+      uploadedAt: new Date().toISOString(),
+      uploadedByAccountId: account.id,
+    });
+    const expenseWithAttachment = await shiftCashService.uploadAttachment(
+      expenseId,
+      {
+        data: Buffer.from('lifecycle attachment').toString('base64'),
+        fileName: 'lifecycle-receipt.png',
+        mimeType: 'image/png',
+      },
+      account,
+    );
+    assert.equal(expenseWithAttachment.attachments.length, 1);
+    const attachmentEvents = await db.OnboardingEvent.findAll({
+      where: {
+        accountId: account.id,
+        eventKey: 'shift_cash.attachment_uploaded',
+      },
+    });
+    assert.equal(attachmentEvents.length, 1);
+    const attachmentEventPayload = typeof attachmentEvents[0].payload === 'string'
+      ? JSON.parse(attachmentEvents[0].payload)
+      : attachmentEvents[0].payload;
+    assert.deepEqual(attachmentEventPayload, {
+      attachmentId: `lifecycle-attachment-${suffix}`,
+      expenseId,
+      shiftId: shift.id,
+    });
+    await shiftCashService.removeAttachment(
+      expenseId,
+      `lifecycle-attachment-${suffix}`,
+      account,
+    );
     const linkedFinance = await db.Finance.findByPk(financeId);
     assert.equal(linkedFinance.type, 'expense');
     assert.equal(Number(linkedFinance.amount), 900);
@@ -166,6 +216,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(Number(persistedSession.expectedClosingCash), 4200);
     assert.equal(Number(persistedSession.variance), 0);
   } finally {
+    attachmentStorage.storeAttachment = originalStoreAttachment;
     if (shift?.id) {
       const reports = await db.ShiftReport.findAll({
         attributes: ['id'],
