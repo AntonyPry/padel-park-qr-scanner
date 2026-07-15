@@ -1,7 +1,7 @@
 # Статус спринтов CRM
 
 Дата фиксации: 2026-05-28.
-Последнее обновление: 2026-07-13.
+Последнее обновление: 2026-07-15.
 
 Этот файл - единый источник правды по спринтам. Перед началом нового спринта сначала обновляем этот документ: что уже сделано, что частично, что осталось, какие критерии приемки.
 
@@ -2220,6 +2220,76 @@ Product source:
 - owner role override открывает обновленный manager/accountant/viewer path без расширения реальных прав;
 - screenshots являются реальными CRM screenshots из feature UI, без generated assets;
 - `server npm run onboarding:audit:strict` проходит без warnings.
+
+## Sprint 50 - Shift Cash onboarding sync
+
+Цель: обновить onboarding после feature branch `codex/shift-cash` до feature freeze, не мержить в `main` и не деплоить продуктовую ветку.
+
+Общий статус: `ready for release` - onboarding sync, runtime checkpoint и repeat QA подтверждены в merged temp; `main` и deploy в этом срезе не менялись.
+
+Product source:
+
+- branch `origin/codex/shift-cash`;
+- commits `6a4b1ae feat: add shift cash reconciliation`, `f5f47c9 fix: resolve shift cash QA findings`, `ca8348f fix: emit shift cash attachment checkpoint`;
+- QA outcome: repeat QA PASS, без Blocker/P1/P2/P3, mobile 390 без overflow по KPI/dialog.
+
+Сделано:
+
+- добавлены action-задачи администратора:
+  - `admin.shift-cash.opening-record`;
+  - `admin.shift-cash.expense-with-photo`;
+- добавлены review/control-задачи:
+  - `manager.shift-cash.reconciliation-review`;
+  - `owner.shift-cash.control-review`;
+  - `accountant.shift-cash.finance-review`;
+- checkpoint events добавлены как backend-action events:
+  - `shift_cash.opening_recorded`;
+  - `shift_cash.attachment_uploaded`;
+  - `shift_cash.closed`;
+- `shift_cash.*` не добавлены в client checkpoint allowlist, чтобы браузер не мог засчитать кассовые действия без реального backend-события;
+- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-cash`; в instructions-diff это не дублируется;
+- обновлены реальные CRM screenshots из feature QA в dark/light наборах:
+  - `/onboarding/shift-cash/full-cash-metrics.png`;
+  - `/onboarding/shift-cash/opening-form.png`;
+  - `/onboarding/shift-cash/opening-saved.png`;
+  - `/onboarding/shift-cash/expense-form.png`;
+  - `/onboarding/shift-cash/expense-result-attached.png`;
+  - `/onboarding/shift-cash/close-dialog-variance-comment.png`;
+  - `/onboarding/shift-cash/accountant-period-export.png`;
+  - `/onboarding/shift-cash/accountant-linked-row-history.png`;
+  - `/onboarding-light/shift-cash/full-cash-metrics.png`;
+  - `/onboarding-light/shift-cash/opening-form.png`;
+  - `/onboarding-light/shift-cash/opening-saved.png`;
+  - `/onboarding-light/shift-cash/expense-form.png`;
+  - `/onboarding-light/shift-cash/expense-result-attached.png`;
+  - `/onboarding-light/shift-cash/close-dialog-variance-comment.png`;
+  - `/onboarding-light/shift-cash/accountant-period-export.png`;
+  - `/onboarding-light/shift-cash/accountant-linked-row-history.png`;
+- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/motivation`;
+- owner role override сохранен: владелец может проходить роль, но права владельца не снижаются.
+
+Repeat QA 15.07.2026:
+
+- реальный PNG-чек загружен через backend: upload `201`, protected attachment GET `200 image/png`;
+- карточка расхода показывает настоящее `<img>` `600x820` через blob URL, lightbox открывает то же фото;
+- backend checkpoint `shift_cash.attachment_uploaded` записан ровно один раз для загруженного `attachmentId`;
+- dark/light `expense-result-attached.png` пересняты после upload и размечены номерами/стрелками непосредственно на PNG;
+- targeted onboarding tests: `42/42`; server typecheck: PASS; client tests: `22/22`; client build: PASS;
+- merged temp с `origin/codex/shift-cash`: strict audit PASS;
+- browser QA: `20/20` onboarding cases и `4/4` DB-backed product cases в dark/light на desktop `1440px` и mobile `390px`; broken images, console/page errors и horizontal overflow отсутствуют;
+- DB-backed `/admin/motivation` показывает активную смену и настоящее превью чека; `/admin/finances` показывает связанный расход `Касса смены #56: Оплата помещения`.
+
+Осталось до release:
+
+- выполнить штатный merge проверенных `codex/shift-cash` и `codex/crm-instructions` в release target, затем production deploy/smoke по отдельному разрешению; незакрытых code/onboarding QA gates в Sprint 50 нет.
+
+Критерии приемки:
+
+- admin может пройти инструкции по стартовому остатку и кассовому расходу с фото;
+- manager/owner понимают закрытие кассы, фактические суммы, расхождение и обязательный комментарий;
+- accountant сверяет связанный расход через P&L/export, не управляя активной кассой;
+- учебные кассовые сессии, расходы, фото и linked Finance очищаются без production-данных;
+- screenshots являются реальными CRM screenshots, без generated/mock assets.
 
 ## Backlog - SaaS-фундамент
 

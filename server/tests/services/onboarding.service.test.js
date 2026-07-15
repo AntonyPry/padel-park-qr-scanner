@@ -501,10 +501,10 @@ test('owner can inspect onboarding completion metrics by role', async () => {
   assert.equal(metrics.summary.activeAccounts, 4);
   assert.equal(metrics.summary.roles, 6);
   assert.equal(admin.totalAccounts, 2);
-  assert.equal(admin.taskCount, 12);
+  assert.equal(admin.taskCount, 14);
   assert.equal(admin.completedTaskSlots, 3);
-  assert.equal(admin.totalTaskSlots, 24);
-  assert.equal(admin.percent, 13);
+  assert.equal(admin.totalTaskSlots, 28);
+  assert.equal(admin.percent, 11);
   assert.equal(admin.startedAccounts, 2);
   assert.equal(admin.completedAccounts, 0);
   assert.equal(admin.lastCompletedAt, '2026-05-31T10:00:00.000Z');
