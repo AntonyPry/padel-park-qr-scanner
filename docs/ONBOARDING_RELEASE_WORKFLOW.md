@@ -215,8 +215,6 @@ The current Guided Onboarding card-reader baseline is release-ready when:
 
 For Visits Analytics releases, the handoff must also verify owner/manager segment-to-client-base-to-call-task flow, accountant/viewer read-only filters and exports, the four tabs of `/admin/visits-analytics`, and no new checkpoint event beyond the existing `report.viewed` route-review event.
 
-For Shift Cash releases, the handoff must also verify `/admin/motivation` cash panel instructions for admin opening cash and expense with receipt photo, owner/manager closing reconciliation with variance comment, accountant read-only review of linked `Finance` expenses in `/admin/finances`, backend-only checkpoint events `shift_cash.opening_recorded`, `shift_cash.attachment_uploaded`, `shift_cash.closed`, and training cleanup for `ShiftCashSession`, `ShiftCashExpense`, receipt attachments and linked finance rows.
-
 ## Handoff text for another Codex chat
 
 Use this when the feature chat needs to hand work back here:
