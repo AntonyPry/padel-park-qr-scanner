@@ -17,6 +17,11 @@ describe('ShiftSettingsPage', () => {
     render(<ShiftSettingsPage />);
 
     expect(screen.getByText('motivation settings content')).toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        'Правила мотивации сотрудников и шаблоны обязательных отчетов.',
+      ),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Шаблоны отчетов' }));
     expect(screen.getByText('report template settings content')).toBeInTheDocument();
   });

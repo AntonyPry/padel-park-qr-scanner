@@ -7,9 +7,6 @@ export default function ShiftSettingsPage() {
     <div className="grid min-w-0 gap-5">
       <header className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Настройки смены</h1>
-        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Правила мотивации сотрудников и шаблоны обязательных отчетов.
-        </p>
       </header>
 
       <Tabs className="min-w-0" defaultValue="motivation">

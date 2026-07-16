@@ -77,10 +77,10 @@ describe('ShiftWorkspaceLayout', () => {
       expect(link).toHaveAttribute('href', item.path);
       if (item.path === section.path) {
         expect(link).toHaveAttribute('aria-current', 'page');
-        expect(link).toHaveClass('bg-primary', 'text-primary-foreground', 'shadow-md');
+        expect(link).toHaveClass('bg-foreground/10', 'text-foreground', 'ring-foreground/15');
       } else {
         expect(link).not.toHaveAttribute('aria-current');
-        expect(link).not.toHaveClass('bg-primary');
+        expect(link).not.toHaveClass('bg-foreground/10');
       }
     }
     expect(await screen.findByText('Администратор')).toBeInTheDocument();
@@ -88,6 +88,47 @@ describe('ShiftWorkspaceLayout', () => {
     expect(
       mocks.apiFetch.mock.calls.filter(([input]) => input === '/api/shifts/active'),
     ).toHaveLength(1);
+  });
+
+  it('keeps the active shift context mounted while switching sections', async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={['/admin/shift/motivation']}>
+        <Routes>
+          <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
+            <Route path="motivation" element={<div>motivation content</div>} />
+            <Route path="reports" element={<div>reports content</div>} />
+            <Route path="cash" element={<div>cash content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Администратор')).toBeInTheDocument();
+    await user.click(screen.getByRole('link', { name: 'Отчеты' }));
+
+    expect(await screen.findByText('reports content')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Завершить' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Начать смену' })).not.toBeInTheDocument();
+    expect(
+      mocks.apiFetch.mock.calls.filter(([input]) => input === '/api/shifts/active'),
+    ).toHaveLength(1);
+  });
+
+  it('uses a neutral placeholder while the active shift is loading', () => {
+    mocks.apiFetch.mockImplementation(() => new Promise(() => undefined));
+    const { container } = render(
+      <MemoryRouter initialEntries={['/admin/shift/reports']}>
+        <Routes>
+          <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
+            <Route path="reports" element={<div>reports content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByRole('button', { name: 'Начать смену' })).not.toBeInTheDocument();
+    expect(container.querySelectorAll('[data-slot="skeleton"]')).toHaveLength(3);
   });
 
   it('starts a shift from the shared panel', async () => {
