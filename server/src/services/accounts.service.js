@@ -3,6 +3,7 @@ const authService = require('./auth.service');
 const accountLifecycle = require('./account-lifecycle.service');
 const accountMetadata = require('./account-metadata.service');
 const onboardingService = require('./onboarding.service');
+const { resolveStaffAccessContext } = require('./staff-access-context.service');
 const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 
 const ACCOUNT_ATTRIBUTES = [
@@ -15,7 +16,13 @@ const ACCOUNT_ATTRIBUTES = [
   'createdAt',
   'updatedAt',
 ];
-const STAFF_ATTRIBUTES = ['id', 'name', 'role', 'phone', 'status'];
+const STAFF_ATTRIBUTES = [
+  'id',
+  'name',
+  'role',
+  'phone',
+  'status',
+];
 const MANAGER_MANAGED_ROLES = ['admin', 'accountant', 'viewer', 'trainer'];
 const ACCOUNT_STATUS_VALUES = ['active', 'inactive', 'archived'];
 
@@ -69,7 +76,11 @@ function assertCanManageAccount(actor, account, nextRole = account.role) {
   throw appError('Недостаточно прав для управления этим пользователем', 403);
 }
 
-async function normalizeStaffId(staffId, accountId = null) {
+async function normalizeStaffId(
+  staffId,
+  organizationId,
+  accountId = null,
+) {
   if (staffId === null || staffId === undefined || staffId === '') return null;
 
   const normalizedStaffId = Number(staffId);
@@ -77,47 +88,99 @@ async function normalizeStaffId(staffId, accountId = null) {
     throw appError('Некорректный сотрудник');
   }
 
-  const staff = await db.Staff.findByPk(normalizedStaffId);
+  const staff = await db.Staff.findOne({
+    where: { id: normalizedStaffId, organizationId },
+  });
   if (!staff) throw appError('Сотрудник не найден', 404);
   if (staff.status !== 'active') {
     throw appError('К пользователю можно привязать только активного сотрудника', 409);
   }
 
-  const where = { staffId: normalizedStaffId };
+  const where = { organizationId, staffId: normalizedStaffId };
   if (accountId) {
-    where.id = { [db.Sequelize.Op.ne]: Number(accountId) };
+    where.accountId = { [db.Sequelize.Op.ne]: Number(accountId) };
   }
 
-  const existingAccount = await db.Account.findOne({ where });
-  if (existingAccount) {
+  const existingMembership = await db.Membership.findOne({ where });
+  if (existingMembership) {
     throw appError('Этот сотрудник уже привязан к другому пользователю', 409);
   }
 
   return normalizedStaffId;
 }
 
-function getById(id) {
+function getLegacyById(id) {
   return db.Account.findByPk(id, {
     attributes: ACCOUNT_ATTRIBUTES,
     include: [{ model: db.Staff, attributes: STAFF_ATTRIBUTES }],
   });
 }
 
-async function getAll(query = {}) {
+function serializeScopedAccount(membership) {
+  if (!membership?.Account) return null;
+  const account = membership.Account.toJSON
+    ? membership.Account.toJSON()
+    : membership.Account;
+  const staff = membership.Staff
+    ? membership.Staff.toJSON
+      ? membership.Staff.toJSON()
+      : membership.Staff
+    : null;
+  return {
+    ...account,
+    Staff: staff,
+    staffId: membership.staffId,
+  };
+}
+
+async function getById(id, context) {
+  if (!context.scoped) return getLegacyById(id);
+  const membership = await db.Membership.findOne({
+    include: [
+      { model: db.Account, attributes: ACCOUNT_ATTRIBUTES, required: true },
+      { model: db.Staff, attributes: STAFF_ATTRIBUTES, required: false },
+    ],
+    where: {
+      accountId: Number(id),
+      organizationId: context.organizationId,
+    },
+  });
+  return serializeScopedAccount(membership);
+}
+
+async function getAll(query = {}, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
   const where = {};
   if (query.status && query.status !== 'all') {
     where.status = normalizeStatus(query.status);
   }
 
-  return db.Account.findAll({
-    attributes: ACCOUNT_ATTRIBUTES,
-    include: [{ model: db.Staff, attributes: STAFF_ATTRIBUTES }],
-    where,
-    order: [['createdAt', 'DESC']],
+  if (!context.scoped) {
+    return db.Account.findAll({
+      attributes: ACCOUNT_ATTRIBUTES,
+      include: [{ model: db.Staff, attributes: STAFF_ATTRIBUTES }],
+      where,
+      order: [['createdAt', 'DESC']],
+    });
+  }
+  const memberships = await db.Membership.findAll({
+    include: [
+      {
+        model: db.Account,
+        attributes: ACCOUNT_ATTRIBUTES,
+        required: true,
+        where,
+      },
+      { model: db.Staff, attributes: STAFF_ATTRIBUTES, required: false },
+    ],
+    order: [[db.Account, 'createdAt', 'DESC']],
+    where: { organizationId: context.organizationId },
   });
+  return memberships.map(serializeScopedAccount);
 }
 
-async function create(actor, data) {
+async function create(actor, data, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
   const email = normalizeEmail(data.email);
   const password = String(data.password || '');
   const role = normalizeRole(data.role || 'admin');
@@ -130,16 +193,22 @@ async function create(actor, data) {
     throw appError('Пароль должен быть не короче 6 символов');
   }
 
-  const staffId = await normalizeStaffId(data.staffId);
+  const staffId = await normalizeStaffId(
+    data.staffId,
+    context.organizationId,
+  );
 
   try {
-    const account = await accountLifecycle.createAccount({
-      email,
-      passwordHash: authService.hashPassword(password),
-      role,
-      status,
-      staffId,
-    });
+    const account = await accountLifecycle.createAccount(
+      {
+        email,
+        passwordHash: authService.hashPassword(password),
+        role,
+        status,
+        staffId,
+      },
+      { organizationId: context.organizationId },
+    );
 
     await onboardingService.recordEventSafe(actor, 'account.created', {
       entityId: account.id,
@@ -151,7 +220,7 @@ async function create(actor, data) {
       },
     });
 
-    return getById(account.id);
+    return getById(account.id, context);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
       throw appError('Пользователь с таким email уже существует', 409);
@@ -161,8 +230,9 @@ async function create(actor, data) {
   }
 }
 
-async function update(actor, id, data) {
-  const account = await db.Account.findByPk(id);
+async function update(actor, id, data, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
+  const account = await getById(id, context);
   if (!account) throw appError('Пользователь не найден', 404);
 
   const payload = {};
@@ -186,7 +256,11 @@ async function update(actor, id, data) {
   }
 
   if ('staffId' in data) {
-    payload.staffId = await normalizeStaffId(data.staffId, account.id);
+    payload.staffId = await normalizeStaffId(
+      data.staffId,
+      context.organizationId,
+      account.id,
+    );
   }
 
   if (data.password) {
@@ -197,12 +271,14 @@ async function update(actor, id, data) {
   }
 
   try {
-    if ('role' in payload || 'status' in payload) {
-      await accountLifecycle.updateAccount(account.id, payload);
+    if ('role' in payload || 'status' in payload || 'staffId' in payload) {
+      await accountLifecycle.updateAccount(account.id, payload, {
+        organizationId: context.organizationId,
+      });
     } else {
       await accountMetadata.updateAccountMetadata(account.id, payload);
     }
-    return getById(account.id);
+    return getById(account.id, context);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
       throw appError('Пользователь с таким email уже существует', 409);
@@ -212,27 +288,38 @@ async function update(actor, id, data) {
   }
 }
 
-async function remove(actor, id) {
-  const account = await db.Account.findByPk(id);
+async function remove(actor, id, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
+  const account = await getById(id, context);
   if (!account) throw appError('Пользователь не найден', 404);
 
   assertCanManageAccount(actor, account);
-  await accountLifecycle.updateAccount(account.id, { status: 'archived' });
+  await accountLifecycle.updateAccount(
+    account.id,
+    { status: 'archived' },
+    { organizationId: context.organizationId },
+  );
 
-  return getById(account.id);
+  return getById(account.id, context);
 }
 
-async function restore(actor, id) {
-  const account = await db.Account.findByPk(id);
+async function restore(actor, id, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
+  const account = await getById(id, context);
   if (!account) throw appError('Пользователь не найден', 404);
 
   assertCanManageAccount(actor, account);
-  await accountLifecycle.updateAccount(account.id, { status: 'active' });
-  return getById(account.id);
+  await accountLifecycle.updateAccount(
+    account.id,
+    { status: 'active' },
+    { organizationId: context.organizationId },
+  );
+  return getById(account.id, context);
 }
 
-async function removeArchived(actor, id) {
-  const account = await db.Account.findByPk(id);
+async function removeArchived(actor, id, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
+  const account = await getById(id, context);
   if (!account) throw appError('Пользователь не найден', 404);
 
   assertCanManageAccount(actor, account);
@@ -244,6 +331,7 @@ async function removeArchived(actor, id) {
   }
 
   return accountLifecycle.permanentDeleteAccount(account.id, {
+    organizationId: context.organizationId,
     assertDeletable: async (lockedAccount, transaction) => {
       const references = await Promise.all([
         db.Shift.count({

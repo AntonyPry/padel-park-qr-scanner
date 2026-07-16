@@ -7,7 +7,6 @@ const ACCOUNT_METADATA_FIELDS = Object.freeze([
   'lastLoginAt',
   'email',
   'passwordHash',
-  'staffId',
 ]);
 
 function metadataError(message, statusCode = 400, code = 'ACCOUNT_METADATA_INVALID') {
@@ -25,7 +24,7 @@ function assertMetadataPayload(payload) {
     throw metadataError(
       `Account metadata writer rejected fields: ${rejected.join(', ')}`,
       400,
-      rejected.some((field) => ['role', 'status'].includes(field))
+      rejected.some((field) => ['role', 'status', 'staffId'].includes(field))
         ? 'ACCOUNT_LIFECYCLE_REQUIRED'
         : 'ACCOUNT_METADATA_INVALID',
     );

@@ -1,5 +1,9 @@
 module.exports = (sequelize, DataTypes) => {
   const Staff = sequelize.define('Staff', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     name: {
       type: DataTypes.STRING,
       allowNull: false,
@@ -18,7 +22,9 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Staff.associate = (models) => {
+    Staff.belongsTo(models.Organization, { foreignKey: 'organizationId' });
     Staff.hasOne(models.Account, { foreignKey: 'staffId' });
+    Staff.hasOne(models.Membership, { foreignKey: 'staffId' });
     Staff.hasMany(models.Shift, { foreignKey: 'staffId' });
   };
 

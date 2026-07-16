@@ -21,6 +21,10 @@ function isTenantProviderIntegrationsEnabled() {
   return readBooleanEnv(process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED, false);
 }
 
+function isTenantStaffAccessEnabled() {
+  return readBooleanEnv(process.env.TENANT_STAFF_ACCESS_ENABLED, false);
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -61,12 +65,34 @@ function assertTenantCapabilityDependencies() {
       'TENANT_FILES_WORKERS_ENABLED',
     );
   }
+  if (isTenantStaffAccessEnabled() && !isTenantContextEnabled()) {
+    throw capabilityDependencyError('TENANT_STAFF_ACCESS_ENABLED');
+  }
+  if (isTenantStaffAccessEnabled() && !isTenantCacheRealtimeEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_STAFF_ACCESS_ENABLED',
+      'TENANT_CACHE_REALTIME_ENABLED',
+    );
+  }
+  if (isTenantStaffAccessEnabled() && !isTenantFilesWorkersEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_STAFF_ACCESS_ENABLED',
+      'TENANT_FILES_WORKERS_ENABLED',
+    );
+  }
+  if (isTenantStaffAccessEnabled() && !isTenantProviderIntegrationsEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_STAFF_ACCESS_ENABLED',
+      'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
     tenantContext: isTenantContextEnabled(),
     tenantFilesWorkers: isTenantFilesWorkersEnabled(),
     tenantProviderIntegrations: isTenantProviderIntegrationsEnabled(),
+    tenantStaffAccess: isTenantStaffAccessEnabled(),
   });
 }
 
@@ -85,6 +111,7 @@ module.exports = {
   isTenantContextEnabled,
   isTenantFilesWorkersEnabled,
   isTenantProviderIntegrationsEnabled,
+  isTenantStaffAccessEnabled,
   readBooleanEnv,
   tenantContextCapability,
 };

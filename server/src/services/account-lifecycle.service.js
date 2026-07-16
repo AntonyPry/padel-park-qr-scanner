@@ -35,7 +35,10 @@ function assertRoleStatus(role, status) {
   }
 }
 
-async function lockDefaultFoundation(transaction, { requireInitialized = true } = {}) {
+async function lockDefaultFoundation(
+  transaction,
+  { organizationId = null, requireInitialized = true } = {},
+) {
   const organization = await db.Organization.findOne({
     lock: transaction.LOCK.UPDATE,
     transaction,
@@ -44,6 +47,16 @@ async function lockDefaultFoundation(transaction, { requireInitialized = true } 
   if (!organization || organization.status !== 'active') {
     const classification = await classifyTenantFoundation({ transaction });
     throw stateError(classification);
+  }
+  if (
+    organizationId !== null &&
+    Number(organization.id) !== Number(organizationId)
+  ) {
+    throw lifecycleError(
+      'Контекст организации недоступен',
+      404,
+      'TENANT_CONTEXT_NOT_FOUND',
+    );
   }
 
   const [organizationCount, clubCount, club] = await Promise.all([
@@ -72,6 +85,53 @@ async function lockDefaultFoundation(transaction, { requireInitialized = true } 
   }
 
   return { club, organization };
+}
+
+async function assertStaffLinkAvailable(
+  staffId,
+  organizationId,
+  transaction,
+  { accountId = null } = {},
+) {
+  if (staffId === null || staffId === undefined || staffId === '') return null;
+  const normalizedStaffId = Number(staffId);
+  if (!Number.isSafeInteger(normalizedStaffId) || normalizedStaffId <= 0) {
+    throw lifecycleError('Некорректный сотрудник', 400, 'INVALID_STAFF_ID');
+  }
+
+  const staff = await db.Staff.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: { id: normalizedStaffId, organizationId },
+  });
+  if (!staff) {
+    throw lifecycleError('Сотрудник не найден', 404, 'STAFF_NOT_FOUND');
+  }
+  if (staff.status !== 'active') {
+    throw lifecycleError(
+      'К пользователю можно привязать только активного сотрудника',
+      409,
+      'STAFF_NOT_ACTIVE',
+    );
+  }
+
+  const membershipWhere = { organizationId, staffId: normalizedStaffId };
+  if (accountId) {
+    membershipWhere.accountId = { [db.Sequelize.Op.ne]: Number(accountId) };
+  }
+  const linkedMembership = await db.Membership.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: membershipWhere,
+  });
+  if (linkedMembership) {
+    throw lifecycleError(
+      'Этот сотрудник уже привязан к другому пользователю',
+      409,
+      'STAFF_ALREADY_LINKED',
+    );
+  }
+  return normalizedStaffId;
 }
 
 async function lockAccountGraph(accountId, organizationId, transaction) {
@@ -173,9 +233,16 @@ async function createAccount(payload, options = {}) {
   assertRoleStatus(role, status);
 
   const account = await db.sequelize.transaction(async (transaction) => {
-    const { club, organization } = await lockDefaultFoundation(transaction);
+    const { club, organization } = await lockDefaultFoundation(transaction, {
+      organizationId: options.organizationId,
+    });
+    const staffId = await assertStaffLinkAvailable(
+      payload.staffId,
+      organization.id,
+      transaction,
+    );
     const createdAccount = await db.Account.create(
-      { ...payload, role, status },
+      { ...payload, role, staffId, status },
       { transaction },
     );
     if (options.failAfter === 'account') {
@@ -186,6 +253,7 @@ async function createAccount(payload, options = {}) {
         accountId: createdAccount.id,
         organizationId: organization.id,
         role,
+        staffId,
         status,
       },
       { transaction },
@@ -215,11 +283,21 @@ async function createAccount(payload, options = {}) {
 
 async function updateAccount(accountId, payload, options = {}) {
   const account = await db.sequelize.transaction(async (transaction) => {
-    const { club, organization } = await lockDefaultFoundation(transaction);
+    const { club, organization } = await lockDefaultFoundation(transaction, {
+      organizationId: options.organizationId,
+    });
     const graph = await lockAccountGraph(accountId, organization.id, transaction);
     const finalRole = payload.role ?? graph.account.role;
     const finalStatus = payload.status ?? graph.account.status;
     assertRoleStatus(finalRole, finalStatus);
+    const finalStaffId = Object.prototype.hasOwnProperty.call(payload, 'staffId')
+      ? await assertStaffLinkAvailable(
+          payload.staffId,
+          organization.id,
+          transaction,
+          { accountId: graph.account.id },
+        )
+      : graph.membership.staffId;
     await assertLastActiveOwnerRemains(
       graph.membership,
       { role: finalRole, status: finalStatus },
@@ -231,7 +309,7 @@ async function updateAccount(accountId, payload, options = {}) {
       throw lifecycleError('Forced Account lifecycle failure');
     }
     await graph.membership.update(
-      { role: finalRole, status: finalStatus },
+      { role: finalRole, staffId: finalStaffId, status: finalStatus },
       { transaction },
     );
     if (options.failAfter === 'membership') {
@@ -259,7 +337,9 @@ async function updateAccount(accountId, payload, options = {}) {
 
 async function permanentDeleteAccount(accountId, options = {}) {
   await db.sequelize.transaction(async (transaction) => {
-    const { organization } = await lockDefaultFoundation(transaction);
+    const { organization } = await lockDefaultFoundation(transaction, {
+      organizationId: options.organizationId,
+    });
     const graph = await lockAccountGraph(accountId, organization.id, transaction);
     await assertLastActiveOwnerRemains(
       graph.membership,
@@ -314,7 +394,10 @@ async function bootstrapInitialOwner(
       throw stateError(classification);
     }
 
-    const createdStaff = await db.Staff.create(staff, { transaction });
+    const createdStaff = await db.Staff.create(
+      { ...staff, organizationId: organization.id },
+      { transaction },
+    );
     if (failAfter === 'staff') {
       throw lifecycleError('Forced bootstrap failure after Staff');
     }
@@ -331,6 +414,7 @@ async function bootstrapInitialOwner(
         accountId: createdAccount.id,
         organizationId: organization.id,
         role: 'owner',
+        staffId: createdStaff.id,
         status: 'active',
       },
       { transaction },
@@ -355,6 +439,7 @@ async function bootstrapInitialOwner(
 
 module.exports = {
   _private: {
+    assertStaffLinkAvailable,
     assertLastActiveOwnerRemains,
     lockAccountGraph,
     lockDefaultFoundation,

@@ -125,6 +125,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     schemaSequelize = await createBaseSchema(database);
     db = require('../../models');
     const migration = require('../../migrations/20260714120000-create-tenant-foundation');
+    const staffIdentityMigration = require('../../migrations/20260716140000-add-tenant-staff-access-identity');
     const tenantFoundation = require('../../src/services/tenant-foundation.service');
     const accountLifecycle = require('../../src/services/account-lifecycle.service');
     const accountMetadata = require('../../src/services/account-metadata.service');
@@ -186,6 +187,17 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       const reapplied = await tenantFoundation.classifyTenantFoundation();
       assert.equal(reapplied.state, 'bootstrap-pending');
     });
+
+    await staffIdentityMigration.up(queryInterface, SequelizePackage);
+
+    const downFoundationWithStaffIdentity = async () => {
+      await staffIdentityMigration.down(queryInterface, SequelizePackage);
+      await migration.down(queryInterface, SequelizePackage);
+    };
+    const upFoundationWithStaffIdentity = async () => {
+      await migration.up(queryInterface, SequelizePackage);
+      await staffIdentityMigration.up(queryInterface, SequelizePackage);
+    };
 
     await t.test('pending API allowlist blocks all business and ingress routes', async () => {
       server = await listen(createApp());
@@ -310,7 +322,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     });
 
     await t.test('rollback initialized and backfill existing Accounts preserves parity', async () => {
-      await migration.down(queryInterface, SequelizePackage);
+      await downFoundationWithStaffIdentity();
       assert.equal(await db.Account.count(), 1);
       const passwordHash = authService.hashPassword('Compat123!');
       await db.Account.bulkCreate([
@@ -333,7 +345,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
           status: 'archived',
         },
       ]);
-      await migration.up(queryInterface, SequelizePackage);
+      await upFoundationWithStaffIdentity();
       const state = await assertInitialized();
       assert.equal(state.counts.accounts, 4);
       assert.equal(state.counts.memberships, 4);
@@ -341,7 +353,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     });
 
     await t.test('existing Accounts without active owner abort migration and retain Accounts', async () => {
-      await migration.down(queryInterface, SequelizePackage);
+      await downFoundationWithStaffIdentity();
       await db.Account.update({ status: 'inactive' }, { where: {} });
       await assert.rejects(
         migration.up(queryInterface, SequelizePackage),
@@ -354,7 +366,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         { status: 'active' },
         { where: { id: initialOwner.id } },
       );
-      await migration.up(queryInterface, SequelizePackage);
+      await upFoundationWithStaffIdentity();
       await assertInitialized();
     });
 
@@ -513,7 +525,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       await assertInitialized();
     });
 
-    await t.test('metadata allowlist and login update do not change parity or take Organization lock', async () => {
+    await t.test('metadata allowlist excludes staffId while lifecycle preserves Staff parity', async () => {
       await assert.rejects(
         accountMetadata.updateAccountMetadata(initialOwner.id, { role: 'manager' }),
         (error) => error.code === 'ACCOUNT_LIFECYCLE_REQUIRED',
@@ -521,14 +533,23 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       const before = await assertInitialized();
       const metadataStaff = await db.Staff.create({
         name: 'Metadata QA',
+        organizationId: (await db.Organization.findOne()).id,
         phone: `+7777${Date.now()}`.slice(0, 16),
         role: 'QA',
         status: 'active',
       });
+      await assert.rejects(
+        accountMetadata.updateAccountMetadata(created['manager-archived'].id, {
+          staffId: metadataStaff.id,
+        }),
+        (error) => error.code === 'ACCOUNT_LIFECYCLE_REQUIRED',
+      );
+      await accountLifecycle.updateAccount(created['manager-archived'].id, {
+        staffId: metadataStaff.id,
+      });
       await accountMetadata.updateAccountMetadata(created['manager-archived'].id, {
         email: 'metadata-allowlist@lifecycle.test',
         passwordHash: authService.hashPassword('Metadata123!'),
-        staffId: metadataStaff.id,
       });
       const organization = await db.Organization.findOne();
       const lockTransaction = await db.sequelize.transaction();
@@ -740,11 +761,12 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       await assert.rejects(
         accountSeeder.runInitializedSeederBatch(
           queryInterface,
-          async (scopedQueryInterface) => {
+          async (scopedQueryInterface, _accountBatch, foundation) => {
             await scopedQueryInterface.bulkInsert('Staffs', [
               {
                 createdAt: new Date(),
                 name: 'Forced Seeder QA',
+                organizationId: foundation.organization.id,
                 phone: marker,
                 role: 'QA',
                 status: 'active',
@@ -795,7 +817,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       await queryInterface.bulkInsert('SequelizeMeta', [{ name: laterMigration }]);
       await assert.rejects(
         migration.down(queryInterface, SequelizePackage),
-        /later tenant migrations/,
+        /external FKs|later tenant migrations/,
       );
       assert.ok((await queryInterface.showAllTables()).includes('Organizations'));
       await queryInterface.bulkDelete('SequelizeMeta', { name: laterMigration });
@@ -822,9 +844,9 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
 
     await t.test('initialized rollback/reapply restores identical checksum', async () => {
       const before = await assertInitialized();
-      await migration.down(queryInterface, SequelizePackage);
+      await downFoundationWithStaffIdentity();
       assert.equal(await db.Account.count(), before.counts.accounts);
-      await migration.up(queryInterface, SequelizePackage);
+      await upFoundationWithStaffIdentity();
       const after = await assertInitialized();
       assert.equal(after.checksum, before.checksum);
     });

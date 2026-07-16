@@ -4,16 +4,24 @@ const { sendError } = require('../utils/api-error');
 class StaffController {
   async getAll(req, res) {
     try {
-      const staff = await staffService.getAll(req.query);
+      const staff = await staffService.getAll(req.query, req.tenant);
       res.json(staff);
     } catch (error) {
       sendError(res, error, 'Ошибка получения персонала');
     }
   }
 
+  async getById(req, res) {
+    try {
+      res.json(await staffService.getStaffById(req.params.id, req.tenant));
+    } catch (error) {
+      sendError(res, error, 'Ошибка получения сотрудника');
+    }
+  }
+
   async create(req, res) {
     try {
-      const staff = await staffService.create(req.body);
+      const staff = await staffService.create(req.body, req.tenant);
       res.status(201).json(staff);
     } catch (error) {
       sendError(res, error, 'Ошибка добавления сотрудника');
@@ -22,7 +30,7 @@ class StaffController {
 
   async update(req, res) {
     try {
-      const staff = await staffService.update(req.params.id, req.body);
+      const staff = await staffService.update(req.params.id, req.body, req.tenant);
       res.json(staff);
     } catch (error) {
       sendError(res, error, 'Ошибка обновления сотрудника');
@@ -31,7 +39,7 @@ class StaffController {
 
   async remove(req, res) {
     try {
-      const result = await staffService.remove(req.params.id);
+      const result = await staffService.remove(req.params.id, req.tenant);
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка удаления сотрудника');
@@ -40,7 +48,7 @@ class StaffController {
 
   async restore(req, res) {
     try {
-      const result = await staffService.restore(req.params.id);
+      const result = await staffService.restore(req.params.id, req.tenant);
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка восстановления сотрудника');
@@ -49,7 +57,7 @@ class StaffController {
 
   async removeArchived(req, res) {
     try {
-      const result = await staffService.removeArchived(req.params.id);
+      const result = await staffService.removeArchived(req.params.id, req.tenant);
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка удаления сотрудника из архива');

@@ -283,6 +283,7 @@ const rawEndpointContracts: EndpointContract[] = [
 
   { id: 'staff.list', method: 'get', path: '/staff', query: apiSchemas.staff.listQuery, summary: 'List staff', tags: ['Staff'] },
   { id: 'staff.create', method: 'post', path: '/staff', body: apiSchemas.staff.body, summary: 'Create staff member', tags: ['Staff'] },
+  { id: 'staff.get', method: 'get', path: '/staff/{id}', params: apiSchemas.staff.params, summary: 'Get staff member', tags: ['Staff'] },
   { id: 'staff.update', method: 'put', path: '/staff/{id}', body: apiSchemas.staff.body, params: apiSchemas.staff.params, summary: 'Update staff member', tags: ['Staff'] },
   { id: 'staff.restore', method: 'post', path: '/staff/{id}/restore', params: apiSchemas.staff.params, summary: 'Restore staff member', tags: ['Staff'] },
   { id: 'staff.deletePermanent', method: 'delete', path: '/staff/{id}/permanent', params: apiSchemas.staff.params, summary: 'Delete archived staff member permanently', tags: ['Staff'] },

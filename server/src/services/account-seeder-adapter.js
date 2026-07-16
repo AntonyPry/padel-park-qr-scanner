@@ -23,6 +23,7 @@ function seederError(message, code = 'TENANT_SEEDER_INVALID') {
 
 function validateAccountRows(rows) {
   const emails = new Set();
+  const staffIds = new Set();
   for (const row of rows) {
     const email = String(row.email || '').trim().toLowerCase();
     if (!email || emails.has(email)) {
@@ -34,6 +35,13 @@ function validateAccountRows(rows) {
     }
     if (!TENANT_STATUS_VALUES.includes(row.status)) {
       throw seederError(`Seeder Account status is invalid: ${row.status}`);
+    }
+    if (row.staffId !== null && row.staffId !== undefined) {
+      const staffId = Number(row.staffId);
+      if (!Number.isSafeInteger(staffId) || staffId <= 0 || staffIds.has(staffId)) {
+        throw seederError(`Seeder Account staffId is invalid or duplicated: ${row.staffId}`);
+      }
+      staffIds.add(staffId);
     }
   }
 }
@@ -119,7 +127,7 @@ async function insertAccountsWithParity(
   await queryInterface.bulkInsert('Accounts', rows, { transaction });
   const emails = rows.map((row) => String(row.email).trim().toLowerCase());
   const [accounts] = await queryInterface.sequelize.query(
-    'SELECT id, email, role, status FROM Accounts WHERE email IN (:emails) ORDER BY id FOR UPDATE',
+    'SELECT id, email, role, staffId, status FROM Accounts WHERE email IN (:emails) ORDER BY id FOR UPDATE',
     { replacements: { emails }, transaction },
   );
   if (accounts.length !== rows.length) {
@@ -133,6 +141,7 @@ async function insertAccountsWithParity(
       createdAt: now,
       organizationId: foundation.organization.id,
       role: account.role,
+      staffId: account.staffId,
       status: account.status,
       updatedAt: now,
     })),
@@ -210,7 +219,11 @@ async function runInitializedSeederBatch(
         ),
     };
 
-    const callbackResult = await execute(scopedQueryInterface, accountBatch);
+    const callbackResult = await execute(
+      scopedQueryInterface,
+      accountBatch,
+      foundation,
+    );
     if (options.failAfter === 'batch') {
       throw seederError('Forced seeder batch failure');
     }
@@ -239,6 +252,7 @@ async function seedDemoAccounts(accounts, options = {}) {
     for (const definition of accounts) {
       const staffPayload = {
         name: definition.name,
+        organizationId: organization.id,
         phone: definition.phone,
         role: definition.staffRole,
         status: definition.status,
@@ -246,7 +260,10 @@ async function seedDemoAccounts(accounts, options = {}) {
       let staff = await db.Staff.findOne({
         lock: transaction.LOCK.UPDATE,
         transaction,
-        where: { phone: definition.phone },
+        where: {
+          organizationId: organization.id,
+          phone: definition.phone,
+        },
       });
       if (staff) {
         await staff.update(staffPayload, { transaction });
@@ -275,7 +292,11 @@ async function seedDemoAccounts(accounts, options = {}) {
         );
         await graph.account.update(payload, { transaction });
         await graph.membership.update(
-          { role: definition.role, status: definition.status },
+          {
+            role: definition.role,
+            staffId: staff.id,
+            status: definition.status,
+          },
           { transaction },
         );
         await accountLifecycle._private.reconcileAccess({
@@ -294,6 +315,7 @@ async function seedDemoAccounts(accounts, options = {}) {
             accountId: account.id,
             organizationId: organization.id,
             role: definition.role,
+            staffId: staff.id,
             status: definition.status,
           },
           { transaction },

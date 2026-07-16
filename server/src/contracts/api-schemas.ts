@@ -1130,7 +1130,9 @@ const apiSchemas = {
         status: z.enum(['active', 'inactive', 'archived']).optional(),
       })
       .passthrough(),
-    listQuery: z.object({ status: statusFilter.optional() }).passthrough(),
+    listQuery: z
+      .object({ q: optionalString, status: statusFilter.optional() })
+      .passthrough(),
     params: idParams,
   },
   onboarding: {

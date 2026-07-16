@@ -17,6 +17,10 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
+      staffId: {
+        type: DataTypes.INTEGER,
+        allowNull: true,
+      },
       role: {
         type: DataTypes.ENUM(...MEMBERSHIP_ROLE_VALUES),
         allowNull: false,
@@ -32,6 +36,7 @@ module.exports = (sequelize, DataTypes) => {
   Membership.associate = (models) => {
     Membership.belongsTo(models.Organization, { foreignKey: 'organizationId' });
     Membership.belongsTo(models.Account, { foreignKey: 'accountId' });
+    Membership.belongsTo(models.Staff, { foreignKey: 'staffId' });
     Membership.hasMany(models.MembershipClubAccess, {
       foreignKey: 'membershipId',
     });

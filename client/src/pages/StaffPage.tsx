@@ -1180,21 +1180,21 @@ export default function StaffPage() {
       </div>
 
       <div className="rounded-md border bg-card">
-        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col items-stretch gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <div className="font-semibold">Сотрудники</div>
             <div className="text-xs text-muted-foreground">
               Рабочие смены привязываются к этой базе.
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
             <Select
               value={staffStatus}
               onValueChange={(value) =>
                 setStaffStatus(value as 'active' | 'archived' | 'all')
               }
             >
-              <SelectTrigger className="w-[150px]">
+              <SelectTrigger className="min-w-0 flex-1 sm:w-[150px] sm:flex-none">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1205,6 +1205,7 @@ export default function StaffPage() {
             </Select>
             {canEditStaff && (
               <Button
+                className="shrink-0"
                 variant="outline"
                 size="sm"
                 onClick={() => openStaffForm()}

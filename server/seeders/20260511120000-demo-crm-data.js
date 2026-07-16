@@ -69,7 +69,7 @@ module.exports = {
   async up(queryInterface, Sequelize) {
     return runInitializedSeederBatch(
       queryInterface,
-      async (queryInterface, accountBatch) => {
+      async (queryInterface, accountBatch, foundation) => {
         const now = new Date();
         const passwordHash = hashPassword('Demo1234!');
 
@@ -90,6 +90,7 @@ module.exports = {
     });
         await accountBatch.deleteAccountsByEmailLike('%@padelpark.demo');
     await queryInterface.bulkDelete('Staffs', {
+      organizationId: foundation.organization.id,
       phone: { [Sequelize.Op.like]: '+790000001%' },
     });
     await queryInterface.bulkDelete('Finances', {
@@ -211,6 +212,7 @@ module.exports = {
     await queryInterface.bulkInsert('Staffs', [
       {
         name: 'Антон Pry',
+        organizationId: foundation.organization.id,
         role: 'Владелец',
         phone: '+79000000100',
         status: 'active',
@@ -219,6 +221,7 @@ module.exports = {
       },
       {
         name: 'Мария Орлова',
+        organizationId: foundation.organization.id,
         role: 'Управляющий',
         phone: '+79000000101',
         status: 'active',
@@ -227,6 +230,7 @@ module.exports = {
       },
       {
         name: 'Илья Смирнов',
+        organizationId: foundation.organization.id,
         role: 'Администратор',
         phone: '+79000000102',
         status: 'active',
@@ -235,6 +239,7 @@ module.exports = {
       },
       {
         name: 'Софья Ким',
+        organizationId: foundation.organization.id,
         role: 'Администратор',
         phone: '+79000000103',
         status: 'active',
@@ -243,6 +248,7 @@ module.exports = {
       },
       {
         name: 'Елена Морозова',
+        organizationId: foundation.organization.id,
         role: 'Бухгалтер',
         phone: '+79000000104',
         status: 'active',
@@ -251,6 +257,7 @@ module.exports = {
       },
       {
         name: 'Виктория Лебедева',
+        organizationId: foundation.organization.id,
         role: 'Наблюдатель',
         phone: '+79000000105',
         status: 'active',
@@ -259,6 +266,7 @@ module.exports = {
       },
       {
         name: 'Павел Романов',
+        organizationId: foundation.organization.id,
         role: 'Тренер',
         phone: '+79000000106',
         status: 'active',
@@ -268,7 +276,8 @@ module.exports = {
     ]);
 
     const [staffRows] = await queryInterface.sequelize.query(
-      'SELECT id, phone FROM Staffs WHERE phone LIKE "+790000001%"',
+      'SELECT id, phone FROM Staffs WHERE organizationId = :organizationId AND phone LIKE "+790000001%"',
+      { replacements: { organizationId: foundation.organization.id } },
     );
     const staffByPhone = Object.fromEntries(
       staffRows.map((staff) => [staff.phone, staff.id]),
@@ -538,7 +547,7 @@ module.exports = {
   async down(queryInterface, Sequelize) {
     return runInitializedSeederBatch(
       queryInterface,
-      async (queryInterface, accountBatch) => {
+      async (queryInterface, accountBatch, foundation) => {
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
     );
@@ -556,6 +565,7 @@ module.exports = {
     });
         await accountBatch.deleteAccountsByEmailLike('%@padelpark.demo');
     await queryInterface.bulkDelete('Staffs', {
+      organizationId: foundation.organization.id,
       phone: { [Sequelize.Op.like]: '+790000001%' },
     });
     await queryInterface.bulkDelete('Finances', {

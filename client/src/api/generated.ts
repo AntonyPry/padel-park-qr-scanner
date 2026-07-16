@@ -219,6 +219,7 @@ export const apiEndpoints = {
   "references.deletePermanent": { method: "DELETE", path: "/references/{type}/{id}/permanent", responseType: "json", tenantScope: "organization" },
   "staff.list": { method: "GET", path: "/staff", responseType: "json", tenantScope: "organization" },
   "staff.create": { method: "POST", path: "/staff", responseType: "json", tenantScope: "organization" },
+  "staff.get": { method: "GET", path: "/staff/{id}", responseType: "json", tenantScope: "organization" },
   "staff.update": { method: "PUT", path: "/staff/{id}", responseType: "json", tenantScope: "organization" },
   "staff.restore": { method: "POST", path: "/staff/{id}/restore", responseType: "json", tenantScope: "organization" },
   "staff.deletePermanent": { method: "DELETE", path: "/staff/{id}/permanent", responseType: "json", tenantScope: "organization" },
@@ -405,6 +406,7 @@ export type AccessUpdateVisitCategoryBody = {
   [key: string]: unknown;
 };
 export type AccountsListQuery = {
+  q?: string | "" | null;
   status?: "active" | "archived" | "inactive" | "all";
   [key: string]: unknown;
 };
@@ -1905,6 +1907,9 @@ export type StaffCreateBody = {
   status?: "active" | "inactive" | "archived";
   [key: string]: unknown;
 };
+export type StaffGetParams = {
+  id: number | string;
+};
 export type StaffUpdateParams = {
   id: number | string;
 };
@@ -2684,6 +2689,7 @@ export interface ApiEndpointRequestMap {
   "references.deletePermanent": ApiEndpointRequest<ReferencesDeletePermanentParams, undefined, undefined>;
   "staff.list": ApiEndpointRequest<undefined, StaffListQuery, undefined>;
   "staff.create": ApiEndpointRequest<undefined, undefined, StaffCreateBody>;
+  "staff.get": ApiEndpointRequest<StaffGetParams, undefined, undefined>;
   "staff.update": ApiEndpointRequest<StaffUpdateParams, undefined, StaffUpdateBody>;
   "staff.restore": ApiEndpointRequest<StaffRestoreParams, undefined, undefined>;
   "staff.deletePermanent": ApiEndpointRequest<StaffDeletePermanentParams, undefined, undefined>;
@@ -2970,6 +2976,7 @@ export interface ApiEndpointResponseMap {
   "references.deletePermanent": unknown;
   "staff.list": unknown;
   "staff.create": unknown;
+  "staff.get": unknown;
   "staff.update": unknown;
   "staff.restore": unknown;
   "staff.deletePermanent": unknown;

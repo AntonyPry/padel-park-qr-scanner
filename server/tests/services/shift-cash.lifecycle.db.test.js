@@ -19,8 +19,13 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
   const originalStoreAttachment = attachmentStorage.storeAttachment;
 
   try {
+    const organization = await db.Organization.findOne({
+      where: { slug: 'padel-park' },
+    });
+    assert.ok(organization, 'default Organization is required');
     staff = await db.Staff.create({
       name: `Shift cash lifecycle ${suffix}`,
+      organizationId: organization.id,
       role: 'Администратор',
       status: 'active',
     });

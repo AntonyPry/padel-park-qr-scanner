@@ -106,3 +106,35 @@ test('provider integration capability depends on Features 3, 4.1 and 4.2', () =>
     for (const name of names) restore(name, previous[name]);
   }
 });
+
+test('Staff/access capability is server-owned and depends on accepted Feature 4 capabilities', () => {
+  const names = [
+    'TENANT_CONTEXT_ENABLED',
+    'TENANT_CACHE_REALTIME_ENABLED',
+    'TENANT_FILES_WORKERS_ENABLED',
+    'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+    'TENANT_STAFF_ACCESS_ENABLED',
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) process.env[name] = 'true';
+    assert.equal(assertTenantCapabilityDependencies().tenantStaffAccess, true);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        tenantContextCapability(),
+        'tenantStaffAccess',
+      ),
+      false,
+    );
+
+    process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED = 'false';
+    assert.throws(
+      () => assertTenantCapabilityDependencies(),
+      (error) =>
+        error.code === 'TENANT_CAPABILITY_DEPENDENCY_INVALID' &&
+        error.message.includes('TENANT_PROVIDER_INTEGRATIONS_ENABLED'),
+    );
+  } finally {
+    for (const name of names) restore(name, previous[name]);
+  }
+});

@@ -134,6 +134,35 @@ test('owner access and owner roleOverride are never accepted by classifier', () 
   assert.match(result.diagnostics.reasons.join(' '), /must not have Club access/);
 });
 
+test('ready Staff identity schema requires Account/Membership/Staff parity', () => {
+  const base = snapshot({
+    accounts: [{ id: 1, role: 'owner', staffId: 5, status: 'active' }],
+    memberships: [
+      {
+        id: 10,
+        accountId: 1,
+        organizationId: 1,
+        role: 'owner',
+        staffId: 5,
+        status: 'active',
+      },
+    ],
+  });
+  base.staffIdentitySchema = 'ready';
+  base.staffs = [{ id: 5, organizationId: 1, status: 'active' }];
+  assert.equal(classifySnapshot(base).state, 'initialized');
+
+  base.memberships[0].staffId = null;
+  const mismatch = classifySnapshot(base);
+  assert.equal(mismatch.state, 'invalid');
+  assert.match(mismatch.diagnostics.reasons.join(' '), /Staff link parity/);
+
+  const partial = snapshot();
+  partial.staffIdentitySchema = 'partial';
+  partial.staffs = [];
+  assert.equal(classifySnapshot(partial).state, 'invalid');
+});
+
 test('request gate cache is short, bounded and coalesces concurrent strict reads', async () => {
   invalidateTenantFoundationGateCache();
   assert.equal(resolveGateCacheTtlMs(-10), 0);

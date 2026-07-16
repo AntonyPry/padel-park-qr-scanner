@@ -42,6 +42,7 @@
     "tenant:cache-realtime:audit": "node scripts/audit-tenant-cache-realtime.js",
     "tenant:files-workers:audit": "node scripts/audit-tenant-files-workers.js",
     "tenant:providers:audit": "node scripts/audit-tenant-provider-integrations.js",
+    "tenant:staff-membership-writes:audit": "node scripts/audit-staff-membership-writes.js",
     "tenant:files-workers:attachments": "node scripts/migrate-shift-report-attachments.js",
     "tenant:providers:bootstrap": "node scripts/bootstrap-provider-connections.js",
     "tenant:foundation:assert": "node scripts/tenant-foundation-check.js",

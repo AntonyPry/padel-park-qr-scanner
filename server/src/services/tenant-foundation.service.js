@@ -38,7 +38,12 @@ function stableChecksum(snapshot) {
       row.roleOverride,
       row.status,
     ]),
-    accounts: snapshot.accounts.map((row) => [row.id, row.role, row.status]),
+    accounts: snapshot.accounts.map((row) => [
+      row.id,
+      row.role,
+      row.status,
+      row.staffId ?? null,
+    ]),
     clubs: snapshot.clubs.map((row) => [
       row.id,
       row.organizationId,
@@ -51,10 +56,17 @@ function stableChecksum(snapshot) {
       row.accountId,
       row.role,
       row.status,
+      row.staffId ?? null,
     ]),
     organizations: snapshot.organizations.map((row) => [
       row.id,
       row.slug,
+      row.status,
+    ]),
+    staffIdentitySchema: snapshot.staffIdentitySchema || 'legacy',
+    staffs: (snapshot.staffs || []).map((row) => [
+      row.id,
+      row.organizationId,
       row.status,
     ]),
   });
@@ -81,6 +93,30 @@ async function loadTenantFoundationSnapshot({
     if (afterRead) await afterRead({ rows, table, transaction });
     return rows;
   };
+  const [identityColumns] = await sequelize.query(
+    `SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND ((TABLE_NAME = 'Staffs' AND COLUMN_NAME = 'organizationId')
+          OR (TABLE_NAME = 'Memberships' AND COLUMN_NAME = 'staffId'))
+      ORDER BY TABLE_NAME, COLUMN_NAME`,
+    { transaction },
+  );
+  const hasStaffOrganization = identityColumns.some(
+    (column) =>
+      column.tableName === 'Staffs' && column.columnName === 'organizationId',
+  );
+  const hasMembershipStaff = identityColumns.some(
+    (column) =>
+      column.tableName === 'Memberships' && column.columnName === 'staffId',
+  );
+  const staffIdentitySchema =
+    hasStaffOrganization && hasMembershipStaff
+      ? 'ready'
+      : hasStaffOrganization || hasMembershipStaff
+        ? 'partial'
+        : 'legacy';
+
   const organizations = await read(
     'Organizations',
     'SELECT id, slug, name, status FROM Organizations ORDER BY id',
@@ -91,22 +127,41 @@ async function loadTenantFoundationSnapshot({
   );
   const accounts = await read(
     'Accounts',
-    'SELECT id, role, status FROM Accounts ORDER BY id',
+    `SELECT id, role, status${staffIdentitySchema === 'ready' ? ', staffId' : ''}
+       FROM Accounts ORDER BY id`,
   );
   const memberships = await read(
     'Memberships',
-    'SELECT id, organizationId, accountId, role, status FROM Memberships ORDER BY id',
+    `SELECT id, organizationId, accountId, role, status${staffIdentitySchema === 'ready' ? ', staffId' : ''}
+       FROM Memberships ORDER BY id`,
   );
   const accesses = await read(
     'MembershipClubAccesses',
     'SELECT organizationId, membershipId, clubId, roleOverride, status FROM MembershipClubAccesses ORDER BY membershipId, clubId',
   );
 
-  return { accesses, accounts, clubs, memberships, organizations };
+  const staffs =
+    staffIdentitySchema === 'ready'
+      ? await read(
+          'Staffs',
+          'SELECT id, organizationId, status FROM Staffs ORDER BY id',
+        )
+      : [];
+
+  return {
+    accesses,
+    accounts,
+    clubs,
+    memberships,
+    organizations,
+    staffIdentitySchema,
+    staffs,
+  };
 }
 
 function classifySnapshot(snapshot) {
   const reasons = [];
+  const staffIdentitySchema = snapshot.staffIdentitySchema || 'legacy';
   const counts = {
     accesses: snapshot.accesses.length,
     accounts: snapshot.accounts.length,
@@ -117,6 +172,10 @@ function classifySnapshot(snapshot) {
 
   const organization = snapshot.organizations[0] || null;
   const club = snapshot.clubs[0] || null;
+
+  if (staffIdentitySchema === 'partial') {
+    reasons.push('Staff/Membership identity schema is only partially applied');
+  }
 
   if (counts.organizations !== 1) {
     reasons.push('exactly one Organization is required');
@@ -155,7 +214,10 @@ function classifySnapshot(snapshot) {
     reasons.push('Account/Membership/access triple is partially empty');
   }
 
-  if (allIdentityEmpty && reasons.length === 0) {
+  if (
+    allIdentityEmpty &&
+    reasons.length === 0
+  ) {
     return {
       state: TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING,
       bootstrapPending: true,
@@ -174,6 +236,10 @@ function classifySnapshot(snapshot) {
     snapshot.memberships.map((row) => [Number(row.id), row]),
   );
   const membershipsByAccount = new Map();
+  const staffsById = new Map(
+    (snapshot.staffs || []).map((row) => [Number(row.id), row]),
+  );
+  const membershipByStaff = new Map();
 
   for (const membership of snapshot.memberships) {
     const accountId = Number(membership.accountId);
@@ -187,6 +253,36 @@ function classifySnapshot(snapshot) {
     if (!accountsById.has(accountId)) {
       reasons.push(`Membership ${membership.id} has no Account`);
     }
+
+    if (staffIdentitySchema === 'ready' && membership.staffId !== null) {
+      const staffId = Number(membership.staffId);
+      const staff = staffsById.get(staffId);
+      const previous = membershipByStaff.get(staffId);
+      if (previous) {
+        reasons.push(
+          `Staff ${staffId} is linked to multiple Memberships ${previous.id} and ${membership.id}`,
+        );
+      }
+      membershipByStaff.set(staffId, membership);
+      if (!staff) {
+        reasons.push(`Membership ${membership.id} has stale Staff ${staffId}`);
+      } else if (
+        Number(staff.organizationId) !== Number(membership.organizationId)
+      ) {
+        reasons.push(`Membership ${membership.id} Staff Organization mismatch`);
+      }
+    }
+  }
+
+  if (staffIdentitySchema === 'ready') {
+    for (const staff of snapshot.staffs || []) {
+      if (
+        !organization ||
+        Number(staff.organizationId) !== Number(organization.id)
+      ) {
+        reasons.push(`Staff ${staff.id} is outside the default Organization`);
+      }
+    }
   }
 
   for (const account of snapshot.accounts) {
@@ -198,6 +294,12 @@ function classifySnapshot(snapshot) {
     const membership = memberships[0];
     if (membership.role !== account.role || membership.status !== account.status) {
       reasons.push(`Account ${account.id} role/status parity mismatch`);
+    }
+    if (
+      staffIdentitySchema === 'ready' &&
+      Number(account.staffId || 0) !== Number(membership.staffId || 0)
+    ) {
+      reasons.push(`Account ${account.id} Staff link parity mismatch`);
     }
   }
 
