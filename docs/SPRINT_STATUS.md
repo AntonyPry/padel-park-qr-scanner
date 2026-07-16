@@ -2225,13 +2225,13 @@ Product source:
 
 Цель: обновить onboarding после feature branch `codex/shift-cash` до feature freeze, не мержить в `main` и не деплоить продуктовую ветку.
 
-Общий статус: `partial` - onboarding sync обновляется под product commits `289f04a` + `2441c8e`; `main` и deploy в этом срезе не менялись.
+Общий статус: `partial` - onboarding sync обновляется под product commits `7168744` ... `67f8684` нового раздела «Смена»; `main` и deploy в этом срезе не менялись.
 
 Product source:
 
-- branch `origin/codex/shift-navigation-cash-ux`;
-- commits `289f04a feat: separate shift navigation and cash UX`, `2441c8e fix: preserve shift cash data during category migration`;
-- QA outcome: repeat QA PASS, без Blocker/P1/P2/P3, mobile 390 без overflow по KPI/dialog.
+- branch `origin/codex/shift-section-settings-fix`;
+- commits `7168744 fix: restructure shift workspace navigation`, `c9d20c4 fix: tighten shift workspace header`, `927b7a6 fix: refine shift workspace density`, `5ad5ec0 fix: prevent shift report filter overlap`, `67f8684 fix: preserve legacy shift redirect state`;
+- QA outcome: Product QA PASS, без P1/P2/P3; User Preview Gate пройден.
 
 Сделано:
 
@@ -2247,9 +2247,10 @@ Product source:
   - `shift_cash.attachment_uploaded`;
   - `shift_cash.closed`;
 - `shift_cash.*` не добавлены в client checkpoint allowlist, чтобы браузер не мог засчитать кассовые действия без реального backend-события;
-- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-navigation-cash-ux`; в instructions-diff это не дублируется;
-- admin/manager/owner Shift Cash задачи ведут на `/admin/shift-cash`; бухгалтерский read-only сценарий остается на `/admin/finances`;
-- связанные Shift Reports уроки проверяются отдельно и должны вести на `/admin/shift-reports`; отдельных Shift Reports onboarding-задач в catalog на момент sync нет;
+- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью product branches; в instructions-diff это не дублируется;
+- admin/manager/owner Shift Cash задачи ведут на `/admin/shift/cash` внутри workspace «Смена»; бухгалтерский read-only сценарий остается на `/admin/finances`;
+- связанные Shift Reports уроки проверяются отдельно и должны вести на `/admin/shift/reports`; отдельных Shift Reports onboarding-задач в catalog на момент sync нет;
+- задачи и knowledge по правилам мотивации ведут на `/admin/shift-settings` под названием «Настройки смены»;
 - из Shift Cash инструкций убраны выбор и сверка категории расхода после migration `20260715190000-remove-shift-cash-expense-category.js`;
 - обновлены реальные CRM screenshots из feature QA в dark/light наборах:
   - `/onboarding/shift-cash/full-cash-metrics.png`;
@@ -2268,19 +2269,19 @@ Product source:
   - `/onboarding-light/shift-cash/close-dialog-variance-comment.png`;
   - `/onboarding-light/shift-cash/accountant-period-export.png`;
   - `/onboarding-light/shift-cash/accountant-linked-row-history.png`;
-- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/shift-cash`;
+- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/shift/cash`;
 - owner role override сохранен: владелец может проходить роль, но права владельца не снижаются.
 
-Repeat QA 15.07.2026:
+Repeat QA 16.07.2026:
 
 - реальный PNG-чек загружен через backend: upload `201`, protected attachment GET `200 image/png`;
 - карточка расхода показывает настоящее `<img>` `600x820` через blob URL, lightbox открывает то же фото;
 - backend checkpoint `shift_cash.attachment_uploaded` записан ровно один раз для загруженного `attachmentId`;
 - dark/light `expense-result-attached.png` пересняты после upload и показывают реальное превью чека без графических аннотаций;
-- targeted onboarding tests: `42/42`; server typecheck: PASS; client tests: `22/22`; client build: PASS;
-- merged temp с product commits `289f04a` + `2441c8e`: strict audit требуется повторить после обновления screenshots;
+- targeted onboarding tests: `35/35`; server typecheck: PASS; client lint: PASS; client tests: `22/22`; client build: PASS;
+- merged product worktree с product commits `7168744` ... `67f8684`: `npm run onboarding:audit:strict` PASS;
 - browser QA: `20/20` onboarding cases и `4/4` DB-backed product cases в dark/light на desktop `1440px` и mobile `390px`; broken images, console/page errors и horizontal overflow отсутствуют;
-- DB-backed `/admin/shift-cash` должен показывать активную смену и настоящее превью чека; `/admin/finances` должен показывать связанный расход `Касса смены ...`; `/admin/shift-reports` должен открывать отчеты смен без возврата к кассовому экрану в мотивации.
+- DB-backed `/admin/shift/cash` должен показывать активную смену, горизонтальную навигацию «Мотивация / Отчеты / Касса» и настоящее превью чека; `/admin/finances` должен показывать связанный расход `Касса смены ...`; `/admin/shift/reports` должен открывать отчеты смен; `/admin/shift-settings` должен открывать настройки правил мотивации и шаблонов отчетов.
 
 Осталось до release:
 
