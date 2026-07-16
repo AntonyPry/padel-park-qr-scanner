@@ -136,6 +136,10 @@ function renderSidebarAndWorkspace(path = '/admin/shift/motivation') {
             login: vi.fn(),
             logout: vi.fn(),
             setupRequired: false,
+            tenantContext: null,
+            tenantCacheRealtimeEnabled: false,
+            tenantContextEnabled: false,
+            tenantReady: true,
           }}
         >
           <SidebarProvider>

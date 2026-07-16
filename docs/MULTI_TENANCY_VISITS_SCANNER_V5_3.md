@@ -1,6 +1,6 @@
 # Feature 5.3 — Visits and scanner
 
-Статус: `implementation complete; ready for independent QA; not accepted or integrated`.
+Статус: `accepted and integrated; Feature 5.4 not started`.
 
 Exact base: `e727ab95e69804b94cb2d1c65f3d3f49b99dee9f` from `codex/saas-multitenancy-integration`.
 
