@@ -102,6 +102,14 @@ describe('ShiftReportsPage', () => {
       'data-size',
       'sm',
     );
+    expect(screen.getByTestId('shift-report-date-filter')).toHaveClass(
+      'grid-cols-[48px_minmax(0,1fr)]',
+    );
+    expect(screen.getByTestId('shift-report-date-filter')).not.toHaveClass('sm:flex');
+    expect(screen.getByTestId('shift-report-status-filter')).toHaveClass(
+      'grid-cols-[48px_minmax(0,1fr)]',
+    );
+    expect(screen.getByTestId('shift-report-status-filter')).not.toHaveClass('sm:flex');
     expect(mocks.listTemplates).not.toHaveBeenCalled();
   });
 
