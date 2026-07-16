@@ -202,9 +202,12 @@ describe('ShiftWorkspaceLayout', () => {
     const navigation = screen.getByRole('navigation', { name: 'Разделы смены' });
     const reportsLink = within(navigation).getByRole('link', { name: 'Отчеты' });
     const reportsItem = reportsLink.parentElement;
-    const badge = await within(reportsItem!).findByLabelText(
-      '2 отчетов требуют внимания, есть просроченные',
-    );
+    const badge = await within(reportsItem!).findByRole('status', {
+      name: '2 отчета требуют внимания, есть просроченные',
+    });
+
+    expect(badge).toHaveAttribute('aria-atomic', 'true');
+    expect(badge).toHaveAttribute('aria-live', 'polite');
 
     expect(badge).toHaveTextContent('2');
     expect(badge).toHaveClass('bg-destructive');
@@ -214,7 +217,7 @@ describe('ShiftWorkspaceLayout', () => {
     for (const label of ['Мотивация', 'Касса']) {
       const link = within(navigation).getByRole('link', { name: label });
       expect(
-        within(link.parentElement!).queryByLabelText(/отчетов требуют внимания/),
+        within(link.parentElement!).queryByRole('status'),
       ).not.toBeInTheDocument();
     }
   });
@@ -234,7 +237,7 @@ describe('ShiftWorkspaceLayout', () => {
 
     expect(screen.getByRole('link', { name: 'Отчеты' })).toHaveClass('px-2');
     expect(
-      screen.queryByLabelText(/отчетов требуют внимания/),
+      screen.queryByRole('status', { name: /требу(?:ет|ют) внимания/ }),
     ).not.toBeInTheDocument();
   });
 
@@ -254,7 +257,7 @@ describe('ShiftWorkspaceLayout', () => {
     await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('link', { name: 'Отчеты' })).toHaveClass('px-2');
     expect(
-      screen.queryByLabelText(/отчетов требуют внимания/),
+      screen.queryByRole('status', { name: /требу(?:ет|ют) внимания/ }),
     ).not.toBeInTheDocument();
   });
 

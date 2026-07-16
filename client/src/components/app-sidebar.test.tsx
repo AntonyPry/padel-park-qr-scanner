@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSidebar } from '@/components/app-sidebar';
+import { queryKeys } from '@/api/query-keys';
 import ShiftWorkspaceLayout from '@/components/shift-workspace-layout';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { AuthContext } from '@/lib/auth-context';
@@ -247,9 +248,11 @@ describe('AppSidebar shift navigation', () => {
     });
     renderSidebar('admin', '/admin/shift/reports');
 
-    const badge = await screen.findByLabelText(
-      '2 отчетов требуют внимания, есть просроченные',
-    );
+    const badge = await screen.findByRole('status', {
+      name: '2 отчета требуют внимания, есть просроченные',
+    });
+    expect(badge).toHaveAttribute('aria-atomic', 'true');
+    expect(badge).toHaveAttribute('aria-live', 'polite');
     expect(badge).toHaveTextContent('2');
     expect(badge).toHaveClass('bg-destructive');
     expect(screen.getByRole('link', { name: 'Смена' })).toHaveAttribute(
@@ -270,24 +273,31 @@ describe('AppSidebar shift navigation', () => {
 
     await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('link', { name: 'Смена' })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/отчетов требуют внимания/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('status', { name: /требу(?:ет|ют) внимания/ }),
+    ).not.toBeInTheDocument();
   });
 
-  it('keeps sidebar and Reports badges consistent through realtime invalidation', async () => {
+  it('keeps both observers consistent through realtime 2 to 1 invalidation', async () => {
     mocks.listActiveShiftReports.mockResolvedValueOnce({
-      reports: Array.from({ length: 100 }, (_, index) => ({
-        computedStatus: 'pending',
-        id: index + 1,
-      })),
+      reports: [
+        { computedStatus: 'pending', id: 1 },
+        { computedStatus: 'draft', id: 2 },
+      ],
       shift: { id: 12 },
     });
     const { queryClient } = renderSidebarAndWorkspace();
 
-    const initialBadges = await screen.findAllByLabelText(
-      '100 отчетов требуют внимания',
-    );
+    const initialBadges = await screen.findAllByRole('status', {
+      name: '2 отчета требуют внимания',
+    });
     expect(initialBadges).toHaveLength(2);
-    for (const badge of initialBadges) expect(badge).toHaveTextContent('99+');
+    for (const badge of initialBadges) {
+      expect(badge).toHaveAttribute('aria-atomic', 'true');
+      expect(badge).toHaveAttribute('aria-live', 'polite');
+      expect(badge).toHaveClass('bg-primary');
+      expect(badge).toHaveTextContent('2');
+    }
     expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1);
 
     mocks.listActiveShiftReports.mockResolvedValueOnce({
@@ -312,16 +322,65 @@ describe('AppSidebar shift navigation', () => {
 
     await waitFor(() =>
       expect(
-        screen.getAllByLabelText('1 отчетов требуют внимания'),
+        screen.getAllByRole('status', { name: '1 отчет требует внимания' }),
       ).toHaveLength(2),
     );
-    const refreshedBadges = screen.getAllByLabelText(
-      '1 отчетов требуют внимания',
-    );
+    const refreshedBadges = screen.getAllByRole('status', {
+      name: '1 отчет требует внимания',
+    });
     for (const badge of refreshedBadges) {
       expect(badge).toHaveTextContent('1');
       expect(badge).toHaveClass('bg-primary');
     }
+    expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps both shared observer badges at 99+ with one fetch', async () => {
+    mocks.listActiveShiftReports.mockResolvedValueOnce({
+      reports: Array.from({ length: 100 }, (_, index) => ({
+        computedStatus: 'pending',
+        id: index + 1,
+      })),
+      shift: { id: 12 },
+    });
+
+    renderSidebarAndWorkspace();
+
+    const badges = await screen.findAllByRole('status', {
+      name: '100 отчетов требуют внимания',
+    });
+    expect(badges).toHaveLength(2);
+    for (const badge of badges) expect(badge).toHaveTextContent('99+');
+    expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers both placements from an error through query invalidation', async () => {
+    mocks.listActiveShiftReports.mockRejectedValueOnce(new Error('offline'));
+    const { queryClient } = renderSidebarAndWorkspace('/admin/shift/reports');
+
+    await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByRole('status', { name: /требу(?:ет|ют) внимания/ }),
+    ).not.toBeInTheDocument();
+
+    mocks.listActiveShiftReports.mockResolvedValueOnce({
+      reports: [
+        { computedStatus: 'draft', id: 1 },
+        { computedStatus: 'overdue', id: 2 },
+      ],
+      shift: { id: 12 },
+    });
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.shiftReports.active(),
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('status', {
+          name: '2 отчета требуют внимания, есть просроченные',
+        }),
+      ).toHaveLength(2),
+    );
     expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(2);
   });
 });
