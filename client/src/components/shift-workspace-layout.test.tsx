@@ -1,5 +1,6 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useEffect } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LegacyShiftRedirect } from '@/components/legacy-shift-redirect';
@@ -25,7 +26,12 @@ const sections = [
 ];
 
 function LocationProbe() {
-  return <output data-testid="location">{useLocation().pathname}</output>;
+  const location = useLocation();
+  return (
+    <output data-testid="location">
+      {`${location.pathname}${location.search}${location.hash}`}
+    </output>
+  );
 }
 
 function jsonResponse(body: unknown) {
@@ -157,22 +163,62 @@ describe('ShiftWorkspaceLayout', () => {
   });
 
   it.each([
-    ['/admin/motivation', '/admin/shift/motivation'],
-    ['/admin/shift-reports', '/admin/shift/reports'],
-    ['/admin/shift-cash', '/admin/shift/cash'],
-  ])('redirects legacy %s to %s once', (legacyPath, canonicalPath) => {
+    [
+      '/admin/motivation?closeShift=1#close',
+      '/admin/shift/motivation?closeShift=1#close',
+      '/admin/shift/motivation',
+    ],
+    [
+      '/admin/shift-reports?date=2026-07-16&status=overdue#filters',
+      '/admin/shift/reports?date=2026-07-16&status=overdue#filters',
+      '/admin/shift/reports',
+    ],
+    [
+      '/admin/shift-cash?openExpense=1#expenses',
+      '/admin/shift/cash?openExpense=1#expenses',
+      '/admin/shift/cash',
+    ],
+  ])(
+    'preserves query and hash while redirecting legacy %s',
+    (legacyPath, expectedLocation, canonicalPath) => {
+      render(
+        <MemoryRouter initialEntries={[legacyPath]}>
+          <Routes>
+            <Route
+              path={legacyPath.split(/[?#]/)[0]}
+              element={<LegacyShiftRedirect to={canonicalPath} />}
+            />
+            <Route path={canonicalPath} element={<LocationProbe />} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByTestId('location')).toHaveTextContent(expectedLocation);
+    },
+  );
+
+  it('redirects a legacy route exactly once without a loop', async () => {
+    const onRedirectMount = vi.fn();
+
+    function RedirectProbe() {
+      useEffect(() => {
+        onRedirectMount();
+      }, []);
+      return <LegacyShiftRedirect to="/admin/shift/motivation" />;
+    }
+
     render(
-      <MemoryRouter initialEntries={[legacyPath]}>
+      <MemoryRouter initialEntries={['/admin/motivation?closeShift=1#close']}>
         <Routes>
-          <Route
-            path={legacyPath}
-            element={<LegacyShiftRedirect to={canonicalPath} />}
-          />
-          <Route path={canonicalPath} element={<LocationProbe />} />
+          <Route path="/admin/motivation" element={<RedirectProbe />} />
+          <Route path="/admin/shift/motivation" element={<LocationProbe />} />
         </Routes>
       </MemoryRouter>,
     );
 
-    expect(screen.getByTestId('location')).toHaveTextContent(canonicalPath);
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      '/admin/shift/motivation?closeShift=1#close',
+    );
+    await waitFor(() => expect(onRedirectMount).toHaveBeenCalledTimes(1));
   });
 });
