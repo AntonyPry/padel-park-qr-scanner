@@ -1,6 +1,10 @@
 'use strict';
 
 const db = require('../../models');
+const {
+  countAuthUsableOwners,
+  isAuthUsableOwnerMembership,
+} = require('./owner-access-invariant.service');
 const { resolveStaffAccessContext } = require('./staff-access-context.service');
 const {
   invalidateTenantFoundationGateCache,
@@ -127,14 +131,17 @@ async function assertStaffOwnerCanBecomeInactive(staff, transaction) {
   ) {
     return;
   }
-  const remainingOwners = await db.Membership.count({
+  const removesUsableOwner = await isAuthUsableOwnerMembership({
+    membershipId: membership.id,
+    organizationId: staff.organizationId,
     transaction,
-    where: {
-      id: { [db.Sequelize.Op.ne]: membership.id },
-      organizationId: staff.organizationId,
-      role: 'owner',
-      status: 'active',
-    },
+  });
+  if (!removesUsableOwner) return;
+
+  const remainingOwners = await countAuthUsableOwners({
+    excludeMembershipId: membership.id,
+    organizationId: staff.organizationId,
+    transaction,
   });
   if (remainingOwners < 1) {
     throw appError(

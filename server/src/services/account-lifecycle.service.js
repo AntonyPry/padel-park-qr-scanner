@@ -2,6 +2,10 @@
 
 const db = require('../../models');
 const {
+  countAuthUsableOwners,
+  isAuthUsableOwnerMembership,
+} = require('./owner-access-invariant.service');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
   MEMBERSHIP_ROLE_VALUES,
@@ -172,14 +176,17 @@ async function assertLastActiveOwnerRemains(
     (finalValues.delete || finalRole !== 'owner' || finalStatus !== 'active');
 
   if (!removesActiveOwner) return;
-  const remainingOwners = await db.Membership.count({
+  const removesUsableOwner = await isAuthUsableOwnerMembership({
+    membershipId: membership.id,
+    organizationId: membership.organizationId,
     transaction,
-    where: {
-      id: { [db.Sequelize.Op.ne]: membership.id },
-      organizationId: membership.organizationId,
-      role: 'owner',
-      status: 'active',
-    },
+  });
+  if (!removesUsableOwner) return;
+
+  const remainingOwners = await countAuthUsableOwners({
+    excludeMembershipId: membership.id,
+    organizationId: membership.organizationId,
+    transaction,
   });
   if (remainingOwners < 1) {
     throw lifecycleError(

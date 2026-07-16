@@ -1,6 +1,6 @@
 # Feature 5.1 — Staff and membership identity
 
-Статус: `implemented; independent SaaS QA required before promotion`.
+Статус: `QA fixes applied, re-review pending`.
 
 Exact base: `882aa24399186f660efc7d78113185f88ceef2ac` from `codex/saas-multitenancy-integration`.
 
@@ -34,7 +34,7 @@ Foundation classifier обнаруживает `legacy`, `partial` и `ready` sc
 - forced failure после Account или Membership write откатывает обе стороны;
 - unique composite key и service preflight не позволяют назначить Staff двум Memberships одной Organization;
 - bootstrap создаёт Staff organization attribution и owner Membership link атомарно;
-- archive/restore/permanent delete сохраняют last-active-owner и access-row invariants;
+- archive/inactive update/remove/permanent delete сохраняют last-active-owner и access-row invariants; owner считается доступным для auth только при active Account + active owner Membership + согласованном nullable Staff contract либо active Staff той же Organization;
 - permanent Account delete сначала удаляет access/Membership, затем Account; Staff не удаляется автоматически.
 
 Staff create/update/archive/restore/permanent delete также транзакционны. Permanent delete блокируется при ссылке из Account, Membership или Shift. Деактивация/архивация Staff, связанного с последним active owner Membership, запрещена. `MembershipClubAccess` остаётся только authorization/access моделью; у Staff нет `clubId`, owner all-club discovery не изменён.

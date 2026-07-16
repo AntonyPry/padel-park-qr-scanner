@@ -327,6 +327,216 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       );
     });
 
+    await t.test('Staff owner deactivation preserves an auth-usable owner', async () => {
+      const secondOwnerPassword = 'StaffOwnerB123!';
+      const secondOwnerStaff = await createStaff('21');
+      const secondOwner = await accountLifecycle.createAccount(
+        {
+          email: 'staff-owner-b@staff-access.test',
+          passwordHash: authService.hashPassword(secondOwnerPassword),
+          role: 'owner',
+          staffId: secondOwnerStaff.id,
+          status: 'active',
+        },
+        { organizationId: defaultOrganization.id },
+      );
+      const secondOwnerMembership = await db.Membership.findOne({
+        where: {
+          accountId: secondOwner.id,
+          organizationId: defaultOrganization.id,
+        },
+      });
+      const secondOwnerContext = tenantFor(
+        secondOwner,
+        secondOwnerMembership,
+        defaultOrganization.id,
+      );
+
+      const staffStatus = async (staffId) =>
+        (await db.Staff.findByPk(staffId)).status;
+      const updateStaffStatus = async (staffId, status, tenant) => {
+        const staff = await db.Staff.findByPk(staffId);
+        return staffService.update(
+          staff.id,
+          {
+            name: staff.name,
+            phone: staff.phone,
+            position: staff.role,
+            status,
+          },
+          tenant,
+        );
+      };
+      const expectLastOwner = (operation) =>
+        assert.rejects(operation, (error) => error.code === 'LAST_ACTIVE_OWNER');
+
+      await staffService.remove(owner.staffId, secondOwnerContext);
+      await expectLastOwner(() =>
+        staffService.remove(secondOwnerStaff.id, secondOwnerContext),
+      );
+      assert.equal(await staffStatus(owner.staffId), 'archived');
+      assert.equal(await staffStatus(secondOwnerStaff.id), 'active');
+      assert.equal((await db.Account.findByPk(secondOwner.id)).status, 'active');
+      assert.equal(
+        (await db.Membership.findByPk(secondOwnerMembership.id)).status,
+        'active',
+      );
+      await authService.login({
+        email: secondOwner.email,
+        password: secondOwnerPassword,
+      });
+      await staffService.restore(owner.staffId, secondOwnerContext);
+
+      await updateStaffStatus(owner.staffId, 'inactive', secondOwnerContext);
+      await expectLastOwner(() =>
+        updateStaffStatus(
+          secondOwnerStaff.id,
+          'inactive',
+          secondOwnerContext,
+        ),
+      );
+      assert.equal(await staffStatus(owner.staffId), 'inactive');
+      assert.equal(await staffStatus(secondOwnerStaff.id), 'active');
+      assert.equal((await db.Account.findByPk(owner.id)).status, 'active');
+      assert.equal((await db.Membership.findByPk(ownerMembership.id)).status, 'active');
+      await authService.login({
+        email: secondOwner.email,
+        password: secondOwnerPassword,
+      });
+      await staffService.restore(owner.staffId, secondOwnerContext);
+
+      const temporaryOrganization = await db.Organization.create({
+        name: 'Temporary owner guard organization',
+        slug: 'temporary-owner-guard',
+        status: 'active',
+      });
+      const crossOrganizationStaff = await db.Staff.create({
+        name: 'Cross organization owner guard',
+        organizationId: temporaryOrganization.id,
+        phone: '+78880000021',
+        role: 'Владелец',
+        status: 'active',
+      });
+      await secondOwner.update({ staffId: crossOrganizationStaff.id });
+      await expectLastOwner(() =>
+        staffService.remove(owner.staffId, secondOwnerContext),
+      );
+      assert.equal(await staffStatus(owner.staffId), 'active');
+      assert.equal(await staffStatus(secondOwnerStaff.id), 'active');
+      await secondOwner.update({ staffId: secondOwnerStaff.id });
+      await crossOrganizationStaff.destroy();
+      await temporaryOrganization.destroy();
+
+      await secondOwner.update({ status: 'inactive' });
+      await expectLastOwner(() =>
+        staffService.remove(owner.staffId, secondOwnerContext),
+      );
+      assert.equal(await staffStatus(owner.staffId), 'active');
+      assert.equal((await db.Membership.findByPk(secondOwnerMembership.id)).status, 'active');
+      await secondOwner.update({ status: 'active' });
+
+      await staffService.remove(secondOwnerStaff.id, ownerContext);
+      await expectLastOwner(() =>
+        accountLifecycle.updateAccount(owner.id, { status: 'archived' }),
+      );
+      await expectLastOwner(() =>
+        accountLifecycle.permanentDeleteAccount(owner.id, {
+          organizationId: defaultOrganization.id,
+        }),
+      );
+      assert.equal((await db.Account.findByPk(owner.id)).status, 'active');
+      assert.equal((await db.Membership.findByPk(ownerMembership.id)).status, 'active');
+      assert.equal(await staffStatus(owner.staffId), 'active');
+      assert.equal(await staffStatus(secondOwnerStaff.id), 'archived');
+      await staffService.restore(secondOwnerStaff.id, ownerContext);
+
+      const concurrent = await Promise.allSettled([
+        staffService.remove(owner.staffId, ownerContext),
+        staffService.remove(secondOwnerStaff.id, secondOwnerContext),
+      ]);
+      assert.equal(
+        concurrent.filter((result) => result.status === 'fulfilled').length,
+        1,
+      );
+      const rejected = concurrent.find((result) => result.status === 'rejected');
+      assert.equal(rejected.reason.code, 'LAST_ACTIVE_OWNER');
+
+      const originalStaffStatus = await staffStatus(owner.staffId);
+      const secondStaffStatus = await staffStatus(secondOwnerStaff.id);
+      assert.deepEqual(
+        [originalStaffStatus, secondStaffStatus].sort(),
+        ['active', 'archived'],
+      );
+      assert.equal((await db.Account.findByPk(owner.id)).status, 'active');
+      assert.equal((await db.Account.findByPk(secondOwner.id)).status, 'active');
+      assert.equal((await db.Membership.findByPk(ownerMembership.id)).status, 'active');
+      assert.equal(
+        (await db.Membership.findByPk(secondOwnerMembership.id)).status,
+        'active',
+      );
+
+      if (originalStaffStatus === 'active') {
+        await authService.login({
+          email: owner.email,
+          password: 'StaffOwner123!',
+        });
+        await staffService.restore(secondOwnerStaff.id, ownerContext);
+      } else {
+        await authService.login({
+          email: secondOwner.email,
+          password: secondOwnerPassword,
+        });
+        await staffService.restore(owner.staffId, secondOwnerContext);
+      }
+
+      const nullableOwnerPassword = 'NullableOwner123!';
+      const nullableOwner = await accountLifecycle.createAccount(
+        {
+          email: 'nullable-owner@staff-access.test',
+          passwordHash: authService.hashPassword(nullableOwnerPassword),
+          role: 'owner',
+          staffId: null,
+          status: 'active',
+        },
+        { organizationId: defaultOrganization.id },
+      );
+      const nullableOwnerMembership = await db.Membership.findOne({
+        where: {
+          accountId: nullableOwner.id,
+          organizationId: defaultOrganization.id,
+        },
+      });
+      const nullableOwnerContext = tenantFor(
+        nullableOwner,
+        nullableOwnerMembership,
+        defaultOrganization.id,
+      );
+      await staffService.remove(owner.staffId, nullableOwnerContext);
+      await staffService.remove(secondOwnerStaff.id, nullableOwnerContext);
+      assert.equal(await staffStatus(owner.staffId), 'archived');
+      assert.equal(await staffStatus(secondOwnerStaff.id), 'archived');
+      assert.equal(nullableOwnerMembership.staffId, null);
+      await authService.login({
+        email: nullableOwner.email,
+        password: nullableOwnerPassword,
+      });
+      await staffService.restore(owner.staffId, nullableOwnerContext);
+      await staffService.restore(secondOwnerStaff.id, nullableOwnerContext);
+
+      await accountLifecycle.permanentDeleteAccount(nullableOwner.id, {
+        organizationId: defaultOrganization.id,
+      });
+      await accountLifecycle.permanentDeleteAccount(secondOwner.id, {
+        organizationId: defaultOrganization.id,
+      });
+      await staffService.remove(secondOwnerStaff.id, ownerContext);
+      await staffService.removeArchived(secondOwnerStaff.id, ownerContext);
+      assert.equal(await db.Account.count({ where: { id: nullableOwner.id } }), 0);
+      assert.equal(await db.Account.count({ where: { id: secondOwner.id } }), 0);
+      assert.equal(await db.Staff.count({ where: { id: secondOwnerStaff.id } }), 0);
+      assert.equal(await staffStatus(owner.staffId), 'active');
+    });
+
     await t.test('account and Staff lifecycle preserve last-owner and delete invariants', async () => {
       await assert.rejects(
         accountLifecycle.updateAccount(owner.id, { status: 'archived' }),
