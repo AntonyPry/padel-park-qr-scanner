@@ -85,11 +85,13 @@ describe('mixed-page API authorization inventory', () => {
     }
   });
 
-  it('locks the four required inseparable pages to composite mount authorization', () => {
+  it('locks required inseparable pages and their canonical Shift routes to composite mount authorization', () => {
     for (const path of [
       '/admin/motivation',
+      '/admin/shift/motivation',
       '/admin/catalog',
       '/admin/shift-reports',
+      '/admin/shift/reports',
       '/admin/finances',
     ] as const) {
       expect(MIXED_PAGE_AUTHORIZATION[path].strategy).toBe('composite');

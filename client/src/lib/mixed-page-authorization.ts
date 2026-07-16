@@ -24,7 +24,7 @@ export interface MixedPageAuthorizationInventory {
   strategy: Exclude<RouteAuthorizationStrategy, 'single'>;
 }
 
-export const MIXED_PAGE_AUTHORIZATION = {
+const BASE_MIXED_PAGE_AUTHORIZATION = {
   '/admin': {
     sourceFile: 'Admin.tsx',
     strategy: 'partial',
@@ -566,6 +566,16 @@ export const MIXED_PAGE_AUTHORIZATION = {
       },
     ],
   },
+} as const satisfies Partial<
+  Record<ClientRoute, MixedPageAuthorizationInventory>
+>;
+
+export const MIXED_PAGE_AUTHORIZATION = {
+  ...BASE_MIXED_PAGE_AUTHORIZATION,
+  '/admin/shift/motivation':
+    BASE_MIXED_PAGE_AUTHORIZATION['/admin/motivation'],
+  '/admin/shift/reports':
+    BASE_MIXED_PAGE_AUTHORIZATION['/admin/shift-reports'],
 } as const satisfies Partial<
   Record<ClientRoute, MixedPageAuthorizationInventory>
 >;
