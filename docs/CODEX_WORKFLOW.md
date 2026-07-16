@@ -184,10 +184,11 @@ CRM feature-чаты не должны менять WireGuard/Docker/Ubuntu lapt
 - возвращать точечные fix prompts в нужные feature-чаты;
 - перед merge/deploy делать полный release review.
 
-Чаты не общаются друг с другом автоматически. Есть два режима передачи:
+Чаты не общаются друг с другом автоматически. Есть три режима передачи:
 
 - вручную: пользователь копирует handoff из feature-чата в integration/QA или instructions-чат;
 - через штаб: пользователь просит coordination chat прочитать/найти нужный thread и отправить туда follow-up prompt через thread tools.
+- delegation callback: если штаб передал feature/fix handoff или запрос на финальный QA/promotion через `codex_delegation` с `source_thread_id`, integration/QA chat после завершения сам один раз отправляет итог в исходный штабной thread через `send_message_to_thread`; пользователя не просят копировать ответ вручную.
 
 Пример запроса в штаб:
 
@@ -203,6 +204,7 @@ CRM feature-чаты не должны менять WireGuard/Docker/Ubuntu lapt
 4. Пользователь кликает CRM руками и отправляет замечания в integration/QA chat.
 5. Если QA находит проблемы, он формирует точный fix prompt для исходного feature-chat. Фиксы возвращаются в тот же feature-chat.
 6. Цикл feature-chat -> QA повторяется, пока QA не даст `ready for merge` или явное `accepted for next step`.
+   Если QA-задача пришла через delegation, финальный structured handoff одновременно возвращается в `source_thread_id`: findings P0–P3, accepted/final SHA, gates, status, risks, `Onboarding impact`, следующий разрешенный шаг; при `blocked`/`needs fixes` добавляется полный fix prompt.
 7. Если фича будет релизиться отдельно, после QA передаем `Onboarding impact` в instructions/onboarding chat.
 8. Если несколько фич идут одной большой release-chain, копим `Onboarding impact` и обновляем onboarding пачкой после стабилизации всей цепочки, но до merge/deploy. QA может вести onboarding backlog, но не должен отправлять пользователя в onboarding-чат после каждой принятой фичи без явного запроса.
 9. После onboarding-обновления integration/QA chat делает финальный release review: feature + instructions + tests + browser QA + release checklist.

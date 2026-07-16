@@ -165,6 +165,8 @@ Onboarding impact:
 
 Чаты не должны предполагать, что другие чаты автоматически узнают об их результате. Каждый feature/instructions/QA chat должен возвращать handoff в финале, а штабной чат может переслать этот handoff дальше, если пользователь попросит.
 
+Исключение для явной Codex delegation: если штаб передал feature handoff, fix handoff или запрос на финальный QA/promotion через `codex_delegation` с `source_thread_id`, QA/integration chat после фактического завершения работы обязан один раз отправить структурированный итог обратно в исходный штабной thread через `send_message_to_thread`. Итог должен включать findings P0–P3, accepted/final SHA, release/integration status, результаты gates, риски, `Onboarding impact` и следующий разрешенный шаг. При `blocked`/`needs fixes` туда же отправляется полный fix prompt для нужного feature-chat. Не проси пользователя вручную копировать такой handoff между чатами.
+
 Подробная инструкция по использованию Codex в проекте: `docs/CODEX_WORKFLOW.md`.
 
 ## Large feature decomposition
