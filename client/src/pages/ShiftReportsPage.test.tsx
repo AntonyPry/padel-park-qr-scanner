@@ -93,6 +93,15 @@ describe('ShiftReportsPage', () => {
     expect(screen.queryByRole('button', { name: 'Обновить' })).not.toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Шаблоны' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Создать шаблон' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /июля 2026/ })).toHaveAttribute(
+      'data-size',
+      'sm',
+    );
+    expect(screen.getByRole('combobox')).toHaveAttribute('data-size', 'sm');
+    expect(screen.getByText('Дата').closest('[data-slot="card"]')).toHaveAttribute(
+      'data-size',
+      'sm',
+    );
     expect(mocks.listTemplates).not.toHaveBeenCalled();
   });
 

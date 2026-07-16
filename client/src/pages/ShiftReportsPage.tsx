@@ -528,9 +528,10 @@ function ShiftReportDatePicker({
       <PopoverTrigger asChild>
         <Button
           className={cn(
-            'w-full justify-start bg-card text-left font-normal',
+            'h-8 w-full justify-start bg-card text-left font-normal',
             !selectedDate && 'text-muted-foreground',
           )}
+          size="sm"
           variant="outline"
         >
           <CalendarDays className="mr-2 h-4 w-4" />
@@ -1244,19 +1245,19 @@ export default function ShiftReportsPage({
                 </CardContent>
               </Card>
             )}
-            <Card>
-              <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-end">
-                <div className="grid gap-2 sm:w-64">
-                  <Label>Дата</Label>
+            <Card className="rounded-xl" size="sm">
+              <CardContent className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="grid min-w-0 grid-cols-[48px_minmax(0,1fr)] items-center gap-2 sm:flex sm:w-64">
+                  <Label className="text-xs text-muted-foreground">Дата</Label>
                   <ShiftReportDatePicker value={date} onChange={setDate} />
                 </div>
-                <div className="grid gap-2 sm:w-52">
-                  <Label>Статус</Label>
+                <div className="grid min-w-0 grid-cols-[48px_minmax(0,1fr)] items-center gap-2 sm:flex sm:w-48">
+                  <Label className="text-xs text-muted-foreground">Статус</Label>
                   <Select
                     value={status}
                     onValueChange={(value) => setStatus(value as ShiftReportStatus | 'all')}
                   >
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger className="w-full" size="sm">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>

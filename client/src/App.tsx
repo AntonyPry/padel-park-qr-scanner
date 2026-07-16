@@ -267,40 +267,27 @@ function App() {
                       path="/admin/shift"
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/shift']}>
-                          <Navigate to="/admin/shift/motivation" replace />
+                          <ShiftWorkspaceLayout />
                         </RequireRoles>
                       }
-                    />
-                    <Route
-                      path="/admin/shift/motivation"
-                      element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift/motivation']}>
-                          <ShiftWorkspaceLayout>
-                            <AdminMotivationPage />
-                          </ShiftWorkspaceLayout>
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/shift/reports"
-                      element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift/reports']}>
-                          <ShiftWorkspaceLayout>
-                            <ShiftReportsPage />
-                          </ShiftWorkspaceLayout>
-                        </RequireRoles>
-                      }
-                    />
-                    <Route
-                      path="/admin/shift/cash"
-                      element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift/cash']}>
-                          <ShiftWorkspaceLayout>
-                            <ShiftCashPage />
-                          </ShiftWorkspaceLayout>
-                        </RequireRoles>
-                      }
-                    />
+                    >
+                      <Route
+                        index
+                        element={<Navigate to="/admin/shift/motivation" replace />}
+                      />
+                      <Route
+                        path="/admin/shift/motivation"
+                        element={<AdminMotivationPage />}
+                      />
+                      <Route
+                        path="/admin/shift/reports"
+                        element={<ShiftReportsPage />}
+                      />
+                      <Route
+                        path="/admin/shift/cash"
+                        element={<ShiftCashPage />}
+                      />
+                    </Route>
                     <Route
                       path="/admin/shift-settings"
                       element={

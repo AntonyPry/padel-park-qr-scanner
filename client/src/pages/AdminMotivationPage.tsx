@@ -1701,13 +1701,7 @@ export default function AdminMotivationPage({
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-              <div>
-                <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Что уже продано, какой бонус начислится и что осталось сделать
-                  до включения порога.
-                </p>
-              </div>
+              <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
               <div className="text-sm text-muted-foreground">
                 {loading && <span className="animate-pulse">Обновление...</span>}
               </div>

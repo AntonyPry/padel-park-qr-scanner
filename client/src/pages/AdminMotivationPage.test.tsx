@@ -6,6 +6,13 @@ import AdminMotivationPage, {
 } from '@/pages/AdminMotivationPage';
 
 const mocks = vi.hoisted(() => ({
+  activeShift: null as null | {
+    adminName: string;
+    date: string;
+    id: number;
+    startedAt: string;
+    status: 'active';
+  },
   apiFetch: vi.fn(),
 }));
 
@@ -24,7 +31,7 @@ vi.mock('@/lib/useAuth', () => ({
 
 vi.mock('@/components/shift-workspace-state', () => ({
   useShiftWorkspaceOptional: () => ({
-    activeShift: null,
+    activeShift: mocks.activeShift,
     loaded: true,
     setActiveShift: vi.fn(),
   }),
@@ -38,6 +45,7 @@ function jsonResponse(body: unknown) {
 }
 
 beforeEach(() => {
+  mocks.activeShift = null;
   mocks.apiFetch.mockReset().mockImplementation((input: string) => {
     if (input === '/api/motivation/rules') {
       return Promise.resolve(
@@ -129,5 +137,26 @@ describe('AdminMotivationPage views', () => {
         ),
       ).toBe(false);
     });
+  });
+
+  it('keeps the motivation progress header concise during an active shift', async () => {
+    mocks.activeShift = {
+      adminName: 'Администратор',
+      date: '2026-07-16',
+      id: 12,
+      startedAt: '2026-07-16T09:00:00.000Z',
+      status: 'active',
+    };
+
+    render(
+      <MemoryRouter>
+        <AdminMotivationPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Прогресс мотиваций')).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Что уже продано, какой бонус начислится/),
+    ).not.toBeInTheDocument();
   });
 });
