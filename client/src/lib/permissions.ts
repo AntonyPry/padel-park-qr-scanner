@@ -20,6 +20,11 @@ export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant'],
   '/admin/users': ['owner', 'manager'],
+  '/admin/shift': ['owner', 'manager', 'admin'],
+  '/admin/shift/motivation': ['owner', 'manager', 'admin'],
+  '/admin/shift/reports': ['owner', 'manager', 'admin'],
+  '/admin/shift/cash': ['owner', 'manager', 'admin'],
+  '/admin/shift-settings': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
   '/admin/shift-reports': ['owner', 'manager', 'admin'],
   '/admin/shift-cash': ['owner', 'manager', 'admin'],
@@ -48,7 +53,7 @@ export function getDefaultPath(role: AccountRole | null | undefined) {
     hasRoleAccess(role, roles),
   );
 
-  return entry?.[0] || '/admin/motivation';
+  return entry?.[0] || '/admin/shift/motivation';
 }
 
 export function canManageFinance(role: AccountRole | null | undefined) {

@@ -119,6 +119,18 @@ describe('ShiftCashPanel', () => {
     expect(screen.getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
   });
 
+  it('keeps the cash header on the same card surface as its body', async () => {
+    mocks.getActive.mockResolvedValueOnce(makeSummary());
+    render(<ShiftCashPanel />);
+
+    const title = await screen.findByText('Касса', { exact: true });
+    const header = title.closest('[data-slot="card-header"]');
+
+    expect(header).toHaveClass('border-b');
+    expect(header?.className).not.toMatch(/(?:^|\s)bg-/);
+    expect(header?.className).not.toMatch(/gradient/);
+  });
+
   it('keeps mobile KPI labels and closing placeholder fully visible', async () => {
     mocks.getActive.mockResolvedValueOnce(makeSummary());
     render(<ShiftCashPanel />);

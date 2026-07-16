@@ -1,11 +1,14 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import ShiftReportsPage from '@/pages/ShiftReportsPage';
+import ShiftReportsPage, {
+  ShiftReportTemplatesSettings,
+} from '@/pages/ShiftReportsPage';
 
 const mocks = vi.hoisted(() => ({
   listReports: vi.fn(),
   listTemplates: vi.fn(),
+  updateTemplateStatus: vi.fn(),
   role: 'admin',
 }));
 
@@ -17,6 +20,7 @@ vi.mock('@/api/shift-reports', async () => {
     ...actual,
     listShiftReports: mocks.listReports,
     listShiftReportTemplates: mocks.listTemplates,
+    updateShiftReportTemplateStatus: mocks.updateTemplateStatus,
   };
 });
 
@@ -62,7 +66,11 @@ function reportFixture() {
 }
 
 function templateFixture() {
-  return reportFixture().templateSnapshot;
+  return {
+    ...reportFixture().templateSnapshot,
+    appliesToRole: 'admin',
+    appliesToShiftType: 'day',
+  };
 }
 
 beforeEach(() => {
@@ -70,22 +78,53 @@ beforeEach(() => {
   mocks.role = 'admin';
   mocks.listReports.mockReset().mockResolvedValue([reportFixture()]);
   mocks.listTemplates.mockReset().mockResolvedValue([templateFixture()]);
+  mocks.updateTemplateStatus.mockReset();
 });
 
 afterEach(() => cleanup());
 
 describe('ShiftReportsPage', () => {
   it('lets admin work with reports without template management controls', async () => {
-    const user = userEvent.setup();
     render(<ShiftReportsPage />);
 
-    expect(await screen.findByText('Контроль смены')).toBeInTheDocument();
+    const reportTitle = await screen.findByText('Контроль смены');
+    expect(reportTitle).toHaveClass('break-words');
+    expect(reportTitle).not.toHaveClass('truncate');
     expect(screen.queryByRole('button', { name: 'Обновить' })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole('tab', { name: 'Шаблоны' }));
-    expect(await screen.findByText('Доступен просмотр настроек.')).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Шаблоны' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Создать шаблон' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Редактировать' })).not.toBeInTheDocument();
+    expect(mocks.listTemplates).not.toHaveBeenCalled();
+  });
+
+  it('keeps template management in the owner settings view', async () => {
+    mocks.role = 'owner';
+    render(<ShiftReportTemplatesSettings />);
+
+    const templateTitle = await screen.findByText('Контроль смены');
+    expect(templateTitle).toHaveClass('break-words');
+    expect(templateTitle).not.toHaveClass('truncate');
+    expect(screen.getByRole('button', { name: 'Создать шаблон' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Редактировать' })).toBeInTheDocument();
+    expect(screen.getByText('Роль: admin · Тип смены: day')).toBeInTheDocument();
+    expect(mocks.listTemplates).toHaveBeenCalledWith('all');
+    expect(mocks.listReports).not.toHaveBeenCalled();
+  });
+
+  it('restores an archived template from settings', async () => {
+    const user = userEvent.setup();
+    const archived = { ...templateFixture(), status: 'archived' as const };
+    mocks.role = 'manager';
+    mocks.listTemplates.mockResolvedValueOnce([archived]);
+    mocks.updateTemplateStatus.mockResolvedValueOnce({
+      ...archived,
+      archivedAt: null,
+      status: 'active',
+    });
+    render(<ShiftReportTemplatesSettings />);
+
+    await user.click(await screen.findByRole('button', { name: 'Восстановить' }));
+    expect(mocks.updateTemplateStatus).toHaveBeenCalledWith(archived.id, 'active');
+    expect(await screen.findByText('Активен')).toBeInTheDocument();
   });
 
   it('shows the completed shift text on Reports after closing and allows copying it', async () => {

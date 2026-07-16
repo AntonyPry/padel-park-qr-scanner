@@ -820,9 +820,16 @@ function BonusRuleForm({
   );
 }
 
-export default function AdminMotivationPage() {
+type AdminMotivationPageProps = {
+  view?: 'operations' | 'settings';
+};
+
+export default function AdminMotivationPage({
+  view = 'operations',
+}: AdminMotivationPageProps) {
   const { account } = useAuth();
   const canEditMotivation = canManageMotivation(account?.role);
+  const isSettingsView = view === 'settings';
 
   const [records, setRecords] = useState<FinanceRecord[]>([]);
   const [paymentSummary, setPaymentSummary] =
@@ -1003,14 +1010,18 @@ export default function AdminMotivationPage() {
 
   useEffect(() => {
     void fetchMotivationSettings();
-    void fetchActiveShift();
-    void fetchFinances();
-  }, [fetchActiveShift, fetchFinances, fetchMotivationSettings]);
+    if (!isSettingsView) {
+      void fetchActiveShift();
+      void fetchFinances();
+    }
+  }, [fetchActiveShift, fetchFinances, fetchMotivationSettings, isSettingsView]);
 
   useRealtimeRefresh(['motivation', 'shifts', 'finance', 'catalog'], () => {
     void fetchMotivationSettings();
-    void fetchActiveShift();
-    void fetchFinances();
+    if (!isSettingsView) {
+      void fetchActiveShift();
+      void fetchFinances();
+    }
   });
 
   useEffect(() => {
@@ -1454,65 +1465,69 @@ export default function AdminMotivationPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex justify-end">
-        <div
-          className={`flex w-full items-center gap-4 rounded-lg border bg-card p-2 sm:w-auto ${
-            isLongShift ? 'border-amber-500/40 bg-amber-500/5' : ''
-          }`}
-        >
-          {isShiftActive ? (
-            <>
-              <div className="flex flex-col px-2">
-                <span className="text-xs text-muted-foreground">
-                  {activeShift?.adminName}
-                </span>
-                <span
-                  className={`flex items-center gap-2 font-mono text-lg tracking-widest ${
-                    isLongShift ? 'text-amber-500' : 'text-primary'
-                  }`}
-                >
-                  {isLongShift ? (
-                    <AlertTriangle className="h-5 w-5" />
-                  ) : (
-                    <Clock className="h-5 w-5 animate-pulse" />
-                  )}
-                  {shiftStart ? formatDuration(shiftDurationMs) : '00:00:00'}
-                </span>
-                {isLongShift && (
-                  <span className="text-xs text-amber-500">
-                    Смена длится больше 16 часов
-                  </span>
-                )}
-              </div>
-              <Button
-                onClick={() => void handleEndShift()}
-                variant="destructive"
-                className="w-full sm:w-auto"
-              >
-                <Square className="w-4 h-4 mr-2 fill-current" /> Завершить
-              </Button>
-            </>
-          ) : (
-            <Button
-              onClick={() => void handleStartShift()}
-              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
+      {!isSettingsView && (
+        <>
+          <div className="flex justify-end">
+            <div
+              className={`flex w-full items-center gap-4 rounded-lg border bg-card p-2 sm:w-auto ${
+                isLongShift ? 'border-amber-500/40 bg-amber-500/5' : ''
+              }`}
             >
-              <Play className="w-4 h-4 mr-2 fill-current" /> Начать смену
-            </Button>
-          )}
-        </div>
-      </div>
+              {isShiftActive ? (
+                <>
+                  <div className="flex flex-col px-2">
+                    <span className="text-xs text-muted-foreground">
+                      {activeShift?.adminName}
+                    </span>
+                    <span
+                      className={`flex items-center gap-2 font-mono text-lg tracking-widest ${
+                        isLongShift ? 'text-amber-500' : 'text-primary'
+                      }`}
+                    >
+                      {isLongShift ? (
+                        <AlertTriangle className="h-5 w-5" />
+                      ) : (
+                        <Clock className="h-5 w-5 animate-pulse" />
+                      )}
+                      {shiftStart ? formatDuration(shiftDurationMs) : '00:00:00'}
+                    </span>
+                    {isLongShift && (
+                      <span className="text-xs text-amber-500">
+                        Смена длится больше 16 часов
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    onClick={() => void handleEndShift()}
+                    variant="destructive"
+                    className="w-full sm:w-auto"
+                  >
+                    <Square className="w-4 h-4 mr-2 fill-current" /> Завершить
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  onClick={() => void handleStartShift()}
+                  className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Play className="w-4 h-4 mr-2 fill-current" /> Начать смену
+                </Button>
+              )}
+            </div>
+          </div>
 
-      {shiftStatusError && (
-        <ErrorState
-          compact
-          message={shiftStatusError}
-          onRetry={() => void fetchActiveShift()}
-          title="Статус смены не загрузился"
-        />
+          {shiftStatusError && (
+            <ErrorState
+              compact
+              message={shiftStatusError}
+              onRetry={() => void fetchActiveShift()}
+              title="Статус смены не загрузился"
+            />
+          )}
+        </>
       )}
 
-      {canEditMotivation && (
+      {isSettingsView && canEditMotivation && (
         <>
           <Card>
             {rulesLoading && (
@@ -1711,7 +1726,7 @@ export default function AdminMotivationPage() {
         </>
       )}
 
-      {!isShiftActive ? (
+      {!isSettingsView && (!isShiftActive ? (
         <Card className="border-dashed border-2 bg-muted/20">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center space-y-3">
             <div className="p-3 rounded-full bg-primary/10">
@@ -1985,14 +2000,16 @@ export default function AdminMotivationPage() {
           </Card>
 
         </>
-      )}
+      ))}
 
-      <ShiftCashCloseDialog
-        loading={cashCloseLoading}
-        onClose={() => setCashCloseOpen(false)}
-        onConfirm={executeEndShift}
-        open={cashCloseOpen}
-      />
+      {!isSettingsView && (
+        <ShiftCashCloseDialog
+          loading={cashCloseLoading}
+          onClose={() => setCashCloseOpen(false)}
+          onConfirm={executeEndShift}
+          open={cashCloseOpen}
+        />
+      )}
 
       <ConfirmActionDialog
         action={pendingAction}
@@ -2002,4 +2019,8 @@ export default function AdminMotivationPage() {
       />
     </div>
   );
+}
+
+export function AdminMotivationSettings() {
+  return <AdminMotivationPage view="settings" />;
 }

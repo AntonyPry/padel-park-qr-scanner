@@ -90,9 +90,25 @@ const ROUTE_CHECKS = [
   { route: '/admin/utilization' },
   { route: '/admin/catalog' },
   { route: '/admin/references' },
-  { route: '/admin/motivation' },
-  { route: '/admin/shift-reports' },
-  { route: '/admin/shift-cash' },
+  { navRoute: '/admin/shift/motivation', route: '/admin/shift/motivation' },
+  { navRoute: '/admin/shift/motivation', route: '/admin/shift/reports' },
+  { navRoute: '/admin/shift/motivation', route: '/admin/shift/cash' },
+  { route: '/admin/shift-settings' },
+  {
+    expectedPath: '/admin/shift/motivation',
+    navRoute: '/admin/shift/motivation',
+    route: '/admin/motivation',
+  },
+  {
+    expectedPath: '/admin/shift/reports',
+    navRoute: '/admin/shift/motivation',
+    route: '/admin/shift-reports',
+  },
+  {
+    expectedPath: '/admin/shift/cash',
+    navRoute: '/admin/shift/motivation',
+    route: '/admin/shift-cash',
+  },
   { route: '/admin/audit' },
 ];
 
@@ -191,6 +207,7 @@ async function main() {
 
   const results = [];
   for (const {
+    expectedPath,
     route,
     navRoute = route,
     sentinel,
@@ -203,6 +220,11 @@ async function main() {
     });
     const mainContent = page.locator('main[data-slot="sidebar-inset"]');
     await mainContent.waitFor({ state: 'visible', timeout: 10_000 });
+    if (expectedPath) {
+      await page.waitForURL((url) => url.pathname === expectedPath, {
+        timeout: 10_000,
+      });
+    }
     await page.locator(
       `[data-sidebar-nav-item="true"][data-active="true"][href="${navRoute}"]`,
     ).waitFor({ state: 'visible', timeout: 10_000 });
