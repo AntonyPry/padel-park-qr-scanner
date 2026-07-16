@@ -238,7 +238,10 @@ function isVisitsAnalyticsFilters(filters = {}) {
 
 async function countBaseClients(filters = {}, tenant = null) {
   if (isVisitsAnalyticsFilters(filters)) {
-    return visitsAnalyticsService.countVisitAnalyticsSegmentClients(filters.visitsAnalytics);
+    return visitsAnalyticsService.countVisitAnalyticsSegmentClients(
+      filters.visitsAnalytics,
+      { tenant },
+    );
   }
   return clientsService.countClients(filters, tenant);
 }
@@ -247,7 +250,7 @@ async function listBaseClientsForSnapshot(filters = {}, options = {}) {
   if (isVisitsAnalyticsFilters(filters)) {
     return (await visitsAnalyticsService.listVisitAnalyticsSegmentClients(
       filters.visitsAnalytics,
-      { limit: options.limit || 20000, offset: 0 },
+      { limit: options.limit || 20000, offset: 0, tenant: options.tenant },
     )).items;
   }
   return clientsService.listClientsForSnapshot(filters, options);
@@ -458,7 +461,10 @@ async function create(actor, data, tenant = null) {
 }
 
 async function createFromVisitsAnalytics(actor, data, tenant = null) {
-  const preview = await visitsAnalyticsService.previewVisitAnalyticsSegment(data.selection);
+  const preview = await visitsAnalyticsService.previewVisitAnalyticsSegment(
+    data.selection,
+    { tenant },
+  );
 
   return persistBase(actor, {
     description: data.description,
@@ -564,7 +570,7 @@ async function getClients(id, query = {}, tenant = null) {
   if (isVisitsAnalyticsFilters(filters)) {
     const result = await visitsAnalyticsService.listVisitAnalyticsSegmentClients(
       filters.visitsAnalytics,
-      { limit: pageSize, offset: (page - 1) * pageSize },
+      { limit: pageSize, offset: (page - 1) * pageSize, tenant },
     );
     return {
       items: result.items,

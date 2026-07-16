@@ -2,11 +2,11 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
 const { getCohortsLifecycle, getSourceQuality, getVisitsAnalytics } = require('../../src/services/visits-analytics.service');
-const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
+const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
 
 test('DB-backed production fixture keeps dashboard aggregated and bounded', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
@@ -14,6 +14,8 @@ test('DB-backed production fixture keeps dashboard aggregated and bounded', asyn
       users.push(await db.User.create({ organizationId, name: `perf-${index}-${suffix}`, phone: `${suffix}${index}`.slice(-15), source: `Source ${index % 5}` }));
     }
     const visits = Array.from({ length: 5000 }, (_, index) => ({
+      clubId,
+      organizationId,
       userId: users[index % users.length].id,
       scannedAt: new Date(Date.UTC(2093, 2, 1 + (index % 28), index % 24, index % 60)),
       category: `Category ${index % 8}`,

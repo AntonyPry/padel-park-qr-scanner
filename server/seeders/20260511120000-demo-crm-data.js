@@ -41,6 +41,35 @@ async function resolveUserTenantSeederScope(queryInterface, foundation) {
   };
 }
 
+async function resolveVisitTenantSeederScope(queryInterface, foundation) {
+  const [columns] = await queryInterface.sequelize.query(
+    `SELECT COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'Visits'
+        AND COLUMN_NAME IN ('organizationId', 'clubId')`,
+  );
+  const tenantColumns = new Set(columns.map((column) => column.columnName));
+  return tenantColumns.has('organizationId') && tenantColumns.has('clubId')
+    ? {
+        clubId: foundation.club.id,
+        organizationId: foundation.organization.id,
+      }
+    : {};
+}
+
+async function deleteDemoVisits(queryInterface, userTenantScope) {
+  const userSql = `SELECT id FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%"`;
+  await queryInterface.sequelize.query(
+    `DELETE FROM ScannerEvents WHERE visitId IN (SELECT id FROM Visits WHERE userId IN (${userSql})) OR userId IN (${userSql})`,
+    userTenantScope.query,
+  );
+  await queryInterface.sequelize.query(
+    `DELETE FROM Visits WHERE userId IN (${userSql})`,
+    userTenantScope.query,
+  );
+}
+
 const DEMO_CATALOG_RULES = [
   ['Аренда корта 90 минут', 'Аренда кортов'],
   ['Аренда корта 60 минут', 'Аренда кортов'],
@@ -106,10 +135,7 @@ module.exports = {
     await queryInterface.sequelize.query(
       'DELETE FROM Receipts WHERE id BETWEEN 20000 AND 29999',
     );
-    await queryInterface.sequelize.query(
-      `DELETE FROM Visits WHERE userId IN (SELECT id FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%")`,
-      userTenantScope.query,
-    );
+    await deleteDemoVisits(queryInterface, userTenantScope);
     await queryInterface.bulkDelete('Users', {
       ...userTenantScope.where,
       phone: { [Sequelize.Op.like]: '+7909%' },
@@ -406,10 +432,15 @@ module.exports = {
       'Первый раз',
     ];
     const visits = [];
+    const visitTenantScope = await resolveVisitTenantSeederScope(
+      queryInterface,
+      foundation,
+    );
 
     users.forEach((user, index) => {
       for (let i = 0; i < 3; i += 1) {
         visits.push({
+          ...visitTenantScope,
           userId: user.id,
           scannedAt: dateAt(1 + index + i * 3, 10 + ((index + i) % 9), 20),
           keyNumber: String(20 + index + i),
@@ -589,10 +620,7 @@ module.exports = {
     await queryInterface.sequelize.query(
       'DELETE FROM Receipts WHERE id BETWEEN 20000 AND 29999',
     );
-    await queryInterface.sequelize.query(
-      `DELETE FROM Visits WHERE userId IN (SELECT id FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%")`,
-      userTenantScope.query,
-    );
+    await deleteDemoVisits(queryInterface, userTenantScope);
     await queryInterface.bulkDelete('Users', {
       ...userTenantScope.where,
       phone: { [Sequelize.Op.like]: '+7909%' },

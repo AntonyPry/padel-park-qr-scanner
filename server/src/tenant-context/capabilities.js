@@ -32,6 +32,13 @@ function isTenantClientsReferencesEnabled() {
   );
 }
 
+function isTenantVisitsScannerEnabled() {
+  return readBooleanEnv(
+    process.env.TENANT_VISITS_SCANNER_ENABLED,
+    false,
+  );
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -99,6 +106,12 @@ function assertTenantCapabilityDependencies() {
       'TENANT_STAFF_ACCESS_ENABLED',
     );
   }
+  if (isTenantVisitsScannerEnabled() && !isTenantClientsReferencesEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_VISITS_SCANNER_ENABLED',
+      'TENANT_CLIENTS_REFERENCES_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
@@ -107,6 +120,7 @@ function assertTenantCapabilityDependencies() {
     tenantProviderIntegrations: isTenantProviderIntegrationsEnabled(),
     tenantStaffAccess: isTenantStaffAccessEnabled(),
     tenantClientsReferences: isTenantClientsReferencesEnabled(),
+    tenantVisitsScanner: isTenantVisitsScannerEnabled(),
   });
 }
 
@@ -127,6 +141,7 @@ module.exports = {
   isTenantFilesWorkersEnabled,
   isTenantProviderIntegrationsEnabled,
   isTenantStaffAccessEnabled,
+  isTenantVisitsScannerEnabled,
   readBooleanEnv,
   tenantContextCapability,
 };

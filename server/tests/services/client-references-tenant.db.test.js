@@ -11,6 +11,7 @@ const SequelizePackage = require('sequelize');
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260716160000-add-tenant-clients-references.js';
+const VISITS_MIGRATION_FILE = '20260716180000-add-tenant-visits-scanner.js';
 const CAPABILITY_ENV = [
   'TENANT_CONTEXT_ENABLED',
   'TENANT_CACHE_REALTIME_ENABLED',
@@ -49,7 +50,7 @@ async function createSchema(database) {
   });
   const migrations = fs
     .readdirSync(path.join(SERVER_ROOT, 'migrations'))
-    .filter((file) => file.endsWith('.js'))
+    .filter((file) => file.endsWith('.js') && file <= VISITS_MIGRATION_FILE)
     .sort();
   for (const file of migrations) {
     const migration = require(path.join(SERVER_ROOT, 'migrations', file));
@@ -196,7 +197,11 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
       serializeConnection,
     } = require('../../src/provider-integrations/connection-service');
     const migration = require(`../../migrations/${FEATURE_MIGRATION_FILE}`);
+    const visitsMigration = require(`../../migrations/${VISITS_MIGRATION_FILE}`);
     const queryInterface = schema.getQueryInterface();
+
+    await visitsMigration.down(queryInterface, SequelizePackage);
+    await queryInterface.bulkDelete('SequelizeMeta', { name: VISITS_MIGRATION_FILE });
 
     await t.test('fresh pending migration cleans up a forced failure and reapplies', async () => {
       await migration.down(queryInterface, SequelizePackage);
@@ -460,6 +465,9 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
       await migrationSource.destroy();
       await migrationCategory.destroy();
     });
+
+    await visitsMigration.up(queryInterface, SequelizePackage);
+    await queryInterface.bulkInsert('SequelizeMeta', [{ name: VISITS_MIGRATION_FILE }]);
 
     const foreignOrganization = await db.Organization.create({
       name: 'Foreign Client Organization',

@@ -39,6 +39,8 @@ module.exports = (sequelize, DataTypes) => {
     Club.belongsTo(models.Organization, { foreignKey: 'organizationId' });
     Club.hasMany(models.IntegrationConnection, { foreignKey: 'clubId' });
     Club.hasMany(models.MembershipClubAccess, { foreignKey: 'clubId' });
+    Club.hasMany(models.Visit, { foreignKey: 'clubId' });
+    Club.hasMany(models.ScannerEvent, { foreignKey: 'clubId' });
   };
 
   return Club;

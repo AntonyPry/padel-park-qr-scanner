@@ -30,6 +30,7 @@ const originalAccountModel = db.Account;
 const originalSequelize = db.sequelize;
 const originalBookingChangeLogModel = db.BookingChangeLog;
 const originalVisitCategoryAssignmentModel = db.VisitCategoryAssignment;
+const originalScannerEventModel = db.ScannerEvent;
 const originalTrainingPlanExerciseModel = db.TrainingPlanExercise;
 const originalTrainingPlanParticipantModel = db.TrainingPlanParticipant;
 const trainingModelNames = [
@@ -71,6 +72,7 @@ after(() => {
   db.sequelize = originalSequelize;
   db.BookingChangeLog = originalBookingChangeLogModel;
   db.VisitCategoryAssignment = originalVisitCategoryAssignmentModel;
+  db.ScannerEvent = originalScannerEventModel;
   db.TrainingPlanExercise = originalTrainingPlanExerciseModel;
   db.TrainingPlanParticipant = originalTrainingPlanParticipantModel;
   for (const [name, model] of originalTrainingModels) {
@@ -633,6 +635,17 @@ test('owner cleanup removes dependent training data without touching progress', 
       return 1;
     },
   };
+  db.ScannerEvent = {
+    async destroy({ transaction: currentTransaction, where }) {
+      operations.push({
+        action: 'destroy',
+        model: 'ScannerEvent',
+        transaction: currentTransaction,
+        where,
+      });
+      return 2;
+    },
+  };
   db.TrainingPlanExercise = {
     async destroy() {
       throw new Error('plan exercises should be removed by TrainingPlan cascade');
@@ -669,6 +682,7 @@ test('owner cleanup removes dependent training data without touching progress', 
 
         if (name === 'Booking') return [{ id: 10 }, { id: '11' }];
         if (name === 'Visit') return [{ id: 20 }];
+        if (name === 'User') return [{ id: 30 }];
         return [];
       },
     };
@@ -698,6 +712,7 @@ test('owner cleanup removes dependent training data without touching progress', 
   assert.equal(result.role, 'admin');
   assert.equal(result.deleted.bookingChangeLogs, 2);
   assert.equal(result.deleted.visitCategoryAssignments, 1);
+  assert.equal(result.deleted.scannerEvents, 2);
   assert.equal(result.deleted.onboardingEvents, 4);
   assert.equal(result.deleted.trainingPlans, 1);
   assert.equal(result.deleted.clients, 3);
@@ -718,6 +733,15 @@ test('owner cleanup removes dependent training data without touching progress', 
     { visitId: { [opIn]: [20] } },
   );
   assert.deepEqual(
+    operations.find((item) => item.model === 'ScannerEvent').where,
+    {
+      [db.Sequelize.Op.or]: [
+        { visitId: { [opIn]: [20] } },
+        { userId: { [opIn]: [30] } },
+      ],
+    },
+  );
+  assert.deepEqual(
     operations.find(
       (item) => item.model === 'OnboardingEvent' && item.action === 'destroy',
     ).where,
@@ -732,7 +756,11 @@ test('owner cleanup removes dependent training data without touching progress', 
       .filter(
         (item) =>
           item.action === 'destroy' &&
-          !['BookingChangeLog', 'VisitCategoryAssignment'].includes(item.model),
+          ![
+            'BookingChangeLog',
+            'VisitCategoryAssignment',
+            'ScannerEvent',
+          ].includes(item.model),
       )
       .map((item) => item.model),
     [

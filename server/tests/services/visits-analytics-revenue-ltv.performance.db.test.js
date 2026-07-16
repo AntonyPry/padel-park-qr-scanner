@@ -2,11 +2,11 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
 const { getRevenueLtv } = require('../../src/services/visits-analytics.service');
-const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
+const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
 
 test('DB-backed production-size revenue fixture stays aggregated and bounded', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = String(Date.now());
   let source;
   let users = [];
@@ -24,6 +24,8 @@ test('DB-backed production-size revenue fixture stays aggregated and bounded', a
       sourceId: source.id,
     })));
     visits = await db.Visit.bulkCreate(users.map((user, index) => ({
+      clubId,
+      organizationId,
       userId: user.id,
       scannedAt: new Date(Date.UTC(2086, 0, 1 + (index % 10), 10, 0)),
     })));

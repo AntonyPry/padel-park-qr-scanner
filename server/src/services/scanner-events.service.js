@@ -1,6 +1,13 @@
 const { Op } = require('sequelize');
 const crypto = require('crypto');
 const db = require('../../models');
+const {
+  isTenantVisitsScannerEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  resolveVisitAccessContext,
+  visitTenantWhere,
+} = require('./visit-access-context.service');
 
 const MAX_PAGE_SIZE = 100;
 const QR_PREVIEW_TAIL = 4;
@@ -59,12 +66,45 @@ async function recordEvent({
   metadata = null,
   throwOnError = false,
   transaction = undefined,
+  tenant = null,
 }) {
   if (!eventType) return null;
 
   try {
+    const context = await resolveVisitAccessContext(tenant, {
+      lock: Boolean(transaction),
+      transaction,
+    });
+    let authoritativeUserId = userId;
+    if (visitId) {
+      const visit = await db.Visit.findOne({
+        attributes: ['id', 'userId'],
+        transaction,
+        where: visitTenantWhere(
+          context,
+          { id: Number(visitId) },
+          { force: true },
+        ),
+      });
+      if (!visit || (userId && Number(userId) !== Number(visit.userId))) {
+        throw appError('Связанный визит недоступен', 404);
+      }
+      authoritativeUserId = visit.userId;
+    } else if (userId) {
+      const user = await db.User.findOne({
+        attributes: ['id'],
+        transaction,
+        where: {
+          id: Number(userId),
+          organizationId: context.organizationId,
+        },
+      });
+      if (!user) throw appError('Связанный клиент недоступен', 404);
+    }
     return await db.ScannerEvent.create(
       {
+        organizationId: context.organizationId,
+        clubId: context.clubId,
         eventType,
         severity,
         status,
@@ -74,7 +114,7 @@ async function recordEvent({
         qrPreview: sanitizeQrPreview(rawQr),
         qrHash: hashQr(rawQr),
         visitId,
-        userId,
+        userId: authoritativeUserId,
         accountId: account?.id || accountId || null,
         clientEventId: clientEventId || null,
         metadata: sanitizeMetadata(metadata),
@@ -89,8 +129,8 @@ async function recordEvent({
       return null;
     }
 
-    console.error('Ошибка записи события сканера:', error);
     if (throwOnError) throw error;
+    console.error('Ошибка записи события сканера:', error);
     return null;
   }
 }
@@ -139,12 +179,15 @@ function serializeEvent(row) {
   };
 }
 
-async function listEvents(query = {}) {
+async function listEvents(query = {}, tenant = null) {
   const limit = Math.min(
     MAX_PAGE_SIZE,
     Math.max(10, Number.parseInt(query.limit, 10) || 30),
   );
   const where = {};
+  const context = isTenantVisitsScannerEnabled()
+    ? await resolveVisitAccessContext(tenant)
+    : null;
 
   if (query.eventType && query.eventType !== 'all') {
     where.eventType = query.eventType;
@@ -161,7 +204,7 @@ async function listEvents(query = {}) {
   }
 
   const rows = await db.ScannerEvent.findAll({
-    where,
+    where: visitTenantWhere(context, where),
     include: [
       {
         model: db.Account,

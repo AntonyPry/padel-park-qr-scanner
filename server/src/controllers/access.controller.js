@@ -62,7 +62,7 @@ class AccessController {
     const { visitId, keyNumber } = req.body;
 
     try {
-      await accessService.issueKey(visitId, keyNumber, req.account);
+      await accessService.issueKey(visitId, keyNumber, req.account, req.tenant);
       res.json({ status: 'ok' });
     } catch (error) {
       sendError(res, error, 'Ошибка выдачи ключа');
@@ -77,6 +77,7 @@ class AccessController {
         visitId,
         keyNumber,
         req.account,
+        req.tenant,
       );
       res.json({ status: 'ok', ...result });
     } catch (error) {
@@ -128,6 +129,7 @@ class AccessController {
           scannerSessionId,
           deviceLabel,
         },
+        tenant: req.tenant,
       });
       sendError(res, error, 'Ошибка сканирования QR');
     }
@@ -148,6 +150,7 @@ class AccessController {
         account: req.account,
         clientEventId: req.body.clientEventId,
         metadata: req.body.metadata,
+        tenant: req.tenant,
         throwOnError: true,
       });
 
@@ -162,7 +165,7 @@ class AccessController {
 
   async getScannerEvents(req, res) {
     try {
-      const events = await scannerEventsService.listEvents(req.query);
+      const events = await scannerEventsService.listEvents(req.query, req.tenant);
       res.json(events);
     } catch (error) {
       sendError(res, error, 'Ошибка получения журнала сканера');
@@ -193,7 +196,7 @@ class AccessController {
 
   async getVisits(req, res) {
     try {
-      const visits = await accessService.getRecentVisitCards();
+      const visits = await accessService.getRecentVisitCards(50, req.tenant);
       res.json(visits);
     } catch (error) {
       console.error(error);

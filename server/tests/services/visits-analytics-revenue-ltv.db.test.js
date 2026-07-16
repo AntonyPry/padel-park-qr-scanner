@@ -3,11 +3,11 @@ const { test } = require('node:test');
 const XLSX = require('xlsx');
 const db = require('../../models');
 const { createVisitsExportBuffer, getRevenueLtv } = require('../../src/services/visits-analytics.service');
-const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
+const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
 
 test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and excludes unsafe sources', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = String(Date.now());
   const records = {
     bookings: [], certificates: [], items: [], pendingSales: [], receipts: [], subscriptions: [], users: [], visits: [],
@@ -33,11 +33,11 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
     const leaf = await makeUser('revenue-leaf', { status: 'archived', mergedIntoUserId: root.id, mergedAt: new Date() });
     const training = await makeUser('revenue-training', { isTraining: true });
     const otherSourceClient = await makeUser('revenue-other-source', { sourceId: secondarySource.id });
-    const firstVisit = await db.Visit.create({ userId: leaf.id, scannedAt: '2088-01-01T10:00:00Z' });
+    const firstVisit = await db.Visit.create({ organizationId, clubId, userId: leaf.id, scannedAt: '2088-01-01T10:00:00Z' });
     records.visits.push(firstVisit);
-    records.visits.push(await db.Visit.create({ userId: root.id, scannedAt: '2088-01-02T10:00:00Z', duplicateOfVisitId: firstVisit.id }));
-    records.visits.push(await db.Visit.create({ userId: training.id, scannedAt: '2088-01-01T11:00:00Z', isTraining: true }));
-    records.visits.push(await db.Visit.create({ userId: otherSourceClient.id, scannedAt: '2088-01-01T12:00:00Z' }));
+    records.visits.push(await db.Visit.create({ organizationId, clubId, userId: root.id, scannedAt: '2088-01-02T10:00:00Z', duplicateOfVisitId: firstVisit.id }));
+    records.visits.push(await db.Visit.create({ organizationId, clubId, userId: training.id, scannedAt: '2088-01-01T11:00:00Z', isTraining: true }));
+    records.visits.push(await db.Visit.create({ organizationId, clubId, userId: otherSourceClient.id, scannedAt: '2088-01-01T12:00:00Z' }));
 
     const createReceiptItem = async ({ amount, clientId, dateTime, type }) => {
       const receipt = await db.Receipt.create({
@@ -240,7 +240,7 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
 
 test('DB-backed revenue LTV resolves a merge cycle to one canonical paying client', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = String(Date.now());
   let source;
   const users = [];
@@ -260,8 +260,8 @@ test('DB-backed revenue LTV resolves a merge cycle to one canonical paying clien
     }
     await users[0].update({ mergedIntoUserId: users[1].id });
     await users[1].update({ mergedIntoUserId: users[0].id });
-    visits.push(await db.Visit.create({ userId: users[0].id, scannedAt: '2087-01-01T10:00:00Z' }));
-    visits.push(await db.Visit.create({ userId: users[1].id, scannedAt: '2087-01-02T10:00:00Z' }));
+    visits.push(await db.Visit.create({ organizationId, clubId, userId: users[0].id, scannedAt: '2087-01-01T10:00:00Z' }));
+    visits.push(await db.Visit.create({ organizationId, clubId, userId: users[1].id, scannedAt: '2087-01-02T10:00:00Z' }));
     certificate = await db.Certificate.create({
       clientId: users[1].id,
       source: 'manual',

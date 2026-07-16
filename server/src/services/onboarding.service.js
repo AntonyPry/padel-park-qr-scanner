@@ -1034,9 +1034,14 @@ async function cleanupTrainingData(actor, query = {}) {
     );
     const visitWhere = getTrainingEntityWhere({ modelName: 'Visit' }, role);
 
-    const [bookingIds, visitIds] = await Promise.all([
+    const [bookingIds, visitIds, userIds] = await Promise.all([
       listTrainingIds(db.Booking, bookingWhere, transaction),
       listTrainingIds(db.Visit, visitWhere, transaction),
+      listTrainingIds(
+        db.User,
+        getTrainingEntityWhere({ modelName: 'User' }, role),
+        transaction,
+      ),
     ]);
 
     if (db.ShiftCashExpense) {
@@ -1079,6 +1084,22 @@ async function cleanupTrainingData(actor, query = {}) {
       });
     } else {
       deleted.visitCategoryAssignments = 0;
+    }
+
+    if ((visitIds.length > 0 || userIds.length > 0) && db.ScannerEvent) {
+      const scannerWhere = [];
+      if (visitIds.length > 0) {
+        scannerWhere.push({ visitId: { [db.Sequelize.Op.in]: visitIds } });
+      }
+      if (userIds.length > 0) {
+        scannerWhere.push({ userId: { [db.Sequelize.Op.in]: userIds } });
+      }
+      deleted.scannerEvents = await db.ScannerEvent.destroy({
+        transaction,
+        where: { [db.Sequelize.Op.or]: scannerWhere },
+      });
+    } else {
+      deleted.scannerEvents = 0;
     }
 
     const deletionOrder = [

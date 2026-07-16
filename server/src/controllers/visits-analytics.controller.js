@@ -9,6 +9,7 @@ class VisitsAnalyticsController {
       const analytics = await visitsAnalyticsService.getVisitsAnalytics(
         from,
         to,
+        { tenant: req.tenant },
       );
       res.json(analytics);
     } catch (error) {
@@ -20,7 +21,7 @@ class VisitsAnalyticsController {
   async getSourceQuality(req, res) {
     try {
       const { from, to, sources } = req.query;
-      res.json(await visitsAnalyticsService.getSourceQuality(from, to, { sourceKeys: sources ? String(sources).split(',') : undefined }));
+      res.json(await visitsAnalyticsService.getSourceQuality(from, to, { sourceKeys: sources ? String(sources).split(',') : undefined, tenant: req.tenant }));
     } catch (error) { sendError(res, error, 'Ошибка аналитики качества источников'); }
   }
 
@@ -29,6 +30,7 @@ class VisitsAnalyticsController {
       const { from, to, sources } = req.query;
       res.json(await visitsAnalyticsService.getCohortsLifecycle(from, to, {
         sourceKeys: sources ? String(sources).split(',') : undefined,
+        tenant: req.tenant,
       }));
     } catch (error) {
       sendError(res, error, 'Ошибка аналитики когорт и жизненного цикла');
@@ -40,6 +42,7 @@ class VisitsAnalyticsController {
       const { from, to, sources } = req.query;
       res.json(await visitsAnalyticsService.getRevenueLtv(from, to, {
         sourceKeys: sources ? String(sources).split(',') : undefined,
+        tenant: req.tenant,
       }));
     } catch (error) {
       sendError(res, error, 'Ошибка аналитики выручки и LTV');
@@ -48,7 +51,10 @@ class VisitsAnalyticsController {
 
   async previewClientBase(req, res) {
     try {
-      res.json(await visitsAnalyticsService.previewVisitAnalyticsSegment(req.body));
+      res.json(await visitsAnalyticsService.previewVisitAnalyticsSegment(
+        req.body,
+        { tenant: req.tenant },
+      ));
     } catch (error) {
       sendError(res, error, 'Ошибка предпросмотра базы из аналитики');
     }
@@ -69,7 +75,7 @@ class VisitsAnalyticsController {
   async exportSourceQuality(req, res) {
     try {
       const { from, to, sources } = req.query;
-      const buffer = await visitsAnalyticsService.createSourceQualityExportBuffer(from, to, { sourceKeys: sources ? String(sources).split(',') : undefined });
+      const buffer = await visitsAnalyticsService.createSourceQualityExportBuffer(from, to, { sourceKeys: sources ? String(sources).split(',') : undefined, tenant: req.tenant });
       res.setHeader('Content-Disposition', 'attachment; filename="visits_source_quality.xlsx"');
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       res.send(buffer);
@@ -82,7 +88,7 @@ class VisitsAnalyticsController {
       const buffer = await visitsAnalyticsService.createVisitsExportBuffer(
         from,
         to,
-        { sourceKeys: sources ? String(sources).split(',') : undefined },
+        { sourceKeys: sources ? String(sources).split(',') : undefined, tenant: req.tenant },
       );
 
       res.setHeader(

@@ -5,7 +5,7 @@ const analyticsService = require('../../src/services/visits-analytics.service');
 const clientBasesService = require('../../src/services/client-bases.service');
 const callTasksService = require('../../src/services/call-tasks.service');
 const clientBasesController = require('../../src/controllers/client-bases.controller');
-const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
+const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
 
 function createApiResponse() {
   return {
@@ -24,7 +24,7 @@ function createApiResponse() {
 
 test('DB-backed analytics → preview → client base → call task keeps count parity and canonical membership', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   let source;
@@ -63,16 +63,16 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     await cycleA.update({ mergedIntoUserId: cycleB.id });
     await cycleB.update({ mergedIntoUserId: cycleA.id });
 
-    const firstRootVisit = await db.Visit.create({ userId: leaf.id, scannedAt: '2091-01-05T10:00:00Z' });
+    const firstRootVisit = await db.Visit.create({ organizationId, clubId, userId: leaf.id, scannedAt: '2091-01-05T10:00:00Z' });
     await db.Visit.bulkCreate([
-      { userId: middle.id, scannedAt: '2091-02-10T10:00:00Z' },
-      { userId: root.id, scannedAt: '2091-03-10T10:00:00Z' },
-      { userId: active.id, scannedAt: '2091-01-12T10:00:00Z' },
-      { userId: archived.id, scannedAt: '2091-01-13T10:00:00Z' },
-      { userId: training.id, scannedAt: '2091-01-14T10:00:00Z', isTraining: true },
-      { userId: cycleA.id, scannedAt: '2091-01-15T10:00:00Z' },
-      { userId: cycleB.id, scannedAt: '2091-02-15T10:00:00Z' },
-      { userId: root.id, scannedAt: '2091-03-10T10:01:00Z', duplicateOfVisitId: firstRootVisit.id },
+      { organizationId, clubId, userId: middle.id, scannedAt: '2091-02-10T10:00:00Z' },
+      { organizationId, clubId, userId: root.id, scannedAt: '2091-03-10T10:00:00Z' },
+      { organizationId, clubId, userId: active.id, scannedAt: '2091-01-12T10:00:00Z' },
+      { organizationId, clubId, userId: archived.id, scannedAt: '2091-01-13T10:00:00Z' },
+      { organizationId, clubId, userId: training.id, scannedAt: '2091-01-14T10:00:00Z', isTraining: true },
+      { organizationId, clubId, userId: cycleA.id, scannedAt: '2091-01-15T10:00:00Z' },
+      { organizationId, clubId, userId: cycleB.id, scannedAt: '2091-02-15T10:00:00Z' },
+      { organizationId, clubId, userId: root.id, scannedAt: '2091-03-10T10:01:00Z', duplicateOfVisitId: firstRootVisit.id },
     ]);
 
     const sourceQuality = await analyticsService.getSourceQuality('2091-01-01', '2091-01-31', {
@@ -261,7 +261,7 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     assert.equal(new Set(taskClients.map((item) => Number(item.userId))).size, preview.count);
 
     const joinedLater = await makeUser('joined-later');
-    await db.Visit.create({ userId: joinedLater.id, scannedAt: '2091-01-20T10:00:00Z' });
+    await db.Visit.create({ organizationId, clubId, userId: joinedLater.id, scannedAt: '2091-01-20T10:00:00Z' });
     const syncResult = await callTasksService.sync(actor, task.id);
     assert.equal(syncResult.addedCount, 1);
     assert.equal(syncResult.task.snapshotClientCount, preview.count + 1);

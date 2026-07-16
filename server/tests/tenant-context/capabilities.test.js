@@ -172,3 +172,38 @@ test('clients/references capability is server-owned and depends on accepted Staf
     for (const name of names) restore(name, previous[name]);
   }
 });
+
+test('visits/scanner capability is server-owned and depends on accepted clients/references', () => {
+  const names = [
+    'TENANT_CONTEXT_ENABLED',
+    'TENANT_CACHE_REALTIME_ENABLED',
+    'TENANT_FILES_WORKERS_ENABLED',
+    'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+    'TENANT_STAFF_ACCESS_ENABLED',
+    'TENANT_CLIENTS_REFERENCES_ENABLED',
+    'TENANT_VISITS_SCANNER_ENABLED',
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) process.env[name] = 'true';
+    const capabilities = assertTenantCapabilityDependencies();
+    assert.equal(capabilities.tenantVisitsScanner, true);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        tenantContextCapability(),
+        'tenantVisitsScanner',
+      ),
+      false,
+    );
+
+    process.env.TENANT_CLIENTS_REFERENCES_ENABLED = 'false';
+    assert.throws(
+      () => assertTenantCapabilityDependencies(),
+      (error) =>
+        error.code === 'TENANT_CAPABILITY_DEPENDENCY_INVALID' &&
+        error.message.includes('TENANT_CLIENTS_REFERENCES_ENABLED'),
+    );
+  } finally {
+    for (const name of names) restore(name, previous[name]);
+  }
+});

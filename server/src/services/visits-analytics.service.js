@@ -1,5 +1,11 @@
 const XLSX = require('xlsx');
 const db = require('../../models');
+const {
+  isTenantVisitsScannerEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  resolveVisitAccessContext,
+} = require('./visit-access-context.service');
 
 const CLUB_TIME_ZONE = 'Europe/Moscow';
 const CLUB_UTC_OFFSET = '+03:00';
@@ -110,6 +116,57 @@ const CANONICAL_CLIENTS_CTE = `
   )
 `;
 
+async function resolveAnalyticsVisitContext(options = {}) {
+  if (options.visitContext) return options.visitContext;
+  if (!isTenantVisitsScannerEnabled()) return null;
+  return resolveVisitAccessContext(options.tenant || null);
+}
+
+function canonicalClientsCte(context) {
+  if (!context) return CANONICAL_CLIENTS_CTE;
+  return `
+  WITH RECURSIVE client_chain AS (
+    SELECT id AS originUserId, id AS currentUserId, mergedIntoUserId,
+      CAST(CONCAT(',', id, ',') AS CHAR(2048)) AS path, 0 AS depth
+    FROM Users
+    WHERE organizationId = :visitOrganizationId
+    UNION ALL
+    SELECT chain.originUserId, parent.id, parent.mergedIntoUserId,
+      CONCAT(chain.path, parent.id, ','), chain.depth + 1
+    FROM client_chain chain
+    JOIN Users parent
+      ON parent.id = chain.mergedIntoUserId
+     AND parent.organizationId = :visitOrganizationId
+    WHERE chain.depth < 63
+      AND LOCATE(CONCAT(',', parent.id, ','), chain.path) = 0
+  ), canonical_clients AS (
+    SELECT originUserId,
+      COALESCE(MAX(CASE WHEN mergedIntoUserId IS NULL THEN currentUserId END), MIN(currentUserId)) AS canonicalUserId
+    FROM client_chain
+    GROUP BY originUserId
+  )
+`;
+}
+
+function visitScopeSql(context, alias = 'v') {
+  return context
+    ? ` AND ${alias}.organizationId = :visitOrganizationId AND ${alias}.clubId = :visitClubId`
+    : '';
+}
+
+function visitScopeReplacements(context) {
+  return context
+    ? {
+        visitClubId: context.clubId,
+        visitOrganizationId: context.organizationId,
+      }
+    : {};
+}
+
+function visitIndex(context, legacyName, tenantName) {
+  return context ? tenantName : legacyName;
+}
+
 const VALID_VISIT_SQL = `COALESCE(v.isTraining, 0) = 0
   AND COALESCE(origin.isTraining, 0) = 0
   AND v.duplicateOfVisitId IS NULL`;
@@ -136,34 +193,39 @@ function calculateChanges(current, previous) {
   }]));
 }
 
-async function queryMetrics(period, now, sourceFilter = { sql: '', replacements: {} }) {
-  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+async function queryMetrics(
+  period,
+  now,
+  sourceFilter = { sql: '', replacements: {} },
+  context = null,
+) {
+  const rows = await db.sequelize.query(`${canonicalClientsCte(context)},
     first_visits AS (
       SELECT cc.canonicalUserId, MIN(v.visitedAt) AS firstVisitAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id = v.userId
       JOIN canonical_clients cc ON cc.originUserId = v.userId
       JOIN Users root ON root.id=cc.canonicalUserId
-      WHERE ${VALID_VISIT_SQL} ${sourceFilter.sql}
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} ${sourceFilter.sql}
       GROUP BY cc.canonicalUserId
     ), second_visits AS (
       SELECT cc.canonicalUserId, MIN(v.visitedAt) AS secondVisitAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id = v.userId
       JOIN canonical_clients cc ON cc.originUserId = v.userId
       JOIN first_visits fv ON fv.canonicalUserId = cc.canonicalUserId AND v.visitedAt > fv.firstVisitAt
-      WHERE ${VALID_VISIT_SQL}
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)}
       GROUP BY cc.canonicalUserId
     ), period_counts AS (
       SELECT 'current' AS periodKey, cc.canonicalUserId, COUNT(*) AS visits
-      FROM Visits v FORCE INDEX (idx_visits_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_visited_at', 'idx_visits_tenant_visited')})
       JOIN Users origin ON origin.id = v.userId JOIN canonical_clients cc ON cc.originUserId = v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to GROUP BY cc.canonicalUserId
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt BETWEEN :from AND :to GROUP BY cc.canonicalUserId
       UNION ALL
       SELECT 'previous', cc.canonicalUserId, COUNT(*)
-      FROM Visits v FORCE INDEX (idx_visits_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_visited_at', 'idx_visits_tenant_visited')})
       JOIN Users origin ON origin.id = v.userId JOIN canonical_clients cc ON cc.originUserId = v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :previousFrom AND :previousTo GROUP BY cc.canonicalUserId
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt BETWEEN :previousFrom AND :previousTo GROUP BY cc.canonicalUserId
     )
     SELECT pc.periodKey, SUM(pc.visits) totalVisits, COUNT(*) uniqueGuests,
       SUM(fv.firstVisitAt BETWEEN CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END AND CASE WHEN pc.periodKey='current' THEN :to ELSE :previousTo END) newGuests,
@@ -172,7 +234,7 @@ async function queryMetrics(period, now, sourceFilter = { sql: '', replacements:
       SUM(fv.firstVisitAt BETWEEN CASE WHEN pc.periodKey='current' THEN :from ELSE :previousFrom END AND CASE WHEN pc.periodKey='current' THEN :to ELSE :previousTo END AND DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY) <= :now AND sv.secondVisitAt <= DATE_ADD(fv.firstVisitAt, INTERVAL 30 DAY)) repeatRate30RepeatedGuests
     FROM period_counts pc JOIN first_visits fv ON fv.canonicalUserId=pc.canonicalUserId
     LEFT JOIN second_visits sv ON sv.canonicalUserId=pc.canonicalUserId GROUP BY pc.periodKey`, {
-    replacements: { from: period.fromSql, to: period.toSql, previousFrom: period.previousFromSql, previousTo: period.previousToSql, now: utcSql(now), ...sourceFilter.replacements },
+    replacements: { from: period.fromSql, to: period.toSql, previousFrom: period.previousFromSql, previousTo: period.previousToSql, now: utcSql(now), ...sourceFilter.replacements, ...visitScopeReplacements(context) },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   const byKey = new Map(rows.map((row) => [row.periodKey, row]));
@@ -184,10 +246,14 @@ async function queryMetrics(period, now, sourceFilter = { sql: '', replacements:
   return { current: finalize('current'), previous: finalize('previous') };
 }
 
-async function queryDashboardAggregates(period, sourceFilter = { sql: '', replacements: {} }) {
-  const replacements = { from: period.fromSql, to: period.toSql, ...sourceFilter.replacements };
-  const base = `${CANONICAL_CLIENTS_CTE}`;
-  const common = `FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}`;
+async function queryDashboardAggregates(
+  period,
+  sourceFilter = { sql: '', replacements: {} },
+  context = null,
+) {
+  const replacements = { from: period.fromSql, to: period.toSql, ...sourceFilter.replacements, ...visitScopeReplacements(context) };
+  const base = `${canonicalClientsCte(context)}`;
+  const common = `FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_visited_at', 'idx_visits_tenant_visited')}) JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}`;
   const [sources, categories, topGuests, heatRows] = await Promise.all([
     db.sequelize.query(`${base} SELECT COALESCE(NULLIF(root.source,''),'Не указан') name, COUNT(*) value ${common} GROUP BY root.source ORDER BY value DESC`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
     db.sequelize.query(`${base} SELECT COALESCE(NULLIF(v.category,''),'Не указана') category, COUNT(*) value ${common} GROUP BY v.category`, { replacements, type: db.Sequelize.QueryTypes.SELECT }),
@@ -205,10 +271,11 @@ async function queryDashboardAggregates(period, sourceFilter = { sql: '', replac
 }
 
 async function getVisitsAnalytics(from, to, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
   const sourceFilter = buildSourceFilter(options.sourceKeys);
-  const [metricSets, aggregates] = await Promise.all([queryMetrics(period, now, sourceFilter), queryDashboardAggregates(period, sourceFilter)]);
+  const [metricSets, aggregates] = await Promise.all([queryMetrics(period, now, sourceFilter, context), queryDashboardAggregates(period, sourceFilter, context)]);
   return { ...metricSets.current, previousPeriod: { from: period.previousFrom, to: period.previousTo, metrics: metricSets.previous }, changes: calculateChanges(metricSets.current, metricSets.previous), ...aggregates, timeZone: CLUB_TIME_ZONE };
 }
 
@@ -284,16 +351,17 @@ function sourceQualityFromRow(row) {
 }
 
 async function getSourceQuality(from, to, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
   const sourceFilter = buildSourceFilter(options.sourceKeys);
-  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+  const rows = await db.sequelize.query(`${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId, v.visitedAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id=v.userId
       JOIN canonical_clients cc ON cc.originUserId=v.userId
-      WHERE ${VALID_VISIT_SQL}
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)}
     ), ranked_visits AS (
       SELECT canonicalUserId, visitedAt,
         ROW_NUMBER() OVER (PARTITION BY canonicalUserId ORDER BY visitedAt, canonicalUserId) visitNumber,
@@ -340,7 +408,7 @@ async function getSourceQuality(from, to, options = {}) {
     )
     SELECT g.*,m.medianDaysToSecondVisit FROM grouped g LEFT JOIN medians m
       ON m.sourceId<=>g.sourceId AND m.sourceName=g.sourceName ORDER BY newClients DESC,sourceName`, {
-    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), ...sourceFilter.replacements },
+    replacements: { from: period.fromSql, to: period.toSql, now: utcSql(now), ...sourceFilter.replacements, ...visitScopeReplacements(context) },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   return { from: period.from, to: period.to, asOf: now, timeZone: CLUB_TIME_ZONE, sources: rows.map(sourceQualityFromRow) };
@@ -386,14 +454,14 @@ function ltvMetric(revenue, eligibleCount) {
   };
 }
 
-function revenueAttributionCte(sourceFilterSql = '') {
-  return `${CANONICAL_CLIENTS_CTE},
+function revenueAttributionCte(sourceFilterSql = '', context = null) {
+  return `${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId,v.visitedAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id=v.userId
       JOIN canonical_clients cc ON cc.originUserId=v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt<=:asOf
     ), client_facts AS (
       SELECT canonicalUserId,MIN(visitedAt) firstVisitAt
       FROM valid_visits GROUP BY canonicalUserId
@@ -509,8 +577,8 @@ function sourceRevenueFromRow(row) {
   };
 }
 
-async function queryRevenueBySource(period, sourceFilter) {
-  const rows = await db.sequelize.query(`${revenueAttributionCte(sourceFilter.sql)},
+async function queryRevenueBySource(period, sourceFilter, context = null) {
+  const rows = await db.sequelize.query(`${revenueAttributionCte(sourceFilter.sql, context)},
     client_revenue AS (
       SELECT cohort.canonicalUserId,cohort.sourceId,cohort.sourceName,cohort.firstVisitAt,
         SUM(CASE WHEN events.eventDate>=cohort.firstVisitAt AND events.eventDate<=:asOf THEN events.amount ELSE 0 END) lifetimeRevenue,
@@ -536,14 +604,15 @@ async function queryRevenueBySource(period, sourceFilter) {
       from: period.fromSql,
       to: period.toSql,
       ...sourceFilter.replacements,
+      ...visitScopeReplacements(context),
     },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   return rows.map(sourceRevenueFromRow);
 }
 
-async function queryRevenueCohorts(period, sourceFilter) {
-  return db.sequelize.query(`${revenueAttributionCte(sourceFilter.sql)},
+async function queryRevenueCohorts(period, sourceFilter, context = null) {
+  return db.sequelize.query(`${revenueAttributionCte(sourceFilter.sql, context)},
     cohort_sizes AS (
       SELECT cohortMonth,COUNT(*) cohortSize FROM cohort_clients GROUP BY cohortMonth
     ), cohort_month_revenue AS (
@@ -564,6 +633,7 @@ async function queryRevenueCohorts(period, sourceFilter) {
       from: period.fromSql,
       to: period.toSql,
       ...sourceFilter.replacements,
+      ...visitScopeReplacements(context),
     },
     type: db.Sequelize.QueryTypes.SELECT,
   });
@@ -608,8 +678,8 @@ function buildRevenueCohorts(rows, asOfDate) {
   };
 }
 
-async function queryRevenueCoverage(period, sourceFilter) {
-  const rows = await db.sequelize.query(`${revenueAttributionCte('')}
+async function queryRevenueCoverage(period, sourceFilter, context = null) {
+  const rows = await db.sequelize.query(`${revenueAttributionCte('', context)}
     SELECT
       (SELECT COALESCE(SUM(CASE WHEN type='PAYBACK' THEN -ABS(totalAmount) ELSE ABS(totalAmount) END),0)
         FROM Receipts WHERE dateTime BETWEEN :from AND :to) cashNetRevenue,
@@ -691,6 +761,7 @@ async function queryRevenueCoverage(period, sourceFilter) {
       to: period.toSql,
       toDate: clubDateString(period.to),
       ...sourceFilter.replacements,
+      ...visitScopeReplacements(context),
     },
     type: db.Sequelize.QueryTypes.SELECT,
   });
@@ -745,13 +816,14 @@ function revenueReliability(coveragePercent, mature90) {
 }
 
 async function getRevenueLtv(from, to, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const period = resolvePeriod(from, to, options.now ? new Date(options.now) : new Date());
   const sourceFilter = buildSourceFilter(options.sourceKeys);
   const [sources, cohortRows, coverage, availableSources] = await Promise.all([
-    queryRevenueBySource(period, sourceFilter),
-    queryRevenueCohorts(period, sourceFilter),
-    queryRevenueCoverage(period, sourceFilter),
-    queryAvailableSources(period.toSql),
+    queryRevenueBySource(period, sourceFilter, context),
+    queryRevenueCohorts(period, sourceFilter, context),
+    queryRevenueCoverage(period, sourceFilter, context),
+    queryAvailableSources(period.toSql, context),
   ]);
   const acquiredClients = sources.reduce((sum, row) => sum + row.acquiredClients, 0);
   const payingClients = sources.reduce((sum, row) => sum + row.payingClients, 0);
@@ -817,14 +889,14 @@ function lifecycleStatusCase() {
     ELSE 'lost' END`;
 }
 
-function cohortFactsCte(sourceFilterSql = '') {
-  return `${CANONICAL_CLIENTS_CTE},
+function cohortFactsCte(sourceFilterSql = '', context = null) {
+  return `${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId,v.visitedAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id=v.userId
       JOIN canonical_clients cc ON cc.originUserId=v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt<=:asOf
     ), ranked_visits AS (
       SELECT canonicalUserId,visitedAt,
         ROW_NUMBER() OVER(PARTITION BY canonicalUserId ORDER BY visitedAt,canonicalUserId) visitNumber,
@@ -843,15 +915,16 @@ function cohortFactsCte(sourceFilterSql = '') {
     )`;
 }
 
-async function queryCohorts(period, sourceFilter) {
+async function queryCohorts(period, sourceFilter, context = null) {
   const replacements = {
     from: period.fromSql,
     to: period.toSql,
     asOf: period.toSql,
     ...sourceFilter.replacements,
+    ...visitScopeReplacements(context),
   };
   const [summaryRows, retentionRows] = await Promise.all([
-    db.sequelize.query(`${cohortFactsCte(sourceFilter.sql)}
+    db.sequelize.query(`${cohortFactsCte(sourceFilter.sql, context)}
       SELECT cohortMonth,COUNT(*) cohortSize,
         SUM(clientStatus='active' AND NOT rootIsTraining) actionableCount,
         SUM(DATE_ADD(firstVisitAt,INTERVAL 30 DAY)<=:asOf) eligible30,
@@ -864,7 +937,7 @@ async function queryCohorts(period, sourceFilter) {
       replacements,
       type: db.Sequelize.QueryTypes.SELECT,
     }),
-    db.sequelize.query(`${cohortFactsCte(sourceFilter.sql)}
+    db.sequelize.query(`${cohortFactsCte(sourceFilter.sql, context)}
       SELECT cohort.cohortMonth,
         PERIOD_DIFF(DATE_FORMAT(CONVERT_TZ(visits.visitedAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y%m'),DATE_FORMAT(CONVERT_TZ(cohort.firstVisitAt,'+00:00','${CLUB_UTC_OFFSET}'),'%Y%m')) retentionMonth,
         COUNT(DISTINCT cohort.canonicalUserId) retainedClients
@@ -879,14 +952,14 @@ async function queryCohorts(period, sourceFilter) {
   return { summaryRows, retentionRows };
 }
 
-async function queryLifecycle(asOfSql, sourceFilter) {
-  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+async function queryLifecycle(asOfSql, sourceFilter, context = null) {
+  const rows = await db.sequelize.query(`${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId,v.visitedAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id=v.userId
       JOIN canonical_clients cc ON cc.originUserId=v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt<=:asOf
     ), client_facts AS (
       SELECT canonicalUserId,MIN(visitedAt) firstVisitAt,MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
       FROM valid_visits GROUP BY canonicalUserId
@@ -899,7 +972,11 @@ async function queryLifecycle(asOfSql, sourceFilter) {
     SELECT statusKey,COUNT(*) count,
       SUM(clientStatus='active' AND NOT rootIsTraining) actionableCount
     FROM classified GROUP BY statusKey`, {
-    replacements: { asOf: asOfSql, ...sourceFilter.replacements },
+    replacements: {
+      asOf: asOfSql,
+      ...sourceFilter.replacements,
+      ...visitScopeReplacements(context),
+    },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   return new Map(rows.map((row) => [row.statusKey, {
@@ -908,12 +985,12 @@ async function queryLifecycle(asOfSql, sourceFilter) {
   }]));
 }
 
-async function queryAvailableSources(asOfSql) {
-  const rows = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE},
+async function queryAvailableSources(asOfSql, context = null) {
+  const rows = await db.sequelize.query(`${canonicalClientsCte(context)},
     visited_clients AS (
-      SELECT DISTINCT cc.canonicalUserId FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      SELECT DISTINCT cc.canonicalUserId FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id=v.userId JOIN canonical_clients cc ON cc.originUserId=v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt<=:asOf
     )
     SELECT root.sourceId,COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') sourceName,
       COUNT(*) clientCount,
@@ -921,7 +998,7 @@ async function queryAvailableSources(asOfSql) {
     FROM visited_clients clients JOIN Users root ON root.id=clients.canonicalUserId
     LEFT JOIN ClientSources cs ON cs.id=root.sourceId
     GROUP BY root.sourceId,sourceName ORDER BY clientCount DESC,sourceName`, {
-    replacements: { asOf: asOfSql },
+    replacements: { asOf: asOfSql, ...visitScopeReplacements(context) },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   return rows.map((row) => ({
@@ -934,14 +1011,15 @@ async function queryAvailableSources(asOfSql) {
 }
 
 async function getCohortsLifecycle(from, to, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const period = resolvePeriod(from, to, new Date());
   const sourceFilter = buildSourceFilter(options.sourceKeys);
   const asOfDate = clubDateString(period.to);
   const [cohortData, currentLifecycle, previousLifecycle, availableSources] = await Promise.all([
-    queryCohorts(period, sourceFilter),
-    queryLifecycle(period.toSql, sourceFilter),
-    queryLifecycle(period.previousToSql, sourceFilter),
-    queryAvailableSources(period.toSql),
+    queryCohorts(period, sourceFilter, context),
+    queryLifecycle(period.toSql, sourceFilter, context),
+    queryLifecycle(period.previousToSql, sourceFilter, context),
+    queryAvailableSources(period.toSql, context),
   ]);
   const retentionCounts = new Map(cohortData.retentionRows.map((row) => [
     `${row.cohortMonth}:${number(row.retentionMonth)}`, number(row.retainedClients),
@@ -1088,6 +1166,7 @@ function mapSegmentClient(row) {
 }
 
 async function queryVisitAnalyticsSegment(filtersInput, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const filters = normalizeVisitAnalyticsSegmentFilters(filtersInput);
   const sourceFilter = buildSourceFilter(filters.sourceKeys.length ? filters.sourceKeys : undefined);
   const criteria = buildSegmentCriteria(filters);
@@ -1096,13 +1175,13 @@ async function queryVisitAnalyticsSegment(filtersInput, options = {}) {
     'COALESCE(root.isTraining,0)=0',
     ...criteria.having,
   ];
-  const baseSql = `${CANONICAL_CLIENTS_CTE},
+  const baseSql = `${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId,v.visitedAt
-      FROM Visits v FORCE INDEX (idx_visits_user_visited_at)
+      FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_user_visited_at', 'idx_visits_tenant_user_visited')})
       JOIN Users origin ON origin.id=v.userId
       JOIN canonical_clients cc ON cc.originUserId=v.userId
-      WHERE ${VALID_VISIT_SQL} AND v.visitedAt<=:asOf
+      WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt<=:asOf
     ), client_facts AS (
       SELECT canonicalUserId,MIN(visitedAt) firstVisitAt,MAX(visitedAt) lastVisitAt,COUNT(*) visitCount
       FROM valid_visits GROUP BY canonicalUserId
@@ -1115,7 +1194,11 @@ async function queryVisitAnalyticsSegment(filtersInput, options = {}) {
       LEFT JOIN ClientSources cs ON cs.id=root.sourceId
       WHERE ${where.join(' AND ')} ${sourceFilter.sql}
     )`;
-  const replacements = { ...criteria.replacements, ...sourceFilter.replacements };
+  const replacements = {
+    ...criteria.replacements,
+    ...sourceFilter.replacements,
+    ...visitScopeReplacements(context),
+  };
   const countRows = await db.sequelize.query(`${baseSql} SELECT COUNT(*) total FROM selected_clients`, {
     replacements,
     type: db.Sequelize.QueryTypes.SELECT,
@@ -1133,8 +1216,8 @@ async function queryVisitAnalyticsSegment(filtersInput, options = {}) {
   return { filters, items: rows.map(mapSegmentClient), total };
 }
 
-async function countVisitAnalyticsSegmentClients(filters) {
-  return (await queryVisitAnalyticsSegment(filters, { countOnly: true })).total;
+async function countVisitAnalyticsSegmentClients(filters, options = {}) {
+  return (await queryVisitAnalyticsSegment(filters, { ...options, countOnly: true })).total;
 }
 
 async function listVisitAnalyticsSegmentClients(filters, options = {}) {
@@ -1145,7 +1228,8 @@ function getLifecycleLabel(key) {
   return LIFECYCLE_STATUSES.find((status) => status.key === key)?.label || key;
 }
 
-async function previewVisitAnalyticsSegment(selection = {}) {
+async function previewVisitAnalyticsSegment(selection = {}, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const kind = ['source', 'lifecycle', 'cohort', 'filters'].includes(selection.kind)
     ? selection.kind
     : 'filters';
@@ -1174,9 +1258,9 @@ async function previewVisitAnalyticsSegment(selection = {}) {
     lifecycleStatus: kind === 'lifecycle' ? selection.lifecycleStatus : undefined,
   });
   const period = { from, to };
-  const availableSources = await queryAvailableSources(analyticsDateTimeSql(filters.asOf));
+  const availableSources = await queryAvailableSources(analyticsDateTimeSql(filters.asOf), context);
   const sourceLabels = sourceKeys.map((key) => availableSources.find((source) => source.sourceKey === key)?.source || key);
-  const count = await countVisitAnalyticsSegmentClients(filters);
+  const count = await countVisitAnalyticsSegmentClients(filters, { visitContext: context });
   const criterion = kind === 'lifecycle'
     ? `Жизненный статус «${getLifecycleLabel(filters.lifecycleStatus)}»`
     : kind === 'cohort'
@@ -1319,23 +1403,29 @@ function appendRevenueLtvSheets(workbook, analytics) {
 }
 
 async function createVisitsExportBuffer(from, to, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const now = options.now ? new Date(options.now) : new Date();
   const period = resolvePeriod(from, to, now);
   const sourceFilter = buildSourceFilter(options.sourceKeys);
   const [analytics, cohortsLifecycle, revenueLtv] = await Promise.all([
-    getVisitsAnalytics(from, to, { now, sourceKeys: options.sourceKeys }),
-    getCohortsLifecycle(from, to, options),
-    getRevenueLtv(from, to, { ...options, now }),
+    getVisitsAnalytics(from, to, { now, sourceKeys: options.sourceKeys, visitContext: context }),
+    getCohortsLifecycle(from, to, { ...options, visitContext: context }),
+    getRevenueLtv(from, to, { ...options, now, visitContext: context }),
   ]);
-  const visits = await db.sequelize.query(`${CANONICAL_CLIENTS_CTE}
+  const visits = await db.sequelize.query(`${canonicalClientsCte(context)}
     SELECT v.id,v.visitedAt,v.keyNumber,v.category,root.name,root.phone,
       COALESCE(NULLIF(cs.name,''),NULLIF(root.source,''),'Не указан') source
-    FROM Visits v FORCE INDEX (idx_visits_visited_at) JOIN Users origin ON origin.id=v.userId
+    FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_visited_at', 'idx_visits_tenant_visited')}) JOIN Users origin ON origin.id=v.userId
     JOIN canonical_clients cc ON cc.originUserId=v.userId JOIN Users root ON root.id=cc.canonicalUserId
     LEFT JOIN ClientSources cs ON cs.id=root.sourceId
-    WHERE ${VALID_VISIT_SQL} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}
+    WHERE ${VALID_VISIT_SQL}${visitScopeSql(context)} AND v.visitedAt BETWEEN :from AND :to ${sourceFilter.sql}
     ORDER BY v.visitedAt DESC`, {
-    replacements: { from: period.fromSql, to: period.toSql, ...sourceFilter.replacements },
+    replacements: {
+      from: period.fromSql,
+      to: period.toSql,
+      ...sourceFilter.replacements,
+      ...visitScopeReplacements(context),
+    },
     type: db.Sequelize.QueryTypes.SELECT,
   });
   const appliedSources = Array.isArray(options.sourceKeys)
@@ -1399,10 +1489,15 @@ async function createVisitsExportBuffer(from, to, options = {}) {
 }
 
 async function explainPeriodIndex(from, to, options = {}) {
+  const context = await resolveAnalyticsVisitContext(options);
   const period = resolvePeriod(from, to, options.now ? new Date(options.now) : new Date());
-  return db.sequelize.query(`EXPLAIN SELECT v.id FROM Visits v FORCE INDEX (idx_visits_visited_at)
-    WHERE v.visitedAt BETWEEN :from AND :to AND COALESCE(v.isTraining,0)=0 AND v.duplicateOfVisitId IS NULL`, {
-    replacements: { from: period.fromSql, to: period.toSql }, type: db.Sequelize.QueryTypes.SELECT,
+  return db.sequelize.query(`EXPLAIN SELECT v.id FROM Visits v FORCE INDEX (${visitIndex(context, 'idx_visits_visited_at', 'idx_visits_tenant_visited')})
+    WHERE v.visitedAt BETWEEN :from AND :to AND COALESCE(v.isTraining,0)=0 AND v.duplicateOfVisitId IS NULL${visitScopeSql(context)}`, {
+    replacements: {
+      from: period.fromSql,
+      to: period.toSql,
+      ...visitScopeReplacements(context),
+    }, type: db.Sequelize.QueryTypes.SELECT,
   });
 }
 

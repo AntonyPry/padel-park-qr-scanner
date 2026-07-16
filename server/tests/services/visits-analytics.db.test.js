@@ -3,11 +3,11 @@ const { test } = require('node:test');
 const db = require('../../models');
 const XLSX = require('xlsx');
 const { createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, sourceKeyFromRow } = require('../../src/services/visits-analytics.service');
-const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
+const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
 
 test('DB-backed visit analytics handles history, 30-day boundary, training, duplicates, merge and scannedAt', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
@@ -23,7 +23,7 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
     const primary = await makeUser('primary');
     const merged = await makeUser('merged', { status: 'archived', mergedIntoUserId: primary.id, mergedAt: new Date() });
     const training = await makeUser('training');
-    const create = (userId, scannedAt, extra = {}) => db.Visit.create({ userId, scannedAt, ...extra });
+    const create = (userId, scannedAt, extra = {}) => db.Visit.create({ organizationId, clubId, userId, scannedAt, ...extra });
     await create(returning.id, '2097-12-20T10:00:00Z');
     await create(returning.id, '2098-01-05T10:00:00Z');
     const firstExact = await create(exact30.id, '2098-01-01T10:00:00Z', { createdAt: '2098-02-01T10:00:00Z' });
@@ -58,7 +58,7 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
 
 test('DB-backed canonical chain leaf → middle → root uses final root everywhere', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
@@ -74,9 +74,9 @@ test('DB-backed canonical chain leaf → middle → root uses final root everywh
     await middle.update({ status: 'archived', mergedIntoUserId: root.id, mergedAt: new Date() });
     await leaf.update({ status: 'archived', mergedIntoUserId: middle.id, mergedAt: new Date() });
     await db.Visit.bulkCreate([
-      { userId: leaf.id, scannedAt: '2095-06-01T08:00:00Z' },
-      { userId: middle.id, scannedAt: '2095-06-02T08:00:00Z' },
-      { userId: root.id, scannedAt: '2095-06-03T08:00:00Z' },
+      { organizationId, clubId, userId: leaf.id, scannedAt: '2095-06-01T08:00:00Z' },
+      { organizationId, clubId, userId: middle.id, scannedAt: '2095-06-02T08:00:00Z' },
+      { organizationId, clubId, userId: root.id, scannedAt: '2095-06-03T08:00:00Z' },
     ]);
 
     const result = await getVisitsAnalytics('2095-06-01', '2095-06-30', { now: '2095-08-01T00:00:00Z' });
@@ -110,7 +110,7 @@ test('DB-backed canonical chain leaf → middle → root uses final root everywh
 
 test('DB-backed canonical resolution terminates on merged cycles', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
@@ -118,7 +118,7 @@ test('DB-backed canonical resolution terminates on merged cycles', async () => {
     for (const name of ['cycle-a', 'cycle-b']) users.push(await db.User.create({ organizationId, name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source: cycleSource }));
     await users[0].update({ mergedIntoUserId: users[1].id, status: 'archived' });
     await users[1].update({ mergedIntoUserId: users[0].id, status: 'archived' });
-    await db.Visit.bulkCreate(users.map((user, index) => ({ userId: user.id, scannedAt: `2094-05-0${index + 1}T08:00:00Z` })));
+    await db.Visit.bulkCreate(users.map((user, index) => ({ organizationId, clubId, userId: user.id, scannedAt: `2094-05-0${index + 1}T08:00:00Z` })));
     const result = await getVisitsAnalytics('2094-05-01', '2094-05-31', { now: '2094-07-01T00:00:00Z' });
     assert.equal(result.totalVisits, 2);
     assert.equal(result.uniqueGuests, 1);
@@ -141,7 +141,7 @@ test('DB-backed EXPLAIN uses visitedAt range index', async () => {
 
 test('DB-backed source quality handles boundaries, maturity, canonical source and Excel parity', async () => {
   await db.sequelize.authenticate();
-  const organizationId = await getDefaultOrganizationId(db);
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   let source;
@@ -156,11 +156,11 @@ test('DB-backed source quality handles boundaries, maturity, canonical source an
     const legacy=await make('legacy');
     const unspecified=await make('unspecified',{source:''});
     await db.Visit.bulkCreate([
-      {userId:exact.id,scannedAt:'2090-01-01T10:00:00Z'},{userId:exact.id,scannedAt:'2090-01-31T10:00:00Z'},{userId:exact.id,scannedAt:'2090-03-31T10:00:00Z'},
-      {userId:late.id,scannedAt:'2090-01-02T10:00:00Z'},{userId:late.id,scannedAt:'2090-02-01T10:00:01Z'},
-      {userId:fresh.id,scannedAt:'2090-01-30T10:00:00Z'},
-      {userId:leaf.id,scannedAt:'2090-01-03T10:00:00Z'},{userId:root.id,scannedAt:'2090-01-04T10:00:00Z'},
-      {userId:legacy.id,scannedAt:'2090-01-05T10:00:00Z'},{userId:unspecified.id,scannedAt:'2090-01-06T10:00:00Z'},
+      {organizationId,clubId,userId:exact.id,scannedAt:'2090-01-01T10:00:00Z'},{organizationId,clubId,userId:exact.id,scannedAt:'2090-01-31T10:00:00Z'},{organizationId,clubId,userId:exact.id,scannedAt:'2090-03-31T10:00:00Z'},
+      {organizationId,clubId,userId:late.id,scannedAt:'2090-01-02T10:00:00Z'},{organizationId,clubId,userId:late.id,scannedAt:'2090-02-01T10:00:01Z'},
+      {organizationId,clubId,userId:fresh.id,scannedAt:'2090-01-30T10:00:00Z'},
+      {organizationId,clubId,userId:leaf.id,scannedAt:'2090-01-03T10:00:00Z'},{organizationId,clubId,userId:root.id,scannedAt:'2090-01-04T10:00:00Z'},
+      {organizationId,clubId,userId:legacy.id,scannedAt:'2090-01-05T10:00:00Z'},{organizationId,clubId,userId:unspecified.id,scannedAt:'2090-01-06T10:00:00Z'},
     ]);
     const result=await getSourceQuality('2090-01-01','2090-01-31',{now:'2090-05-01T00:00:00Z'});
     const row=result.sources.find(item=>item.source===source.name);
@@ -188,7 +188,7 @@ test('DB-backed source quality handles boundaries, maturity, canonical source an
     assert.equal(lifecycle.lifecycle.totalClassified,4);
     assert.equal(lifecycle.cohorts.find(item=>item.cohortMonth==='2090-01').repeat30.eligibleCount,4);
 
-    await db.Visit.create({userId:exact.id,scannedAt:'2090-05-01T00:00:00Z'});
+    await db.Visit.create({organizationId,clubId,userId:exact.id,scannedAt:'2090-05-01T00:00:00Z'});
     const historical=await getCohortsLifecycle('2090-01-01','2090-04-30',filterOptions);
     assert.equal(historical.lifecycle.statuses.reduce((sum,item)=>sum+item.count,0),4);
 
