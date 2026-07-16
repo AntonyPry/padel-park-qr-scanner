@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { queryKeys } from '@/api/query-keys';
 import {
   getRealtimeQueryGroups,
   getRealtimeQueryKeys,
@@ -64,6 +65,23 @@ describe('realtime invalidation mapping', () => {
     expect(groups).toContain('shifts');
     expect(groups).toContain('motivation');
     expect(groups).toContain('finance');
+  });
+
+  it('invalidates the active reports query through the shared shiftReports group', () => {
+    const keys = getRealtimeQueryKeys(
+      event({
+        domain: 'shifts',
+        entity: 'shift_report',
+        hints: { queryGroups: ['shiftReports'] },
+      }),
+    );
+    const activeReportsKey = queryKeys.shiftReports.active();
+
+    expect(
+      keys.some((key) =>
+        key.every((segment, index) => activeReportsKey[index] === segment),
+      ),
+    ).toBe(true);
   });
 
   it('keeps unknown groups usable for legacy screens', () => {
