@@ -119,16 +119,20 @@ describe('ShiftCashPanel', () => {
     expect(screen.getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
   });
 
-  it('keeps the cash header on the same card surface as its body', async () => {
+  it('omits redundant cash headings and operator explanations', async () => {
     mocks.getActive.mockResolvedValueOnce(makeSummary());
     render(<ShiftCashPanel />);
 
-    const title = await screen.findByText('Касса', { exact: true });
-    const header = title.closest('[data-slot="card-header"]');
-
-    expect(header).toHaveClass('border-b');
-    expect(header?.className).not.toMatch(/(?:^|\s)bg-/);
-    expect(header?.className).not.toMatch(/gradient/);
+    expect(await screen.findByText('Ожидаемый остаток')).toBeInTheDocument();
+    expect(screen.queryByText('Касса', { exact: true })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Купюры, мелочь, наличная выручка и расходы текущей смены.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        'Расход сразу попадет в P&L. Фото чека можно снять камерой телефона.',
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it('keeps mobile KPI labels and closing placeholder fully visible', async () => {

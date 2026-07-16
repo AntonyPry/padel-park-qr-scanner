@@ -1,4 +1,5 @@
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import AdminMotivationPage, {
   AdminMotivationSettings,
@@ -19,6 +20,14 @@ vi.mock('@/lib/realtime', () => ({
 
 vi.mock('@/lib/useAuth', () => ({
   useAuth: () => ({ account: { id: 1, role: 'owner' } }),
+}));
+
+vi.mock('@/components/shift-workspace-state', () => ({
+  useShiftWorkspaceOptional: () => ({
+    activeShift: null,
+    loaded: true,
+    setActiveShift: vi.fn(),
+  }),
 }));
 
 function jsonResponse(body: unknown) {
@@ -84,18 +93,27 @@ afterEach(() => cleanup());
 
 describe('AdminMotivationPage views', () => {
   it('keeps only operational controls on the Shift workspace', async () => {
-    render(<AdminMotivationPage />);
+    render(
+      <MemoryRouter>
+        <AdminMotivationPage />
+      </MemoryRouter>,
+    );
 
-    expect(await screen.findByRole('button', { name: 'Начать смену' })).toBeInTheDocument();
+    expect(await screen.findByText('Смена не начата')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Начать смену' })).not.toBeInTheDocument();
     expect(screen.queryByText('Бонусные правила')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Создать' })).not.toBeInTheDocument();
     expect(
       mocks.apiFetch.mock.calls.some(([input]) => input === '/api/shifts/active'),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('keeps rule forms in Shift settings without loading operational data', async () => {
-    render(<AdminMotivationSettings />);
+    render(
+      <MemoryRouter>
+        <AdminMotivationSettings />
+      </MemoryRouter>,
+    );
 
     expect(await screen.findByText('Бонусные правила')).toBeInTheDocument();
     expect(screen.getByText('Продажи бара')).toBeInTheDocument();
