@@ -154,6 +154,12 @@ function visitScopeSql(context, alias = 'v') {
     : '';
 }
 
+function receiptScopeSql(context, alias = 'receipts') {
+  return context
+    ? ` AND ${alias}.organizationId = :visitOrganizationId AND ${alias}.clubId = :visitClubId`
+    : '';
+}
+
 function visitScopeReplacements(context) {
   return context
     ? {
@@ -455,6 +461,37 @@ function ltvMetric(revenue, eligibleCount) {
 }
 
 function revenueAttributionCte(sourceFilterSql = '', context = null) {
+  const receiptItemCandidatesSql = context
+    ? `SELECT ps.receiptItemId,ps.clientId
+      FROM PendingSales ps
+      JOIN ReceiptItems pending_items ON pending_items.id=ps.receiptItemId
+      JOIN Receipts pending_receipts
+        ON pending_receipts.id=ps.receiptId
+       AND pending_receipts.id=pending_items.receiptId
+      WHERE ps.clientId IS NOT NULL AND ps.status='linked'
+        ${receiptScopeSql(context, 'pending_receipts')}`
+    : `SELECT ps.receiptItemId,ps.clientId
+      FROM PendingSales ps
+      WHERE ps.clientId IS NOT NULL AND ps.status='linked'
+      UNION ALL
+      SELECT subscriptions.sourceReceiptItemId,subscriptions.clientId
+      FROM ClientSubscriptions subscriptions
+      WHERE subscriptions.sourceReceiptItemId IS NOT NULL
+        AND subscriptions.status<>'canceled'
+      UNION ALL
+      SELECT certificates.sourceReceiptItemId,certificates.clientId
+      FROM Certificates certificates
+      WHERE certificates.sourceReceiptItemId IS NOT NULL
+        AND certificates.status<>'canceled'
+        AND certificates.source<>'legacy_stn_google_sheet'`;
+  const supplementalAttributedEventsSql = context
+    ? ''
+    : `
+      UNION ALL
+      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_subscription_events
+      UNION ALL
+      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_certificate_events`;
+  const unscopedRevenueGuard = context ? '\n        AND 1=0' : '';
   return `${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId,v.visitedAt
@@ -475,20 +512,7 @@ function revenueAttributionCte(sourceFilterSql = '', context = null) {
       WHERE facts.firstVisitAt BETWEEN :from AND :to
         AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}
     ), receipt_item_candidates AS (
-      SELECT ps.receiptItemId,ps.clientId
-      FROM PendingSales ps
-      WHERE ps.clientId IS NOT NULL AND ps.status='linked'
-      UNION ALL
-      SELECT subscriptions.sourceReceiptItemId,subscriptions.clientId
-      FROM ClientSubscriptions subscriptions
-      WHERE subscriptions.sourceReceiptItemId IS NOT NULL
-        AND subscriptions.status<>'canceled'
-      UNION ALL
-      SELECT certificates.sourceReceiptItemId,certificates.clientId
-      FROM Certificates certificates
-      WHERE certificates.sourceReceiptItemId IS NOT NULL
-        AND certificates.status<>'canceled'
-        AND certificates.source<>'legacy_stn_google_sheet'
+      ${receiptItemCandidatesSql}
     ), receipt_item_candidate_roots AS (
       SELECT candidates.receiptItemId,cc.canonicalUserId
       FROM receipt_item_candidates candidates
@@ -510,7 +534,7 @@ function revenueAttributionCte(sourceFilterSql = '', context = null) {
       FROM ReceiptItems items
       JOIN Receipts receipts ON receipts.id=items.receiptId
       LEFT JOIN receipt_item_links links ON links.receiptItemId=items.id
-      WHERE receipts.dateTime<=:asOf
+      WHERE receipts.dateTime<=:asOf${receiptScopeSql(context)}
     ), manual_subscription_events AS (
       SELECT CONCAT('subscription:',subscriptions.id) eventKey,subscriptions.startsAt eventDate,
         subscriptions.saleAmount amount,1 candidateCount,cc.canonicalUserId,
@@ -525,7 +549,7 @@ function revenueAttributionCte(sourceFilterSql = '', context = null) {
         AND subscriptions.status<>'canceled'
         AND subscriptions.startsAt<=:asOf
         AND COALESCE(subscriptions.saleAmount,0)<>0
-        AND COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0
+        AND COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0${unscopedRevenueGuard}
     ), manual_certificate_events AS (
       SELECT CONCAT('certificate:',certificates.id) eventKey,certificates.startsAt eventDate,
         certificates.saleAmount amount,1 candidateCount,cc.canonicalUserId,
@@ -541,14 +565,10 @@ function revenueAttributionCte(sourceFilterSql = '', context = null) {
         AND certificates.source<>'legacy_stn_google_sheet'
         AND certificates.startsAt<=:asOf
         AND COALESCE(certificates.saleAmount,0)<>0
-        AND COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0
+        AND COALESCE(origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0${unscopedRevenueGuard}
     ), attributed_events AS (
       SELECT eventKey,eventDate,amount,canonicalUserId,eventSource
-      FROM receipt_events WHERE candidateCount=1
-      UNION ALL
-      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_subscription_events
-      UNION ALL
-      SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_certificate_events
+      FROM receipt_events WHERE candidateCount=1${supplementalAttributedEventsSql}
     )`;
 }
 
@@ -678,14 +698,69 @@ function buildRevenueCohorts(rows, asOfDate) {
   };
 }
 
+function unscopedRevenueCoverageSelect(sourceFilterSql, context) {
+  if (context) {
+    return `0 subscriptionReceiptDuplicateRisk,
+      0 certificateReceiptDuplicateRisk,
+      0 legacySalesCount,
+      0 legacySalesAmount,
+      0 bookingPaymentsReference,
+      0 manualFinanceWithoutClient,
+      0 corporateLedgerExcludedAmount`;
+  }
+  return `(SELECT COALESCE(SUM(subscriptions.saleAmount),0) FROM ClientSubscriptions subscriptions
+        JOIN Users subscription_origin ON subscription_origin.id=subscriptions.clientId
+        JOIN canonical_clients subscription_clients ON subscription_clients.originUserId=subscriptions.clientId
+        JOIN Users root ON root.id=subscription_clients.canonicalUserId
+        WHERE (subscriptions.sourceReceiptItemId IS NOT NULL OR subscriptions.sourceReceiptId IS NOT NULL OR subscriptions.pendingSaleId IS NOT NULL)
+          AND subscriptions.status<>'canceled'
+          AND subscriptions.startsAt BETWEEN :from AND :to
+          AND COALESCE(subscription_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}) subscriptionReceiptDuplicateRisk,
+      (SELECT COALESCE(SUM(certificates.saleAmount),0) FROM Certificates certificates
+        JOIN Users certificate_origin ON certificate_origin.id=certificates.clientId
+        JOIN canonical_clients certificate_clients ON certificate_clients.originUserId=certificates.clientId
+        JOIN Users root ON root.id=certificate_clients.canonicalUserId
+        WHERE (certificates.sourceReceiptItemId IS NOT NULL OR certificates.sourceReceiptId IS NOT NULL OR certificates.pendingSaleId IS NOT NULL)
+          AND certificates.status<>'canceled'
+          AND certificates.startsAt BETWEEN :from AND :to
+          AND COALESCE(certificate_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}) certificateReceiptDuplicateRisk,
+      (SELECT COUNT(*) FROM Certificates certificates
+        JOIN Users legacy_origin ON legacy_origin.id=certificates.clientId
+        JOIN canonical_clients legacy_clients ON legacy_clients.originUserId=certificates.clientId
+        JOIN Users root ON root.id=legacy_clients.canonicalUserId
+        WHERE certificates.source='legacy_stn_google_sheet'
+          AND certificates.status<>'canceled'
+          AND COALESCE(legacy_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}) legacySalesCount,
+      (SELECT COALESCE(SUM(ABS(certificates.saleAmount)),0) FROM Certificates certificates
+        JOIN Users legacy_origin ON legacy_origin.id=certificates.clientId
+        JOIN canonical_clients legacy_clients ON legacy_clients.originUserId=certificates.clientId
+        JOIN Users root ON root.id=legacy_clients.canonicalUserId
+        WHERE certificates.source='legacy_stn_google_sheet'
+          AND certificates.status<>'canceled'
+          AND COALESCE(legacy_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}) legacySalesAmount,
+      (SELECT COALESCE(SUM(bookings.paidAmount),0) FROM Bookings bookings
+        JOIN canonical_clients booking_clients ON booking_clients.originUserId=bookings.userId
+        JOIN Users root ON root.id=booking_clients.canonicalUserId
+        WHERE bookings.startsAt BETWEEN :from AND :to AND bookings.status<>'canceled'
+          AND COALESCE(bookings.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql}) bookingPaymentsReference,
+      (SELECT COALESCE(SUM(finance.amount),0) FROM Finances finance
+        WHERE finance.date BETWEEN :fromDate AND :toDate AND finance.type='income'
+          AND COALESCE(finance.isTraining,0)=0
+          AND NOT EXISTS (SELECT 1 FROM CorporateLedgerEntries ledger WHERE ledger.financeId=finance.id)) manualFinanceWithoutClient,
+      (SELECT COALESCE(SUM(ABS(ledger.amount)),0) FROM CorporateLedgerEntries ledger
+        WHERE ledger.date BETWEEN :fromDate AND :toDate AND ledger.status='active'
+          AND COALESCE(ledger.isTraining,0)=0) corporateLedgerExcludedAmount`;
+}
+
 async function queryRevenueCoverage(period, sourceFilter, context = null) {
   const rows = await db.sequelize.query(`${revenueAttributionCte('', context)}
     SELECT
-      (SELECT COALESCE(SUM(CASE WHEN type='PAYBACK' THEN -ABS(totalAmount) ELSE ABS(totalAmount) END),0)
-        FROM Receipts WHERE dateTime BETWEEN :from AND :to) cashNetRevenue,
-      (SELECT COALESCE(SUM(ABS(totalAmount)),0)
-        FROM Receipts WHERE dateTime BETWEEN :from AND :to) cashMovementAmount,
-      (SELECT COUNT(*) FROM Receipts WHERE type='PAYBACK' AND dateTime BETWEEN :from AND :to) paybackCount,
+      (SELECT COALESCE(SUM(CASE WHEN receipts.type='PAYBACK' THEN -ABS(receipts.totalAmount) ELSE ABS(receipts.totalAmount) END),0)
+        FROM Receipts receipts WHERE receipts.dateTime BETWEEN :from AND :to${receiptScopeSql(context)}) cashNetRevenue,
+      (SELECT COALESCE(SUM(ABS(receipts.totalAmount)),0)
+        FROM Receipts receipts WHERE receipts.dateTime BETWEEN :from AND :to${receiptScopeSql(context)}) cashMovementAmount,
+      (SELECT COUNT(*) FROM Receipts receipts WHERE receipts.type='PAYBACK'
+        AND receipts.dateTime BETWEEN :from AND :to${receiptScopeSql(context)}) paybackCount,
       (SELECT COALESCE(SUM(events.amount),0) FROM receipt_events events
         JOIN Users root ON root.id=events.canonicalUserId
         WHERE events.candidateCount=1 AND events.eventDate BETWEEN :from AND :to ${sourceFilter.sql}) attributedCashRevenue,
@@ -711,48 +786,7 @@ async function queryRevenueCoverage(period, sourceFilter, context = null) {
       (SELECT COALESCE(SUM(events.amount),0) FROM attributed_events events
         JOIN Users root ON root.id=events.canonicalUserId
         WHERE events.eventDate BETWEEN :from AND :to ${sourceFilter.sql}) periodAttributedRevenue,
-      (SELECT COALESCE(SUM(subscriptions.saleAmount),0) FROM ClientSubscriptions subscriptions
-        JOIN Users subscription_origin ON subscription_origin.id=subscriptions.clientId
-        JOIN canonical_clients subscription_clients ON subscription_clients.originUserId=subscriptions.clientId
-        JOIN Users root ON root.id=subscription_clients.canonicalUserId
-        WHERE (subscriptions.sourceReceiptItemId IS NOT NULL OR subscriptions.sourceReceiptId IS NOT NULL OR subscriptions.pendingSaleId IS NOT NULL)
-          AND subscriptions.status<>'canceled'
-          AND subscriptions.startsAt BETWEEN :from AND :to
-          AND COALESCE(subscription_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) subscriptionReceiptDuplicateRisk,
-      (SELECT COALESCE(SUM(certificates.saleAmount),0) FROM Certificates certificates
-        JOIN Users certificate_origin ON certificate_origin.id=certificates.clientId
-        JOIN canonical_clients certificate_clients ON certificate_clients.originUserId=certificates.clientId
-        JOIN Users root ON root.id=certificate_clients.canonicalUserId
-        WHERE (certificates.sourceReceiptItemId IS NOT NULL OR certificates.sourceReceiptId IS NOT NULL OR certificates.pendingSaleId IS NOT NULL)
-          AND certificates.status<>'canceled'
-          AND certificates.startsAt BETWEEN :from AND :to
-          AND COALESCE(certificate_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) certificateReceiptDuplicateRisk,
-      (SELECT COUNT(*) FROM Certificates certificates
-        JOIN Users legacy_origin ON legacy_origin.id=certificates.clientId
-        JOIN canonical_clients legacy_clients ON legacy_clients.originUserId=certificates.clientId
-        JOIN Users root ON root.id=legacy_clients.canonicalUserId
-        WHERE certificates.source='legacy_stn_google_sheet'
-          AND certificates.status<>'canceled'
-          AND COALESCE(legacy_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) legacySalesCount,
-      (SELECT COALESCE(SUM(ABS(certificates.saleAmount)),0) FROM Certificates certificates
-        JOIN Users legacy_origin ON legacy_origin.id=certificates.clientId
-        JOIN canonical_clients legacy_clients ON legacy_clients.originUserId=certificates.clientId
-        JOIN Users root ON root.id=legacy_clients.canonicalUserId
-        WHERE certificates.source='legacy_stn_google_sheet'
-          AND certificates.status<>'canceled'
-          AND COALESCE(legacy_origin.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) legacySalesAmount,
-      (SELECT COALESCE(SUM(bookings.paidAmount),0) FROM Bookings bookings
-        JOIN canonical_clients booking_clients ON booking_clients.originUserId=bookings.userId
-        JOIN Users root ON root.id=booking_clients.canonicalUserId
-        WHERE bookings.startsAt BETWEEN :from AND :to AND bookings.status<>'canceled'
-          AND COALESCE(bookings.isTraining,0)=0 AND COALESCE(root.isTraining,0)=0 ${sourceFilter.sql}) bookingPaymentsReference,
-      (SELECT COALESCE(SUM(finance.amount),0) FROM Finances finance
-        WHERE finance.date BETWEEN :fromDate AND :toDate AND finance.type='income'
-          AND COALESCE(finance.isTraining,0)=0
-          AND NOT EXISTS (SELECT 1 FROM CorporateLedgerEntries ledger WHERE ledger.financeId=finance.id)) manualFinanceWithoutClient,
-      (SELECT COALESCE(SUM(ABS(ledger.amount)),0) FROM CorporateLedgerEntries ledger
-        WHERE ledger.date BETWEEN :fromDate AND :toDate AND ledger.status='active'
-          AND COALESCE(ledger.isTraining,0)=0) corporateLedgerExcludedAmount
+      ${unscopedRevenueCoverageSelect(sourceFilter.sql, context)}
     `, {
     replacements: {
       asOf: period.toSql,

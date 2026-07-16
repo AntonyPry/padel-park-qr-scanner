@@ -40,6 +40,7 @@ const INDEXES = Object.freeze({
 const TRIGGERS = Object.freeze({
   assignment: 'trg_visit_assignments_tenant_immutable',
   scanner: 'trg_scanner_events_tenant_immutable',
+  scannerInsert: 'trg_scanner_events_tenant_validate_insert',
   visit: 'trg_visits_tenant_immutable',
   visitInsert: 'trg_visits_tenant_validate_insert',
 });
@@ -307,6 +308,221 @@ async function dropForeignKeys(queryInterface, tableName, columns) {
   }
 }
 
+async function getLegacySchemaSnapshot(queryInterface) {
+  const targets = [
+    ['Visits', ['duplicateOfVisitId', 'userId']],
+    ['ScannerEvents', ['visitId', 'userId']],
+    ['VisitCategoryAssignments', ['visitCategoryId', 'visitId']],
+  ];
+  const foreignKeys = [];
+  for (const [tableName, columns] of targets) {
+    const [rows] = await queryInterface.sequelize.query(
+      `SELECT kcu.CONSTRAINT_NAME AS constraintName,
+              kcu.COLUMN_NAME AS columnName,
+              kcu.ORDINAL_POSITION AS ordinalPosition,
+              kcu.REFERENCED_TABLE_NAME AS referencedTableName,
+              kcu.REFERENCED_COLUMN_NAME AS referencedColumnName,
+              rc.DELETE_RULE AS deleteRule,
+              rc.UPDATE_RULE AS updateRule
+         FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+         JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+           ON rc.CONSTRAINT_SCHEMA = kcu.CONSTRAINT_SCHEMA
+          AND rc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
+          AND rc.TABLE_NAME = kcu.TABLE_NAME
+        WHERE kcu.CONSTRAINT_SCHEMA = DATABASE()
+          AND kcu.TABLE_NAME = :tableName
+          AND kcu.CONSTRAINT_NAME IN (
+            SELECT candidate.CONSTRAINT_NAME
+              FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE candidate
+             WHERE candidate.CONSTRAINT_SCHEMA = DATABASE()
+               AND candidate.TABLE_NAME = :tableName
+               AND candidate.COLUMN_NAME IN (:columns)
+               AND candidate.REFERENCED_TABLE_NAME IS NOT NULL
+          )
+        ORDER BY kcu.CONSTRAINT_NAME, kcu.ORDINAL_POSITION`,
+      { replacements: { columns, tableName } },
+    );
+    const grouped = new Map();
+    for (const row of rows) {
+      if (!grouped.has(row.constraintName)) {
+        grouped.set(row.constraintName, {
+          deleteRule: row.deleteRule,
+          fields: [],
+          name: row.constraintName,
+          referencedFields: [],
+          referencedTable: row.referencedTableName,
+          tableName,
+          updateRule: row.updateRule,
+        });
+      }
+      const definition = grouped.get(row.constraintName);
+      definition.fields.push(row.columnName);
+      definition.referencedFields.push(row.referencedColumnName);
+    }
+    foreignKeys.push(...grouped.values());
+  }
+
+  const indexes = [];
+  for (const [tableName, name] of [
+    ['Visits', LEGACY_INDEXES.visitClientEvent],
+    ['ScannerEvents', LEGACY_INDEXES.scannerClientEvent],
+  ]) {
+    const [rows] = await queryInterface.sequelize.query(
+      `SELECT COLUMN_NAME AS columnName, NON_UNIQUE AS nonUnique
+         FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = :tableName
+          AND INDEX_NAME = :name
+        ORDER BY SEQ_IN_INDEX`,
+      { replacements: { name, tableName } },
+    );
+    if (rows.length > 0) {
+      indexes.push({
+        fields: rows.map((row) => row.columnName),
+        name,
+        tableName,
+        unique: Number(rows[0].nonUnique) === 0,
+      });
+    }
+  }
+
+  return { foreignKeys, indexes };
+}
+
+function assertLegacySchemaSnapshot(snapshot) {
+  const expectedForeignKeys = [
+    ['Visits', 'userId', 'Users', 'id', 'CASCADE', 'CASCADE'],
+    ['Visits', 'duplicateOfVisitId', 'Visits', 'id', 'SET NULL', 'CASCADE'],
+    ['ScannerEvents', 'visitId', 'Visits', 'id', 'SET NULL', 'CASCADE'],
+    ['ScannerEvents', 'userId', 'Users', 'id', 'SET NULL', 'CASCADE'],
+    ['VisitCategoryAssignments', 'visitId', 'Visits', 'id', 'CASCADE', 'CASCADE'],
+    ['VisitCategoryAssignments', 'visitCategoryId', 'VisitCategories', 'id', 'RESTRICT', 'CASCADE'],
+  ];
+  for (const [
+    tableName,
+    field,
+    referencedTable,
+    referencedField,
+    deleteRule,
+    updateRule,
+  ] of expectedForeignKeys) {
+    const matches = snapshot.foreignKeys.filter((foreignKey) =>
+      foreignKey.tableName === tableName
+      && foreignKey.fields.length === 1
+      && foreignKey.fields[0] === field
+      && foreignKey.referencedTable === referencedTable
+      && foreignKey.referencedFields.length === 1
+      && foreignKey.referencedFields[0] === referencedField
+      && foreignKey.deleteRule === deleteRule
+      && foreignKey.updateRule === updateRule);
+    if (matches.length !== 1) {
+      throw migrationError(
+        `legacy foreign key ${tableName}.${field} is missing or ambiguous`,
+      );
+    }
+  }
+  const expectedIndexes = [
+    ['Visits', LEGACY_INDEXES.visitClientEvent, ['clientEventId']],
+    [
+      'ScannerEvents',
+      LEGACY_INDEXES.scannerClientEvent,
+      ['clientEventId', 'eventType'],
+    ],
+  ];
+  const validIndexes = expectedIndexes.every(([tableName, name, fields]) =>
+    snapshot.indexes.some((index) =>
+      index.tableName === tableName
+      && index.name === name
+      && index.unique
+      && JSON.stringify(index.fields) === JSON.stringify(fields)));
+  if (snapshot.indexes.length !== 2 || !validIndexes) {
+    throw migrationError('legacy visit/scanner idempotency indexes are incomplete');
+  }
+}
+
+async function assertCurrentArtifactNamesAbsent(queryInterface) {
+  const [[constraints], [indexes], [triggers]] = await Promise.all([
+    queryInterface.sequelize.query(
+      `SELECT TABLE_NAME AS tableName,CONSTRAINT_NAME AS name
+         FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+        WHERE CONSTRAINT_SCHEMA=DATABASE()
+          AND CONSTRAINT_NAME IN (:names)`,
+      { replacements: { names: Object.values(CONSTRAINTS) } },
+    ),
+    queryInterface.sequelize.query(
+      `SELECT DISTINCT TABLE_NAME AS tableName,INDEX_NAME AS name
+         FROM INFORMATION_SCHEMA.STATISTICS
+        WHERE TABLE_SCHEMA=DATABASE()
+          AND INDEX_NAME IN (:names)`,
+      { replacements: { names: Object.values(INDEXES) } },
+    ),
+    queryInterface.sequelize.query(
+      `SELECT EVENT_OBJECT_TABLE AS tableName,TRIGGER_NAME AS name
+         FROM INFORMATION_SCHEMA.TRIGGERS
+        WHERE TRIGGER_SCHEMA=DATABASE()
+          AND TRIGGER_NAME IN (:names)`,
+      { replacements: { names: Object.values(TRIGGERS) } },
+    ),
+  ]);
+  const collisions = [...constraints, ...indexes, ...triggers];
+  if (collisions.length > 0) {
+    throw migrationError(
+      `legacy schema already contains reserved tenant artifacts: ${collisions
+        .map((row) => `${row.tableName}.${row.name}`)
+        .sort()
+        .join(', ')}`,
+    );
+  }
+}
+
+async function dropLegacySchemaSnapshot(queryInterface, snapshot) {
+  for (const foreignKey of snapshot.foreignKeys) {
+    if (await constraintExists(
+      queryInterface,
+      foreignKey.tableName,
+      foreignKey.name,
+    )) {
+      await queryInterface.removeConstraint(
+        foreignKey.tableName,
+        foreignKey.name,
+      );
+    }
+  }
+  for (const index of snapshot.indexes) {
+    await removeIndexIfExists(queryInterface, index.tableName, index.name);
+  }
+}
+
+async function restoreLegacySchemaSnapshot(queryInterface, snapshot) {
+  for (const foreignKey of snapshot.foreignKeys) {
+    if (!(await constraintExists(
+      queryInterface,
+      foreignKey.tableName,
+      foreignKey.name,
+    ))) {
+      await queryInterface.addConstraint(foreignKey.tableName, {
+        fields: foreignKey.fields,
+        name: foreignKey.name,
+        onDelete: foreignKey.deleteRule,
+        onUpdate: foreignKey.updateRule,
+        references: {
+          fields: foreignKey.referencedFields,
+          table: foreignKey.referencedTable,
+        },
+        type: 'foreign key',
+      });
+    }
+  }
+  for (const index of snapshot.indexes) {
+    if (!(await indexExists(queryInterface, index.tableName, index.name))) {
+      await queryInterface.addIndex(index.tableName, index.fields, {
+        name: index.name,
+        unique: index.unique,
+      });
+    }
+  }
+}
+
 async function indexExists(queryInterface, tableName, indexName) {
   const [rows] = await queryInterface.sequelize.query(
     `SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS
@@ -409,6 +625,72 @@ async function addVisitTenantTriggers(queryInterface) {
   );
 }
 
+async function addScannerTenantTriggers(queryInterface) {
+  await queryInterface.sequelize.query(
+    `DROP TRIGGER IF EXISTS ${quoteIdentifier(TRIGGERS.scanner)}`,
+  );
+  await queryInterface.sequelize.query(
+    `CREATE TRIGGER ${quoteIdentifier(TRIGGERS.scanner)}
+       BEFORE UPDATE ON ScannerEvents
+       FOR EACH ROW
+       BEGIN
+         IF NOT (OLD.organizationId <=> NEW.organizationId)
+            OR NOT (OLD.clubId <=> NEW.clubId) THEN
+           SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT = 'tenant attribution is immutable';
+         END IF;
+         IF NEW.visitId IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM Visits visit
+               WHERE visit.id = NEW.visitId
+                 AND visit.organizationId = NEW.organizationId
+                 AND visit.clubId = NEW.clubId
+            ) THEN
+           SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT = 'scanner visit tenant mismatch';
+         END IF;
+         IF NEW.userId IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM Users user
+               WHERE user.id = NEW.userId
+                 AND user.organizationId = NEW.organizationId
+            ) THEN
+           SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT = 'scanner user tenant mismatch';
+         END IF;
+       END`,
+  );
+  await queryInterface.sequelize.query(
+    `DROP TRIGGER IF EXISTS ${quoteIdentifier(TRIGGERS.scannerInsert)}`,
+  );
+  await queryInterface.sequelize.query(
+    `CREATE TRIGGER ${quoteIdentifier(TRIGGERS.scannerInsert)}
+       BEFORE INSERT ON ScannerEvents
+       FOR EACH ROW
+       BEGIN
+         IF NEW.visitId IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM Visits visit
+               WHERE visit.id = NEW.visitId
+                 AND visit.organizationId = NEW.organizationId
+                 AND visit.clubId = NEW.clubId
+            ) THEN
+           SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT = 'scanner visit tenant mismatch';
+         END IF;
+         IF NEW.userId IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM Users user
+               WHERE user.id = NEW.userId
+                 AND user.organizationId = NEW.organizationId
+            ) THEN
+           SIGNAL SQLSTATE '45000'
+             SET MESSAGE_TEXT = 'scanner user tenant mismatch';
+         END IF;
+       END`,
+  );
+}
+
 async function addTenantColumns(queryInterface, Sequelize, tenant) {
   for (const tableName of TABLES) {
     await queryInterface.addColumn(tableName, 'organizationId', {
@@ -466,27 +748,6 @@ async function addTenantColumns(queryInterface, Sequelize, tenant) {
 }
 
 async function addTenantSchema(queryInterface) {
-  await dropForeignKeys(queryInterface, 'Visits', [
-    'duplicateOfVisitId',
-    'userId',
-  ]);
-  await dropForeignKeys(queryInterface, 'ScannerEvents', ['visitId', 'userId']);
-  await dropForeignKeys(queryInterface, 'VisitCategoryAssignments', [
-    'visitCategoryId',
-    'visitId',
-  ]);
-
-  await removeIndexIfExists(
-    queryInterface,
-    'Visits',
-    LEGACY_INDEXES.visitClientEvent,
-  );
-  await removeIndexIfExists(
-    queryInterface,
-    'ScannerEvents',
-    LEGACY_INDEXES.scannerClientEvent,
-  );
-
   await queryInterface.addConstraint('Visits', {
     fields: ['organizationId', 'clubId', 'id'],
     name: CONSTRAINTS.visitTenantId,
@@ -542,22 +803,19 @@ async function addTenantSchema(queryInterface) {
     type: 'foreign key',
   });
   await queryInterface.addConstraint('ScannerEvents', {
-    fields: ['organizationId', 'clubId', 'visitId'],
+    fields: ['visitId'],
     name: CONSTRAINTS.scannerVisit,
-    onDelete: 'RESTRICT',
+    onDelete: 'SET NULL',
     onUpdate: 'RESTRICT',
-    references: {
-      fields: ['organizationId', 'clubId', 'id'],
-      table: 'Visits',
-    },
+    references: { fields: ['id'], table: 'Visits' },
     type: 'foreign key',
   });
   await queryInterface.addConstraint('ScannerEvents', {
-    fields: ['organizationId', 'userId'],
+    fields: ['userId'],
     name: CONSTRAINTS.scannerUser,
-    onDelete: 'RESTRICT',
+    onDelete: 'SET NULL',
     onUpdate: 'RESTRICT',
-    references: { fields: ['organizationId', 'id'], table: 'Users' },
+    references: { fields: ['id'], table: 'Users' },
     type: 'foreign key',
   });
 
@@ -602,12 +860,90 @@ async function addTenantSchema(queryInterface) {
   }
 
   await addVisitTenantTriggers(queryInterface);
-  await addImmutableTrigger(queryInterface, 'ScannerEvents', TRIGGERS.scanner);
+  await addScannerTenantTriggers(queryInterface);
   await addImmutableTrigger(
     queryInterface,
     'VisitCategoryAssignments',
     TRIGGERS.assignment,
   );
+}
+
+async function removeCurrentInvocationArtifacts(queryInterface) {
+  for (const triggerName of Object.values(TRIGGERS)) {
+    await queryInterface.sequelize.query(
+      `DROP TRIGGER IF EXISTS ${quoteIdentifier(triggerName)}`,
+    );
+  }
+
+  for (const [tableName, constraintNames] of [
+    ['VisitCategoryAssignments', [
+      CONSTRAINTS.assignmentCategory,
+      CONSTRAINTS.assignmentVisit,
+    ]],
+    ['ScannerEvents', [
+      CONSTRAINTS.scannerUser,
+      CONSTRAINTS.scannerVisit,
+      CONSTRAINTS.scannerClub,
+      CONSTRAINTS.scannerOrganization,
+    ]],
+    ['Visits', [
+      CONSTRAINTS.visitDuplicate,
+      CONSTRAINTS.visitUser,
+      CONSTRAINTS.visitClub,
+      CONSTRAINTS.visitOrganization,
+      CONSTRAINTS.visitTenantId,
+    ]],
+  ]) {
+    for (const constraintName of constraintNames) {
+      await removeConstraintIfExists(
+        queryInterface,
+        tableName,
+        constraintName,
+      );
+    }
+  }
+
+  for (const [tableName, indexNames] of [
+    ['VisitCategoryAssignments', [
+      INDEXES.assignmentCategory,
+      INDEXES.assignmentVisit,
+    ]],
+    ['ScannerEvents', [
+      INDEXES.scannerQr,
+      INDEXES.scannerType,
+      INDEXES.scannerCreated,
+      INDEXES.scannerClientEvent,
+    ]],
+    ['Visits', [
+      INDEXES.visitDuplicate,
+      INDEXES.visitScanned,
+      INDEXES.visitUserVisited,
+      INDEXES.visitVisited,
+      INDEXES.visitClientEvent,
+    ]],
+  ]) {
+    for (const indexName of indexNames) {
+      await removeIndexIfExists(queryInterface, tableName, indexName);
+    }
+  }
+}
+
+async function removeCurrentInvocationColumns(queryInterface) {
+  const columns = await getColumns(queryInterface);
+  for (const tableName of [...TABLES].reverse()) {
+    for (const columnName of ['clubId', 'organizationId']) {
+      if (columns.some((row) =>
+        row.tableName === tableName && row.columnName === columnName)) {
+        await queryInterface.removeColumn(tableName, columnName);
+      }
+    }
+  }
+}
+
+async function cleanupCurrentInvocation(queryInterface, legacySnapshot) {
+  await removeCurrentInvocationArtifacts(queryInterface);
+  await removeCurrentInvocationColumns(queryInterface);
+  await restoreLegacySchemaSnapshot(queryInterface, legacySnapshot);
 }
 
 async function removeTenantSchema(queryInterface) {
@@ -804,17 +1140,15 @@ async function assertRollbackAllowed(queryInterface) {
 
 module.exports = {
   async up(queryInterface, Sequelize) {
-    let state = await getSchemaState(queryInterface);
+    const state = await getSchemaState(queryInterface);
     if (state.mode === 'ready') {
       await assertReadyGraph(queryInterface);
       return;
     }
     if (state.mode === 'partial') {
-      await removeTenantSchema(queryInterface);
-      state = await getSchemaState(queryInterface);
-      if (state.mode !== 'legacy') {
-        throw migrationError('partial migration cleanup did not restore legacy schema');
-      }
+      throw migrationError(
+        'pre-existing partial schema requires an explicit operator repair; no changes were applied',
+      );
     }
 
     const tenant = await queryInterface.sequelize.transaction(
@@ -827,6 +1161,9 @@ module.exports = {
         return exactTenant;
       },
     );
+    const legacySnapshot = await getLegacySchemaSnapshot(queryInterface);
+    assertLegacySchemaSnapshot(legacySnapshot);
+    await assertCurrentArtifactNamesAbsent(queryInterface);
 
     try {
       await addTenantColumns(queryInterface, Sequelize, tenant);
@@ -838,11 +1175,12 @@ module.exports = {
         throw migrationError('forced failure after backfill');
       }
       await assertReadyGraph(queryInterface);
+      await dropLegacySchemaSnapshot(queryInterface, legacySnapshot);
       await addTenantSchema(queryInterface);
       await assertReadyGraph(queryInterface);
     } catch (error) {
       try {
-        await removeTenantSchema(queryInterface);
+        await cleanupCurrentInvocation(queryInterface, legacySnapshot);
       } catch (cleanupError) {
         error.cleanupError = cleanupError;
       }
@@ -854,7 +1192,9 @@ module.exports = {
     const state = await getSchemaState(queryInterface);
     if (state.mode === 'legacy') return;
     if (state.mode !== 'ready') {
-      throw migrationError('partial schema must be repaired by reapplying up');
+      throw migrationError(
+        'partial schema requires an explicit operator repair; rollback made no changes',
+      );
     }
     await assertRollbackAllowed(queryInterface);
     await removeTenantSchema(queryInterface);

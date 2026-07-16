@@ -106,6 +106,155 @@ async function snapshotVisitGraph(sequelize) {
   };
 }
 
+async function snapshotDatabaseInvariants(sequelize) {
+  const schemaQueries = {
+    columns: `SELECT TABLE_NAME tableName,COLUMN_NAME columnName,ORDINAL_POSITION ordinalPosition,
+        COLUMN_DEFAULT columnDefault,IS_NULLABLE isNullable,COLUMN_TYPE columnType,EXTRA extra
+      FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,ORDINAL_POSITION`,
+    constraints: `SELECT TABLE_NAME tableName,CONSTRAINT_NAME constraintName,
+        CONSTRAINT_TYPE constraintType
+      FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME`,
+    indexes: `SELECT TABLE_NAME tableName,INDEX_NAME indexName,NON_UNIQUE nonUnique,
+        SEQ_IN_INDEX sequenceInIndex,COLUMN_NAME columnName,SUB_PART subPart
+      FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX`,
+    keyUsage: `SELECT TABLE_NAME tableName,CONSTRAINT_NAME constraintName,
+        COLUMN_NAME columnName,ORDINAL_POSITION ordinalPosition,
+        REFERENCED_TABLE_NAME referencedTableName,
+        REFERENCED_COLUMN_NAME referencedColumnName
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME,ORDINAL_POSITION`,
+    tables: `SELECT TABLE_NAME tableName,ENGINE engine,TABLE_COLLATION tableCollation
+      FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME`,
+    triggers: `SELECT TRIGGER_NAME triggerName,EVENT_MANIPULATION eventManipulation,
+        EVENT_OBJECT_TABLE eventObjectTable,ACTION_TIMING actionTiming,
+        ACTION_STATEMENT actionStatement
+      FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()
+      ORDER BY TRIGGER_NAME`,
+  };
+  const schema = {};
+  for (const [key, sql] of Object.entries(schemaQueries)) {
+    schema[key] = await sequelize.query(sql, {
+      type: SequelizePackage.QueryTypes.SELECT,
+    });
+  }
+
+  const dataTables = [
+    'Organizations',
+    'Clubs',
+    'Users',
+    'Visits',
+    'ScannerEvents',
+    'VisitCategoryAssignments',
+  ];
+  const data = {};
+  const counts = {};
+  const checksums = {};
+  for (const tableName of dataTables) {
+    const rows = await sequelize.query(
+      `SELECT * FROM \`${tableName}\` ORDER BY 1`,
+      { type: SequelizePackage.QueryTypes.SELECT },
+    );
+    data[tableName] = rows;
+    counts[tableName] = rows.length;
+    checksums[tableName] = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(rows))
+      .digest('hex');
+  }
+  const attribution = {};
+  const availableColumns = new Set(
+    schema.columns.map((column) => `${column.tableName}.${column.columnName}`),
+  );
+  for (const tableName of ['Users', 'Visits', 'ScannerEvents', 'VisitCategoryAssignments']) {
+    const organizationExpression = availableColumns.has(`${tableName}.organizationId`)
+      ? 'organizationId'
+      : 'NULL';
+    const clubExpression = availableColumns.has(`${tableName}.clubId`)
+      ? 'clubId'
+      : 'NULL';
+    attribution[tableName] = await sequelize.query(
+      `SELECT ${organizationExpression} organizationId,${clubExpression} clubId,
+              COUNT(*) rowCount
+         FROM \`${tableName}\`
+        GROUP BY ${organizationExpression},${clubExpression}
+        ORDER BY organizationId,clubId`,
+      { type: SequelizePackage.QueryTypes.SELECT },
+    );
+  }
+  return { attribution, checksums, counts, data, schema };
+}
+
+async function seedAdditionalTenantGraph(sequelize, suffix) {
+  const queryInterface = sequelize.getQueryInterface();
+  const now = new Date(`2087-01-${String(suffix + 1).padStart(2, '0')}T09:00:00.000Z`);
+  const slug = `partial-organization-${suffix}`;
+  await queryInterface.bulkInsert('Organizations', [{
+    createdAt: now,
+    name: `Partial Organization ${suffix}`,
+    slug,
+    status: 'active',
+    updatedAt: now,
+  }]);
+  const [organizations] = await sequelize.query(
+    'SELECT id FROM Organizations WHERE slug=:slug',
+    { replacements: { slug } },
+  );
+  const organizationId = Number(organizations[0].id);
+  await queryInterface.bulkInsert('Clubs', [{
+    createdAt: now,
+    name: `Partial Club ${suffix}`,
+    organizationId,
+    slug: `partial-club-${suffix}`,
+    status: 'active',
+    timezone: 'Europe/Moscow',
+    updatedAt: now,
+  }]);
+  const [clubs] = await sequelize.query(
+    'SELECT id FROM Clubs WHERE organizationId=:organizationId',
+    { replacements: { organizationId } },
+  );
+  const clubId = Number(clubs[0].id);
+  await queryInterface.bulkInsert('Users', [{
+    ...clientRow(organizationId, 900 + suffix),
+    createdAt: now,
+    updatedAt: now,
+  }]);
+  const [users] = await sequelize.query(
+    'SELECT id FROM Users WHERE organizationId=:organizationId ORDER BY id DESC LIMIT 1',
+    { replacements: { organizationId } },
+  );
+  const userId = Number(users[0].id);
+  await queryInterface.bulkInsert('Visits', [{
+    clubId,
+    createdAt: now,
+    entrySource: 'manual',
+    isTraining: false,
+    organizationId,
+    scannedAt: now,
+    updatedAt: now,
+    userId,
+  }]);
+  const [visits] = await sequelize.query(
+    'SELECT id FROM Visits WHERE organizationId=:organizationId ORDER BY id DESC LIMIT 1',
+    { replacements: { organizationId } },
+  );
+  await queryInterface.bulkInsert('ScannerEvents', [{
+    clubId,
+    createdAt: now,
+    eventType: 'partial_schema_probe',
+    organizationId,
+    severity: 'info',
+    status: 'created',
+    updatedAt: now,
+    userId,
+    visitId: Number(visits[0].id),
+  }]);
+}
+
 function clientRow(organizationId, suffix) {
   return {
     organizationId,
@@ -150,8 +299,94 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     const referencesService = require('../../src/services/references.service');
     const scannerEventsService = require('../../src/services/scanner-events.service');
     const analyticsService = require('../../src/services/visits-analytics.service');
+    const analyticsController = require('../../src/controllers/visits-analytics.controller');
     const migration = require(`../../migrations/${FEATURE_MIGRATION_FILE}`);
     const queryInterface = schema.getQueryInterface();
+
+    await t.test('pre-existing partial schema rejects before any schema or data mutation', async () => {
+      const partialCases = [
+        {
+          damage: (partialQueryInterface) => partialQueryInterface.sequelize.query(
+            'DROP TRIGGER `trg_scanner_events_tenant_validate_insert`',
+          ),
+          name: 'trigger',
+        },
+        {
+          damage: (partialQueryInterface) => partialQueryInterface.removeIndex(
+            'ScannerEvents',
+            'idx_scanner_events_tenant_qr_hash',
+          ),
+          name: 'index',
+        },
+        {
+          damage: (partialQueryInterface) => partialQueryInterface.removeConstraint(
+            'ScannerEvents',
+            'fk_scanner_events_organization_user',
+          ),
+          name: 'constraint',
+        },
+        {
+          damage: async (partialQueryInterface) => {
+            for (const triggerName of [
+              'trg_scanner_events_tenant_immutable',
+              'trg_scanner_events_tenant_validate_insert',
+            ]) {
+              await partialQueryInterface.sequelize.query(
+                `DROP TRIGGER \`${triggerName}\``,
+              );
+            }
+            await partialQueryInterface.removeConstraint(
+              'ScannerEvents',
+              'fk_scanner_events_organization_club',
+            );
+            await partialQueryInterface.addIndex(
+              'ScannerEvents',
+              ['organizationId'],
+              { name: 'partial_probe_scanner_organization' },
+            );
+            for (const indexName of [
+              'uq_scanner_events_tenant_client_event_type',
+              'idx_scanner_events_tenant_created',
+              'idx_scanner_events_tenant_type_created',
+              'idx_scanner_events_tenant_qr_hash',
+            ]) {
+              await partialQueryInterface.removeIndex('ScannerEvents', indexName);
+            }
+            await partialQueryInterface.removeColumn('ScannerEvents', 'clubId');
+          },
+          name: 'column',
+        },
+      ];
+
+      for (const [index, partialCase] of partialCases.entries()) {
+        const partialDatabase = `${database.slice(0, 43)}_partial_${partialCase.name}`;
+        let partialSchema;
+        await admin.query(`DROP DATABASE IF EXISTS \`${partialDatabase}\``);
+        await admin.query(
+          `CREATE DATABASE \`${partialDatabase}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+        );
+        try {
+          partialSchema = await createSchema(partialDatabase);
+          await seedAdditionalTenantGraph(partialSchema, index + 1);
+          const partialQueryInterface = partialSchema.getQueryInterface();
+          await partialCase.damage(partialQueryInterface);
+          const before = await snapshotDatabaseInvariants(partialSchema);
+          await assert.rejects(
+            migration.up(partialQueryInterface, SequelizePackage),
+            /pre-existing partial schema requires an explicit operator repair/,
+          );
+          const after = await snapshotDatabaseInvariants(partialSchema);
+          assert.deepEqual(
+            after,
+            before,
+            `${partialCase.name} partial state changed during rejected up()`,
+          );
+        } finally {
+          if (partialSchema) await partialSchema.close().catch(() => {});
+          await admin.query(`DROP DATABASE IF EXISTS \`${partialDatabase}\``);
+        }
+      }
+    });
 
     const ownerSession = await authService.bootstrapOwner({
       email: 'owner@visits-scanner.test',
@@ -218,6 +453,7 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         visitCategoryId: legacyCategory.id,
         visitId: legacyVisitId,
       }]);
+      const beforeForcedFailure = await snapshotDatabaseInvariants(schema);
 
       process.env.TENANT_VISITS_SCANNER_MIGRATION_FAIL_AFTER_BACKFILL = 'true';
       let forcedError;
@@ -229,6 +465,11 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         },
       );
       assert.equal(forcedError.cleanupError, undefined, forcedError.cleanupError?.stack);
+      assert.deepEqual(
+        await snapshotDatabaseInvariants(schema),
+        beforeForcedFailure,
+        'forced-failure cleanup did not restore the exact legacy schema and data',
+      );
       assert.equal((await queryInterface.describeTable('Visits')).organizationId, undefined);
       assert.equal(
         Number((await schema.query('SELECT COUNT(*) count FROM Visits', {
@@ -432,6 +673,106 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         }),
         (error) => error.statusCode === 404,
       );
+    });
+
+    await t.test('ScannerEvent references fail closed but Visit/User deletes preserve audit snapshots', async () => {
+      const foreignKeys = await schema.query(
+        `SELECT kcu.CONSTRAINT_NAME constraintName,kcu.COLUMN_NAME columnName,
+                rc.DELETE_RULE deleteRule
+           FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+           JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS rc
+             ON rc.CONSTRAINT_SCHEMA=kcu.CONSTRAINT_SCHEMA
+            AND rc.CONSTRAINT_NAME=kcu.CONSTRAINT_NAME
+            AND rc.TABLE_NAME=kcu.TABLE_NAME
+          WHERE kcu.CONSTRAINT_SCHEMA=DATABASE()
+            AND kcu.TABLE_NAME='ScannerEvents'
+            AND kcu.CONSTRAINT_NAME IN (
+              'fk_scanner_events_tenant_visit',
+              'fk_scanner_events_organization_user'
+            )
+          ORDER BY kcu.CONSTRAINT_NAME,kcu.ORDINAL_POSITION`,
+        { type: SequelizePackage.QueryTypes.SELECT },
+      );
+      assert.deepEqual(foreignKeys, [
+        {
+          columnName: 'userId',
+          constraintName: 'fk_scanner_events_organization_user',
+          deleteRule: 'SET NULL',
+        },
+        {
+          columnName: 'visitId',
+          constraintName: 'fk_scanner_events_tenant_visit',
+          deleteRule: 'SET NULL',
+        },
+      ]);
+
+      const auditClient = await db.User.create(clientRow(defaultOrganization.id, 15));
+      const auditVisit = await db.Visit.create({
+        clubId: defaultClub.id,
+        entrySource: 'manual',
+        organizationId: defaultOrganization.id,
+        userId: auditClient.id,
+      });
+      const auditEvent = await db.ScannerEvent.create({
+        clubId: defaultClub.id,
+        eventType: 'audit_snapshot_delete_probe',
+        organizationId: defaultOrganization.id,
+        severity: 'info',
+        userId: auditClient.id,
+        visitId: auditVisit.id,
+      });
+
+      await assert.rejects(
+        db.ScannerEvent.create({
+          clubId: defaultClub.id,
+          eventType: 'cross_club_visit_trigger_probe',
+          organizationId: defaultOrganization.id,
+          severity: 'info',
+          userId: auditClient.id,
+          visitId: secondClubVisit.visitId,
+        }),
+        (error) => databaseErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+      );
+      await assert.rejects(
+        db.ScannerEvent.create({
+          clubId: defaultClub.id,
+          eventType: 'cross_organization_user_trigger_probe',
+          organizationId: defaultOrganization.id,
+          severity: 'info',
+          userId: foreignClient.id,
+          visitId: auditVisit.id,
+        }),
+        (error) => databaseErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+      );
+      await assert.rejects(
+        schema.query(
+          'UPDATE ScannerEvents SET visitId=:visitId WHERE id=:id',
+          { replacements: { id: auditEvent.id, visitId: secondClubVisit.visitId } },
+        ),
+        (error) => databaseErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+      );
+      await assert.rejects(
+        schema.query(
+          'UPDATE ScannerEvents SET userId=:userId WHERE id=:id',
+          { replacements: { id: auditEvent.id, userId: foreignClient.id } },
+        ),
+        (error) => databaseErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+      );
+
+      await auditVisit.destroy();
+      await auditEvent.reload();
+      assert.equal(auditEvent.visitId, null);
+      assert.equal(auditEvent.userId, auditClient.id);
+      assert.equal(auditEvent.organizationId, defaultOrganization.id);
+      assert.equal(auditEvent.clubId, defaultClub.id);
+
+      await auditClient.destroy();
+      await auditEvent.reload();
+      assert.equal(auditEvent.visitId, null);
+      assert.equal(auditEvent.userId, null);
+      assert.equal(auditEvent.organizationId, defaultOrganization.id);
+      assert.equal(auditEvent.clubId, defaultClub.id);
+      await auditEvent.destroy();
     });
 
     await t.test('concurrent scan retries are tenant-idempotent', async () => {
@@ -655,6 +996,204 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       assert.ok(defaultEvents.some((event) => event.visitId === defaultVisit.visitId));
       assert.equal(defaultEvents.some((event) => event.visitId === foreignVisit.visitId), false);
       assert.equal(defaultEvents.some((event) => event.visitId === secondClubVisit.visitId), false);
+    });
+
+    await t.test('same-org two-Club analytics, API and XLSX share one revenue-scoped dataset', async () => {
+      const from = '2088-01-01';
+      const to = '2088-12-31';
+      const revenueClient = await db.User.create(clientRow(defaultOrganization.id, 16));
+      const defaultRevenueVisit = await db.Visit.create({
+        clubId: defaultClub.id,
+        entrySource: 'manual',
+        organizationId: defaultOrganization.id,
+        scannedAt: new Date('2088-01-10T09:00:00.000Z'),
+        userId: revenueClient.id,
+      });
+      const secondRevenueVisit = await db.Visit.create({
+        clubId: secondClub.id,
+        entrySource: 'manual',
+        organizationId: defaultOrganization.id,
+        scannedAt: new Date('2088-07-10T09:00:00.000Z'),
+        userId: revenueClient.id,
+      });
+
+      async function createAttributedReceipt(clubId, amount, suffix, dateTime) {
+        const receipt = await db.Receipt.create({
+          clubId,
+          dateTime: new Date(dateTime),
+          evotorId: `tenant-revenue-${suffix}`,
+          idempotencyKey: `tenant-revenue-${suffix}`,
+          organizationId: defaultOrganization.id,
+          totalAmount: amount,
+          type: 'SELL',
+        });
+        const item = await db.ReceiptItem.create({
+          name: `Tenant revenue item ${suffix}`,
+          price: amount,
+          quantity: 1,
+          receiptId: receipt.id,
+          sum: amount,
+          sumPrice: amount,
+        });
+        await db.PendingSale.create({
+          clientId: revenueClient.id,
+          itemName: item.name,
+          linkedAt: new Date(dateTime),
+          receiptId: receipt.id,
+          receiptItemId: item.id,
+          saleIntent: 'subscription',
+          status: 'linked',
+        });
+        return { item, receipt };
+      }
+
+      await createAttributedReceipt(
+        defaultClub.id,
+        111,
+        'default',
+        '2088-02-01T09:00:00.000Z',
+      );
+      await createAttributedReceipt(
+        secondClub.id,
+        222,
+        'second',
+        '2088-08-01T09:00:00.000Z',
+      );
+
+      await db.ClientSubscription.create({
+        clientId: revenueClient.id,
+        saleAmount: 999,
+        startsAt: new Date('2088-03-01T09:00:00.000Z'),
+        status: 'active',
+        typeName: 'Unscoped manual subscription',
+      });
+      await db.Certificate.create({
+        clientId: revenueClient.id,
+        code: 'UNSCOPED-V53-CERTIFICATE',
+        saleAmount: 888,
+        source: 'manual',
+        startsAt: new Date('2088-04-01T09:00:00.000Z'),
+        status: 'active',
+        title: 'Unscoped manual certificate',
+      });
+      const court = await db.Court.create({ name: 'Unscoped V5.3 revenue court' });
+      await db.Booking.create({
+        clientName: revenueClient.name,
+        clientPhone: revenueClient.phone,
+        courtId: court.id,
+        durationMinutes: 60,
+        endsAt: new Date('2088-05-01T10:00:00.000Z'),
+        isTraining: false,
+        paidAmount: 666,
+        startsAt: new Date('2088-05-01T09:00:00.000Z'),
+        status: 'confirmed',
+        userId: revenueClient.id,
+      });
+      await db.Finance.create({
+        amount: 777,
+        category: 'Unscoped V5.3 revenue',
+        date: '2088-06-01',
+        isTraining: false,
+        type: 'income',
+      });
+      const corporateClient = await db.CorporateClient.create({
+        isTraining: false,
+        name: 'Unscoped V5.3 corporate client',
+        status: 'active',
+      });
+      await db.CorporateLedgerEntry.create({
+        amount: 555,
+        corporateClientId: corporateClient.id,
+        date: '2088-06-02',
+        isTraining: false,
+        status: 'active',
+        type: 'deposit',
+      });
+
+      const [defaultDashboard, secondDashboard, defaultSources, secondSources,
+        defaultCohorts, secondCohorts, defaultRevenue, secondRevenue] = await Promise.all([
+        analyticsService.getVisitsAnalytics(from, to, { tenant: defaultContext }),
+        analyticsService.getVisitsAnalytics(from, to, { tenant: secondClubContext }),
+        analyticsService.getSourceQuality(from, to, { tenant: defaultContext }),
+        analyticsService.getSourceQuality(from, to, { tenant: secondClubContext }),
+        analyticsService.getCohortsLifecycle(from, to, { tenant: defaultContext }),
+        analyticsService.getCohortsLifecycle(from, to, { tenant: secondClubContext }),
+        analyticsService.getRevenueLtv(from, to, { tenant: defaultContext }),
+        analyticsService.getRevenueLtv(from, to, { tenant: secondClubContext }),
+      ]);
+      assert.equal(defaultDashboard.totalVisits, 1);
+      assert.equal(secondDashboard.totalVisits, 1);
+      assert.equal(defaultSources.sources.reduce((sum, row) => sum + row.newClients, 0), 1);
+      assert.equal(secondSources.sources.reduce((sum, row) => sum + row.newClients, 0), 1);
+      assert.deepEqual(defaultCohorts.cohorts.map((row) => row.cohortMonth), ['2088-01']);
+      assert.deepEqual(secondCohorts.cohorts.map((row) => row.cohortMonth), ['2088-07']);
+
+      assert.equal(defaultRevenue.summary.attributedRevenue, 111);
+      assert.equal(defaultRevenue.summary.cohortAttributedRevenue, 111);
+      assert.equal(defaultRevenue.coverage.cashNetRevenue, 111);
+      assert.equal(defaultRevenue.coverage.receiptItemReconciliationDifference, 0);
+      assert.equal(secondRevenue.summary.attributedRevenue, 222);
+      assert.equal(secondRevenue.summary.cohortAttributedRevenue, 222);
+      assert.equal(secondRevenue.coverage.cashNetRevenue, 222);
+      assert.equal(secondRevenue.coverage.receiptItemReconciliationDifference, 0);
+      for (const revenue of [defaultRevenue, secondRevenue]) {
+        assert.equal(revenue.sources.length, 1);
+        assert.equal(revenue.cohorts.rows.length, 1);
+        assert.equal(revenue.coverage.bookingPaymentsReference, 0);
+        assert.equal(revenue.coverage.manualFinanceWithoutClient, 0);
+        assert.equal(revenue.coverage.corporateLedgerExcludedAmount, 0);
+        assert.equal(revenue.coverage.legacySales.amount, 0);
+      }
+
+      let apiPayload;
+      await analyticsController.getRevenueLtv(
+        { query: { from, to }, tenant: defaultContext },
+        { json(payload) { apiPayload = payload; } },
+      );
+      assert.deepEqual(apiPayload.summary, defaultRevenue.summary);
+      assert.deepEqual(apiPayload.coverage, defaultRevenue.coverage);
+      assert.deepEqual(apiPayload.sources, defaultRevenue.sources);
+      assert.deepEqual(apiPayload.cohorts, defaultRevenue.cohorts);
+
+      const workbook = XLSX.read(await analyticsService.createVisitsExportBuffer(
+        from,
+        to,
+        { tenant: defaultContext },
+      ));
+      const summaryRows = XLSX.utils.sheet_to_json(
+        workbook.Sheets['Выручка и LTV'],
+        { header: 1 },
+      );
+      const coverageRows = XLSX.utils.sheet_to_json(
+        workbook.Sheets['Покрытие данных'],
+        { header: 1 },
+      );
+      assert.equal(
+        summaryRows.find((row) => row[0] === 'Надежно атрибутированная выручка')[1],
+        defaultRevenue.summary.attributedRevenue,
+      );
+      assert.equal(
+        coverageRows.find((row) => row[0] === 'Общая кассовая net-выручка')[1],
+        defaultRevenue.coverage.cashNetRevenue,
+      );
+      const exportVisitIds = new Set(
+        XLSX.utils.sheet_to_json(workbook.Sheets['Визиты'])
+          .map((row) => Number(row['ID визита'])),
+      );
+      assert.ok(exportVisitIds.has(defaultRevenueVisit.id));
+      assert.equal(exportVisitIds.has(secondRevenueVisit.id), false);
+
+      process.env.TENANT_VISITS_SCANNER_ENABLED = 'false';
+      try {
+        const legacyRevenue = await analyticsService.getRevenueLtv(from, to);
+        assert.equal(legacyRevenue.coverage.cashNetRevenue, 333);
+        assert.equal(legacyRevenue.coverage.bookingPaymentsReference, 666);
+        assert.equal(legacyRevenue.coverage.manualFinanceWithoutClient, 777);
+        assert.equal(legacyRevenue.coverage.corporateLedgerExcludedAmount, 555);
+        assert.equal(legacyRevenue.summary.attributedRevenue, 2220);
+      } finally {
+        process.env.TENANT_VISITS_SCANNER_ENABLED = 'true';
+      }
     });
 
     await t.test('flag-off keeps the single-default bridge and flag-on restores club isolation', async () => {
