@@ -10,6 +10,7 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       DB_NAME: padel_park_test
       DB_PASSWORD: root
@@ -57,6 +58,7 @@ jobs:
   client:
     name: Client checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: client
