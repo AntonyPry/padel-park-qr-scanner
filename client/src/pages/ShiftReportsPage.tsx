@@ -1247,11 +1247,17 @@ export default function ShiftReportsPage({
             )}
             <Card className="rounded-xl" size="sm">
               <CardContent className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="grid min-w-0 grid-cols-[48px_minmax(0,1fr)] items-center gap-2 sm:flex sm:w-64">
+                <div
+                  className="grid min-w-0 grid-cols-[48px_minmax(0,1fr)] items-center gap-2 sm:w-64"
+                  data-testid="shift-report-date-filter"
+                >
                   <Label className="text-xs text-muted-foreground">Дата</Label>
                   <ShiftReportDatePicker value={date} onChange={setDate} />
                 </div>
-                <div className="grid min-w-0 grid-cols-[48px_minmax(0,1fr)] items-center gap-2 sm:flex sm:w-48">
+                <div
+                  className="grid min-w-0 grid-cols-[48px_minmax(0,1fr)] items-center gap-2 sm:w-48"
+                  data-testid="shift-report-status-filter"
+                >
                   <Label className="text-xs text-muted-foreground">Статус</Label>
                   <Select
                     value={status}
