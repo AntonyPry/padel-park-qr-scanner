@@ -1,6 +1,6 @@
 # Feature 5.1 — Staff and membership identity
 
-Статус: `QA fixes applied, re-review pending`.
+Статус: `accepted and integrated; ready as base for Feature 5.2`.
 
 Exact base: `882aa24399186f660efc7d78113185f88ceef2ac` from `codex/saas-multitenancy-integration`.
 
