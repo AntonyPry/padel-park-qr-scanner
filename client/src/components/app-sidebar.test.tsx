@@ -1,10 +1,16 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSidebar } from '@/components/app-sidebar';
+import { queryKeys } from '@/api/query-keys';
+import ShiftWorkspaceLayout from '@/components/shift-workspace-layout';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { AuthContext } from '@/lib/auth-context';
+import {
+  getRealtimeQueryKeys,
+  type CrmChangedEvent,
+} from '@/lib/realtime-invalidation';
 import type { AccountRole } from '@/lib/roles';
 
 vi.mock('@/hooks/use-mobile', () => ({
@@ -16,8 +22,14 @@ vi.mock('@/components/theme-toggle', () => ({
 }));
 
 const mocks = vi.hoisted(() => ({
+  apiFetch: vi.fn(),
   listActiveShiftReports: vi.fn(),
 }));
+
+vi.mock('@/lib/api', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/api')>('@/lib/api');
+  return { ...actual, apiFetch: mocks.apiFetch };
+});
 
 vi.mock('@/api/shift-reports', () => ({
   listActiveShiftReports: mocks.listActiveShiftReports,
@@ -32,6 +44,20 @@ vi.stubGlobal('ResizeObserver', ResizeObserverMock);
 
 afterEach(() => cleanup());
 beforeEach(() => {
+  mocks.apiFetch.mockReset().mockResolvedValue(
+    new Response(
+      JSON.stringify({
+        shift: {
+          adminName: 'Администратор',
+          date: '2026-07-16',
+          id: 12,
+          startedAt: '2026-07-16T09:00:00.000Z',
+          status: 'active',
+        },
+      }),
+      { headers: { 'Content-Type': 'application/json' }, status: 200 },
+    ),
+  );
   mocks.listActiveShiftReports.mockReset();
   mocks.listActiveShiftReports.mockResolvedValue({ reports: [], shift: null });
 });
@@ -50,7 +76,7 @@ function renderSidebar(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[normalizedOptions.path || '/admin/catalog']}>
         <AuthContext.Provider
@@ -87,6 +113,46 @@ function renderSidebar(
       </MemoryRouter>
     </QueryClientProvider>,
   );
+  return { ...result, queryClient };
+}
+
+function renderSidebarAndWorkspace(path = '/admin/shift/motivation') {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const result = render(
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[path]}>
+        <AuthContext.Provider
+          value={{
+            account: {
+              id: 1,
+              email: 'owner@padelpark.demo',
+              role: 'owner',
+              status: 'active',
+            },
+            bootstrap: vi.fn(),
+            loading: false,
+            login: vi.fn(),
+            logout: vi.fn(),
+            setupRequired: false,
+          }}
+        >
+          <SidebarProvider>
+            <AppSidebar />
+            <Routes>
+              <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
+                <Route path="motivation" element={<div>motivation content</div>} />
+                <Route path="reports" element={<div>reports content</div>} />
+                <Route path="cash" element={<div>cash content</div>} />
+              </Route>
+            </Routes>
+          </SidebarProvider>
+        </AuthContext.Provider>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+  return { ...result, queryClient };
 }
 
 describe('AppSidebar authorization', () => {
@@ -183,6 +249,7 @@ describe('AppSidebar shift navigation', () => {
     (role) => {
       renderSidebar(role);
       expect(screen.queryByRole('link', { name: 'Смена' })).not.toBeInTheDocument();
+      expect(mocks.listActiveShiftReports).not.toHaveBeenCalled();
     },
   );
 
@@ -230,9 +297,11 @@ describe('AppSidebar shift navigation', () => {
     });
     renderSidebar('admin', '/admin/shift/reports');
 
-    const badge = await screen.findByLabelText(
-      '2 отчетов требуют внимания, есть просроченные',
-    );
+    const badge = await screen.findByRole('status', {
+      name: '2 отчета требуют внимания, есть просроченные',
+    });
+    expect(badge).toHaveAttribute('aria-atomic', 'true');
+    expect(badge).toHaveAttribute('aria-live', 'polite');
     expect(badge).toHaveTextContent('2');
     expect(badge).toHaveClass('bg-destructive');
     expect(screen.getByRole('link', { name: 'Смена' })).toHaveAttribute(
@@ -253,17 +322,69 @@ describe('AppSidebar shift navigation', () => {
 
     await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('link', { name: 'Смена' })).toBeInTheDocument();
-    expect(screen.queryByLabelText(/отчетов требуют внимания/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('status', { name: /требу(?:ет|ют) внимания/ }),
+    ).not.toBeInTheDocument();
   });
 
-  it('refreshes the badge from realtime and caps large counts at 99+', async () => {
+  it('keeps both observers consistent through realtime 2 to 1 invalidation', async () => {
+    mocks.listActiveShiftReports.mockResolvedValueOnce({
+      reports: [
+        { computedStatus: 'pending', id: 1 },
+        { computedStatus: 'draft', id: 2 },
+      ],
+      shift: { id: 12 },
+    });
+    const { queryClient } = renderSidebarAndWorkspace();
+
+    const initialBadges = await screen.findAllByRole('status', {
+      name: '2 отчета требуют внимания',
+    });
+    expect(initialBadges).toHaveLength(2);
+    for (const badge of initialBadges) {
+      expect(badge).toHaveAttribute('aria-atomic', 'true');
+      expect(badge).toHaveAttribute('aria-live', 'polite');
+      expect(badge).toHaveClass('bg-primary');
+      expect(badge).toHaveTextContent('2');
+    }
+    expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1);
+
     mocks.listActiveShiftReports.mockResolvedValueOnce({
       reports: [{ computedStatus: 'draft', id: 1 }],
       shift: { id: 12 },
     });
-    renderSidebar('owner');
-    expect(await screen.findByLabelText('1 отчетов требуют внимания')).toHaveTextContent('1');
+    const event: CrmChangedEvent = {
+      action: 'submitted',
+      actorId: null,
+      actorRole: null,
+      domain: 'shifts',
+      entity: 'shift_report',
+      entityId: '1',
+      hints: { queryGroups: ['shiftReports'] },
+      id: 'event-1',
+      occurredAt: new Date().toISOString(),
+      source: 'api',
+    };
+    for (const queryKey of getRealtimeQueryKeys(event)) {
+      await queryClient.invalidateQueries({ queryKey });
+    }
 
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('status', { name: '1 отчет требует внимания' }),
+      ).toHaveLength(2),
+    );
+    const refreshedBadges = screen.getAllByRole('status', {
+      name: '1 отчет требует внимания',
+    });
+    for (const badge of refreshedBadges) {
+      expect(badge).toHaveTextContent('1');
+      expect(badge).toHaveClass('bg-primary');
+    }
+    expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(2);
+  });
+
+  it('caps both shared observer badges at 99+ with one fetch', async () => {
     mocks.listActiveShiftReports.mockResolvedValueOnce({
       reports: Array.from({ length: 100 }, (_, index) => ({
         computedStatus: 'pending',
@@ -271,23 +392,44 @@ describe('AppSidebar shift navigation', () => {
       })),
       shift: { id: 12 },
     });
-    window.dispatchEvent(
-      new CustomEvent('realtime:crm:changed', {
-        detail: {
-          action: 'submitted',
-          domain: 'shifts',
-          entity: 'shift_report',
-          entityId: '1',
-          hints: { queryGroups: ['shiftReports'] },
-          id: 'event-1',
-          occurredAt: new Date().toISOString(),
-          source: 'api',
-        },
-      }),
-    );
 
-    expect(await screen.findByLabelText('100 отчетов требуют внимания')).toHaveTextContent(
-      '99+',
+    renderSidebarAndWorkspace();
+
+    const badges = await screen.findAllByRole('status', {
+      name: '100 отчетов требуют внимания',
+    });
+    expect(badges).toHaveLength(2);
+    for (const badge of badges) expect(badge).toHaveTextContent('99+');
+    expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers both placements from an error through query invalidation', async () => {
+    mocks.listActiveShiftReports.mockRejectedValueOnce(new Error('offline'));
+    const { queryClient } = renderSidebarAndWorkspace('/admin/shift/reports');
+
+    await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByRole('status', { name: /требу(?:ет|ют) внимания/ }),
+    ).not.toBeInTheDocument();
+
+    mocks.listActiveShiftReports.mockResolvedValueOnce({
+      reports: [
+        { computedStatus: 'draft', id: 1 },
+        { computedStatus: 'overdue', id: 2 },
+      ],
+      shift: { id: 12 },
+    });
+    await queryClient.invalidateQueries({
+      queryKey: queryKeys.shiftReports.active(),
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('status', {
+          name: '2 отчета требуют внимания, есть просроченные',
+        }),
+      ).toHaveLength(2),
     );
+    expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(2);
   });
 });

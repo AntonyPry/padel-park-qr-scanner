@@ -3,6 +3,7 @@ import { AlertTriangle, Clock, Play, RotateCcw, Square } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { ShiftReportsAttentionBadge } from '@/components/shift-reports-attention-badge';
 import {
   ShiftWorkspaceProvider,
 } from '@/components/shift-workspace-context';
@@ -14,7 +15,7 @@ import { cn } from '@/lib/utils';
 
 const shiftSections = [
   { label: 'Мотивация', to: '/admin/shift/motivation' },
-  { label: 'Отчеты', to: '/admin/shift/reports' },
+  { attentionBadge: true, label: 'Отчеты', to: '/admin/shift/reports' },
   { label: 'Касса', to: '/admin/shift/cash' },
 ];
 
@@ -126,20 +127,36 @@ function ShiftWorkspaceContent({ children }: { children?: ReactNode }) {
           className="grid min-h-11 min-w-0 flex-1 grid-cols-3 gap-0.5 rounded-xl border bg-muted/40 p-0.5"
         >
           {shiftSections.map((section) => (
-            <NavLink
-              key={section.to}
-              className={({ isActive }) =>
-                cn(
-                  'flex min-h-9 min-w-0 items-center justify-center rounded-[10px] px-2 text-center text-sm font-medium text-muted-foreground transition-[background-color,color,box-shadow] duration-150',
-                  'hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                  isActive &&
-                    'bg-foreground/10 font-semibold text-foreground ring-1 ring-foreground/15 hover:bg-foreground/10 hover:text-foreground',
-                )
-              }
-              to={section.to}
-            >
-              <span className="min-w-0 break-words">{section.label}</span>
-            </NavLink>
+            <div className="relative grid min-w-0" key={section.to}>
+              <NavLink
+                className={({ isActive }) =>
+                  cn(
+                    'col-start-1 row-start-1 flex h-full min-h-9 min-w-0 items-center justify-center rounded-[10px] px-2 text-center text-sm font-medium text-muted-foreground transition-[background-color,color,box-shadow] duration-150',
+                    'hover:bg-background/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
+                    isActive &&
+                      'bg-foreground/10 font-semibold text-foreground ring-1 ring-foreground/15 hover:bg-foreground/10 hover:text-foreground',
+                  )
+                }
+                to={section.to}
+              >
+                {section.attentionBadge ? (
+                  <span className="inline-grid min-w-0 grid-cols-[auto_1.5rem] items-center gap-1.5">
+                    <span className="min-w-0 whitespace-nowrap">{section.label}</span>
+                    <span aria-hidden="true" className="h-5 w-6" />
+                  </span>
+                ) : (
+                  <span className="min-w-0 whitespace-nowrap">{section.label}</span>
+                )}
+              </NavLink>
+              {section.attentionBadge ? (
+                <span className="pointer-events-none col-start-1 row-start-1 inline-grid grid-cols-[auto_1.5rem] items-center gap-1.5 place-self-center text-sm font-medium">
+                  <span aria-hidden="true" className="invisible whitespace-nowrap">
+                    {section.label}
+                  </span>
+                  <ShiftReportsAttentionBadge className="w-6 min-w-6 px-0 text-[9px]" />
+                </span>
+              ) : null}
+            </div>
           ))}
         </nav>
         <CurrentShiftPanel />

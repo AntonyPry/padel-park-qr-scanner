@@ -24,8 +24,8 @@ import {
   SlidersHorizontal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { ShiftReportsAttentionBadge } from '@/components/shift-reports-attention-badge';
 import {
   Sidebar,
   SidebarContent,
@@ -45,9 +45,6 @@ import {
   canAccessPathForAuthority,
   type ClientRoute,
 } from '@/lib/permissions';
-import { listActiveShiftReports } from '@/api/shift-reports';
-import { queryKeys } from '@/api/query-keys';
-import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
 import { selectAuthorizationRole } from '@/lib/authorization';
 import { getAccountRoleLabel } from '@/lib/roles';
@@ -238,45 +235,7 @@ function isRouteActive(currentPath: string, item: NavItem) {
 }
 
 function ShiftReportsBadge() {
-  const queryClient = useQueryClient();
-  const reportsQuery = useQuery({
-    queryFn: listActiveShiftReports,
-    queryKey: queryKeys.shiftReports.active(),
-    retry: false,
-    staleTime: 30_000,
-  });
-
-  useRealtimeRefresh(['shiftReports', 'shifts'], () => {
-    void queryClient.invalidateQueries({ queryKey: queryKeys.shiftReports.active() });
-  });
-
-  if (reportsQuery.isError || !reportsQuery.data) return null;
-
-  const actionable = reportsQuery.data.reports.filter((report) =>
-    ['pending', 'draft', 'overdue'].includes(report.computedStatus),
-  );
-  if (actionable.length === 0) return null;
-
-  const hasOverdue = actionable.some((report) => report.computedStatus === 'overdue');
-  const label = actionable.length > 99 ? '99+' : String(actionable.length);
-  const ariaLabel = hasOverdue
-    ? `${actionable.length} отчетов требуют внимания, есть просроченные`
-    : `${actionable.length} отчетов требуют внимания`;
-
-  return (
-    <SidebarMenuBadge
-      aria-label={ariaLabel}
-      aria-live="polite"
-      className={cn(
-        'min-w-6 justify-center px-1.5 text-[10px] font-semibold tabular-nums',
-        hasOverdue
-          ? 'bg-destructive text-destructive-foreground'
-          : 'bg-primary text-primary-foreground',
-      )}
-    >
-      {label}
-    </SidebarMenuBadge>
-  );
+  return <ShiftReportsAttentionBadge placement="sidebar" />;
 }
 
 function NavigationBadge({ badge }: { badge: NonNullable<NavItem['badge']> }) {

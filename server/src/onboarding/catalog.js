@@ -2098,6 +2098,7 @@ function makeTextLesson({ blocks, screenshots = [], summary, title, updatedAt })
 const VISITS_ANALYTICS_UPDATED_AT = '2026-07-13T00:00:00.000+03:00';
 const PREPAYMENTS_SCREENSHOT_UPDATED_AT = '2026-07-14T00:00:00.000+03:00';
 const SHIFT_CASH_UPDATED_AT = '2026-07-16T00:00:00.000+03:00';
+const SHIFT_CASH_WORKSPACE_BADGE_UPDATED_AT = '2026-07-16T20:30:00.000+03:00';
 
 function makeVisitsAnalyticsScreenshot(fileName, alt, caption, callouts) {
   return {
@@ -2405,7 +2406,7 @@ const roleInstructionLessons = {
     title: 'Как зафиксировать кассу на начало смены',
     summary:
       'Начальный остаток нужен, чтобы Setly мог посчитать ожидаемую наличность к закрытию смены.',
-    updatedAt: SHIFT_CASH_UPDATED_AT,
+    updatedAt: SHIFT_CASH_WORKSPACE_BADGE_UPDATED_AT,
     blocks: [
       {
         screenshotIndex: 1,
@@ -2464,7 +2465,7 @@ const roleInstructionLessons = {
     title: 'Как добавить расход из кассы с фото чека',
     summary:
       'Кассовый расход уменьшает ожидаемый остаток смены и создает связанную финансовую операцию в P&L.',
-    updatedAt: SHIFT_CASH_UPDATED_AT,
+    updatedAt: SHIFT_CASH_WORKSPACE_BADGE_UPDATED_AT,
     blocks: [
       {
         screenshotIndex: 1,
@@ -2523,7 +2524,7 @@ const roleInstructionLessons = {
     title: 'Как проверить кассовую сверку смены',
     summary:
       'Менеджер проверяет, что начальный остаток, наличные продажи, расходы и фактическая касса сходятся перед закрытием смены.',
-    updatedAt: SHIFT_CASH_UPDATED_AT,
+    updatedAt: SHIFT_CASH_WORKSPACE_BADGE_UPDATED_AT,
     blocks: [
       {
         screenshotIndex: 1,
@@ -2589,7 +2590,7 @@ const roleInstructionLessons = {
     title: 'Как читать контроль наличной кассы',
     summary:
       'Владелец читает кассу смены как контроль качества учета: что было на старте, какие были расходы, почему появилось расхождение и как это связано с P&L.',
-    updatedAt: SHIFT_CASH_UPDATED_AT,
+    updatedAt: SHIFT_CASH_WORKSPACE_BADGE_UPDATED_AT,
     blocks: [
       {
         screenshotIndex: 1,
