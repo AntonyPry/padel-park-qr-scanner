@@ -11,6 +11,9 @@ const clientSkillMapService = require('./client-skill-map.service');
 const certificatesService = require('./certificates.service');
 const subscriptionsService = require('./subscriptions.service');
 const trainingNotesService = require('./training-notes.service');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const CLIENT_ATTRIBUTES = [
@@ -211,6 +214,7 @@ function getClientSegment(stats) {
 function mapClient(row) {
   if (!row) return null;
   const raw = row.toJSON ? row.toJSON() : row;
+  const { organizationId: _organizationId, ...publicRaw } = raw;
   const visitCount = Number(raw.visitCount || 0);
   const stats = {
     firstVisitAt: raw.firstVisitAt || null,
@@ -224,12 +228,18 @@ function mapClient(row) {
   };
 
   return {
-    ...raw,
+    ...publicRaw,
     statusLabel: getClientStatus(raw),
     segment: getClientSegment(stats),
     stats,
     training,
   };
+}
+
+function clientWhere(context, where = {}) {
+  return context.scoped
+    ? { ...where, organizationId: context.organizationId }
+    : where;
 }
 
 function isTrainer(account) {
@@ -491,6 +501,11 @@ function getClientIdentityLockKeys(data = {}, phoneNormalized = null) {
   return Array.from(new Set(keys));
 }
 
+function scopeClientIdentityLockKeys(keys, context) {
+  if (!context.scoped) return keys;
+  return keys.map((key) => `organization:${context.organizationId}:${key}`);
+}
+
 async function withClientIdentityLocks(keys, callback) {
   const lockNames = Array.from(new Set(keys.filter(Boolean))).map(
     buildClientIdentityLockName,
@@ -693,6 +708,11 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
 
   where.push('COALESCE(u.isTraining, 0) = 0');
 
+  if (options.context?.scoped) {
+    where.push('u.organizationId = :organizationId');
+    replacements.organizationId = options.context.organizationId;
+  }
+
   // Merged rows are technical tombstones. They never represent clients in list/search.
   where.push('u.mergedIntoUserId IS NULL');
 
@@ -760,6 +780,7 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
       SELECT 1
       FROM Users merged_alias
       WHERE merged_alias.mergedIntoUserId = u.id
+        AND merged_alias.organizationId = u.organizationId
         AND (
           merged_alias.name LIKE :q
           ${includePhoneSearch ? 'OR merged_alias.phone LIKE :q' : ''}
@@ -777,6 +798,7 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
         SELECT phoneNormalized
       FROM Users
         WHERE status = 'active'
+          AND organizationId = u.organizationId
           AND COALESCE(isTraining, 0) = 0
           AND mergedIntoUserId IS NULL
           AND phoneNormalized IS NOT NULL
@@ -900,9 +922,13 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
   };
 }
 
-async function listClients(query = {}, account = null) {
+async function listClients(query = {}, account = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const paging = parsePaging(query);
-  const sqlOptions = { includePhoneSearch: !isTrainer(account) };
+  const sqlOptions = {
+    context,
+    includePhoneSearch: !isTrainer(account),
+  };
   const [listQuery, countQuery] = [
     buildClientListSql(query, paging, false, sqlOptions),
     buildClientListSql(query, paging, true, sqlOptions),
@@ -917,7 +943,7 @@ async function listClients(query = {}, account = null) {
       replacements: countQuery.replacements,
       type: db.Sequelize.QueryTypes.SELECT,
     }),
-    getSources(),
+    getSources(tenant),
   ]);
 
   const total = Number(countRows[0]?.total || 0);
@@ -932,11 +958,14 @@ async function listClients(query = {}, account = null) {
 }
 
 async function listClientsForSnapshot(query = {}, options = {}) {
+  const context = await resolveClientAccessContext(options.tenant || null);
   const limit = Math.min(
     20000,
     Math.max(1, Number.parseInt(options.limit, 10) || 5000),
   );
-  const listQuery = buildClientListSql(query, { limit, offset: 0 });
+  const listQuery = buildClientListSql(query, { limit, offset: 0 }, false, {
+    context,
+  });
   const rows = await db.sequelize.query(listQuery.sql, {
     replacements: listQuery.replacements,
     type: db.Sequelize.QueryTypes.SELECT,
@@ -945,9 +974,10 @@ async function listClientsForSnapshot(query = {}, options = {}) {
   return rows.map(mapClient);
 }
 
-async function countClients(query = {}) {
+async function countClients(query = {}, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const paging = parsePaging({ ...query, page: 1, pageSize: 10 });
-  const countQuery = buildClientListSql(query, paging, true);
+  const countQuery = buildClientListSql(query, paging, true, { context });
   const rows = await db.sequelize.query(countQuery.sql, {
     replacements: countQuery.replacements,
     type: db.Sequelize.QueryTypes.SELECT,
@@ -1054,10 +1084,10 @@ async function deleteSavedView(account, id) {
   return { success: true };
 }
 
-async function getSources() {
+async function getSources(tenant = null) {
   const rows = await referencesService.list('client-sources', {
     status: 'active',
-  });
+  }, tenant);
 
   return rows.map((row) => row.name).filter(Boolean);
 }
@@ -1080,12 +1110,14 @@ async function getClientStats(clientId) {
   };
 }
 
-async function getClientOrFail(id) {
-  const where = { id };
+async function getClientOrFail(id, context, options = {}) {
+  const where = clientWhere(context, { id });
   where.mergedIntoUserId = null;
 
   const client = await db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
+    lock: options.lock,
+    transaction: options.transaction,
     where,
   });
 
@@ -1093,7 +1125,7 @@ async function getClientOrFail(id) {
   return client;
 }
 
-async function getDuplicateCandidates(client) {
+async function getDuplicateCandidates(client, context) {
   const conditions = [];
   if (client.phoneNormalized) conditions.push({ phoneNormalized: client.phoneNormalized });
   CLIENT_IDENTITY_FIELDS.forEach((field) => {
@@ -1103,14 +1135,14 @@ async function getDuplicateCandidates(client) {
 
   const candidates = await db.User.findAll({
     attributes: CLIENT_ATTRIBUTES,
-    where: {
+    where: clientWhere(context, {
       id: {
         [Op.ne]: client.id,
       },
       [Op.or]: conditions,
       status: { [Op.in]: ['active', 'archived'] },
       mergedIntoUserId: null,
-    },
+    }),
     order: [
       [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
       ['createdAt', 'DESC'],
@@ -1254,8 +1286,9 @@ async function listClientTelephonyCalls(clientId, account, options = {}) {
   });
 }
 
-async function getClientDetails(id, account = null) {
-  const client = await getClientOrFail(id);
+async function getClientDetails(id, account = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
+  const client = await getClientOrFail(id, context);
 
   await onboardingService.recordEventSafe(account, 'client.viewed', {
     entityId: client.id,
@@ -1282,7 +1315,7 @@ async function getClientDetails(id, account = null) {
   ] = await Promise.all([
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
-    isTrainer(account) ? [] : getDuplicateCandidates(client),
+    isTrainer(account) ? [] : getDuplicateCandidates(client, context),
     canViewTrainingNotes(account) ? listTrainingNotes(client.id) : [],
     canViewTrainingNotes(account)
       ? clientSkillMapService.listForClient(client.id, account)
@@ -2063,6 +2096,7 @@ async function lookupByPhone(
   excludeClientId = null,
   account = null,
   options = {},
+  tenant = null,
 ) {
   if (isTrainer(account)) {
     throw appError('Тренеру недоступен поиск клиентов по телефону', 403);
@@ -2070,12 +2104,13 @@ async function lookupByPhone(
 
   const phoneNormalized = getPhoneLookupDigits(phone);
   if (phoneNormalized.length !== 10) return null;
+  const context = await resolveClientAccessContext(tenant);
 
-  const where = {
+  const where = clientWhere(context, {
     isTraining: false,
     phoneNormalized,
     mergedIntoUserId: null,
-  };
+  });
   if (options.includeArchived) {
     where.status = { [Op.in]: ['active', 'archived'] };
   } else {
@@ -2100,21 +2135,28 @@ async function lookupByPhone(
   });
 }
 
-async function findExistingByIdentity(field, value, excludeClientId = null) {
+async function findExistingByIdentity(
+  field,
+  value,
+  excludeClientId = null,
+  context,
+  transaction = undefined,
+) {
   const normalizedValue = normalizeOptionalIdentity(value);
   if (!normalizedValue) return null;
 
-  const where = {
+  const where = clientWhere(context, {
     [field]: normalizedValue,
     isTraining: false,
     mergedIntoUserId: null,
-  };
+  });
   if (excludeClientId) {
     where.id = { [Op.ne]: Number(excludeClientId) };
   }
 
   const client = await db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
+    transaction,
     where,
     order: [
       [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
@@ -2122,21 +2164,29 @@ async function findExistingByIdentity(field, value, excludeClientId = null) {
     ],
   });
 
-  return client ? resolveCanonicalClient(client) : null;
+  return client
+    ? resolveCanonicalClient(client, context, { transaction })
+    : null;
 }
 
-async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
-  const where = {
+async function findExistingByPhone(
+  phoneNormalized,
+  excludeClientId = null,
+  context,
+  transaction = undefined,
+) {
+  const where = clientWhere(context, {
     isTraining: false,
     phoneNormalized,
     mergedIntoUserId: null,
-  };
+  });
   if (excludeClientId) {
     where.id = { [Op.ne]: Number(excludeClientId) };
   }
 
   return db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
+    transaction,
     where,
     order: [
       [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
@@ -2145,13 +2195,24 @@ async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
   });
 }
 
-async function assertIdentityAvailable(data, excludeClientId = null) {
+async function assertIdentityAvailable(
+  data,
+  excludeClientId = null,
+  context,
+  transaction = undefined,
+) {
   for (const field of CLIENT_IDENTITY_FIELDS) {
     if (!(field in data)) continue;
     const value = normalizeOptionalIdentity(data[field]);
     if (!value) continue;
 
-    const existing = await findExistingByIdentity(field, value, excludeClientId);
+    const existing = await findExistingByIdentity(
+      field,
+      value,
+      excludeClientId,
+      context,
+      transaction,
+    );
     if (!existing) continue;
 
     const isArchived = existing.status === 'archived';
@@ -2173,26 +2234,79 @@ async function assertIdentityAvailable(data, excludeClientId = null) {
   }
 }
 
-async function generateWebId() {
+async function generateWebId(context, transaction = undefined) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const webId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    const existing = await findExistingByIdentity('webId', webId);
+    const existing = await findExistingByIdentity(
+      'webId',
+      webId,
+      null,
+      context,
+      transaction,
+    );
     if (!existing) return webId;
   }
 
   throw appError('Не удалось сгенерировать уникальный WEB ID клиента');
 }
 
-async function createClient(data, actor = null) {
+async function resolveClientSourceForMutation(
+  data,
+  context,
+  transaction,
+  { allowArchived = false } = {},
+) {
+  const where = { organizationId: context.organizationId };
+  if (data.sourceId) {
+    where.id = Number(data.sourceId);
+  } else {
+    where.name = String(data.source || 'Ресепшн (Админ)')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+  if (!allowArchived) where.status = 'active';
+
+  const source = await db.ClientSource.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where,
+  });
+  if (!source) throw appError('Источник клиента не найден в справочнике', 404);
+  return source;
+}
+
+async function createClient(data, actor = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const name = normalizeClientName(data.name);
-  const sourceRef = await referencesService.getClientSourceByInput(data);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
   const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
-  return withClientIdentityLocks(
-    getClientIdentityLockKeys(data, phoneNormalized),
-    async () => {
-      const existing = await findExistingByPhone(phoneNormalized);
-      await assertIdentityAvailable(data);
+  const client = await withClientIdentityLocks(
+    scopeClientIdentityLockKeys(
+      getClientIdentityLockKeys(data, phoneNormalized),
+      context,
+    ),
+    () => db.sequelize.transaction(async (transaction) => {
+      const writeContext = await resolveClientAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
+      const sourceRef = await resolveClientSourceForMutation(
+        data,
+        writeContext,
+        transaction,
+      );
+      const existing = await findExistingByPhone(
+        phoneNormalized,
+        null,
+        writeContext,
+        transaction,
+      );
+      await assertIdentityAvailable(
+        data,
+        null,
+        writeContext,
+        transaction,
+      );
 
       if (existing) {
         const isArchived = existing.status === 'archived';
@@ -2214,32 +2328,36 @@ async function createClient(data, actor = null) {
       CLIENT_IDENTITY_FIELDS.forEach((field) => {
         if (field in data) identityPayload[field] = normalizeOptionalIdentity(data[field]);
       });
-      if (!identityPayload.webId) identityPayload.webId = await generateWebId();
+      if (!identityPayload.webId) {
+        identityPayload.webId = await generateWebId(writeContext, transaction);
+      }
 
-      const client = await db.User.create({
-        ...identityPayload,
-        name,
-        phone,
-        phoneNormalized,
-        source: sourceRef.name,
-        sourceId: sourceRef.id,
-        note: normalizeNote(data.note),
-        status: 'active',
-        ...trainingMarker,
-      });
-
-      await clientSkillMapService.syncActiveSkillsForClient(client);
-
-      const result = await getClientDetails(client.id, actor);
-      await onboardingService.recordEventSafe(actor, 'client.created', {
-        entityId: result.client?.id || client.id,
-        entityType: 'client',
-        payload: result.client || result,
-      });
-
-      return result;
-    },
+      return db.User.create(
+        {
+          ...identityPayload,
+          organizationId: writeContext.organizationId,
+          name,
+          phone,
+          phoneNormalized,
+          source: sourceRef.name,
+          sourceId: sourceRef.id,
+          note: normalizeNote(data.note),
+          status: 'active',
+          ...trainingMarker,
+        },
+        { transaction },
+      );
+    }),
   );
+
+  await clientSkillMapService.syncActiveSkillsForClient(client);
+  const result = await getClientDetails(client.id, actor, tenant);
+  await onboardingService.recordEventSafe(actor, 'client.created', {
+    entityId: result.client?.id || client.id,
+    entityType: 'client',
+    payload: result.client || result,
+  });
+  return result;
 }
 
 async function registerClientFromMessenger({
@@ -2248,31 +2366,54 @@ async function registerClientFromMessenger({
   name,
   phone: rawPhone,
   source,
+  tenant = null,
 }) {
+  const context = await resolveClientAccessContext(tenant);
   const messengerField = messenger === 'telegram' ? 'telegramId' : 'vkId';
   if (!externalId) throw appError('Не указан идентификатор мессенджера');
 
   const fullName = normalizeClientName(name);
-  const sourceRef = await referencesService.getClientSourceByInput({ source });
   const { phone, phoneNormalized } = normalizePhonePayload(rawPhone);
   const externalIdValue = String(externalId);
 
-  return withClientIdentityLocks(
-    getClientIdentityLockKeys(
-      { [messengerField]: externalIdValue },
-      phoneNormalized,
+  const result = await withClientIdentityLocks(
+    scopeClientIdentityLockKeys(
+      getClientIdentityLockKeys(
+        { [messengerField]: externalIdValue },
+        phoneNormalized,
+      ),
+      context,
     ),
-    async () => {
+    () => db.sequelize.transaction(async (transaction) => {
+      const writeContext = await resolveClientAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
+      const sourceRef = await resolveClientSourceForMutation(
+        { source },
+        writeContext,
+        transaction,
+      );
       const [byPhone, byMessengerRaw] = await Promise.all([
-        findExistingByPhone(phoneNormalized),
+        findExistingByPhone(
+          phoneNormalized,
+          null,
+          writeContext,
+          transaction,
+        ),
         db.User.findOne({
           attributes: CLIENT_ATTRIBUTES,
-          where: { [messengerField]: externalIdValue },
+          transaction,
+          where: clientWhere(writeContext, {
+            [messengerField]: externalIdValue,
+          }),
           order: [['createdAt', 'DESC']],
         }),
       ]);
       const byMessenger = byMessengerRaw
-        ? await resolveCanonicalClient(byMessengerRaw)
+        ? await resolveCanonicalClient(byMessengerRaw, writeContext, {
+          transaction,
+        })
         : null;
 
       if (byMessenger?.status === 'archived') {
@@ -2322,68 +2463,106 @@ async function registerClientFromMessenger({
           );
         }
 
-        await existing.update({
+        await existing.update(
+          {
+            [messengerField]: externalIdValue,
+            name: fullName,
+            phone,
+            phoneNormalized,
+            source: sourceRef.name,
+            sourceId: sourceRef.id,
+            status: 'active',
+          },
+          { transaction },
+        );
+
+        return { client: existing, created: false };
+      }
+
+      const client = await db.User.create(
+        {
           [messengerField]: externalIdValue,
+          organizationId: writeContext.organizationId,
           name: fullName,
           phone,
           phoneNormalized,
           source: sourceRef.name,
           sourceId: sourceRef.id,
           status: 'active',
-        });
+        },
+        { transaction },
+      );
 
-        return getClientDetails(existing.id);
-      }
-
-      const client = await db.User.create({
-        [messengerField]: externalIdValue,
-        name: fullName,
-        phone,
-        phoneNormalized,
-        source: sourceRef.name,
-        sourceId: sourceRef.id,
-        status: 'active',
-      });
-
-      await clientSkillMapService.syncActiveSkillsForClient(client);
-
-      return getClientDetails(client.id);
-    },
+      return { client, created: true };
+    }),
   );
+
+  if (result.created) {
+    await clientSkillMapService.syncActiveSkillsForClient(result.client);
+  }
+  return getClientDetails(result.client.id, null, tenant);
 }
 
-async function updateClient(id, data, actor = null) {
+async function updateClient(id, data, actor = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const normalizedPhonePayload = 'phone' in data ? normalizePhonePayload(data.phone) : null;
 
-  return withClientIdentityLocks(
-    getClientIdentityLockKeys(data, normalizedPhonePayload?.phoneNormalized),
-    async () => updateClientAfterIdentityLock(id, data, normalizedPhonePayload, actor),
+  const clientId = await withClientIdentityLocks(
+    scopeClientIdentityLockKeys(
+      getClientIdentityLockKeys(data, normalizedPhonePayload?.phoneNormalized),
+      context,
+    ),
+    () => db.sequelize.transaction(async (transaction) => {
+      const writeContext = await resolveClientAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
+      return updateClientAfterIdentityLock(
+        id,
+        data,
+        normalizedPhonePayload,
+        writeContext,
+        transaction,
+      );
+    }),
   );
+  return getClientDetails(clientId, actor, tenant);
 }
 
 async function updateClientAfterIdentityLock(
   id,
   data,
   normalizedPhonePayload = null,
-  actor = null,
+  context,
+  transaction,
 ) {
-  const client = await getClientOrFail(id);
+  const client = await getClientOrFail(id, context, {
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+  });
   const payload = {};
 
   if ('name' in data) payload.name = normalizeClientName(data.name);
   if ('source' in data || 'sourceId' in data) {
     const allowArchived = isSameClientSource(client, data);
-    const sourceRef = await referencesService.getClientSourceByInput({
-      ...data,
-      allowArchived,
-    });
+    const sourceRef = await resolveClientSourceForMutation(
+      data,
+      context,
+      transaction,
+      { allowArchived },
+    );
     payload.source = sourceRef.name;
     payload.sourceId = sourceRef.id;
   }
   if ('note' in data) payload.note = normalizeNote(data.note);
   if ('status' in data) payload.status = normalizeStatus(data.status);
 
-  await assertIdentityAvailable(data, client.id);
+  await assertIdentityAvailable(
+    data,
+    client.id,
+    context,
+    transaction,
+  );
   CLIENT_IDENTITY_FIELDS.forEach((field) => {
     if (field in data) payload[field] = normalizeOptionalIdentity(data[field]);
   });
@@ -2391,7 +2570,12 @@ async function updateClientAfterIdentityLock(
   if ('phone' in data) {
     const { phone, phoneNormalized } =
       normalizedPhonePayload || normalizePhonePayload(data.phone);
-    const existing = await findExistingByPhone(phoneNormalized, client.id);
+    const existing = await findExistingByPhone(
+      phoneNormalized,
+      client.id,
+      context,
+      transaction,
+    );
     if (existing) {
       const isArchived = existing.status === 'archived';
       throw appError(
@@ -2417,7 +2601,12 @@ async function updateClientAfterIdentityLock(
     !payload.phoneNormalized &&
     client.phoneNormalized
   ) {
-    const existing = await findExistingByPhone(client.phoneNormalized, client.id);
+    const existing = await findExistingByPhone(
+      client.phoneNormalized,
+      client.id,
+      context,
+      transaction,
+    );
     if (existing) {
       const isArchived = existing.status === 'archived';
       throw appError(
@@ -2435,46 +2624,78 @@ async function updateClientAfterIdentityLock(
     }
   }
 
-  await client.update(payload);
-  return getClientDetails(client.id, actor);
+  await client.update(payload, { transaction });
+  return client.id;
 }
 
-async function resolveCanonicalClient(client) {
+async function resolveCanonicalClient(client, context, options = {}) {
   if (!client) return null;
   if (!client.mergedIntoUserId) return client;
 
-  return db.User.findByPk(client.mergedIntoUserId);
+  return db.User.findOne({
+    transaction: options.transaction,
+    where: clientWhere(context, { id: client.mergedIntoUserId }),
+  });
 }
 
-async function findActiveByPhone(phone) {
+async function findActiveByPhone(phone, tenant = null) {
   const phoneNormalized = getPhoneLookupDigits(phone);
   if (phoneNormalized.length !== 10) return null;
+  const context = await resolveClientAccessContext(tenant);
 
   return db.User.findOne({
-    where: { phoneNormalized, status: 'active', isTraining: false, mergedIntoUserId: null },
+    where: clientWhere(context, {
+      phoneNormalized,
+      status: 'active',
+      isTraining: false,
+      mergedIntoUserId: null,
+    }),
     order: [['createdAt', 'DESC']],
   });
 }
 
-async function findCanonicalByQr(qr) {
+async function findCanonicalById(id, tenant = null, options = {}) {
+  const context = await resolveClientAccessContext(tenant, {
+    lock: Boolean(options.lock),
+    transaction: options.transaction,
+  });
+  let client = await db.User.findOne({
+    lock: options.lock,
+    transaction: options.transaction,
+    where: clientWhere(context, { id: Number(id) }),
+  });
+  if (!client) return null;
+  if (client.mergedIntoUserId) {
+    client = await resolveCanonicalClient(client, context);
+  }
+  return client;
+}
+
+async function findCanonicalByQr(qr, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   let client = null;
 
   if (qr.startsWith('vk_')) {
     client = await db.User.findOne({
-      where: { vkId: qr.replace('vk_', ''), isTraining: false },
+      where: clientWhere(context, {
+        vkId: qr.replace('vk_', ''),
+        isTraining: false,
+      }),
     });
   } else if (qr.startsWith('web_')) {
-    client = await db.User.findOne({ where: { webId: qr, isTraining: false } });
+    client = await db.User.findOne({
+      where: clientWhere(context, { webId: qr, isTraining: false }),
+    });
   } else {
     client = await db.User.findOne({
-      where: {
+      where: clientWhere(context, {
         isTraining: false,
         [Op.or]: [{ telegramId: qr }, { telegramId: `@${qr}` }],
-      },
+      }),
     });
   }
 
-  return resolveCanonicalClient(client);
+  return resolveCanonicalClient(client, context);
 }
 
 function chooseCallTaskClientStatus(currentStatus, duplicateStatus) {
@@ -2674,7 +2895,12 @@ async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction)
   }
 }
 
-async function mergeClients(primaryClientId, duplicateClientIds, actor) {
+async function mergeClients(
+  primaryClientId,
+  duplicateClientIds,
+  actor,
+  tenant = null,
+) {
   const primaryId = Number(primaryClientId);
   const duplicateIds = Array.from(
     new Set((duplicateClientIds || []).map((id) => Number(id))),
@@ -2685,19 +2911,28 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
   }
 
   await db.sequelize.transaction(async (transaction) => {
-    const primary = await db.User.findByPk(primaryId, { transaction });
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const primary = await db.User.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: clientWhere(context, { id: primaryId }),
+    });
     if (!primary || primary.status !== 'active' || primary.mergedIntoUserId) {
       throw appError('Основной клиент не найден', 404);
     }
 
     const duplicates = await db.User.findAll({
-      where: {
+      lock: transaction.LOCK.UPDATE,
+      where: clientWhere(context, {
         id: {
           [Op.in]: duplicateIds,
         },
         status: 'active',
         mergedIntoUserId: null,
-      },
+      }),
       transaction,
     });
 
@@ -2800,11 +3035,15 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
     }
   });
 
-  return getClientDetails(primaryId, actor);
+  return getClientDetails(primaryId, actor, tenant);
 }
 
-async function getDuplicateGroups() {
+async function getDuplicateGroups(tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const duplicateGroups = [];
+  const tenantPredicate = context.scoped
+    ? 'AND organizationId = :organizationId'
+    : '';
 
   for (const group of DUPLICATE_GROUPS) {
     const rows = await db.sequelize.query(
@@ -2812,6 +3051,7 @@ async function getDuplicateGroups() {
         SELECT ${group.field} AS value, COUNT(*) AS count
         FROM Users
         WHERE status = 'active'
+          ${tenantPredicate}
           AND COALESCE(isTraining, 0) = 0
           AND mergedIntoUserId IS NULL
           AND ${group.field} IS NOT NULL
@@ -2820,7 +3060,12 @@ async function getDuplicateGroups() {
         HAVING COUNT(*) > 1
         ORDER BY count DESC, ${group.field} ASC
       `,
-      { type: db.Sequelize.QueryTypes.SELECT },
+      {
+        replacements: context.scoped
+          ? { organizationId: context.organizationId }
+          : {},
+        type: db.Sequelize.QueryTypes.SELECT,
+      },
     );
 
     for (const row of rows) {
@@ -2843,12 +3088,12 @@ async function getDuplicateGroups() {
   }));
   const clients = await db.User.findAll({
     attributes: CLIENT_ATTRIBUTES,
-    where: {
+    where: clientWhere(context, {
       [Op.or]: conditions,
       status: 'active',
       isTraining: false,
       mergedIntoUserId: null,
-    },
+    }),
     order: [['createdAt', 'DESC']],
   });
   const statsByClientId = await getStatsByClientIds(
@@ -2873,55 +3118,77 @@ async function getDuplicateGroups() {
     .sort((a, b) => b.clients.length - a.clients.length || a.key.localeCompare(b.key));
 }
 
-async function removeArchivedClient(id) {
-  const client = await getClientOrFail(id);
-  if (client.status !== 'archived') {
-    throw appError('Удалять безвозвратно можно только клиентов из архива', 409);
-  }
+async function removeArchivedClient(id, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const client = await getClientOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (client.status !== 'archived') {
+      throw appError('Удалять безвозвратно можно только клиентов из архива', 409);
+    }
 
-  const [
-    visitsCount,
-    trainingNotesCount,
-    callTaskClientsCount,
-    telephonyCallsCount,
-    bookingCount,
-    bookingSeriesCount,
-    clientSubscriptionsCount,
-    certificatesCount,
-    mergedClientsCount,
-  ] =
-    await Promise.all([
-      db.Visit.count({ where: { userId: client.id } }),
-      db.TrainingNote.count({ where: { userId: client.id } }),
-      db.CallTaskClient.count({ where: { userId: client.id } }),
-      db.TelephonyCall ? db.TelephonyCall.count({ where: { userId: client.id } }) : 0,
-      db.Booking ? db.Booking.count({ where: { userId: client.id } }) : 0,
-      db.BookingSeries ? db.BookingSeries.count({ where: { userId: client.id } }) : 0,
-      db.ClientSubscription
-        ? db.ClientSubscription.count({ where: { clientId: client.id } })
+    const [
+      visitsCount,
+      trainingNotesCount,
+      callTaskClientsCount,
+      telephonyCallsCount,
+      bookingCount,
+      bookingSeriesCount,
+      clientSubscriptionsCount,
+      certificatesCount,
+      mergedClientsCount,
+    ] = await Promise.all([
+      db.Visit.count({ transaction, where: { userId: client.id } }),
+      db.TrainingNote.count({ transaction, where: { userId: client.id } }),
+      db.CallTaskClient.count({ transaction, where: { userId: client.id } }),
+      db.TelephonyCall
+        ? db.TelephonyCall.count({ transaction, where: { userId: client.id } })
         : 0,
-      db.Certificate ? db.Certificate.count({ where: { clientId: client.id } }) : 0,
-      db.User.count({ where: { mergedIntoUserId: client.id } }),
+      db.Booking
+        ? db.Booking.count({ transaction, where: { userId: client.id } })
+        : 0,
+      db.BookingSeries
+        ? db.BookingSeries.count({ transaction, where: { userId: client.id } })
+        : 0,
+      db.ClientSubscription
+        ? db.ClientSubscription.count({
+            transaction,
+            where: { clientId: client.id },
+          })
+        : 0,
+      db.Certificate
+        ? db.Certificate.count({ transaction, where: { clientId: client.id } })
+        : 0,
+      db.User.count({
+        transaction,
+        where: clientWhere(context, { mergedIntoUserId: client.id }),
+      }),
     ]);
 
-  if (
-    visitsCount > 0 ||
-    trainingNotesCount > 0 ||
-    callTaskClientsCount > 0 ||
-    telephonyCallsCount > 0 ||
-    bookingCount > 0 ||
-    bookingSeriesCount > 0 ||
-    clientSubscriptionsCount > 0 ||
-    certificatesCount > 0 ||
-    mergedClientsCount > 0
-  ) {
-    throw appError(
-      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, сертификаты, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
-      409,
-    );
-  }
+    if (
+      visitsCount > 0 ||
+      trainingNotesCount > 0 ||
+      callTaskClientsCount > 0 ||
+      telephonyCallsCount > 0 ||
+      bookingCount > 0 ||
+      bookingSeriesCount > 0 ||
+      clientSubscriptionsCount > 0 ||
+      certificatesCount > 0 ||
+      mergedClientsCount > 0
+    ) {
+      throw appError(
+        'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, сертификаты, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
+        409,
+      );
+    }
 
-  await client.destroy();
+    await client.destroy({ transaction });
+  });
   return { success: true };
 }
 
@@ -2931,6 +3198,7 @@ module.exports = {
   createSavedView,
   deleteSavedView,
   findActiveByPhone,
+  findCanonicalById,
   findCanonicalByQr,
   getClientDetails,
   getDuplicateGroups,
@@ -2948,6 +3216,7 @@ module.exports = {
     buildClientListSql,
     buildClientPrepaymentSummary,
     buildTrainerClientDetailsResponse,
+    clientWhere,
     listClientPrepaymentTimeline,
     sanitizeClientForAccount,
   },

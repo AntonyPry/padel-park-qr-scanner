@@ -15,6 +15,7 @@ class CallTasksController {
             req.account,
             req.params.clientId,
             req.body,
+            req.tenant,
           ),
         );
     } catch (error) {
@@ -31,6 +32,7 @@ class CallTasksController {
             req.account,
             req.params.baseId,
             req.body,
+            req.tenant,
           ),
         );
     } catch (error) {
@@ -40,7 +42,7 @@ class CallTasksController {
 
   async getAll(req, res) {
     try {
-      res.json(await callTasksService.list(req.account, req.query));
+      res.json(await callTasksService.list(req.account, req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения задач обзвона');
     }
@@ -56,7 +58,9 @@ class CallTasksController {
 
   async getOne(req, res) {
     try {
-      res.json(await callTasksService.getOne(req.account, req.params.id));
+      res.json(
+        await callTasksService.getOne(req.account, req.params.id, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка получения задачи обзвона');
     }
@@ -65,7 +69,12 @@ class CallTasksController {
   async update(req, res) {
     try {
       res.json(
-        await callTasksService.update(req.account, req.params.id, req.body),
+        await callTasksService.update(
+          req.account,
+          req.params.id,
+          req.body,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка обновления задачи обзвона');
@@ -82,7 +91,9 @@ class CallTasksController {
 
   async sync(req, res) {
     try {
-      res.json(await callTasksService.sync(req.account, req.params.id));
+      res.json(
+        await callTasksService.sync(req.account, req.params.id, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка обновления динамической задачи');
     }
@@ -103,6 +114,7 @@ class CallTasksController {
           req.account,
           req.params.id,
           req.query,
+          req.tenant,
         ),
       );
     } catch (error) {

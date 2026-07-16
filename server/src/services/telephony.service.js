@@ -1201,9 +1201,9 @@ function mapRawEvent(row) {
   return mapped;
 }
 
-async function findClientByPhone(clientPhoneNormalized) {
+async function findClientByPhone(clientPhoneNormalized, tenant = null) {
   if (!clientPhoneNormalized) return null;
-  return clientsService.findActiveByPhone(clientPhoneNormalized);
+  return clientsService.findActiveByPhone(clientPhoneNormalized, tenant);
 }
 
 async function findStaffByPayload(normalized) {
@@ -1374,7 +1374,10 @@ async function upsertCallFromNormalized(
   }
 
   const existing = await findExistingCall(normalized, transaction, connection);
-  const client = await findClientByPhone(normalized.clientPhoneNormalized);
+  const client = await findClientByPhone(
+    normalized.clientPhoneNormalized,
+    connection,
+  );
   const staff = await findStaffByPayload(normalized);
   const payload = compactCallPayload(
     {
@@ -2077,21 +2080,26 @@ async function getCall(actor, id, tenant = null) {
   });
 }
 
-async function getActiveClientForCall(clientId, transaction = undefined) {
+async function getActiveClientForCall(
+  clientId,
+  transaction = undefined,
+  tenant = null,
+) {
   const id = Number(clientId);
   if (!Number.isInteger(id) || id <= 0) {
     throw appError('Некорректный клиент для звонка');
   }
 
-  const client = await db.User.findOne({
-    where: {
-      id,
-      mergedIntoUserId: null,
-      status: 'active',
-    },
+  const client = await clientsService.findCanonicalById(id, tenant, {
+    lock: transaction?.LOCK.UPDATE,
     transaction,
   });
-  if (!client) {
+  if (
+    !client ||
+    Number(client.id) !== id ||
+    client.status !== 'active' ||
+    client.mergedIntoUserId
+  ) {
     throw appError('Активный клиент для звонка не найден', 404);
   }
 
@@ -2163,44 +2171,56 @@ async function attachCallToClient(call, client, transaction = undefined) {
   return call;
 }
 
-async function linkCallClient(actor, id, data = {}) {
+async function linkCallClient(actor, id, data = {}, tenant = null) {
   const callId = await db.sequelize.transaction(async (transaction) => {
     const call = await getCallOrFail(actor, id, { transaction });
-    const client = await getActiveClientForCall(data.clientId, transaction);
+    const client = await getActiveClientForCall(
+      data.clientId,
+      transaction,
+      tenant,
+    );
 
     await attachCallToClient(call, client, transaction);
 
     return call.id;
   });
 
-  return getCall(actor, callId);
+  return getCall(actor, callId, tenant);
 }
 
-async function createClientForCall(actor, id, data = {}) {
+async function createClientForCall(actor, id, data = {}, tenant = null) {
   const call = await getCallOrFail(actor, id);
   if (!call.clientPhoneNormalized || !call.clientPhone) {
     throw appError('В звонке нет телефона для создания клиента', 409);
   }
 
-  const client = await clientsService.createClient({
-    ...data,
-    phone: call.clientPhone,
-    status: 'active',
-  }, actor);
+  const client = await clientsService.createClient(
+    {
+      ...data,
+      phone: call.clientPhone,
+      status: 'active',
+    },
+    actor,
+    tenant,
+  );
   const clientId = client.client?.id || client.id;
   let attached = false;
 
   try {
     const callId = await db.sequelize.transaction(async (transaction) => {
       const freshCall = await getCallOrFail(actor, call.id, { transaction });
-      const freshClient = await getActiveClientForCall(clientId, transaction);
+      const freshClient = await getActiveClientForCall(
+        clientId,
+        transaction,
+        tenant,
+      );
 
       await attachCallToClient(freshCall, freshClient, transaction);
       return freshCall.id;
     });
     attached = true;
 
-    return getCall(actor, callId);
+    return getCall(actor, callId, tenant);
   } catch (error) {
     if (!attached && clientId) {
       await db.User.destroy({ where: { id: clientId } }).catch(() => null);

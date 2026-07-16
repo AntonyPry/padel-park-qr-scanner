@@ -59,6 +59,7 @@ class VisitsAnalyticsController {
       res.status(201).json(await clientBasesService.createFromVisitsAnalytics(
         req.account,
         req.body,
+        req.tenant,
       ));
     } catch (error) {
       sendError(res, error, 'Ошибка создания базы из аналитики');

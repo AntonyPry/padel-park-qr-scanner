@@ -77,7 +77,12 @@ class TelephonyController {
   async linkClient(req, res) {
     try {
       res.json(
-        await telephonyService.linkCallClient(req.account, req.params.id, req.body),
+        await telephonyService.linkCallClient(
+          req.account,
+          req.params.id,
+          req.body,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка привязки клиента к звонку');
@@ -87,7 +92,12 @@ class TelephonyController {
   async createClient(req, res) {
     try {
       res.status(201).json(
-        await telephonyService.createClientForCall(req.account, req.params.id, req.body),
+        await telephonyService.createClientForCall(
+          req.account,
+          req.params.id,
+          req.body,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка создания клиента из звонка');

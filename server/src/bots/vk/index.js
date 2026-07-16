@@ -17,9 +17,9 @@ const {
   assertLegacyDownstreamReady,
 } = require('../../provider-integrations/runtime');
 
-async function buildSourceKeyboard() {
+async function buildSourceKeyboard(tenant = null) {
   const keyboard = VkKeyboard.builder();
-  const rows = await getSourceRows(db);
+  const rows = await getSourceRows(db, tenant);
 
   rows.forEach((row, rowIndex) => {
     row.forEach((label) => keyboard.textButton({ label }));
@@ -161,7 +161,7 @@ function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
     async (ctx) => {
       if (ctx.scene.step.firstTime) {
         await ctx.send('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
-          keyboard: await buildSourceKeyboard(),
+          keyboard: await buildSourceKeyboard(connection),
         });
         return;
       }
@@ -178,6 +178,7 @@ function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
           name: fullName,
           phone: ctx.scene.state.phone,
           source: ctx.scene.state.source,
+          tenant: connection,
         });
         await ctx.send('✅ Регистрация завершена!');
         await sendQrCode(ctx, vkId);
@@ -214,7 +215,10 @@ function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
     const vkId = String(ctx.peerId);
 
     if (['Начать', 'начать', '/start'].includes(ctx.text)) {
-      const user = await db.User.findOne({ where: { vkId } });
+      const user = await clientsService.findCanonicalByQr(
+        `vk_${vkId}`,
+        connection,
+      );
       if (user) {
         return ctx.send(`С возвращением, ${user.name}!`, {
           keyboard: mainMenu,

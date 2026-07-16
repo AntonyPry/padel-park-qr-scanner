@@ -421,7 +421,7 @@ async function listMissedCallsWithoutResult() {
   };
 }
 
-async function getDashboard(query = {}, account = null) {
+async function getDashboard(query = {}, account = null, tenant = null) {
   const filters = normalizeFilters(query);
   const range = getDayRange(filters.date);
   const now = new Date();
@@ -440,7 +440,7 @@ async function getDashboard(query = {}, account = null) {
     listExpiringSubscriptions(now, expiringUntil),
     listExpiringCertificates(now, expiringUntil),
     corporateClientsService.listCorporateClients({ status: 'active' }, account),
-    callTasksService.list(account, { status: 'active' }),
+    callTasksService.list(account, { status: 'active' }, tenant),
     listMissedCallsWithoutResult(),
     bookingsService.getSchedule({ date: range.date, status: 'all' }),
   ]);

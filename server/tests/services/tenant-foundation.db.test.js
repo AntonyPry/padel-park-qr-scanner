@@ -635,17 +635,25 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         1,
       );
 
-      const dependency = await db.User.create({
+      const dependencyPhone = `+7999${Date.now()}`.slice(0, 16);
+      await queryInterface.bulkInsert('Users', [{
+        createdAt: new Date(),
         mergedByAccountId: account.id,
         name: 'Dependency QA',
-        phone: `+7999${Date.now()}`.slice(0, 16),
+        phone: dependencyPhone,
         source: 'QA',
-      });
+        updatedAt: new Date(),
+      }]);
+      const [dependencyRows] = await queryInterface.sequelize.query(
+        'SELECT id FROM Users WHERE mergedByAccountId = :accountId AND phone = :phone',
+        { replacements: { accountId: account.id, phone: dependencyPhone } },
+      );
+      const dependency = dependencyRows[0];
       await assert.rejects(
         accountsService.removeArchived(initialOwner, account.id),
         /связанные действия/,
       );
-      await dependency.destroy();
+      await queryInterface.bulkDelete('Users', { id: dependency.id });
       await accountsService.removeArchived(initialOwner, account.id);
       assert.equal(await db.Account.count({ where: { id: account.id } }), 0);
       assert.equal(await db.Membership.count({ where: { accountId: account.id } }), 0);

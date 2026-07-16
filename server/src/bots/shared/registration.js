@@ -1,3 +1,7 @@
+const {
+  resolveClientAccessContext,
+} = require('../../services/client-access-context.service');
+
 function isValidWord(text) {
   return text && /^[а-яА-Яa-zA-ZёЁ-]+$/.test(text.trim());
 }
@@ -34,10 +38,14 @@ function chunkRows(items, size = 3) {
   return rows;
 }
 
-async function getSourceRows(db) {
+async function getSourceRows(db, tenant = null) {
   try {
+    const context = await resolveClientAccessContext(tenant);
     const sources = await db.ClientSource.findAll({
-      where: { status: 'active' },
+      where: {
+        ...(context.scoped ? { organizationId: context.organizationId } : {}),
+        status: 'active',
+      },
       order: [
         ['sortOrder', 'ASC'],
         ['name', 'ASC'],

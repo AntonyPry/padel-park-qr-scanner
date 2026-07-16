@@ -5,6 +5,7 @@ const analyticsService = require('../../src/services/visits-analytics.service');
 const clientBasesService = require('../../src/services/client-bases.service');
 const callTasksService = require('../../src/services/call-tasks.service');
 const clientBasesController = require('../../src/controllers/client-bases.controller');
+const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
 
 function createApiResponse() {
   return {
@@ -23,6 +24,7 @@ function createApiResponse() {
 
 test('DB-backed analytics → preview → client base → call task keeps count parity and canonical membership', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = `${Date.now()}`;
   const users = [];
   let source;
@@ -30,7 +32,7 @@ test('DB-backed analytics → preview → client base → call task keeps count 
   let base;
   let task;
   try {
-    source = await db.ClientSource.create({ name: `Segment source ${suffix}`, status: 'active' });
+    source = await db.ClientSource.create({ organizationId, name: `Segment source ${suffix}`, status: 'active' });
     actor = await db.Account.create({
       email: `visits-segment-${suffix}@example.test`,
       passwordHash: 'not-used-in-test',
@@ -39,6 +41,7 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     });
     const makeUser = async (name, extra = {}) => {
       const user = await db.User.create({
+        organizationId,
         name: `${name}-${suffix}`,
         phone: `79${suffix}${users.length}`.slice(-15),
         source: 'Legacy segment source',

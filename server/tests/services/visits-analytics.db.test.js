@@ -3,14 +3,16 @@ const { test } = require('node:test');
 const db = require('../../models');
 const XLSX = require('xlsx');
 const { createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, sourceKeyFromRow } = require('../../src/services/visits-analytics.service');
+const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
 
 test('DB-backed visit analytics handles history, 30-day boundary, training, duplicates, merge and scannedAt', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
     const makeUser = async (name, extra = {}) => {
-      const user = await db.User.create({ name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source: 'DB QA', ...extra });
+      const user = await db.User.create({ organizationId, name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source: 'DB QA', ...extra });
       users.push(user);
       return user;
     };
@@ -45,6 +47,10 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
   } finally {
     if (users.length) {
       await db.Visit.destroy({ where: { userId: users.map((user) => user.id) } });
+      await db.User.update(
+        { mergedIntoUserId: null },
+        { where: { id: users.map((user) => user.id) } },
+      );
       await db.User.destroy({ force: true, where: { id: users.map((user) => user.id) } });
     }
   }
@@ -52,11 +58,12 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
 
 test('DB-backed canonical chain leaf → middle → root uses final root everywhere', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
     const makeUser = async (name, source) => {
-      const user = await db.User.create({ name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source });
+      const user = await db.User.create({ organizationId, name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source });
       users.push(user);
       return user;
     };
@@ -92,6 +99,10 @@ test('DB-backed canonical chain leaf → middle → root uses final root everywh
   } finally {
     if (users.length) {
       await db.Visit.destroy({ where: { userId: users.map((user) => user.id) } });
+      await db.User.update(
+        { mergedIntoUserId: null },
+        { where: { id: users.map((user) => user.id) } },
+      );
       await db.User.destroy({ force: true, where: { id: users.map((user) => user.id) } });
     }
   }
@@ -99,11 +110,12 @@ test('DB-backed canonical chain leaf → middle → root uses final root everywh
 
 test('DB-backed canonical resolution terminates on merged cycles', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = `${Date.now()}`;
   const users = [];
   try {
     const cycleSource = `Cycle ${suffix}`;
-    for (const name of ['cycle-a', 'cycle-b']) users.push(await db.User.create({ name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source: cycleSource }));
+    for (const name of ['cycle-a', 'cycle-b']) users.push(await db.User.create({ organizationId, name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source: cycleSource }));
     await users[0].update({ mergedIntoUserId: users[1].id, status: 'archived' });
     await users[1].update({ mergedIntoUserId: users[0].id, status: 'archived' });
     await db.Visit.bulkCreate(users.map((user, index) => ({ userId: user.id, scannedAt: `2094-05-0${index + 1}T08:00:00Z` })));
@@ -129,12 +141,13 @@ test('DB-backed EXPLAIN uses visitedAt range index', async () => {
 
 test('DB-backed source quality handles boundaries, maturity, canonical source and Excel parity', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = `${Date.now()}`;
   const users = [];
   let source;
   try {
-    source = await db.ClientSource.create({ name: `VK-${suffix}`, status: 'active' });
-    const make = async (name, extra={}) => { const user=await db.User.create({name:`${name}-${suffix}`,phone:`7${suffix}${users.length}`.slice(-15),source:'Legacy',...extra});users.push(user);return user; };
+    source = await db.ClientSource.create({ organizationId, name: `VK-${suffix}`, status: 'active' });
+    const make = async (name, extra={}) => { const user=await db.User.create({organizationId,name:`${name}-${suffix}`,phone:`7${suffix}${users.length}`.slice(-15),source:'Legacy',...extra});users.push(user);return user; };
     const exact=await make('exact',{sourceId:source.id});
     const late=await make('late',{sourceId:source.id});
     const fresh=await make('fresh',{sourceId:source.id});
@@ -193,7 +206,7 @@ test('DB-backed source quality handles boundaries, maturity, canonical source an
     const lifecycleExport=XLSX.utils.sheet_to_json(fullWorkbook.Sheets['Жизненный цикл']);
     assert.equal(lifecycleExport.reduce((sum,item)=>sum+item['Количество клиентов'],0),4);
   } finally {
-    if(users.length){await db.Visit.destroy({where:{userId:users.map(x=>x.id)}});await db.User.destroy({force:true,where:{id:users.map(x=>x.id)}});}
+    if(users.length){await db.Visit.destroy({where:{userId:users.map(x=>x.id)}});await db.User.update({mergedIntoUserId:null},{where:{id:users.map(x=>x.id)}});await db.User.destroy({force:true,where:{id:users.map(x=>x.id)}});}
     if(source) await source.destroy();
   }
 });

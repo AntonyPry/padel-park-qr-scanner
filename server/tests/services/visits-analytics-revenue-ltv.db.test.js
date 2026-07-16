@@ -3,9 +3,11 @@ const { test } = require('node:test');
 const XLSX = require('xlsx');
 const db = require('../../models');
 const { createVisitsExportBuffer, getRevenueLtv } = require('../../src/services/visits-analytics.service');
+const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
 
 test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and excludes unsafe sources', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = String(Date.now());
   const records = {
     bookings: [], certificates: [], items: [], pendingSales: [], receipts: [], subscriptions: [], users: [], visits: [],
@@ -13,10 +15,11 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
   let secondarySource;
   let source;
   try {
-    source = await db.ClientSource.create({ name: `Revenue QA ${suffix}`, status: 'active' });
-    secondarySource = await db.ClientSource.create({ name: `Revenue QA other ${suffix}`, status: 'active' });
+    source = await db.ClientSource.create({ organizationId, name: `Revenue QA ${suffix}`, status: 'active' });
+    secondarySource = await db.ClientSource.create({ organizationId, name: `Revenue QA other ${suffix}`, status: 'active' });
     const makeUser = async (name, extra = {}) => {
       const user = await db.User.create({
+        organizationId,
         name: `${name}-${suffix}`,
         phone: `7${suffix}${records.users.length}`.slice(-15),
         source: 'Revenue QA legacy fallback',
@@ -237,15 +240,17 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
 
 test('DB-backed revenue LTV resolves a merge cycle to one canonical paying client', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = String(Date.now());
   let source;
   const users = [];
   const visits = [];
   let certificate;
   try {
-    source = await db.ClientSource.create({ name: `Revenue cycle ${suffix}`, status: 'active' });
+    source = await db.ClientSource.create({ organizationId, name: `Revenue cycle ${suffix}`, status: 'active' });
     for (const label of ['a', 'b']) {
       users.push(await db.User.create({
+        organizationId,
         name: `revenue-cycle-${label}-${suffix}`,
         phone: `7${suffix}${label === 'a' ? '1' : '2'}`.slice(-15),
         source: 'Cycle fallback',

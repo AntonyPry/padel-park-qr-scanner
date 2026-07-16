@@ -3,6 +3,9 @@ const db = require('../../models');
 const bookingRulesService = require('./booking-rules.service');
 const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
 const trainingPlansService = require('./training-plans.service');
 const {
   formatRussianPhone,
@@ -591,9 +594,25 @@ async function getBookingOrFail(id, transaction) {
   return booking;
 }
 
-async function resolveClient(data, transaction, trainingMarker = {}) {
+async function resolveClient(
+  data,
+  transaction,
+  trainingMarker = {},
+  tenant = null,
+) {
+  const context = await resolveClientAccessContext(tenant, {
+    lock: true,
+    transaction,
+  });
+  const scopedWhere = (where) =>
+    context.scoped
+      ? { ...where, organizationId: context.organizationId }
+      : where;
   if (data.userId) {
-    const client = await db.User.findByPk(Number(data.userId), { transaction });
+    const client = await db.User.findOne({
+      transaction,
+      where: scopedWhere({ id: Number(data.userId) }),
+    });
     if (!client) throw appError('Клиент не найден', 404);
     if (client.status === 'archived') {
       throw appError('Клиент в архиве. Сначала восстановите его в разделе клиентов', 409);
@@ -610,7 +629,7 @@ async function resolveClient(data, transaction, trainingMarker = {}) {
   const { phone, phoneNormalized } = normalizePhonePayload(payload.phone);
   const existing = await db.User.findOne({
     transaction,
-    where: { phoneNormalized, isTraining: false },
+    where: scopedWhere({ phoneNormalized, isTraining: false }),
   });
   if (existing) {
     throw appError(
@@ -628,15 +647,19 @@ async function resolveClient(data, transaction, trainingMarker = {}) {
     );
   }
 
-  const sourceRef = await referencesService.getClientSourceByInput({
-    source: payload.source || 'Ресепшн (Админ)',
-    sourceId: payload.sourceId,
-  });
+  const sourceRef = await referencesService.getClientSourceByInput(
+    {
+      source: payload.source || 'Ресепшн (Админ)',
+      sourceId: payload.sourceId,
+    },
+    tenant,
+  );
   const webId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
   return db.User.create(
     {
       name,
+      organizationId: context.organizationId,
       note: normalizeText(payload.note),
       phone,
       phoneNormalized,
@@ -650,13 +673,22 @@ async function resolveClient(data, transaction, trainingMarker = {}) {
   );
 }
 
-async function loadGroupParticipantsOrFail(participantIds, transaction) {
+async function loadGroupParticipantsOrFail(
+  participantIds,
+  transaction,
+  tenant = null,
+) {
   if (participantIds.length === 0) return [];
+  const context = await resolveClientAccessContext(tenant, {
+    lock: true,
+    transaction,
+  });
 
   const clients = await db.User.findAll({
     transaction,
     where: {
       id: { [Op.in]: participantIds },
+      ...(context.scoped ? { organizationId: context.organizationId } : {}),
       mergedIntoUserId: null,
     },
   });
@@ -1394,7 +1426,7 @@ async function previewBookingSeries(data) {
   return db.sequelize.transaction(async (transaction) => buildSeriesPreview(data, transaction));
 }
 
-async function createBookingSeries(data, account) {
+async function createBookingSeries(data, account, tenant = null) {
   const trainingMarker = await onboardingService.getTrainingDataMarker(account);
 
   return db.sequelize.transaction(async (transaction) => {
@@ -1410,13 +1442,13 @@ async function createBookingSeries(data, account) {
       });
     }
 
-    const client = await resolveClient(data, transaction, trainingMarker);
+    const client = await resolveClient(data, transaction, trainingMarker, tenant);
     const participantIds = normalizeGroupParticipantIds(
       data,
       client.id,
       config.bookingType,
     );
-    await loadGroupParticipantsOrFail(participantIds, transaction);
+    await loadGroupParticipantsOrFail(participantIds, transaction, tenant);
     const series = await db.BookingSeries.create(
       {
         clientName: client.name,
@@ -1631,7 +1663,7 @@ async function getSchedule(query = {}) {
   };
 }
 
-async function createBooking(data, account) {
+async function createBooking(data, account, tenant = null) {
   const trainingMarker = await onboardingService.getTrainingDataMarker(account);
 
   const result = await db.sequelize.transaction(async (transaction) => {
@@ -1651,7 +1683,7 @@ async function createBooking(data, account) {
       startsAt: timing.startsAt,
       transaction,
     });
-    const client = await resolveClient(data, transaction, trainingMarker);
+    const client = await resolveClient(data, transaction, trainingMarker, tenant);
     const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
     const pricedData = await applyAutomaticPrice(data, court.id, timing);
     const bookingPayload = buildBookingPayload(
@@ -1665,7 +1697,7 @@ async function createBooking(data, account) {
       client.id,
       bookingPayload.bookingType,
     );
-    await loadGroupParticipantsOrFail(participantIds, transaction);
+    await loadGroupParticipantsOrFail(participantIds, transaction, tenant);
 
     const booking = await db.Booking.create(
       {
@@ -1698,10 +1730,12 @@ async function createBooking(data, account) {
   return result;
 }
 
-async function updateBooking(id, data, account) {
+async function updateBooking(id, data, account, tenant = null) {
   const result = await db.sequelize.transaction(async (transaction) => {
     const booking = await getBookingOrFail(id, transaction);
-    const client = data.userId || data.client ? await resolveClient(data, transaction) : booking.User;
+    const client = data.userId || data.client
+      ? await resolveClient(data, transaction, {}, tenant)
+      : booking.User;
     const courtId = Number(data.courtId || booking.courtId);
     await lockCourtsForBooking([booking.courtId, courtId], transaction);
     const timing = buildTiming(data, booking);
@@ -1750,7 +1784,7 @@ async function updateBooking(id, data, account) {
       ? normalizeGroupParticipantIds(participantInput, client.id, payload.bookingType)
       : null;
     if (participantIds) {
-      await loadGroupParticipantsOrFail(participantIds, transaction);
+      await loadGroupParticipantsOrFail(participantIds, transaction, tenant);
     }
     await booking.update(payload, { transaction });
     if (participantIds) {

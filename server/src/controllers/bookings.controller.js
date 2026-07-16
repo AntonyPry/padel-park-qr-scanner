@@ -72,7 +72,9 @@ class BookingsController {
 
   async create(req, res) {
     try {
-      res.status(201).json(await bookingsService.createBooking(req.body, req.account));
+      res.status(201).json(
+        await bookingsService.createBooking(req.body, req.account, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка создания брони');
     }
@@ -81,7 +83,12 @@ class BookingsController {
   async update(req, res) {
     try {
       res.json(
-        await bookingsService.updateBooking(req.params.id, req.body, req.account),
+        await bookingsService.updateBooking(
+          req.params.id,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка обновления брони');
@@ -148,7 +155,13 @@ class BookingsController {
 
   async createSeries(req, res) {
     try {
-      res.status(201).json(await bookingsService.createBookingSeries(req.body, req.account));
+      res.status(201).json(
+        await bookingsService.createBookingSeries(
+          req.body,
+          req.account,
+          req.tenant,
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка создания серии броней');
     }

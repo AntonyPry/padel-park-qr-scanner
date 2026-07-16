@@ -236,11 +236,11 @@ function isVisitsAnalyticsFilters(filters = {}) {
   return Boolean(filters?.visitsAnalytics);
 }
 
-async function countBaseClients(filters = {}) {
+async function countBaseClients(filters = {}, tenant = null) {
   if (isVisitsAnalyticsFilters(filters)) {
     return visitsAnalyticsService.countVisitAnalyticsSegmentClients(filters.visitsAnalytics);
   }
-  return clientsService.countClients(filters);
+  return clientsService.countClients(filters, tenant);
 }
 
 async function listBaseClientsForSnapshot(filters = {}, options = {}) {
@@ -275,11 +275,11 @@ function parseFilters(filters) {
   return filters;
 }
 
-async function mapBase(base, { includeCount = true } = {}) {
+async function mapBase(base, { includeCount = true, tenant = null } = {}) {
   const raw = base.toJSON ? base.toJSON() : base;
   const filters = normalizeFilters(parseFilters(raw.filters));
   const currentClientCount = includeCount
-    ? await countBaseClients(filters)
+    ? await countBaseClients(filters, tenant)
     : null;
   const lastTaskClientCount =
     raw.lastTaskClientCount === null || raw.lastTaskClientCount === undefined
@@ -363,7 +363,7 @@ async function getBaseOrFail(id) {
   return base;
 }
 
-async function list(query = {}) {
+async function list(query = {}, tenant = null) {
   const where = {};
   if (query.status && query.status !== 'all') {
     where.status = normalizeStatus(query.status);
@@ -389,10 +389,10 @@ async function list(query = {}) {
     order: [['updatedAt', 'DESC']],
   });
 
-  return Promise.all(bases.map((base) => mapBase(base)));
+  return Promise.all(bases.map((base) => mapBase(base, { tenant })));
 }
 
-async function persistBase(actor, data, provenance = null) {
+async function persistBase(actor, data, provenance = null, tenant = null) {
   const name = String(data.name || '').trim();
   if (name.length < 2) throw appError('Название базы слишком короткое');
 
@@ -401,7 +401,10 @@ async function persistBase(actor, data, provenance = null) {
   if (origin === 'visits_analytics' && !isVisitsAnalyticsFilters(filters)) {
     throw appError('Для базы из аналитики не передан аналитический фильтр');
   }
-  if (origin === 'visits_analytics' && await countBaseClients(filters) === 0) {
+  if (
+    origin === 'visits_analytics' &&
+    (await countBaseClients(filters, tenant)) === 0
+  ) {
     throw appError('Пустой сегмент нельзя сохранить как клиентскую базу', 409);
   }
   const recurrencePayload = normalizeRecurrence(data.recurrence || {});
@@ -435,10 +438,10 @@ async function persistBase(actor, data, provenance = null) {
     },
   });
 
-  return mapBase(await getBaseOrFail(base.id));
+  return mapBase(await getBaseOrFail(base.id), { tenant });
 }
 
-async function create(actor, data) {
+async function create(actor, data, tenant = null) {
   const rawFilters = parseFilters(data.filters);
   if (
     data.origin === 'visits_analytics'
@@ -451,10 +454,10 @@ async function create(actor, data) {
     );
   }
 
-  return persistBase(actor, data);
+  return persistBase(actor, data, null, tenant);
 }
 
-async function createFromVisitsAnalytics(actor, data) {
+async function createFromVisitsAnalytics(actor, data, tenant = null) {
   const preview = await visitsAnalyticsService.previewVisitAnalyticsSegment(data.selection);
 
   return persistBase(actor, {
@@ -467,10 +470,10 @@ async function createFromVisitsAnalytics(actor, data) {
   }, {
     origin: preview.origin,
     originMetadata: preview.originMetadata,
-  });
+  }, tenant);
 }
 
-async function update(id, data) {
+async function update(id, data, tenant = null) {
   const base = await getBaseOrFail(id);
   const payload = {};
 
@@ -518,19 +521,19 @@ async function update(id, data) {
   }
 
   await base.update(payload);
-  return mapBase(await getBaseOrFail(id));
+  return mapBase(await getBaseOrFail(id), { tenant });
 }
 
-async function archive(id) {
+async function archive(id, tenant = null) {
   const base = await getBaseOrFail(id);
   await base.update({ status: 'archived' });
-  return mapBase(await getBaseOrFail(id));
+  return mapBase(await getBaseOrFail(id), { tenant });
 }
 
-async function restore(id) {
+async function restore(id, tenant = null) {
   const base = await getBaseOrFail(id);
   await base.update({ status: 'active' });
-  return mapBase(await getBaseOrFail(id));
+  return mapBase(await getBaseOrFail(id), { tenant });
 }
 
 async function removeArchived(id) {
@@ -553,7 +556,7 @@ async function removeArchived(id) {
   return { success: true };
 }
 
-async function getClients(id, query = {}) {
+async function getClients(id, query = {}, tenant = null) {
   const base = await getBaseOrFail(id);
   const filters = normalizeFilters(parseFilters(base.filters));
   const page = query.page || 1;
@@ -571,7 +574,11 @@ async function getClients(id, query = {}) {
       totalPages: Math.max(1, Math.ceil(result.total / pageSize)),
     };
   }
-  return clientsService.listClients({ ...filters, page, pageSize });
+  return clientsService.listClients(
+    { ...filters, page, pageSize },
+    null,
+    tenant,
+  );
 }
 
 module.exports = {

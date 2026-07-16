@@ -18,6 +18,29 @@ function dateAt(day, hour, minute = 0) {
   return new Date(`2026-05-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+03:00`);
 }
 
+async function resolveUserTenantSeederScope(queryInterface, foundation) {
+  const [columns] = await queryInterface.sequelize.query(
+    `SELECT COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'Users'
+        AND COLUMN_NAME = 'organizationId'`,
+  );
+  const isTenantAware = columns.length === 1;
+  return {
+    insert: isTenantAware
+      ? { organizationId: foundation.organization.id }
+      : {},
+    query: isTenantAware
+      ? { replacements: { organizationId: foundation.organization.id } }
+      : {},
+    sqlPredicate: isTenantAware ? 'organizationId = :organizationId AND ' : '',
+    where: isTenantAware
+      ? { organizationId: foundation.organization.id }
+      : {},
+  };
+}
+
 const DEMO_CATALOG_RULES = [
   ['Аренда корта 90 минут', 'Аренда кортов'],
   ['Аренда корта 60 минут', 'Аренда кортов'],
@@ -72,6 +95,10 @@ module.exports = {
       async (queryInterface, accountBatch, foundation) => {
         const now = new Date();
         const passwordHash = hashPassword('Demo1234!');
+        const userTenantScope = await resolveUserTenantSeederScope(
+          queryInterface,
+          foundation,
+        );
 
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
@@ -80,9 +107,11 @@ module.exports = {
       'DELETE FROM Receipts WHERE id BETWEEN 20000 AND 29999',
     );
     await queryInterface.sequelize.query(
-      'DELETE FROM Visits WHERE userId IN (SELECT id FROM Users WHERE phone LIKE "+7909%")',
+      `DELETE FROM Visits WHERE userId IN (SELECT id FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%")`,
+      userTenantScope.query,
     );
     await queryInterface.bulkDelete('Users', {
+      ...userTenantScope.where,
       phone: { [Sequelize.Op.like]: '+7909%' },
     });
     await queryInterface.bulkDelete('Shifts', {
@@ -354,6 +383,7 @@ module.exports = {
     await queryInterface.bulkInsert(
       'Users',
       demoUsers.map(([telegramId, name, phone, source]) => ({
+        ...userTenantScope.insert,
         telegramId,
         name,
         phone,
@@ -364,7 +394,8 @@ module.exports = {
     );
 
     const [users] = await queryInterface.sequelize.query(
-      'SELECT id, phone FROM Users WHERE phone LIKE "+7909%"',
+      `SELECT id, phone FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%"`,
+      userTenantScope.query,
     );
 
     const visitCategories = [
@@ -548,6 +579,10 @@ module.exports = {
     return runInitializedSeederBatch(
       queryInterface,
       async (queryInterface, accountBatch, foundation) => {
+        const userTenantScope = await resolveUserTenantSeederScope(
+          queryInterface,
+          foundation,
+        );
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
     );
@@ -555,9 +590,11 @@ module.exports = {
       'DELETE FROM Receipts WHERE id BETWEEN 20000 AND 29999',
     );
     await queryInterface.sequelize.query(
-      'DELETE FROM Visits WHERE userId IN (SELECT id FROM Users WHERE phone LIKE "+7909%")',
+      `DELETE FROM Visits WHERE userId IN (SELECT id FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%")`,
+      userTenantScope.query,
     );
     await queryInterface.bulkDelete('Users', {
+      ...userTenantScope.where,
       phone: { [Sequelize.Op.like]: '+7909%' },
     });
     await queryInterface.bulkDelete('Shifts', {

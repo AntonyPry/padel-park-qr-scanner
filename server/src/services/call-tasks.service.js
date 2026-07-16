@@ -317,10 +317,10 @@ async function getTaskClientMetrics(taskIds) {
   return metricsByTask;
 }
 
-async function countCurrentBaseClients(task) {
+async function countCurrentBaseClients(task, tenant = null) {
   const raw = task.toJSON ? task.toJSON() : task;
   const filters = parseFilters(raw.clientBase?.filters);
-  return clientBasesService.countBaseClients(filters);
+  return clientBasesService.countBaseClients(filters, tenant);
 }
 
 async function mapTask(task, metricsByTask = new Map(), options = {}) {
@@ -332,7 +332,7 @@ async function mapTask(task, metricsByTask = new Map(), options = {}) {
   };
   const includeCurrentBaseCount = options.includeCurrentBaseCount === true;
   const currentBaseClientCount = includeCurrentBaseCount && raw.clientBase
-    ? await countCurrentBaseClients(raw)
+    ? await countCurrentBaseClients(raw, options.tenant || null)
     : null;
 
   return {
@@ -424,14 +424,11 @@ async function getClientStatsForTask(clientId) {
   };
 }
 
-async function getClientSnapshotOrFail(clientId) {
-  const client = await db.User.findOne({
-    where: {
-      id: Number(clientId),
-      mergedIntoUserId: null,
-    },
-  });
-  if (!client) throw appError('Клиент не найден', 404);
+async function getClientSnapshotOrFail(clientId, tenant = null) {
+  const client = await clientsService.findCanonicalById(clientId, tenant);
+  if (!client || Number(client.id) !== Number(clientId)) {
+    throw appError('Клиент не найден', 404);
+  }
   if (client.status !== 'active') {
     throw appError('Нельзя создать задачу по архивному клиенту', 409);
   }
@@ -467,8 +464,12 @@ async function getBaseSnapshotClients(base, options = {}) {
   const filters = parseFilters(base.filters);
   const clients = await clientBasesService.listBaseClientsForSnapshot(filters, {
     limit: options.limit || 20000,
+    tenant: options.tenant || null,
   });
-  const total = await clientBasesService.countBaseClients(filters);
+  const total = await clientBasesService.countBaseClients(
+    filters,
+    options.tenant || null,
+  );
 
   if (clients.length < total) {
     throw appError(
@@ -480,7 +481,7 @@ async function getBaseSnapshotClients(base, options = {}) {
   return clients;
 }
 
-async function syncDynamicTask(task) {
+async function syncDynamicTask(task, tenant = null) {
   const raw = task.toJSON ? task.toJSON() : task;
   const emptyResult = {
     addedCount: 0,
@@ -494,7 +495,9 @@ async function syncDynamicTask(task) {
   if (!baseTargetsOnlyActiveClients(raw.clientBase)) return emptyResult;
 
   return db.sequelize.transaction(async (transaction) => {
-    const currentClients = await getBaseSnapshotClients(raw.clientBase);
+    const currentClients = await getBaseSnapshotClients(raw.clientBase, {
+      tenant,
+    });
     const currentById = new Map(
       currentClients.map((client) => [Number(client.id), client]),
     );
@@ -575,7 +578,7 @@ async function syncDynamicTask(task) {
   });
 }
 
-async function getTaskMembershipDiff(task) {
+async function getTaskMembershipDiff(task, tenant = null) {
   const raw = task.toJSON ? task.toJSON() : task;
   if (!raw.clientBase || raw.clientBase.status !== 'active') {
     return null;
@@ -584,7 +587,9 @@ async function getTaskMembershipDiff(task) {
     return null;
   }
 
-  const currentClients = await getBaseSnapshotClients(raw.clientBase);
+  const currentClients = await getBaseSnapshotClients(raw.clientBase, {
+    tenant,
+  });
   const currentById = new Map(
     currentClients.map((client) => [Number(client.id), client]),
   );
@@ -623,10 +628,12 @@ async function createTaskForBase({
   base,
   clients,
   data = {},
+  tenant = null,
   transaction,
 }) {
   const now = new Date();
-  const snapshotClients = clients || (await getBaseSnapshotClients(base));
+  const snapshotClients =
+    clients || (await getBaseSnapshotClients(base, { tenant }));
   const title =
     normalizeText(data.title) ||
     `${base.name}: обзвон ${formatDateForTitle(now)}`;
@@ -687,10 +694,10 @@ async function createTaskForBase({
   return createdTask;
 }
 
-async function createForClient(actor, clientId, data = {}) {
+async function createForClient(actor, clientId, data = {}, tenant = null) {
   assertCanManageTask(actor);
 
-  const client = await getClientSnapshotOrFail(clientId);
+  const client = await getClientSnapshotOrFail(clientId, tenant);
   const dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
   const assignedToAccountId = await normalizeAssigneeId(data.assignedToAccountId);
   const title = normalizeText(data.title) || `Обзвон: ${client.name}`;
@@ -742,7 +749,7 @@ async function createForClient(actor, clientId, data = {}) {
     },
   });
 
-  return getOne(actor, createdTask.id);
+  return getOne(actor, createdTask.id, tenant);
 }
 
 function buildTaskWhere(actor, query = {}) {
@@ -770,7 +777,7 @@ function buildTaskWhere(actor, query = {}) {
   return where;
 }
 
-async function list(actor, query = {}) {
+async function list(actor, query = {}, tenant = null) {
   const where = buildTaskWhere(actor, query);
 
   const tasks = await db.CallTask.findAll({
@@ -787,10 +794,12 @@ async function list(actor, query = {}) {
     tasks.map((task) => task.id),
   );
 
-  return Promise.all(tasks.map((task) => mapTask(task, metricsByTask)));
+  return Promise.all(
+    tasks.map((task) => mapTask(task, metricsByTask, { tenant })),
+  );
 }
 
-async function createFromBase(actor, baseId, data = {}) {
+async function createFromBase(actor, baseId, data = {}, tenant = null) {
   assertCanManageTask(actor);
 
   const base = await getBaseOrFail(baseId);
@@ -799,7 +808,7 @@ async function createFromBase(actor, baseId, data = {}) {
   }
 
   const task = await db.sequelize.transaction(async (transaction) => {
-    return createTaskForBase({ actor, base, data, transaction });
+    return createTaskForBase({ actor, base, data, tenant, transaction });
   });
 
   await onboardingService.recordEventSafe(actor, 'call_task.created', {
@@ -812,24 +821,25 @@ async function createFromBase(actor, baseId, data = {}) {
     },
   });
 
-  return getOne(actor, task.id);
+  return getOne(actor, task.id, tenant);
 }
 
-async function getOne(actor, id) {
+async function getOne(actor, id, tenant = null) {
   const task = await getTaskOrFail(id);
   assertCanWorkTask(actor, task);
-  await syncDynamicTask(task);
+  await syncDynamicTask(task, tenant);
 
   const metricsByTask = await getTaskClientMetrics([task.id]);
   const freshTask = await getTaskOrFail(id);
   const mapped = await mapTask(freshTask, metricsByTask, {
     includeCurrentBaseCount: true,
+    tenant,
   });
-  mapped.membershipDiff = await getTaskMembershipDiff(freshTask);
+  mapped.membershipDiff = await getTaskMembershipDiff(freshTask, tenant);
   return mapped;
 }
 
-async function update(actor, id, data = {}) {
+async function update(actor, id, data = {}, tenant = null) {
   const task = await getTaskOrFail(id);
   assertCanManageTask(actor);
 
@@ -893,7 +903,7 @@ async function update(actor, id, data = {}) {
   }
 
   await task.update(payload);
-  return getOne(actor, id);
+  return getOne(actor, id, tenant);
 }
 
 function parsePaging(query = {}) {
@@ -954,10 +964,10 @@ function mapTaskClient(row) {
   };
 }
 
-async function listTaskClients(actor, taskId, query = {}) {
+async function listTaskClients(actor, taskId, query = {}, tenant = null) {
   const task = await getTaskOrFail(taskId);
   assertCanWorkTask(actor, task);
-  await syncDynamicTask(task);
+  await syncDynamicTask(task, tenant);
 
   const paging = parsePaging(query);
   const where = {
@@ -1264,13 +1274,13 @@ async function getReport(actor, query = {}) {
   };
 }
 
-async function sync(actor, id) {
+async function sync(actor, id, tenant = null) {
   const task = await getTaskOrFail(id);
   assertCanManageTask(actor);
-  const result = await syncDynamicTask(task);
+  const result = await syncDynamicTask(task, tenant);
   return {
     ...result,
-    task: await getOne(actor, id),
+    task: await getOne(actor, id, tenant),
   };
 }
 

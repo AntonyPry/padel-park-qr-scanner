@@ -2,9 +2,11 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
 const { getRevenueLtv } = require('../../src/services/visits-analytics.service');
+const { getDefaultOrganizationId } = require('../helpers/tenant-fixtures');
 
 test('DB-backed production-size revenue fixture stays aggregated and bounded', async () => {
   await db.sequelize.authenticate();
+  const organizationId = await getDefaultOrganizationId(db);
   const suffix = String(Date.now());
   let source;
   let users = [];
@@ -13,8 +15,9 @@ test('DB-backed production-size revenue fixture stays aggregated and bounded', a
   let items = [];
   let pendingSales = [];
   try {
-    source = await db.ClientSource.create({ name: `Revenue perf ${suffix}`, status: 'active' });
+    source = await db.ClientSource.create({ organizationId, name: `Revenue perf ${suffix}`, status: 'active' });
     users = await db.User.bulkCreate(Array.from({ length: 100 }, (_, index) => ({
+      organizationId,
       name: `revenue-perf-${index}-${suffix}`,
       phone: `7${suffix}${index}`.slice(-15),
       source: 'Revenue perf fallback',

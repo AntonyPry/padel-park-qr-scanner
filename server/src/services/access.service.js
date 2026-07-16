@@ -5,6 +5,9 @@ const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const scannerEventsService = require('./scanner-events.service');
 const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
+const {
   getPhoneLookupDigits,
   normalizePhone,
   normalizedPhoneColumn,
@@ -90,9 +93,10 @@ async function serializeVisitEvent(visitId, { isRepeated = false, clientEventId 
   };
 }
 
-async function searchUsers(query) {
+async function searchUsers(query, tenant = null) {
   const normalizedQuery = String(query || '').trim();
   if (normalizedQuery.length < 2) return [];
+  const context = await resolveClientAccessContext(tenant);
 
   const phoneDigits = normalizePhone(normalizedQuery);
   const conditions = [
@@ -120,6 +124,7 @@ async function searchUsers(query) {
 
   const users = await db.User.findAll({
     where: {
+      ...(context.scoped ? { organizationId: context.organizationId } : {}),
       status: 'active',
       isTraining: false,
       mergedIntoUserId: null,
@@ -137,15 +142,15 @@ async function searchUsers(query) {
   }));
 }
 
-async function findUserByPhone(phone) {
+async function findUserByPhone(phone, tenant = null) {
   const phoneDigits = getPhoneLookupDigits(phone);
   if (phoneDigits.length < 10) return null;
 
-  return clientsService.findActiveByPhone(phoneDigits);
+  return clientsService.findActiveByPhone(phoneDigits, tenant);
 }
 
-async function findUserByQr(qr) {
-  return clientsService.findCanonicalByQr(qr);
+async function findUserByQr(qr, tenant = null) {
+  return clientsService.findCanonicalByQr(qr, tenant);
 }
 
 async function createVisitForUser(user, options = {}) {
@@ -306,13 +311,10 @@ async function createVisitForUser(user, options = {}) {
 }
 
 async function createManualVisit(userId, options = {}) {
-  const user = await db.User.findByPk(userId);
-  if (!user) return null;
-
-  const canonicalUser =
-    user.mergedIntoUserId
-      ? await db.User.findByPk(user.mergedIntoUserId)
-      : user;
+  const canonicalUser = await clientsService.findCanonicalById(
+    userId,
+    options.tenant || null,
+  );
   if (!canonicalUser || canonicalUser.status !== 'active') return null;
 
   return createVisitForUser(canonicalUser, {
@@ -323,7 +325,7 @@ async function createManualVisit(userId, options = {}) {
 
 async function scanQr(rawQr, options = {}) {
   const qr = normalizeQr(rawQr);
-  const user = await findUserByQr(qr);
+  const user = await findUserByQr(qr, options.tenant || null);
 
   if (!user || user.status !== 'active') {
     await scannerEventsService.recordEvent({
@@ -377,8 +379,14 @@ async function scanQr(rawQr, options = {}) {
   };
 }
 
-async function registerReceptionUser({ name, phone, source, sourceId }) {
-  const existingUser = await findUserByPhone(phone);
+async function registerReceptionUser({
+  name,
+  phone,
+  source,
+  sourceId,
+  tenant = null,
+}) {
+  const existingUser = await findUserByPhone(phone, tenant);
   if (existingUser) {
     return {
       status: 'exists',
@@ -388,12 +396,16 @@ async function registerReceptionUser({ name, phone, source, sourceId }) {
     };
   }
 
-  const result = await clientsService.createClient({
-    name,
-    phone,
-    source,
-    sourceId,
-  });
+  const result = await clientsService.createClient(
+    {
+      name,
+      phone,
+      source,
+      sourceId,
+    },
+    null,
+    tenant,
+  );
   const user = result.client;
 
   return {
@@ -566,12 +578,19 @@ function splitVisitCategories(category) {
     .filter(Boolean);
 }
 
-async function updateVisitCategory(visitId, category, categoryIds = [], account = null) {
+async function updateVisitCategory(
+  visitId,
+  category,
+  categoryIds = [],
+  account = null,
+  tenant = null,
+) {
   const categories =
     Array.isArray(categoryIds) && categoryIds.length > 0
-      ? await referencesService.getVisitCategoriesByIds(categoryIds)
+      ? await referencesService.getVisitCategoriesByIds(categoryIds, { tenant })
       : await referencesService.getVisitCategoriesByNames(
           splitVisitCategories(category),
+          { tenant },
         );
   const categoryName = categories.map((item) => item.name).join(', ');
   let userId = null;

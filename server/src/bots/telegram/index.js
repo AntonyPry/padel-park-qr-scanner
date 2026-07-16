@@ -33,8 +33,8 @@ function createProxyAgent(proxyUrl) {
   });
 }
 
-async function createSourceKeyboard(includeBack = false) {
-  const rows = (await getSourceRows(db)).map((row) => [...row]);
+async function createSourceKeyboard(includeBack = false, tenant = null) {
+  const rows = (await getSourceRows(db, tenant)).map((row) => [...row]);
   if (includeBack) rows[rows.length - 1].push('⬅️ Назад');
   return TgKeyboard.from(rows).resized().oneTime();
 }
@@ -178,7 +178,7 @@ function createTelegramBot({
         step++;
       } else if (step === 3) {
         await ctx.reply('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
-          reply_markup: await createSourceKeyboard(true),
+          reply_markup: await createSourceKeyboard(true, connection),
         });
         const msg = await conversation.waitFor(':text');
         if (msg.message.text === '⬅️ Назад') {
@@ -201,6 +201,7 @@ function createTelegramBot({
           name: fullName,
           phone,
           source,
+          tenant: connection,
         }),
       );
     } catch (error) {
@@ -225,7 +226,10 @@ function createTelegramBot({
 
   bot.command('start', async (ctx) => {
     const telegramId = String(ctx.from.id);
-    const user = await db.User.findOne({ where: { telegramId } });
+    const user = await clientsService.findCanonicalByQr(
+      telegramId,
+      connection,
+    );
 
     if (user) {
       return ctx.reply(`С возвращением, ${user.name}!`, {

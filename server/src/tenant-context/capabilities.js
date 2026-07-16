@@ -25,6 +25,13 @@ function isTenantStaffAccessEnabled() {
   return readBooleanEnv(process.env.TENANT_STAFF_ACCESS_ENABLED, false);
 }
 
+function isTenantClientsReferencesEnabled() {
+  return readBooleanEnv(
+    process.env.TENANT_CLIENTS_REFERENCES_ENABLED,
+    false,
+  );
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -86,6 +93,12 @@ function assertTenantCapabilityDependencies() {
       'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
     );
   }
+  if (isTenantClientsReferencesEnabled() && !isTenantStaffAccessEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_CLIENTS_REFERENCES_ENABLED',
+      'TENANT_STAFF_ACCESS_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
@@ -93,6 +106,7 @@ function assertTenantCapabilityDependencies() {
     tenantFilesWorkers: isTenantFilesWorkersEnabled(),
     tenantProviderIntegrations: isTenantProviderIntegrationsEnabled(),
     tenantStaffAccess: isTenantStaffAccessEnabled(),
+    tenantClientsReferences: isTenantClientsReferencesEnabled(),
   });
 }
 
@@ -108,6 +122,7 @@ module.exports = {
   assertTenantCapabilityDependencies,
   capabilityDependencyError,
   isTenantCacheRealtimeEnabled,
+  isTenantClientsReferencesEnabled,
   isTenantContextEnabled,
   isTenantFilesWorkersEnabled,
   isTenantProviderIntegrationsEnabled,

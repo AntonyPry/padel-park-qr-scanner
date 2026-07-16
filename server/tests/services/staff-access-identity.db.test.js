@@ -47,7 +47,10 @@ async function createSchema(database) {
   });
   const migrations = fs
     .readdirSync(path.join(SERVER_ROOT, 'migrations'))
-    .filter((file) => file.endsWith('.js'))
+    .filter(
+      (file) =>
+        file.endsWith('.js') && file.localeCompare(FEATURE_MIGRATION_FILE) <= 0,
+    )
     .sort();
   for (const file of migrations) {
     const migration = require(path.join(SERVER_ROOT, 'migrations', file));

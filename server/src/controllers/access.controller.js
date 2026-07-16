@@ -30,7 +30,7 @@ function emitAccessEvent(req, event) {
 class AccessController {
   async search(req, res) {
     try {
-      const users = await accessService.searchUsers(req.query.q);
+      const users = await accessService.searchUsers(req.query.q, req.tenant);
       res.json(users);
     } catch (error) {
       sendError(res, error, 'Поиск временно недоступен');
@@ -47,6 +47,7 @@ class AccessController {
         clientEventId,
         source: source || 'manual',
         metadata,
+        tenant: req.tenant,
       });
       if (!event) return sendError(res, { statusCode: 404 }, 'Клиент не найден');
 
@@ -98,6 +99,7 @@ class AccessController {
           scannerSessionId,
           deviceLabel,
         },
+        tenant: req.tenant,
       });
 
       if (result.found) {
@@ -180,6 +182,7 @@ class AccessController {
         phone,
         source,
         sourceId,
+        tenant: req.tenant,
       });
       res.json(result);
     } catch (error) {
@@ -207,6 +210,7 @@ class AccessController {
         category,
         categoryIds,
         req.account,
+        req.tenant,
       );
       if (!result) return sendError(res, { statusCode: 404 }, 'Визит не найден');
       res.json({ status: 'ok', ...result });
