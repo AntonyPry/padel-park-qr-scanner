@@ -475,26 +475,18 @@ class FinanceService {
       throw appError('Сумма расхода должна быть положительным числом');
     }
 
-    const categoryId = Number(data.categoryId);
-    if (!Number.isInteger(categoryId) || categoryId <= 0) {
-      throw appError('Выберите категорию расхода');
-    }
+    const category = String(data.category || '').trim();
+    if (!category) throw appError('Категория расхода обязательна');
 
     const date = normalizeDateOnly(data.date);
     await payrollService.assertDateEditable(date, 'кассовый расход');
     const trainingMarker =
       options.trainingMarker ||
       (await onboardingService.getTrainingDataMarker(account));
-    const category = await db.Category.findOne({
-      transaction: options.transaction,
-      where: { id: categoryId, isActive: true, type: 'expense' },
-    });
-    if (!category) throw appError('Категория расхода не найдена', 404);
-
     const record = await db.Finance.create(
       {
         amount: Number(amount.toFixed(2)),
-        category: category.name,
+        category,
         comment: data.comment ? String(data.comment).trim() : null,
         createdByAccountId: account?.id || null,
         date,
@@ -515,7 +507,7 @@ class FinanceService {
       transaction: options.transaction,
     });
 
-    return { category, record };
+    return { record };
   }
 
   async updateLinkedExpenseRecord(financeId, data, account, options = {}) {
@@ -523,10 +515,8 @@ class FinanceService {
     if (!Number.isFinite(amount) || amount <= 0) {
       throw appError('Сумма расхода должна быть положительным числом');
     }
-    const categoryId = Number(data.categoryId);
-    if (!Number.isInteger(categoryId) || categoryId <= 0) {
-      throw appError('Выберите категорию расхода');
-    }
+    const category = String(data.category || '').trim();
+    if (!category) throw appError('Категория расхода обязательна');
 
     const transaction = options.transaction;
     const record = await db.Finance.findByPk(financeId, {
@@ -546,17 +536,11 @@ class FinanceService {
     if (date !== record.date) {
       await payrollService.assertDateEditable(date, 'кассовый расход');
     }
-    const category = await db.Category.findOne({
-      transaction,
-      where: { id: categoryId, isActive: true, type: 'expense' },
-    });
-    if (!category) throw appError('Категория расхода не найдена', 404);
-
     const beforeData = record.toJSON();
     await record.update(
       {
         amount: Number(amount.toFixed(2)),
-        category: category.name,
+        category,
         comment: data.comment ? String(data.comment).trim() : null,
         date,
       },
@@ -574,7 +558,7 @@ class FinanceService {
       transaction,
     });
 
-    return { category, record };
+    return { record };
   }
 
   async deleteLinkedExpenseRecord(financeId, account, options = {}) {

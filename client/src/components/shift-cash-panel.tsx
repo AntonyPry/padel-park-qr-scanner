@@ -1,10 +1,11 @@
 import {
   Camera,
+  ChevronLeft,
+  ChevronRight,
   FileImage,
   Loader2,
   Plus,
   ReceiptText,
-  RotateCcw,
   Trash2,
   WalletCards,
 } from 'lucide-react';
@@ -22,6 +23,10 @@ import {
   type ShiftCashExpense,
   type ShiftCashSummary,
 } from '@/api/shift-cash';
+import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -35,13 +40,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from '@/components/ui/toast';
 import { ErrorState } from '@/components/error-state';
@@ -160,9 +158,9 @@ function ReceiptThumbnail({
   }, [attachment.url]);
 
   return (
-    <div className="relative min-w-0 overflow-hidden rounded-lg border bg-muted/20">
+    <div className="relative size-20 shrink-0 overflow-hidden rounded-lg border bg-muted/20 sm:size-24">
       <button
-        className="block h-24 w-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="block size-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         type="button"
         onClick={onOpen}
       >
@@ -196,13 +194,19 @@ function ReceiptThumbnail({
 }
 
 function ReceiptLightbox({
-  attachment,
+  attachments,
+  index,
   onClose,
+  onIndexChange,
 }: {
-  attachment: ShiftCashAttachment | null;
+  attachments: ShiftCashAttachment[];
+  index: number;
   onClose: () => void;
+  onIndexChange: (index: number) => void;
 }) {
+  const attachment = attachments[index] || null;
   const [url, setUrl] = useState('');
+  const [imageError, setImageError] = useState(false);
   useEffect(() => {
     if (!attachment) return;
     let active = true;
@@ -216,31 +220,78 @@ function ReceiptLightbox({
         objectUrl = nextUrl;
         setUrl(nextUrl);
       })
-      .catch(() => {});
+      .catch(() => setImageError(true));
     return () => {
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [attachment]);
 
+  useEffect(() => {
+    if (!attachment) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowLeft' && index > 0) onIndexChange(index - 1);
+      if (event.key === 'ArrowRight' && index < attachments.length - 1) {
+        onIndexChange(index + 1);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [attachment, attachments.length, index, onIndexChange]);
+
   return (
     <Dialog open={Boolean(attachment)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-[min(960px,calc(100vw-2rem))] overflow-auto p-2 sm:max-w-[min(960px,calc(100vw-2rem))]">
+      <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-hidden p-2 sm:max-w-[min(960px,calc(100vw-2rem))]">
         <DialogTitle className="sr-only">Фото кассового чека</DialogTitle>
         <DialogDescription className="sr-only">
           Увеличенное фото чека кассового расхода.
         </DialogDescription>
-        {url ? (
+        <div className="relative flex min-h-64 items-center justify-center overflow-hidden rounded-lg bg-black/90">
+        {url && !imageError ? (
           <img
             alt={attachment?.originalName || 'Фото чека'}
-            className="max-h-[calc(100dvh-4rem)] w-full max-w-full rounded-lg object-contain"
+            className="max-h-[calc(100dvh-5rem)] w-full max-w-full object-contain"
             src={url}
+            onError={() => setImageError(true)}
           />
+        ) : imageError ? (
+          <div className="flex min-h-64 flex-col items-center justify-center gap-2 px-12 text-center text-sm text-white/75">
+            <FileImage className="h-8 w-8" />
+            Это фото не удалось открыть. Остальные снимки доступны.
+          </div>
         ) : (
-          <div className="flex min-h-52 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <div className="flex min-h-64 items-center justify-center gap-2 text-sm text-white/75">
             <Loader2 className="h-4 w-4 animate-spin" /> Загрузка фото...
           </div>
         )}
+        {index > 0 && (
+          <Button
+            aria-label="Предыдущее фото"
+            className="absolute left-2 size-12 rounded-full bg-background/90 shadow-lg sm:left-4"
+            size="icon"
+            type="button"
+            variant="outline"
+            onClick={() => onIndexChange(index - 1)}
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </Button>
+        )}
+        {index < attachments.length - 1 && (
+          <Button
+            aria-label="Следующее фото"
+            className="absolute right-2 size-12 rounded-full bg-background/90 shadow-lg sm:right-4"
+            size="icon"
+            type="button"
+            variant="outline"
+            onClick={() => onIndexChange(index + 1)}
+          >
+            <ChevronRight className="h-6 w-6" />
+          </Button>
+        )}
+        <div className="absolute bottom-3 rounded-full bg-black/70 px-3 py-1 text-xs font-medium text-white">
+          {index + 1} из {attachments.length}
+        </div>
+        </div>
       </DialogContent>
     </Dialog>
   );
@@ -273,7 +324,7 @@ function CashMetric({
   );
 }
 
-export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
+export function ShiftCashPanel() {
   const { account } = useAuth();
   const [summary, setSummary] = useState<ShiftCashSummary | null>(null);
   const [loading, setLoading] = useState(true);
@@ -283,8 +334,8 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
   const [openingCoins, setOpeningCoins] = useState('');
   const [openingComment, setOpeningComment] = useState('');
   const [openingSaving, setOpeningSaving] = useState(false);
+  const [expenseDialogOpen, setExpenseDialogOpen] = useState(false);
   const [expenseAmount, setExpenseAmount] = useState('');
-  const [expenseCategoryId, setExpenseCategoryId] = useState('');
   const [expenseDescription, setExpenseDescription] = useState('');
   const [expenseFiles, setExpenseFiles] = useState<File[]>([]);
   const [expenseSaving, setExpenseSaving] = useState(false);
@@ -292,7 +343,15 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
   const [cancelExpense, setCancelExpense] = useState<ShiftCashExpense | null>(null);
   const [cancelReason, setCancelReason] = useState('');
   const [canceling, setCanceling] = useState(false);
-  const [selectedAttachment, setSelectedAttachment] = useState<ShiftCashAttachment | null>(null);
+  const [selectedGallery, setSelectedGallery] = useState<{
+    attachments: ShiftCashAttachment[];
+    index: number;
+  } | null>(null);
+  const [removeAttachmentTarget, setRemoveAttachmentTarget] = useState<{
+    attachment: ShiftCashAttachment;
+    expenseId: number;
+  } | null>(null);
+  const [removingAttachment, setRemovingAttachment] = useState(false);
 
   const applySummary = useCallback((next: ShiftCashSummary) => {
     setSummary(next);
@@ -312,9 +371,9 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
 
   useEffect(() => {
     void load();
-  }, [activeShiftId, load]);
+  }, [load]);
 
-  useRealtimeRefresh(['shifts', 'finance', 'motivation'], () => {
+  useRealtimeRefresh(['shiftCash', 'shifts', 'finance'], () => {
     void load();
   });
 
@@ -360,17 +419,16 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
     try {
       const amount = parseMoney(expenseAmount, 'Сумма');
       if (amount <= 0) throw new Error('Сумма расхода должна быть больше 0 ₽');
-      if (!expenseCategoryId) throw new Error('Выберите категорию расхода');
       if (!expenseDescription.trim()) throw new Error('Добавьте описание расхода');
       validateFiles(expenseFiles);
       let next = await createShiftCashExpense({
         amount,
-        categoryId: Number(expenseCategoryId),
         description: expenseDescription.trim(),
       });
       applySummary(next);
 
       const expenseId = next.createdExpenseId;
+      let failedUpload = false;
       if (expenseFiles.length > 0 && expenseId) {
         for (const file of expenseFiles) {
           try {
@@ -398,16 +456,17 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
               : 'Расход сохранен, но фото не загрузилось';
             setUploadError(`Расход сохранен. Фото «${file.name}» не загрузилось: ${message}`);
             toast.error('Расход сохранен, но часть фото не загрузилась');
+            failedUpload = true;
             break;
           }
         }
       }
 
       setExpenseAmount('');
-      setExpenseCategoryId('');
       setExpenseDescription('');
       setExpenseFiles([]);
       toast.success('Расход добавлен в кассу и P&L');
+      if (!failedUpload) setExpenseDialogOpen(false);
     } catch (saveError) {
       toast.error(saveError instanceof Error ? saveError.message : 'Не удалось добавить расход');
     } finally {
@@ -430,12 +489,14 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
     }
   };
 
-  const handleRemoveAttachment = async (
-    expenseId: number,
-    attachmentId: string,
-  ) => {
+  const handleRemoveAttachment = async () => {
+    if (!removeAttachmentTarget) return;
+    setRemovingAttachment(true);
     try {
-      const updated = await removeShiftCashAttachment(expenseId, attachmentId);
+      const updated = await removeShiftCashAttachment(
+        removeAttachmentTarget.expenseId,
+        removeAttachmentTarget.attachment.id,
+      );
       if (summary) {
         applySummary({
           ...summary,
@@ -444,11 +505,23 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
           ),
         });
       }
+      setRemoveAttachmentTarget(null);
       toast.success('Фото удалено');
     } catch (removeError) {
       toast.error(removeError instanceof Error ? removeError.message : 'Не удалось удалить фото');
+    } finally {
+      setRemovingAttachment(false);
     }
   };
+
+  const removeAttachmentAction: ConfirmAction | null = removeAttachmentTarget
+    ? {
+        confirmLabel: 'Удалить фото',
+        description: `Фото «${removeAttachmentTarget.attachment.originalName}» будет удалено без возможности восстановления.`,
+        isDestructive: true,
+        title: 'Удалить фото чека?',
+      }
+    : null;
 
   const sortedExpenses = useMemo(
     () => [...(summary?.expenses || [])].sort(
@@ -483,10 +556,26 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
     );
   }
 
+  if (summary && !summary.shift) {
+    return (
+      <Card className="min-h-64 border-dashed">
+        <CardContent className="flex min-h-64 flex-col items-center justify-center gap-3 px-4 text-center">
+          <WalletCards className="h-9 w-9 text-muted-foreground" />
+          <div>
+            <h2 className="font-semibold">Активной смены нет</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Начните смену в разделе «Мотивация», чтобы открыть кассу.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <>
-      <Card className="overflow-hidden border-primary/25">
-        <CardHeader className="flex flex-row items-start justify-between gap-3 border-b bg-primary/[0.03] pb-4">
+      <Card aria-busy={loading} className="min-w-0 overflow-hidden border-primary/25">
+        <CardHeader className="border-b bg-primary/[0.03] pb-4">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 text-xl">
               <WalletCards className="h-5 w-5 text-primary" /> Касса
@@ -495,9 +584,6 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
               Купюры, мелочь, наличная выручка и расходы текущей смены.
             </p>
           </div>
-          <Button aria-label="Обновить кассу" size="icon-sm" variant="outline" onClick={() => void load()}>
-            <RotateCcw className={cn('h-4 w-4', loading && 'animate-spin')} />
-          </Button>
         </CardHeader>
         <CardContent className="grid gap-5 pt-5">
           {error && (
@@ -605,115 +691,32 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
             )}
           </section>
 
-          <section className="rounded-xl border p-4">
-            <div>
+          <section className="flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
               <h3 className="font-semibold">Добавить расход из кассы</h3>
               <p className="mt-1 text-sm text-muted-foreground">
                 Расход сразу попадет в P&amp;L. Фото чека можно снять камерой телефона.
               </p>
             </div>
-            {!openingRecorded ? (
-              <div className="mt-4 rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-                Сначала зафиксируйте остаток на начало смены.
-              </div>
-            ) : (
-              <form className="mt-4 grid gap-3" onSubmit={(event) => void handleExpenseSubmit(event)}>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="shift-cash-expense-amount">Сумма, ₽</Label>
-                    <Input
-                      id="shift-cash-expense-amount"
-                      inputMode="decimal"
-                      min="0.01"
-                      placeholder="900"
-                      step="0.01"
-                      type="number"
-                      value={expenseAmount}
-                      onChange={(event) => setExpenseAmount(event.currentTarget.value)}
-                    />
-                  </div>
-                  <div className="grid min-w-0 gap-1.5">
-                    <Label>Категория</Label>
-                    <Select value={expenseCategoryId} onValueChange={setExpenseCategoryId}>
-                      <SelectTrigger className="min-w-0">
-                        <SelectValue placeholder="Выберите расход" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(summary?.expenseCategories || []).map((category) => (
-                          <SelectItem key={category.id} value={String(category.id)}>
-                            <span className="block max-w-[min(72vw,420px)] truncate" title={category.name}>
-                              {category.name}
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="shift-cash-expense-description">Описание</Label>
-                  <textarea
-                    id="shift-cash-expense-description"
-                    className="min-h-20 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                    maxLength={1000}
-                    placeholder="Например: сборка подставки на ресепшене"
-                    value={expenseDescription}
-                    onChange={(event) => setExpenseDescription(event.currentTarget.value)}
-                  />
-                </div>
-                <div className="grid gap-1.5">
-                  <Label>Фото чеков · {expenseFiles.length}/{MAX_ATTACHMENTS}</Label>
-                  <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-muted/20 px-4 py-5 text-center text-sm transition-colors hover:border-primary/60 hover:bg-primary/5">
-                    <Camera className="h-5 w-5 text-muted-foreground" />
-                    <span className="font-medium">Снять фото или выбрать файлы</span>
-                    <span className="text-xs text-muted-foreground">
-                      JPEG, PNG, WEBP, GIF или HEIC, до 5 МБ каждое
-                    </span>
-                    <input
-                      accept={IMAGE_ACCEPT}
-                      capture="environment"
-                      className="sr-only"
-                      multiple
-                      type="file"
-                      onChange={(event) => {
-                        const files = Array.from(event.currentTarget.files || []);
-                        try {
-                          validateFiles(files);
-                          setExpenseFiles(files);
-                        } catch (validationError) {
-                          toast.error(validationError instanceof Error ? validationError.message : 'Проверьте фото');
-                        }
-                        event.currentTarget.value = '';
-                      }}
-                    />
-                  </label>
-                  {expenseFiles.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {expenseFiles.map((file) => (
-                        <Badge className="max-w-full" key={`${file.name}-${file.size}`} variant="outline">
-                          <span className="max-w-[240px] truncate">{file.name}</span>
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  {uploadError && (
-                    <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-                      {uploadError}
-                    </div>
-                  )}
-                </div>
-                <div className="flex justify-end">
-                  <Button className="w-full sm:w-auto" disabled={expenseSaving} type="submit">
-                    {expenseSaving ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Plus className="mr-2 h-4 w-4" />
-                    )}
-                    Добавить расход
-                  </Button>
-                </div>
-              </form>
-            )}
+            <div className="shrink-0">
+              <Button
+                className="w-full sm:w-auto"
+                disabled={!openingRecorded}
+                type="button"
+                onClick={() => {
+                  setUploadError('');
+                  setExpenseDialogOpen(true);
+                }}
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Добавить расход
+              </Button>
+              {!openingRecorded && (
+                <p className="mt-2 max-w-64 text-xs text-muted-foreground sm:text-right">
+                  Сначала зафиксируйте остаток на начало смены.
+                </p>
+              )}
+            </div>
           </section>
 
           <section>
@@ -752,14 +755,11 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
                             <span className={cn('break-words font-medium', isCanceled && 'line-through')}>
                               {expense.description}
                             </span>
-                            <Badge variant={isCanceled ? 'secondary' : 'outline'}>
-                              {isCanceled ? 'Отменен' : expense.categoryName}
-                            </Badge>
+                            {isCanceled && <Badge variant="secondary">Отменен</Badge>}
                           </div>
                           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                             <span>{formatDateTime(expense.spentAt)}</span>
                             <span>{expense.createdBy?.name || 'Сотрудник'}</span>
-                            {expense.financeId && <span>Finance #{expense.financeId}</span>}
                           </div>
                           {isCanceled && (
                             <div className="mt-2 break-words text-sm text-muted-foreground">
@@ -787,14 +787,17 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
                         </div>
                       </div>
                       {expense.attachments.length > 0 && (
-                        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-6">
-                          {expense.attachments.map((attachment) => (
+                        <div className="mt-3 flex min-w-0 flex-wrap gap-2">
+                          {expense.attachments.map((attachment, attachmentIndex) => (
                             <ReceiptThumbnail
                               attachment={attachment}
                               canRemove={canChange}
                               key={attachment.id}
-                              onOpen={() => setSelectedAttachment(attachment)}
-                              onRemove={() => void handleRemoveAttachment(expense.id, attachment.id)}
+                              onOpen={() => setSelectedGallery({
+                                attachments: expense.attachments,
+                                index: attachmentIndex,
+                              })}
+                              onRemove={() => setRemoveAttachmentTarget({ attachment, expenseId: expense.id })}
                             />
                           ))}
                         </div>
@@ -807,6 +810,119 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
           </section>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={expenseDialogOpen}
+        onOpenChange={(open) => {
+          if (!expenseSaving) setExpenseDialogOpen(open);
+        }}
+      >
+        <DialogContent className="max-h-[calc(100dvh-1rem)] max-w-[calc(100vw-1rem)] overflow-y-auto p-4 sm:max-w-lg sm:p-6">
+          <DialogHeader>
+            <DialogTitle>Добавить расход из кассы</DialogTitle>
+            <DialogDescription>
+              Укажите сумму и назначение. Связанный расход P&amp;L создастся
+              автоматически.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            aria-busy={expenseSaving}
+            className="grid min-w-0 gap-4"
+            onSubmit={(event) => void handleExpenseSubmit(event)}
+          >
+            <div className="grid gap-1.5">
+              <Label htmlFor="shift-cash-expense-amount">Сумма, ₽</Label>
+              <Input
+                id="shift-cash-expense-amount"
+                disabled={expenseSaving}
+                inputMode="decimal"
+                min="0.01"
+                placeholder="900"
+                step="0.01"
+                type="number"
+                value={expenseAmount}
+                onChange={(event) => setExpenseAmount(event.currentTarget.value)}
+              />
+            </div>
+            <div className="grid gap-1.5">
+              <Label htmlFor="shift-cash-expense-description">Описание</Label>
+              <textarea
+                id="shift-cash-expense-description"
+                className="min-h-24 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                disabled={expenseSaving}
+                maxLength={1000}
+                placeholder="Например: сборка подставки на ресепшене"
+                value={expenseDescription}
+                onChange={(event) => setExpenseDescription(event.currentTarget.value)}
+              />
+            </div>
+            <div className="grid min-w-0 gap-1.5">
+              <Label>Фото чеков · {expenseFiles.length}/{MAX_ATTACHMENTS}</Label>
+              <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border border-dashed bg-muted/20 px-4 py-5 text-center text-sm transition-colors hover:border-primary/60 hover:bg-primary/5">
+                <Camera className="h-5 w-5 text-muted-foreground" />
+                <span className="font-medium">Снять фото или выбрать файлы</span>
+                <span className="text-xs text-muted-foreground">
+                  JPEG, PNG, WEBP, GIF или HEIC, до 5 МБ каждое
+                </span>
+                <input
+                  accept={IMAGE_ACCEPT}
+                  capture="environment"
+                  className="sr-only"
+                  disabled={expenseSaving}
+                  multiple
+                  type="file"
+                  onChange={(event) => {
+                    const files = Array.from(event.currentTarget.files || []);
+                    try {
+                      validateFiles(files);
+                      setExpenseFiles(files);
+                    } catch (validationError) {
+                      toast.error(
+                        validationError instanceof Error
+                          ? validationError.message
+                          : 'Проверьте фото',
+                      );
+                    }
+                    event.currentTarget.value = '';
+                  }}
+                />
+              </label>
+              {expenseFiles.length > 0 && (
+                <div className="flex min-w-0 flex-wrap gap-2">
+                  {expenseFiles.map((file) => (
+                    <Badge
+                      className="max-w-full"
+                      key={`${file.name}-${file.size}`}
+                      variant="outline"
+                    >
+                      <span className="max-w-[min(240px,70vw)] truncate">{file.name}</span>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+              {uploadError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {uploadError}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                disabled={expenseSaving}
+                type="button"
+                variant="outline"
+                onClick={() => setExpenseDialogOpen(false)}
+              >
+                Отмена
+              </Button>
+              <Button disabled={expenseSaving} type="submit">
+                {expenseSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Добавить расход
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(cancelExpense)} onOpenChange={(open) => !open && setCancelExpense(null)}>
         <DialogContent className="sm:max-w-lg">
@@ -840,9 +956,20 @@ export function ShiftCashPanel({ activeShiftId }: { activeShiftId: number }) {
       </Dialog>
 
       <ReceiptLightbox
-        attachment={selectedAttachment}
-        key={selectedAttachment?.id || 'closed'}
-        onClose={() => setSelectedAttachment(null)}
+        attachments={selectedGallery?.attachments || []}
+        index={selectedGallery?.index || 0}
+        key={selectedGallery?.attachments[selectedGallery.index]?.id || 'closed'}
+        onClose={() => setSelectedGallery(null)}
+        onIndexChange={(index) => {
+          setSelectedGallery((current) => (current ? { ...current, index } : current));
+        }}
+      />
+
+      <ConfirmActionDialog
+        action={removeAttachmentAction}
+        loading={removingAttachment}
+        onCancel={() => setRemoveAttachmentTarget(null)}
+        onConfirm={handleRemoveAttachment}
       />
     </>
   );
@@ -988,19 +1115,21 @@ export function ShiftCashCloseDialog({
                 Заполните купюры и мелочь, чтобы увидеть сверку.
               </div>
             )}
-            <div className="grid gap-1.5">
-              <Label htmlFor="shift-cash-closing-comment">
-                Комментарий {hasActualCash && needsComment ? '· обязательно' : '· необязательно'}
-              </Label>
-              <textarea
-                id="shift-cash-closing-comment"
-                className="min-h-24 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                maxLength={1000}
-                placeholder={hasActualCash && needsComment ? 'Укажите причину расхождения' : 'Комментарий по кассе'}
-                value={comment}
-                onChange={(event) => setComment(event.currentTarget.value)}
-              />
-            </div>
+            {hasActualCash && (
+              <div className="grid gap-1.5">
+                <Label htmlFor="shift-cash-closing-comment">
+                  Комментарий {needsComment ? '· обязательно' : '· необязательно'}
+                </Label>
+                <textarea
+                  id="shift-cash-closing-comment"
+                  className="min-h-24 w-full rounded-xl border border-input bg-transparent px-3 py-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                  maxLength={1000}
+                  placeholder={needsComment ? 'Укажите причину расхождения' : 'Комментарий по кассе'}
+                  value={comment}
+                  onChange={(event) => setComment(event.currentTarget.value)}
+                />
+              </div>
+            )}
           </div>
         )}
 

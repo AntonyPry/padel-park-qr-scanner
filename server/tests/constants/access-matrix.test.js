@@ -29,10 +29,10 @@ test('manager can view finances but cannot manage finance operations', () => {
   assert.equal(ACCESS_MATRIX.financeManage.includes('manager'), false);
 });
 
-test('accountant can read payroll-related motivation data without managing motivation', () => {
+test('accountant keeps finance and payroll access without Shift motivation access', () => {
   assert.equal(ACCESS_MATRIX.financeView.includes('accountant'), true);
   assert.equal(ACCESS_MATRIX.payrollView.includes('accountant'), true);
-  assert.equal(ACCESS_MATRIX.motivationView.includes('accountant'), true);
+  assert.equal(ACCESS_MATRIX.motivationView.includes('accountant'), false);
   assert.equal(ACCESS_MATRIX.motivationManage.includes('accountant'), false);
 });
 

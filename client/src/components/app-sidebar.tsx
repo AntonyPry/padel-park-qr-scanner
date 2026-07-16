@@ -1,6 +1,7 @@
 import {
   Activity,
   BicepsFlexed,
+  Banknote,
   CalendarDays,
   CircleDollarSign,
   ContactRound,
@@ -24,6 +25,7 @@ import {
   WalletCards,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import {
   Sidebar,
@@ -44,6 +46,9 @@ import {
   canAccessPathForAuthority,
   type ClientRoute,
 } from '@/lib/permissions';
+import { listActiveShiftReports } from '@/api/shift-reports';
+import { queryKeys } from '@/api/query-keys';
+import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuth } from '@/lib/useAuth';
 import { selectAuthorizationRole } from '@/lib/authorization';
 import { getAccountRoleLabel } from '@/lib/roles';
@@ -56,7 +61,9 @@ type NavItem = {
   authorizationPath?: ClientRoute;
   icon: LucideIcon;
   activeUrls?: string[];
-  badge?: string;
+  badge?:
+    | { kind: 'static'; label: string }
+    | { kind: 'shiftReports' };
   disabled?: boolean;
   tooltip?: string;
 };
@@ -98,6 +105,27 @@ const navigationSections: NavSection[] = [
     ],
   },
   {
+    title: 'Смена',
+    items: [
+      {
+        title: 'Мотивация',
+        url: '/admin/motivation',
+        icon: CircleDollarSign,
+      },
+      {
+        title: 'Отчеты',
+        url: '/admin/shift-reports',
+        icon: ClipboardList,
+        badge: { kind: 'shiftReports' },
+      },
+      {
+        title: 'Касса',
+        url: '/admin/shift-cash',
+        icon: Banknote,
+      },
+    ],
+  },
+  {
     title: 'CRM и коммуникации',
     items: [
       {
@@ -135,11 +163,6 @@ const navigationSections: NavSection[] = [
         url: '/admin/finances',
         icon: Wallet,
       },
-      {
-        title: 'Мотивация',
-        url: '/admin/motivation',
-        icon: CircleDollarSign,
-      },
     ],
   },
   {
@@ -160,11 +183,6 @@ const navigationSections: NavSection[] = [
         title: 'Контроль менеджера',
         url: '/admin/manager-control',
         icon: ClipboardCheck,
-      },
-      {
-        title: 'Отчеты смены',
-        url: '/admin/shift-reports',
-        icon: ClipboardList,
       },
       {
         title: 'Аналитика входов',
@@ -204,7 +222,7 @@ const navigationSections: NavSection[] = [
       {
         title: 'Инвентаризация',
         icon: Boxes,
-        badge: 'Скоро',
+        badge: { kind: 'static', label: 'Скоро' },
         disabled: true,
         authorizationPath: '/admin/catalog',
         tooltip: 'Раздел в разработке',
@@ -226,6 +244,58 @@ function isRouteActive(currentPath: string, item: NavItem) {
   return urls.some(
     (url) =>
       currentPath === url || (url !== '/admin' && currentPath.startsWith(`${url}/`)),
+  );
+}
+
+function ShiftReportsBadge() {
+  const queryClient = useQueryClient();
+  const reportsQuery = useQuery({
+    queryFn: listActiveShiftReports,
+    queryKey: queryKeys.shiftReports.active(),
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  useRealtimeRefresh(['shiftReports', 'shifts'], () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.shiftReports.active() });
+  });
+
+  if (reportsQuery.isError || !reportsQuery.data) return null;
+
+  const actionable = reportsQuery.data.reports.filter((report) =>
+    ['pending', 'draft', 'overdue'].includes(report.computedStatus),
+  );
+  if (actionable.length === 0) return null;
+
+  const hasOverdue = actionable.some((report) => report.computedStatus === 'overdue');
+  const label = actionable.length > 99 ? '99+' : String(actionable.length);
+  const ariaLabel = hasOverdue
+    ? `${actionable.length} отчетов требуют внимания, есть просроченные`
+    : `${actionable.length} отчетов требуют внимания`;
+
+  return (
+    <SidebarMenuBadge
+      aria-label={ariaLabel}
+      aria-live="polite"
+      className={cn(
+        'min-w-6 justify-center px-1.5 text-[10px] font-semibold tabular-nums',
+        hasOverdue
+          ? 'bg-destructive text-destructive-foreground'
+          : 'bg-primary text-primary-foreground',
+      )}
+    >
+      {label}
+    </SidebarMenuBadge>
+  );
+}
+
+function NavigationBadge({ badge }: { badge: NonNullable<NavItem['badge']> }) {
+  if (badge.kind === 'shiftReports') return <ShiftReportsBadge />;
+
+  return (
+    <SidebarMenuBadge className="bg-sidebar-accent/70 text-[10px] text-sidebar-foreground/60">
+      {badge.label}
+    </SidebarMenuBadge>
   );
 }
 
@@ -380,11 +450,7 @@ export function AppSidebar() {
                               <item.icon />
                               <span>{item.title}</span>
                             </SidebarMenuButton>
-                            {item.badge ? (
-                              <SidebarMenuBadge className="bg-sidebar-accent/70 text-[10px] text-sidebar-foreground/60">
-                                {item.badge}
-                              </SidebarMenuBadge>
-                            ) : null}
+                            {item.badge ? <NavigationBadge badge={item.badge} /> : null}
                           </SidebarMenuItem>
                         );
                       }
@@ -393,6 +459,7 @@ export function AppSidebar() {
                         <SidebarMenuItem key={item.url}>
                           <SidebarMenuButton
                             asChild
+                            className={item.badge ? 'pr-10' : undefined}
                             data-sidebar-nav-item="true"
                             isActive={isActive}
                           >
@@ -401,6 +468,7 @@ export function AppSidebar() {
                               <span>{item.title}</span>
                             </Link>
                           </SidebarMenuButton>
+                          {item.badge ? <NavigationBadge badge={item.badge} /> : null}
                         </SidebarMenuItem>
                       );
                     })}

@@ -119,8 +119,14 @@ const DEFAULT_DOMAIN_HINTS = {
     routes: ['/admin/visits-analytics', '/admin/utilization'],
   },
   shifts: {
-    queryGroups: ['shifts', 'shiftReports', 'payroll', 'staff', 'motivation', 'finance'],
-    routes: ['/admin/staff', '/admin/motivation', '/admin/finances', '/admin/shift-reports'],
+    queryGroups: ['shifts', 'shiftCash', 'shiftReports', 'payroll', 'staff', 'motivation', 'finance'],
+    routes: [
+      '/admin/staff',
+      '/admin/motivation',
+      '/admin/finances',
+      '/admin/shift-reports',
+      '/admin/shift-cash',
+    ],
   },
   staff: {
     queryGroups: ['staff', 'payroll', 'accounts'],

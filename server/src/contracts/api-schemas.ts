@@ -890,10 +890,15 @@ const shiftCashBalanceBody = z
       .optional(),
   })
   .passthrough();
-const shiftCashExpenseBody = z
-  .object({
+const shiftCashExpenseBody = z.preprocess(
+  (payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+    const normalized = { ...payload } as Record<string, unknown>;
+    delete normalized.categoryId;
+    return normalized;
+  },
+  z.object({
     amount: positiveNumberValue,
-    categoryId: id,
     description: z
       .string()
       .trim()
@@ -901,7 +906,8 @@ const shiftCashExpenseBody = z
       .max(1000, 'Описание расхода слишком длинное'),
     spentAt: optionalHttpDateTime,
   })
-  .passthrough();
+    .strict(),
+);
 
 const bookingUpdateBody = z
   .object(bookingShape)

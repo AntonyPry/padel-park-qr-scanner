@@ -26,7 +26,8 @@ export const ROUTE_ACCESS = {
   '/admin/staff': ['owner', 'manager', 'accountant'],
   '/admin/users': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
-  '/admin/shift-reports': ['owner', 'manager'],
+  '/admin/shift-reports': ['owner', 'manager', 'admin'],
+  '/admin/shift-cash': ['owner', 'manager', 'admin'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
   '/admin/references': ['owner', 'manager', 'admin', 'accountant', 'viewer'],
@@ -141,6 +142,7 @@ export const ROUTE_AUTHORIZATION: Record<
     { roles: ROUTE_ACCESS['/admin/shift-reports'], scope: 'club' },
     { roles: ROUTE_ACCESS['/admin/shift-reports'], scope: 'organization' },
   ]),
+  '/admin/shift-cash': single('club', ROUTE_ACCESS['/admin/shift-cash']),
   '/admin/utilization': single('club', ROUTE_ACCESS['/admin/utilization']),
   '/admin/catalog': composite([
     { roles: ROUTE_ACCESS['/admin/catalog'], scope: 'organization' },

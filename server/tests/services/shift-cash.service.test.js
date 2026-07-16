@@ -53,8 +53,6 @@ function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {
   const expense = {
     amount: 900,
     attachments: [],
-    categoryId: 9,
-    categoryName: 'Хозяйственные расходы',
     createdByAccountId: 7,
     description: 'Фото чека',
     financeId: 55,
@@ -72,8 +70,6 @@ function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {
       return {
         amount: this.amount,
         attachments: this.attachments,
-        categoryId: this.categoryId,
-        categoryName: this.categoryName,
         createdByAccountId: this.createdByAccountId,
         description: this.description,
         financeId: this.financeId,
@@ -217,11 +213,6 @@ test('linked shift cash expense creates an expense Finance record for P&L', asyn
   const history = [];
   const transaction = { id: 'shift-cash-finance' };
   db.PayrollPeriod = { async findOne() { return null; } };
-  db.Category = {
-    async findOne() {
-      return { id: 9, name: 'Хозяйственные расходы', type: 'expense' };
-    },
-  };
   db.Finance = {
     async create(payload, options) {
       created.push({ options, payload });
@@ -241,7 +232,7 @@ test('linked shift cash expense creates an expense Finance record for P&L', asyn
   const result = await financeService.createLinkedExpenseRecord(
     {
       amount: 900,
-      categoryId: 9,
+      category: shiftCashService.SHIFT_CASH_EXPENSE_CATEGORY,
       comment: 'Касса смены #12: сборка подставки',
       date: '2026-07-14',
     },
@@ -259,7 +250,10 @@ test('linked shift cash expense creates an expense Finance record for P&L', asyn
   assert.equal(result.record.id, 55);
   assert.equal(created[0].payload.type, 'expense');
   assert.equal(created[0].payload.amount, 900);
-  assert.equal(created[0].payload.category, 'Хозяйственные расходы');
+  assert.equal(
+    created[0].payload.category,
+    shiftCashService.SHIFT_CASH_EXPENSE_CATEGORY,
+  );
   assert.equal(created[0].options.transaction, transaction);
   assert.equal(history[0].payload.action, 'shift_cash_expense.finance_created');
 });
@@ -394,7 +388,12 @@ test('shift cash migration creates indexed session and expense tables and rolls 
 
   await migration.up(queryInterface, Sequelize);
   assert.equal(operations[0][1], 'ShiftCashSessions');
-  assert.equal(operations.some((item) => item[1] === 'ShiftCashExpenses'), true);
+  const expenseTable = operations.find(
+    (item) => item[0] === 'create' && item[1] === 'ShiftCashExpenses',
+  );
+  assert.ok(expenseTable);
+  assert.equal(expenseTable[2].categoryId, undefined);
+  assert.equal(expenseTable[2].categoryName, undefined);
   assert.equal(
     operations.some((item) => item[3]?.name === 'shift_cash_expenses_finance_idx'),
     true,
@@ -417,6 +416,8 @@ test('shift cash models expose required links and soft-cancel fields', () => {
   assert.ok(expenseAttributes.status);
   assert.ok(expenseAttributes.cancelReason);
   assert.ok(expenseAttributes.attachments);
+  assert.equal(expenseAttributes.categoryId, undefined);
+  assert.equal(expenseAttributes.categoryName, undefined);
   assert.ok(sessionAttributes.openingBanknotes);
   assert.ok(sessionAttributes.closingBanknotes);
   assert.ok(sessionAttributes.expectedClosingCash);

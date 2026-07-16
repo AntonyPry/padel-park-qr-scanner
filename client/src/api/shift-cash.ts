@@ -17,30 +17,18 @@ export interface ShiftCashAttachment {
   url: string;
 }
 
-export interface ShiftCashCategory {
-  group: string;
-  id: number;
-  name: string;
-  parentId?: number | null;
-  type: string;
-}
-
 export interface ShiftCashExpense {
   amount: number;
   attachments: ShiftCashAttachment[];
   canceledAt?: string | null;
   canceledBy?: ShiftCashAccount | null;
   cancelReason?: string | null;
-  category?: ShiftCashCategory | null;
-  categoryId?: number | null;
-  categoryName: string;
   createdAt: string;
   createdBy?: ShiftCashAccount | null;
   createdByAccountId?: number | null;
   description: string;
   finance?: {
     amount: number;
-    category: string;
     date: string;
     id: number;
     type: string;
@@ -79,7 +67,6 @@ export interface ShiftCashSummary {
   activeExpensesTotal: number;
   cashSales: number;
   createdExpenseId?: number;
-  expenseCategories: ShiftCashCategory[];
   expenses: ShiftCashExpense[];
   expectedClosingCash: number;
   manualAdjustments: number;
@@ -101,7 +88,6 @@ export interface ShiftCashBalancePayload {
 
 export interface ShiftCashExpensePayload {
   amount: number;
-  categoryId: number;
   description: string;
   spentAt?: string;
 }

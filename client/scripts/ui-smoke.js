@@ -91,6 +91,8 @@ const ROUTE_CHECKS = [
   { route: '/admin/catalog' },
   { route: '/admin/references' },
   { route: '/admin/motivation' },
+  { route: '/admin/shift-reports' },
+  { route: '/admin/shift-cash' },
   { route: '/admin/audit' },
 ];
 

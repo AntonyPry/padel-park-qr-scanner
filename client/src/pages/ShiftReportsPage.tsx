@@ -1,12 +1,12 @@
 import {
   CalendarDays,
+  CheckCircle2,
+  Copy,
   CopyPlus,
   FileCheck2,
   ListChecks,
-  Loader2,
   Pencil,
   Plus,
-  RotateCcw,
   Save,
   Trash2,
   X,
@@ -71,6 +71,7 @@ import { cn } from '@/lib/utils';
 import { useRealtimeRefresh } from '@/lib/realtime';
 import { useAuthorizationRole } from '@/lib/useAuth';
 import { canManageShiftReportTemplates } from '@/lib/permissions';
+import { loadCompletedShiftReport } from '@/lib/completed-shift-report';
 import { ru } from 'date-fns/locale';
 
 const statusLabels: Record<ShiftReportStatus | 'all', string> = {
@@ -1005,6 +1006,8 @@ export default function ShiftReportsPage() {
   const [date, setDate] = useState(todayDate());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [completedReport] = useState(loadCompletedShiftReport);
+  const [reportCopied, setReportCopied] = useState(false);
 
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.id === selectedTemplateId) || null,
@@ -1102,8 +1105,20 @@ export default function ShiftReportsPage() {
     setReportDialogOpen(true);
   };
 
+  const copyCompletedReport = async () => {
+    if (!completedReport) return;
+    try {
+      await navigator.clipboard.writeText(completedReport.text);
+      setReportCopied(true);
+      showSuccessToast('Отчет скопирован');
+      window.setTimeout(() => setReportCopied(false), 1500);
+    } catch {
+      toast.error('Не удалось скопировать отчет');
+    }
+  };
+
   return (
-    <div className="grid gap-5">
+    <div aria-busy={loading} className="grid min-w-0 gap-5">
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <TabsList className="w-full sm:w-auto">
@@ -1137,6 +1152,29 @@ export default function ShiftReportsPage() {
 
         <TabsContent value="reports">
           <div className="grid gap-4">
+            {completedReport && (
+              <Card className="min-w-0 border-primary/30">
+                <CardHeader className="flex flex-col gap-3 border-b sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0">
+                    <CardTitle className="text-lg">Отчет по завершенной смене</CardTitle>
+                    <CardDescription>Смена #{completedReport.shiftId}</CardDescription>
+                  </div>
+                  <Button size="sm" type="button" variant="outline" onClick={() => void copyCompletedReport()}>
+                    {reportCopied ? (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    ) : (
+                      <Copy className="mr-2 h-4 w-4" />
+                    )}
+                    {reportCopied ? 'Скопировано' : 'Скопировать'}
+                  </Button>
+                </CardHeader>
+                <CardContent className="pt-4">
+                  <pre className="max-w-full whitespace-pre-wrap break-words rounded-lg bg-muted p-4 font-mono text-sm">
+                    {completedReport.text}
+                  </pre>
+                </CardContent>
+              </Card>
+            )}
             <Card>
               <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-end">
                 <div className="grid gap-2 sm:w-64">
@@ -1161,14 +1199,6 @@ export default function ShiftReportsPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button variant="outline" disabled={loading} onClick={() => void refresh()}>
-                  {loading ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <RotateCcw className="mr-2 h-4 w-4" />
-                  )}
-                  Обновить
-                </Button>
               </CardContent>
             </Card>
 

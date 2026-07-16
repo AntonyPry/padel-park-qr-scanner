@@ -40,6 +40,7 @@ export const TENANT_QUERY_DOMAINS = new Set([
   'prepayments',
   'references',
   'reports',
+  'shiftCash',
   'shiftReports',
   'shifts',
   'staff',
@@ -232,6 +233,7 @@ export const queryKeys = {
       key('organization', 'references', 'list', type, status),
   },
   reports: domainKeys('club', 'reports'),
+  shiftCash: domainKeys('club', 'shiftCash'),
   shiftReports: {
     get all() {
       return key('club', 'shiftReports');

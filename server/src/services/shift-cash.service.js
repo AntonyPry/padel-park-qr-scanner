@@ -2,7 +2,6 @@
 
 const db = require('../../models');
 const { resolveStoredReceiptPayments } = require('../utils/payments');
-const catalogService = require('./catalog.service');
 const financeService = require('./finance.service');
 const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
@@ -10,6 +9,7 @@ const attachmentStorage = require('./shift-cash-attachments');
 
 const { Op } = db.Sequelize;
 const MANAGER_ROLES = new Set(['owner', 'manager']);
+const SHIFT_CASH_EXPENSE_CATEGORY = 'Расходы из кассы';
 
 function accountInclude(as) {
   return {
@@ -23,8 +23,7 @@ function accountInclude(as) {
 const EXPENSE_INCLUDE = [
   accountInclude('createdBy'),
   accountInclude('canceledBy'),
-  { as: 'category', model: db.Category, attributes: ['id', 'name', 'type', 'group'] },
-  { as: 'finance', model: db.Finance, attributes: ['id', 'date', 'category', 'amount', 'type'] },
+  { as: 'finance', model: db.Finance, attributes: ['id', 'date', 'amount', 'type'] },
 ];
 const SESSION_INCLUDE = [
   accountInclude('openingRecordedBy'),
@@ -175,12 +174,6 @@ function serializeExpense(expense) {
     })),
     createdBy: serializeAccount(raw.createdBy),
     canceledBy: serializeAccount(raw.canceledBy),
-    category: raw.category ? {
-      group: raw.category.group,
-      id: raw.category.id,
-      name: raw.category.name,
-      type: raw.category.type,
-    } : null,
     finance: raw.finance ? {
       ...raw.finance,
       amount: roundMoney(raw.finance.amount),
@@ -307,20 +300,6 @@ async function listExpenses(sessionId, options = {}) {
   });
 }
 
-async function getExpenseCategories() {
-  const categories = await catalogService.getCategories({ status: 'active' });
-  return categories
-    .filter((category) => category.type === 'expense')
-    .map((category) => ({
-      group: category.group,
-      id: category.id,
-      name: category.name,
-      parentId: category.parentId || null,
-      type: category.type,
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name, 'ru'));
-}
-
 async function buildCashSummary(shift, session, context, options = {}) {
   const expenses = session ? await listExpenses(session.id, options) : [];
   const activeExpensesTotal = roundMoney(
@@ -347,7 +326,6 @@ async function buildCashSummary(shift, session, context, options = {}) {
   return {
     activeExpensesTotal,
     cashSales,
-    expenseCategories: options.includeCategories === false ? [] : await getExpenseCategories(),
     expenses: expenses.map(serializeExpense),
     expectedClosingCash,
     manualAdjustments,
@@ -362,7 +340,6 @@ async function getActiveCash(account) {
     return {
       activeExpensesTotal: 0,
       cashSales: 0,
-      expenseCategories: await getExpenseCategories(),
       expenses: [],
       expectedClosingCash: 0,
       manualAdjustments: 0,
@@ -439,10 +416,6 @@ async function saveOpening(data, account) {
 
 function normalizeExpensePayload(data, shift) {
   const amount = normalizePositiveMoney(data.amount);
-  const categoryId = Number(data.categoryId);
-  if (!Number.isInteger(categoryId) || categoryId <= 0) {
-    throw appError('Выберите категорию расхода');
-  }
   const description = normalizeText(data.description, 'Описание расхода', {
     max: 1000,
     required: true,
@@ -459,7 +432,7 @@ function normalizeExpensePayload(data, shift) {
   if (!endedAt && spentAt.getTime() > Date.now() + 5 * 60000) {
     throw appError('Время расхода не может быть в будущем');
   }
-  return { amount, categoryId, description, spentAt };
+  return { amount, description, spentAt };
 }
 
 function financeComment(shift, description) {
@@ -477,10 +450,10 @@ async function createExpense(data, account) {
       throw appError('Сначала зафиксируйте остаток кассы на начало смены', 409);
     }
     const normalized = normalizeExpensePayload(data, shift);
-    const { category, record: finance } = await financeService.createLinkedExpenseRecord(
+    const { record: finance } = await financeService.createLinkedExpenseRecord(
       {
         amount: normalized.amount,
-        categoryId: normalized.categoryId,
+        category: SHIFT_CASH_EXPENSE_CATEGORY,
         comment: financeComment(shift, normalized.description),
         date: shift.date,
       },
@@ -492,8 +465,6 @@ async function createExpense(data, account) {
         amount: normalized.amount,
         attachments: [],
         cashSessionId: session.id,
-        categoryId: category.id,
-        categoryName: category.name,
         createdByAccountId: account?.id || null,
         description: normalized.description,
         financeId: finance.id,
@@ -580,11 +551,11 @@ async function updateExpense(expenseId, data, account) {
     await payrollService.assertDateEditable(shift.date, 'кассовый расход');
     const normalized = normalizeExpensePayload(data, shift);
     const beforeData = expense.toJSON();
-    const { category, record: finance } = await financeService.updateLinkedExpenseRecord(
+    const { record: finance } = await financeService.updateLinkedExpenseRecord(
       expense.financeId,
       {
         amount: normalized.amount,
-        categoryId: normalized.categoryId,
+        category: SHIFT_CASH_EXPENSE_CATEGORY,
         comment: financeComment(shift, normalized.description),
         date: shift.date,
       },
@@ -594,8 +565,6 @@ async function updateExpense(expenseId, data, account) {
     await expense.update(
       {
         amount: normalized.amount,
-        categoryId: category.id,
-        categoryName: category.name,
         description: normalized.description,
         financeId: finance.id,
         spentAt: normalized.spentAt,
@@ -844,6 +813,7 @@ module.exports = {
   getShiftCash,
   removeAttachment,
   roundMoney,
+  SHIFT_CASH_EXPENSE_CATEGORY,
   saveOpening,
   serializeExpense,
   serializeSession,
