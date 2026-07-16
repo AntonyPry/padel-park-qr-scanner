@@ -2250,7 +2250,7 @@ Product source:
 - training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-navigation-cash-ux`; в instructions-diff это не дублируется;
 - admin/manager/owner Shift Cash задачи ведут на `/admin/shift-cash`; бухгалтерский read-only сценарий остается на `/admin/finances`;
 - связанные Shift Reports уроки проверяются отдельно и должны вести на `/admin/shift-reports`; отдельных Shift Reports onboarding-задач в catalog на момент sync нет;
-- из Shift Cash инструкций убраны выбор и сверка категории расхода после migration `20260715190000-remove-shift-cash-expense-category.js`;
+- из Shift Cash инструкций убраны выбор и сверка категории расхода; исходная migration `20260714100000-create-shift-cash.js` создает чистую схему без `categoryId` и `categoryName` после согласованного production rollback/reapply;
 - обновлены реальные CRM screenshots из feature QA в dark/light наборах:
   - `/onboarding/shift-cash/full-cash-metrics.png`;
   - `/onboarding/shift-cash/opening-form.png`;
