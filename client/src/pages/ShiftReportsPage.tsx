@@ -1,4 +1,6 @@
 import {
+  Archive,
+  ArchiveRestore,
   CalendarDays,
   CheckCircle2,
   Copy,
@@ -21,6 +23,7 @@ import {
   listShiftReportTemplates,
   updateShiftReportTemplate,
   updateShiftReportTemplateItem,
+  updateShiftReportTemplateStatus,
   type ShiftReport,
   type ShiftReportItemType,
   type ShiftReportTemplate,
@@ -65,7 +68,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Calendar } from '@/components/ui/calendar';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Tabs, TabsContent } from '@/components/ui/tabs';
 import { toast } from '@/components/ui/toast';
 import { cn } from '@/lib/utils';
 import { useRealtimeRefresh } from '@/lib/realtime';
@@ -106,7 +109,19 @@ const editableItemTypes: Array<{ label: string; value: ShiftReportItemType }> = 
   { label: 'Число', value: 'number' },
 ];
 
+const templateRoles = [
+  { label: 'Все роли', value: 'all' },
+  { label: 'Владелец', value: 'owner' },
+  { label: 'Менеджер', value: 'manager' },
+  { label: 'Администратор', value: 'admin' },
+  { label: 'Бухгалтер', value: 'accountant' },
+  { label: 'Наблюдатель', value: 'viewer' },
+  { label: 'Тренер', value: 'trainer' },
+];
+
 interface TemplateDraft {
+  appliesToRole: string;
+  appliesToShiftType: string;
   description: string;
   gracePeriodMinutes: string;
   name: string;
@@ -291,6 +306,8 @@ function getEditableTemplateTimes(template: ShiftReportTemplate) {
 
 function templateToDraft(template: ShiftReportTemplate): TemplateDraft {
   return {
+    appliesToRole: template.appliesToRole || 'all',
+    appliesToShiftType: template.appliesToShiftType || '',
     description: template.description || '',
     gracePeriodMinutes: String(template.gracePeriodMinutes ?? 30),
     name: template.name,
@@ -314,6 +331,8 @@ function itemToDraft(item: ShiftReportTemplateItem): ItemDraft {
 
 function draftToPayload(draft: TemplateDraft): ShiftReportTemplatePayload {
   return {
+    appliesToRole: draft.appliesToRole === 'all' ? null : draft.appliesToRole,
+    appliesToShiftType: draft.appliesToShiftType.trim() || null,
     description: draft.description.trim() || null,
     gracePeriodMinutes: draft.gracePeriodMinutes || 0,
     name: draft.name.trim(),
@@ -339,6 +358,8 @@ function itemDraftToPayload(
 
 function areTemplateDraftsEqual(left: TemplateDraft, right: TemplateDraft) {
   return (
+    left.appliesToRole === right.appliesToRole &&
+    left.appliesToShiftType === right.appliesToShiftType &&
     left.description === right.description &&
     left.gracePeriodMinutes === right.gracePeriodMinutes &&
     left.name === right.name &&
@@ -665,7 +686,7 @@ function TemplateEditorDialog({
   initialSortOrder: number;
   mode: 'create' | 'edit';
   onCreated: (template: ShiftReportTemplate) => void;
-  onDeleted: (templateId: number) => void;
+  onDeleted: (template: ShiftReportTemplate) => void;
   onOpenChange: (open: boolean) => void;
   onSaved: (template: ShiftReportTemplate) => void;
   open: boolean;
@@ -683,6 +704,8 @@ function TemplateEditorDialog({
       mode === 'edit' && template
         ? templateToDraft(template)
         : {
+            appliesToRole: 'all',
+            appliesToShiftType: '',
             description: '',
             gracePeriodMinutes: '30',
             name: 'Новый отчет смены',
@@ -711,6 +734,8 @@ function TemplateEditorDialog({
     }
     if (mode === 'create') {
       setDraft({
+        appliesToRole: 'all',
+        appliesToShiftType: '',
         description: '',
         gracePeriodMinutes: '30',
         name: 'Новый отчет смены',
@@ -804,12 +829,12 @@ function TemplateEditorDialog({
     if (!template) return;
     setDeleting(true);
     try {
-      await deleteShiftReportTemplate(template.id);
-      onDeleted(template.id);
+      const archived = await deleteShiftReportTemplate(template.id);
+      onDeleted(archived);
       onOpenChange(false);
-      showSuccessToast('Шаблон удален');
+      showSuccessToast('Шаблон архивирован');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось удалить шаблон');
+      toast.error(error instanceof Error ? error.message : 'Не удалось архивировать шаблон');
     } finally {
       setDeleting(false);
     }
@@ -903,6 +928,46 @@ function TemplateEditorDialog({
                 }
               />
             </div>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>Роль сотрудника</Label>
+                <Select
+                  disabled={saving || deleting}
+                  value={draft.appliesToRole}
+                  onValueChange={(appliesToRole) =>
+                    setDraft((current) =>
+                      current ? { ...current, appliesToRole } : current,
+                    )
+                  }
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {templateRoles.map((role) => (
+                      <SelectItem key={role.value} value={role.value}>
+                        {role.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-2">
+                <Label>Тип смены</Label>
+                <Input
+                  disabled={saving || deleting}
+                  placeholder="Все типы"
+                  value={draft.appliesToShiftType}
+                  onChange={(event) =>
+                    setDraft((current) =>
+                      current
+                        ? { ...current, appliesToShiftType: event.target.value }
+                        : current,
+                    )
+                  }
+                />
+              </div>
+            </div>
           </section>
 
           <section className="rounded-lg border p-4">
@@ -961,8 +1026,8 @@ function TemplateEditorDialog({
               variant="destructive"
               onClick={() => void deleteTemplate()}
             >
-              <Trash2 className="mr-2 h-4 w-4" />
-              Удалить шаблон
+              <Archive className="mr-2 h-4 w-4" />
+              Архивировать шаблон
             </Button>
           ) : (
             <span />
@@ -991,10 +1056,16 @@ function TemplateEditorDialog({
   );
 }
 
-export default function ShiftReportsPage() {
+type ShiftReportsPageProps = {
+  view?: 'operations' | 'settings';
+};
+
+export default function ShiftReportsPage({
+  view = 'operations',
+}: ShiftReportsPageProps) {
   const { account } = useAuth();
   const canManageTemplates = canManageShiftReportTemplates(account?.role);
-  const [activeTab, setActiveTab] = useState<'reports' | 'templates'>('reports');
+  const isSettingsView = view === 'settings';
   const [reports, setReports] = useState<ShiftReport[]>([]);
   const [templates, setTemplates] = useState<ShiftReportTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
@@ -1018,17 +1089,17 @@ export default function ShiftReportsPage() {
     setLoading(true);
     setError('');
     try {
-      const [nextReports, nextTemplates] = await Promise.all([
-        listShiftReports({ date, status }),
-        listShiftReportTemplates('active'),
-      ]);
-      setReports(nextReports);
-      setTemplates(nextTemplates);
-      setSelectedTemplateId((current) =>
-        current && nextTemplates.some((template) => template.id === current)
-          ? current
-          : null,
-      );
+      if (isSettingsView) {
+        const nextTemplates = await listShiftReportTemplates('all');
+        setTemplates(nextTemplates);
+        setSelectedTemplateId((current) =>
+          current && nextTemplates.some((template) => template.id === current)
+            ? current
+            : null,
+        );
+      } else {
+        setReports(await listShiftReports({ date, status }));
+      }
     } catch (loadError) {
       setError(
         loadError instanceof Error
@@ -1038,7 +1109,7 @@ export default function ShiftReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [date, status]);
+  }, [date, isSettingsView, status]);
 
   useEffect(() => {
     void refresh();
@@ -1052,7 +1123,6 @@ export default function ShiftReportsPage() {
     setSelectedTemplateId(null);
     setTemplateDialogMode('create');
     setTemplateDialogOpen(true);
-    setActiveTab('templates');
   };
 
   const handleTemplateCreated = (template: ShiftReportTemplate) => {
@@ -1070,9 +1140,11 @@ export default function ShiftReportsPage() {
     );
   };
 
-  const handleTemplateDeleted = (templateId: number) => {
-    setTemplates((current) => current.filter((template) => template.id !== templateId));
-    setSelectedTemplateId((current) => (current === templateId ? null : current));
+  const handleTemplateArchived = (template: ShiftReportTemplate) => {
+    setTemplates((current) =>
+      current.map((item) => (item.id === template.id ? template : item)),
+    );
+    setSelectedTemplateId(null);
   };
 
   const openTemplate = (template: ShiftReportTemplate) => {
@@ -1081,14 +1153,19 @@ export default function ShiftReportsPage() {
     setTemplateDialogOpen(true);
   };
 
-  const deleteTemplateFromList = async (template: ShiftReportTemplate) => {
+  const toggleTemplateStatus = async (template: ShiftReportTemplate) => {
+    const nextStatus = template.status === 'active' ? 'archived' : 'active';
     try {
-      await deleteShiftReportTemplate(template.id);
-      handleTemplateDeleted(template.id);
-      showSuccessToast('Шаблон удален');
-    } catch (deleteError) {
+      const updated = await updateShiftReportTemplateStatus(template.id, nextStatus);
+      handleTemplateSaved(updated);
+      showSuccessToast(
+        nextStatus === 'active' ? 'Шаблон восстановлен' : 'Шаблон архивирован',
+      );
+    } catch (statusError) {
       toast.error(
-        deleteError instanceof Error ? deleteError.message : 'Не удалось удалить шаблон',
+        statusError instanceof Error
+          ? statusError.message
+          : 'Не удалось изменить статус шаблона',
       );
     }
   };
@@ -1119,34 +1196,26 @@ export default function ShiftReportsPage() {
 
   return (
     <div aria-busy={loading} className="grid min-w-0 gap-5">
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as typeof activeTab)}>
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <TabsList className="w-full sm:w-auto">
-            <TabsTrigger value="reports">
-              <FileCheck2 className="h-4 w-4" />
-              Отчеты
-            </TabsTrigger>
-            <TabsTrigger value="templates">
-              <ListChecks className="h-4 w-4" />
-              Шаблоны
-            </TabsTrigger>
-          </TabsList>
-          <div className="flex min-h-10 items-center justify-start sm:min-w-[188px] sm:justify-end">
-            {canManageTemplates && activeTab === 'templates' && (
-              <Button variant="outline" onClick={openCreateTemplate}>
-                <CopyPlus className="mr-2 h-4 w-4" />
-                Создать шаблон
-              </Button>
-            )}
+      <Tabs value={isSettingsView ? 'templates' : 'reports'}>
+        {isSettingsView && canManageTemplates && (
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={openCreateTemplate}>
+              <CopyPlus className="mr-2 h-4 w-4" />
+              Создать шаблон
+            </Button>
           </div>
-        </div>
+        )}
 
         {error && (
           <ErrorState
             compact
             message={error}
             onRetry={() => void refresh()}
-            title="Отчеты смены не загрузились"
+            title={
+              isSettingsView
+                ? 'Шаблоны отчетов не загрузились'
+                : 'Отчеты смены не загрузились'
+            }
           />
         )}
 
@@ -1236,7 +1305,7 @@ export default function ShiftReportsPage() {
                       <CardContent className="grid gap-3">
                         <div className="flex flex-wrap items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="truncate font-semibold">
+                            <div className="break-words font-semibold">
                               {report.templateSnapshot.name}
                             </div>
                             <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -1293,13 +1362,27 @@ export default function ShiftReportsPage() {
                     <Card key={template.id} size="sm" className="min-w-0">
                       <CardContent className="grid gap-3">
                         <div className="min-w-0">
-                          <div className="truncate font-semibold">{template.name}</div>
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
+                            <div className="min-w-0 break-words font-semibold">
+                              {template.name}
+                            </div>
+                            <Badge
+                              variant={template.status === 'active' ? 'default' : 'outline'}
+                            >
+                              {template.status === 'active' ? 'Активен' : 'В архиве'}
+                            </Badge>
+                          </div>
                           <div className="mt-2 flex flex-wrap gap-2">
                             {getEditableTemplateTimes(template).map((time) => (
                               <Badge key={time} variant="secondary">
                                 {time}
                               </Badge>
                             ))}
+                          </div>
+                          <div className="mt-2 text-xs text-muted-foreground">
+                            Роль: {template.appliesToRole || 'все'}
+                            {' · '}
+                            Тип смены: {template.appliesToShiftType || 'все'}
                           </div>
                         </div>
                         {template.description && (
@@ -1309,21 +1392,31 @@ export default function ShiftReportsPage() {
                         )}
                         {canManageTemplates ? (
                           <div className="flex flex-wrap justify-end gap-2">
+                            {template.status === 'active' && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => openTemplate(template)}
+                              >
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Редактировать
+                              </Button>
+                            )}
                             <Button
                               size="sm"
-                              variant="outline"
-                              onClick={() => openTemplate(template)}
+                              variant={
+                                template.status === 'active' ? 'destructive' : 'outline'
+                              }
+                              onClick={() => void toggleTemplateStatus(template)}
                             >
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Редактировать
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => void deleteTemplateFromList(template)}
-                            >
-                              <Trash2 className="mr-2 h-4 w-4" />
-                              Удалить
+                              {template.status === 'active' ? (
+                                <Archive className="mr-2 h-4 w-4" />
+                              ) : (
+                                <ArchiveRestore className="mr-2 h-4 w-4" />
+                              )}
+                              {template.status === 'active'
+                                ? 'Архивировать'
+                                : 'Восстановить'}
                             </Button>
                           </div>
                         ) : (
@@ -1345,19 +1438,23 @@ export default function ShiftReportsPage() {
         initialSortOrder={templates.length * 10 + 10}
         mode={templateDialogMode}
         onCreated={handleTemplateCreated}
-        onDeleted={handleTemplateDeleted}
+        onDeleted={handleTemplateArchived}
         onOpenChange={setTemplateDialogOpen}
         onSaved={handleTemplateSaved}
-        open={templateDialogOpen}
+        open={isSettingsView && templateDialogOpen}
         template={templateDialogMode === 'edit' ? selectedTemplate : null}
       />
 
       <ShiftReportDialog
         onOpenChange={setReportDialogOpen}
         onUpdated={handleReportUpdated}
-        open={reportDialogOpen}
+        open={!isSettingsView && reportDialogOpen}
         report={selectedReport}
       />
     </div>
   );
+}
+
+export function ShiftReportTemplatesSettings() {
+  return <ShiftReportsPage view="settings" />;
 }

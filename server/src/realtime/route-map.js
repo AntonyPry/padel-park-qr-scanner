@@ -26,7 +26,12 @@ const DEFAULT_DOMAIN_HINTS = {
   },
   catalog: {
     queryGroups: ['catalog', 'finance', 'prepayments', 'motivation'],
-    routes: ['/admin/catalog', '/admin/finances', '/admin/prepayments'],
+    routes: [
+      '/admin/catalog',
+      '/admin/finances',
+      '/admin/prepayments',
+      '/admin/shift-settings',
+    ],
   },
   certificates: {
     queryGroups: ['certificates', 'clients', 'bookings', 'prepayments', 'visitsAnalytics'],
@@ -88,7 +93,12 @@ const DEFAULT_DOMAIN_HINTS = {
   },
   motivation: {
     queryGroups: ['motivation', 'finance', 'catalog'],
-    routes: ['/admin/motivation', '/admin/finances', '/admin/catalog'],
+    routes: [
+      '/admin/shift/motivation',
+      '/admin/shift-settings',
+      '/admin/finances',
+      '/admin/catalog',
+    ],
   },
   onboarding: {
     queryGroups: ['onboarding'],
@@ -122,10 +132,11 @@ const DEFAULT_DOMAIN_HINTS = {
     queryGroups: ['shifts', 'shiftCash', 'shiftReports', 'payroll', 'staff', 'motivation', 'finance'],
     routes: [
       '/admin/staff',
-      '/admin/motivation',
+      '/admin/shift/motivation',
       '/admin/finances',
-      '/admin/shift-reports',
-      '/admin/shift-cash',
+      '/admin/shift/reports',
+      '/admin/shift/cash',
+      '/admin/shift-settings',
     ],
   },
   staff: {

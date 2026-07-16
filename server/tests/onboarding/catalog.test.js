@@ -461,10 +461,10 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     '/admin/manager-control',
     '/admin/methodology',
     '/admin/methodology-analytics',
-    '/admin/motivation',
     '/admin/onboarding',
     '/admin/prepayments',
     '/admin/references',
+    '/admin/shift-settings',
     '/admin/staff',
     '/admin/telephony',
     '/admin/trainer',
@@ -838,7 +838,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'admin',
     'admin.shift-cash.opening-record',
   ).task;
-  assert.equal(adminOpening.route, '/admin/shift-cash');
+  assert.equal(adminOpening.route, '/admin/shift/cash');
   assert.equal(adminOpening.kind, 'action');
   assert.equal(adminOpening.checkpoint.event, 'shift_cash.opening_recorded');
   assert.equal(adminOpening.trainingMode.recommended, true);
@@ -847,7 +847,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'admin',
     'admin.shift-cash.expense-with-photo',
   ).task;
-  assert.equal(adminExpense.route, '/admin/shift-cash');
+  assert.equal(adminExpense.route, '/admin/shift/cash');
   assert.equal(adminExpense.kind, 'action');
   assert.equal(adminExpense.checkpoint.event, 'shift_cash.attachment_uploaded');
   assert.equal(
@@ -859,7 +859,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'manager',
     'manager.shift-cash.reconciliation-review',
   ).task;
-  assert.equal(managerClose.route, '/admin/shift-cash');
+  assert.equal(managerClose.route, '/admin/shift/cash');
   assert.equal(managerClose.checkpoint.event, 'shift_cash.closed');
   assert.equal(managerClose.trainingMode.recommended, false);
 
@@ -867,12 +867,24 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'owner',
     'owner.shift-cash.control-review',
   ).task;
-  assert.equal(ownerControl.route, '/admin/shift-cash');
+  assert.equal(ownerControl.route, '/admin/shift/cash');
   assert.equal(ownerControl.checkpoint.event, 'shift_cash.closed');
   assert.equal(
     getTaskVisibleText(ownerControl).includes('Владелец может проходить обучение за роли'),
     true,
   );
+
+  const managerMotivation = findOnboardingTask(
+    'manager',
+    'manager.motivation.update',
+  ).task;
+  assert.equal(managerMotivation.route, '/admin/shift-settings');
+
+  const ownerMotivation = findOnboardingTask(
+    'owner',
+    'owner.motivation.review',
+  ).task;
+  assert.equal(ownerMotivation.route, '/admin/shift-settings');
 
   const accountantReview = findOnboardingTask(
     'accountant',

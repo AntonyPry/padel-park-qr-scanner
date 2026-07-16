@@ -6,6 +6,7 @@ import { Toaster } from '@/components/ui/toast';
 import { PrepaymentsPageShell } from '@/components/prepayments-page-shell';
 import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
+import { LegacyShiftRedirect } from './components/legacy-shift-redirect';
 import { OnboardingRouteEvents } from './components/onboarding-route-events';
 import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { ROUTE_ACCESS } from './lib/permissions';
@@ -30,6 +31,10 @@ const CatalogPage = lazy(() => import('./pages/CatalogPage'));
 const AdminMotivationPage = lazy(() => import('./pages/AdminMotivationPage'));
 const ShiftReportsPage = lazy(() => import('./pages/ShiftReportsPage'));
 const ShiftCashPage = lazy(() => import('./pages/ShiftCashPage'));
+const ShiftSettingsPage = lazy(() => import('./pages/ShiftSettingsPage'));
+const ShiftWorkspaceLayout = lazy(
+  () => import('./components/shift-workspace-layout'),
+);
 const SystemUsersPage = lazy(() => import('./pages/SystemUsersPage'));
 const ClientBasesPage = lazy(() => import('./pages/ClientBasesPage'));
 const CallTasksPage = lazy(() => import('./pages/CallTasksPage'));
@@ -259,10 +264,56 @@ function App() {
                       }
                     />
                     <Route
+                      path="/admin/shift"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift']}>
+                          <Navigate to="/admin/shift/motivation" replace />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift/motivation"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift/motivation']}>
+                          <ShiftWorkspaceLayout>
+                            <AdminMotivationPage />
+                          </ShiftWorkspaceLayout>
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift/reports"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift/reports']}>
+                          <ShiftWorkspaceLayout>
+                            <ShiftReportsPage />
+                          </ShiftWorkspaceLayout>
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift/cash"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift/cash']}>
+                          <ShiftWorkspaceLayout>
+                            <ShiftCashPage />
+                          </ShiftWorkspaceLayout>
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift-settings"
+                      element={
+                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift-settings']}>
+                          <ShiftSettingsPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
                       path="/admin/motivation"
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/motivation']}>
-                          <AdminMotivationPage />
+                          <LegacyShiftRedirect to="/admin/shift/motivation" />
                         </RequireRoles>
                       }
                     />
@@ -270,7 +321,7 @@ function App() {
                       path="/admin/shift-reports"
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/shift-reports']}>
-                          <ShiftReportsPage />
+                          <LegacyShiftRedirect to="/admin/shift/reports" />
                         </RequireRoles>
                       }
                     />
@@ -278,7 +329,7 @@ function App() {
                       path="/admin/shift-cash"
                       element={
                         <RequireRoles roles={ROUTE_ACCESS['/admin/shift-cash']}>
-                          <ShiftCashPage />
+                          <LegacyShiftRedirect to="/admin/shift/cash" />
                         </RequireRoles>
                       }
                     />

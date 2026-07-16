@@ -575,7 +575,7 @@ export function ShiftCashPanel() {
   return (
     <>
       <Card aria-busy={loading} className="min-w-0 overflow-hidden border-primary/25">
-        <CardHeader className="border-b bg-primary/[0.03] pb-4">
+        <CardHeader className="border-b pb-4">
           <div className="min-w-0">
             <CardTitle className="flex items-center gap-2 text-xl">
               <WalletCards className="h-5 w-5 text-primary" /> Касса
