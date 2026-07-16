@@ -3,7 +3,6 @@ import {
   BicepsFlexed,
   Banknote,
   CalendarDays,
-  CircleDollarSign,
   ContactRound,
   Database,
   Filter,
@@ -13,7 +12,6 @@ import {
   LineChart,
   ListChecks,
   ClipboardCheck,
-  ClipboardList,
   Boxes,
   LogOut,
   ListTree,
@@ -23,6 +21,7 @@ import {
   Users,
   Wallet,
   WalletCards,
+  SlidersHorizontal,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -102,26 +101,12 @@ const navigationSections: NavSection[] = [
         url: '/admin/onboarding',
         icon: GraduationCap,
       },
-    ],
-  },
-  {
-    title: 'Смена',
-    items: [
       {
-        title: 'Мотивация',
-        url: '/admin/motivation',
-        icon: CircleDollarSign,
-      },
-      {
-        title: 'Отчеты',
-        url: '/admin/shift-reports',
-        icon: ClipboardList,
-        badge: { kind: 'shiftReports' },
-      },
-      {
-        title: 'Касса',
-        url: '/admin/shift-cash',
+        title: 'Смена',
+        url: '/admin/shift/motivation',
+        activeUrls: ['/admin/shift'],
         icon: Banknote,
+        badge: { kind: 'shiftReports' },
       },
     ],
   },
@@ -204,6 +189,11 @@ const navigationSections: NavSection[] = [
   {
     title: 'Настройки',
     items: [
+      {
+        title: 'Настройки смены',
+        url: '/admin/shift-settings',
+        icon: SlidersHorizontal,
+      },
       {
         title: 'Персонал',
         url: '/admin/staff',

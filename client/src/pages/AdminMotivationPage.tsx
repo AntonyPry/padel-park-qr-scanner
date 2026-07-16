@@ -2,19 +2,16 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import type { ColumnDef } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import {
-  AlertTriangle,
-  Clock,
   Pencil,
   Percent,
-  Play,
   Plus,
   Save,
-  Square,
   Tags,
   Trash2,
   Trophy,
   Wallet,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,6 +24,10 @@ import { ErrorState } from '@/components/error-state';
 import {
   ShiftCashCloseDialog,
 } from '@/components/shift-cash-panel';
+import {
+  useShiftWorkspaceOptional,
+  type ShiftSession,
+} from '@/components/shift-workspace-state';
 import { toast } from '@/components/ui/toast';
 import {
   Dialog,
@@ -106,21 +107,6 @@ interface BonusRecord extends FinanceRecord {
   value: number;
 }
 
-interface ShiftSession {
-  id: number;
-  date: string;
-  staffId?: number | null;
-  adminName: string;
-  startedAt: string;
-  endedAt?: string | null;
-  status: 'active' | 'closed' | 'draft' | 'approved';
-  Staff?: {
-    id: number;
-    name: string;
-    role: string;
-  } | null;
-}
-
 interface RuleBreakdown {
   bonus: number;
   bonusPercent: number;
@@ -181,14 +167,6 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 function formatPaymentMethod(method?: string) {
   return PAYMENT_METHOD_LABELS[method || 'unknown'] || method || 'Не указано';
 }
-
-const formatDuration = (ms: number) => {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-  const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-  const s = String(totalSeconds % 60).padStart(2, '0');
-  return `${h}:${m}:${s}`;
-};
 
 const formatDateTime = (value?: string | null) =>
   value ? format(new Date(value), 'dd.MM.yyyy HH:mm') : '-';
@@ -820,9 +798,18 @@ function BonusRuleForm({
   );
 }
 
-export default function AdminMotivationPage() {
+type AdminMotivationPageProps = {
+  view?: 'operations' | 'settings';
+};
+
+export default function AdminMotivationPage({
+  view = 'operations',
+}: AdminMotivationPageProps) {
+  const shiftWorkspace = useShiftWorkspaceOptional();
+  const [searchParams, setSearchParams] = useSearchParams();
   const organizationRole = useAuthorizationRole('organization');
   const canEditMotivation = canManageMotivation(organizationRole);
+  const isSettingsView = view === 'settings';
 
   const [records, setRecords] = useState<FinanceRecord[]>([]);
   const [paymentSummary, setPaymentSummary] =
@@ -834,7 +821,6 @@ export default function AdminMotivationPage() {
   const [settingsError, setSettingsError] = useState('');
   const [hourlyRulesError, setHourlyRulesError] = useState('');
   const [salesError, setSalesError] = useState('');
-  const [shiftStatusError, setShiftStatusError] = useState('');
   const [bonusDrafts, setBonusDrafts] = useState<Record<number, BonusRuleDraft>>(
     {},
   );
@@ -847,7 +833,6 @@ export default function AdminMotivationPage() {
   const [editingBonusRuleId, setEditingBonusRuleId] = useState<number | null>(
     null,
   );
-  const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
   const [loading, setLoading] = useState(false);
   const [rulesLoading, setRulesLoading] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -870,12 +855,11 @@ export default function AdminMotivationPage() {
     () => bonusRules.find((rule) => rule.id === editingBonusRuleId) || null,
     [bonusRules, editingBonusRuleId],
   );
+  const activeShift = isSettingsView ? null : shiftWorkspace?.activeShift || null;
   const isShiftActive = activeShift?.status === 'active';
   const shiftStart = activeShift?.startedAt
     ? new Date(activeShift.startedAt).getTime()
     : null;
-  const shiftDurationMs = shiftStart ? now - shiftStart : 0;
-  const isLongShift = isShiftActive && shiftDurationMs > 16 * 3600000;
 
   const fetchCurrentSalesSnapshot = useCallback(async () => {
     const res = await apiFetch(
@@ -915,22 +899,6 @@ export default function AdminMotivationPage() {
       setLoading(false);
     }
   }, [fetchCurrentSalesSnapshot]);
-
-  const fetchActiveShift = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/shifts/active');
-      if (res.ok) {
-        const data = (await res.json()) as { shift: ShiftSession | null };
-        setActiveShift(data.shift);
-        setShiftStatusError('');
-      } else {
-        setShiftStatusError(await readError(res, 'Не удалось проверить активную смену'));
-      }
-    } catch (e) {
-      console.error(e);
-      setShiftStatusError(getApiErrorMessage(e, 'Не удалось проверить активную смену'));
-    }
-  }, []);
 
   const fetchMotivationSettings = useCallback(async () => {
     setRulesLoading(true);
@@ -1003,14 +971,16 @@ export default function AdminMotivationPage() {
 
   useEffect(() => {
     void fetchMotivationSettings();
-    void fetchActiveShift();
-    void fetchFinances();
-  }, [fetchActiveShift, fetchFinances, fetchMotivationSettings]);
+    if (!isSettingsView) {
+      void fetchFinances();
+    }
+  }, [fetchFinances, fetchMotivationSettings, isSettingsView]);
 
   useRealtimeRefresh(['motivation', 'shifts', 'finance', 'catalog'], () => {
     void fetchMotivationSettings();
-    void fetchActiveShift();
-    void fetchFinances();
+    if (!isSettingsView) {
+      void fetchFinances();
+    }
   });
 
   useEffect(() => {
@@ -1018,6 +988,29 @@ export default function AdminMotivationPage() {
     const interval = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(interval);
   }, [isShiftActive]);
+
+  useEffect(() => {
+    if (
+      isSettingsView ||
+      searchParams.get('closeShift') !== '1' ||
+      !shiftWorkspace?.loaded
+    ) {
+      return;
+    }
+
+    if (isShiftActive) {
+      setCashCloseOpen(true);
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('closeShift');
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    isSettingsView,
+    isShiftActive,
+    searchParams,
+    setSearchParams,
+    shiftWorkspace?.loaded,
+  ]);
 
   useEffect(() => {
     if (!isShiftActive) return;
@@ -1039,25 +1032,6 @@ export default function AdminMotivationPage() {
       shiftStart,
     });
   }, [bonusRules, now, paymentSummary, records, rulesMap, shiftStart]);
-
-  const handleStartShift = async () => {
-    try {
-      const res = await apiFetch('/api/shifts/start', { method: 'POST' });
-
-      if (!res.ok) {
-        toast.error(await readError(res, 'Не удалось начать смену'));
-        return;
-      }
-
-      const data = (await res.json()) as { shift: ShiftSession };
-      setActiveShift(data.shift);
-      setPaymentSummary(emptyPaymentSummary);
-      toast.success('Смена начата');
-      void fetchFinances();
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, 'Не удалось начать смену'));
-    }
-  };
 
   const executeEndShift = async (
     cash: ShiftCashBalancePayload,
@@ -1106,7 +1080,7 @@ export default function AdminMotivationPage() {
         shiftId: data.shift.id,
         text: buildShiftReport(data.shift, latestStats, data.cash || cashSummary.session),
       });
-      setActiveShift(null);
+      shiftWorkspace?.setActiveShift(null);
       toast.success('Смена завершена, отчет доступен в разделе «Отчеты»');
       void fetchFinances();
       return true;
@@ -1116,12 +1090,6 @@ export default function AdminMotivationPage() {
     } finally {
       setCashCloseLoading(false);
     }
-  };
-
-  const handleEndShift = async () => {
-    if (!activeShift || !shiftStart) return;
-
-    setCashCloseOpen(true);
   };
 
   const handleSaveRule = async (rule: MotivationRule) => {
@@ -1454,65 +1422,7 @@ export default function AdminMotivationPage() {
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex justify-end">
-        <div
-          className={`flex w-full items-center gap-4 rounded-lg border bg-card p-2 sm:w-auto ${
-            isLongShift ? 'border-amber-500/40 bg-amber-500/5' : ''
-          }`}
-        >
-          {isShiftActive ? (
-            <>
-              <div className="flex flex-col px-2">
-                <span className="text-xs text-muted-foreground">
-                  {activeShift?.adminName}
-                </span>
-                <span
-                  className={`flex items-center gap-2 font-mono text-lg tracking-widest ${
-                    isLongShift ? 'text-amber-500' : 'text-primary'
-                  }`}
-                >
-                  {isLongShift ? (
-                    <AlertTriangle className="h-5 w-5" />
-                  ) : (
-                    <Clock className="h-5 w-5 animate-pulse" />
-                  )}
-                  {shiftStart ? formatDuration(shiftDurationMs) : '00:00:00'}
-                </span>
-                {isLongShift && (
-                  <span className="text-xs text-amber-500">
-                    Смена длится больше 16 часов
-                  </span>
-                )}
-              </div>
-              <Button
-                onClick={() => void handleEndShift()}
-                variant="destructive"
-                className="w-full sm:w-auto"
-              >
-                <Square className="w-4 h-4 mr-2 fill-current" /> Завершить
-              </Button>
-            </>
-          ) : (
-            <Button
-              onClick={() => void handleStartShift()}
-              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
-            >
-              <Play className="w-4 h-4 mr-2 fill-current" /> Начать смену
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {shiftStatusError && (
-        <ErrorState
-          compact
-          message={shiftStatusError}
-          onRetry={() => void fetchActiveShift()}
-          title="Статус смены не загрузился"
-        />
-      )}
-
-      {canEditMotivation && (
+      {isSettingsView && canEditMotivation && (
         <>
           <Card>
             {rulesLoading && (
@@ -1711,7 +1621,7 @@ export default function AdminMotivationPage() {
         </>
       )}
 
-      {!isShiftActive ? (
+      {!isSettingsView && (!isShiftActive ? (
         <Card className="border-dashed border-2 bg-muted/20">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center space-y-3">
             <div className="p-3 rounded-full bg-primary/10">
@@ -1791,13 +1701,7 @@ export default function AdminMotivationPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-              <div>
-                <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Что уже продано, какой бонус начислится и что осталось сделать
-                  до включения порога.
-                </p>
-              </div>
+              <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
               <div className="text-sm text-muted-foreground">
                 {loading && <span className="animate-pulse">Обновление...</span>}
               </div>
@@ -1985,14 +1889,16 @@ export default function AdminMotivationPage() {
           </Card>
 
         </>
-      )}
+      ))}
 
-      <ShiftCashCloseDialog
-        loading={cashCloseLoading}
-        onClose={() => setCashCloseOpen(false)}
-        onConfirm={executeEndShift}
-        open={cashCloseOpen}
-      />
+      {!isSettingsView && (
+        <ShiftCashCloseDialog
+          loading={cashCloseLoading}
+          onClose={() => setCashCloseOpen(false)}
+          onConfirm={executeEndShift}
+          open={cashCloseOpen}
+        />
+      )}
 
       <ConfirmActionDialog
         action={pendingAction}
@@ -2002,4 +1908,8 @@ export default function AdminMotivationPage() {
       />
     </div>
   );
+}
+
+export function AdminMotivationSettings() {
+  return <AdminMotivationPage view="settings" />;
 }

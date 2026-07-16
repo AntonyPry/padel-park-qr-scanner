@@ -208,4 +208,25 @@ describe('RequireRoles scope authority', () => {
 
     expect(screen.getByText('protected:/admin/users')).toBeInTheDocument();
   });
+
+  it('redirects organization admin away from direct Shift settings access', async () => {
+    renderProtected('/admin/shift-settings', {
+      accountRole: 'admin',
+      effectiveRole: 'manager',
+      membershipRole: 'admin',
+    });
+
+    expect(await screen.findByText(/^redirect:/)).toBeInTheDocument();
+    expect(screen.queryByText('protected:/admin/shift-settings')).not.toBeInTheDocument();
+  });
+
+  it('allows organization owner to open Shift settings directly', () => {
+    renderProtected('/admin/shift-settings', {
+      accountRole: 'owner',
+      effectiveRole: 'admin',
+      membershipRole: 'owner',
+    });
+
+    expect(screen.getByText('protected:/admin/shift-settings')).toBeInTheDocument();
+  });
 });

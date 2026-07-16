@@ -25,6 +25,11 @@ export const ROUTE_ACCESS = {
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant'],
   '/admin/users': ['owner', 'manager'],
+  '/admin/shift': ['owner', 'manager', 'admin'],
+  '/admin/shift/motivation': ['owner', 'manager', 'admin'],
+  '/admin/shift/reports': ['owner', 'manager', 'admin'],
+  '/admin/shift/cash': ['owner', 'manager', 'admin'],
+  '/admin/shift-settings': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
   '/admin/shift-reports': ['owner', 'manager', 'admin'],
   '/admin/shift-cash': ['owner', 'manager', 'admin'],
@@ -134,6 +139,20 @@ export const ROUTE_AUTHORIZATION: Record<
   ]),
   '/admin/staff': partial('organization', ROUTE_ACCESS['/admin/staff']),
   '/admin/users': single('organization', ROUTE_ACCESS['/admin/users']),
+  '/admin/shift': single('club', ROUTE_ACCESS['/admin/shift']),
+  '/admin/shift/motivation': composite([
+    { roles: ROUTE_ACCESS['/admin/shift/motivation'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/shift/motivation'], scope: 'organization' },
+  ]),
+  '/admin/shift/reports': composite([
+    { roles: ROUTE_ACCESS['/admin/shift/reports'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/shift/reports'], scope: 'organization' },
+  ]),
+  '/admin/shift/cash': single('club', ROUTE_ACCESS['/admin/shift/cash']),
+  '/admin/shift-settings': single(
+    'organization',
+    ROUTE_ACCESS['/admin/shift-settings'],
+  ),
   '/admin/motivation': composite([
     { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'club' },
     { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'organization' },
@@ -189,7 +208,7 @@ export function getDefaultPath(role: AccountRole | null | undefined) {
     hasRoleAccess(role, roles),
   );
 
-  return entry?.[0] || '/admin/motivation';
+  return entry?.[0] || '/admin/shift/motivation';
 }
 
 const DEFAULT_PATH_PRIORITY: ClientRoute[] = [
@@ -214,7 +233,7 @@ export function getDefaultPathForAuthority(authority: RoleAuthority) {
   return (
     DEFAULT_PATH_PRIORITY.find((path) =>
       canAccessPathForAuthority(authority, path),
-    ) || '/admin/motivation'
+    ) || '/admin/shift/motivation'
   );
 }
 

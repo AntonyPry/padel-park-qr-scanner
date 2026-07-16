@@ -29,7 +29,7 @@ import {
 } from '@/components/confirm-action-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -575,16 +575,6 @@ export function ShiftCashPanel() {
   return (
     <>
       <Card aria-busy={loading} className="min-w-0 overflow-hidden border-primary/25">
-        <CardHeader className="border-b bg-primary/[0.03] pb-4">
-          <div className="min-w-0">
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <WalletCards className="h-5 w-5 text-primary" /> Касса
-            </CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Купюры, мелочь, наличная выручка и расходы текущей смены.
-            </p>
-          </div>
-        </CardHeader>
         <CardContent className="grid gap-5 pt-5">
           {error && (
             <ErrorState compact message={error} onRetry={() => void load()} title="Не удалось обновить кассу" />
@@ -692,12 +682,7 @@ export function ShiftCashPanel() {
           </section>
 
           <section className="flex flex-col gap-4 rounded-xl border p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="min-w-0">
-              <h3 className="font-semibold">Добавить расход из кассы</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Расход сразу попадет в P&amp;L. Фото чека можно снять камерой телефона.
-              </p>
-            </div>
+            <h3 className="font-semibold">Добавить расход из кассы</h3>
             <div className="shrink-0">
               <Button
                 className="w-full sm:w-auto"

@@ -119,6 +119,22 @@ describe('ShiftCashPanel', () => {
     expect(screen.getByRole('button', { name: 'Изменить' })).toBeInTheDocument();
   });
 
+  it('omits redundant cash headings and operator explanations', async () => {
+    mocks.getActive.mockResolvedValueOnce(makeSummary());
+    render(<ShiftCashPanel />);
+
+    expect(await screen.findByText('Ожидаемый остаток')).toBeInTheDocument();
+    expect(screen.queryByText('Касса', { exact: true })).not.toBeInTheDocument();
+    expect(
+      screen.queryByText('Купюры, мелочь, наличная выручка и расходы текущей смены.'),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        'Расход сразу попадет в P&L. Фото чека можно снять камерой телефона.',
+      ),
+    ).not.toBeInTheDocument();
+  });
+
   it('keeps mobile KPI labels and closing placeholder fully visible', async () => {
     mocks.getActive.mockResolvedValueOnce(makeSummary());
     render(<ShiftCashPanel />);

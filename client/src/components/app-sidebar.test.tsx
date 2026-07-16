@@ -162,23 +162,19 @@ describe('AppSidebar authorization', () => {
 
 describe('AppSidebar shift navigation', () => {
   it.each<AccountRole>(['owner', 'manager', 'admin'])(
-    'shows the ordered Shift section for %s',
+    'shows one Shift item in the workday section for %s',
     (role) => {
       renderSidebar(role);
 
-      const motivation = screen.getByRole('link', { name: 'Мотивация' });
-      const reports = screen.getByRole('link', { name: 'Отчеты' });
-      const cash = screen.getByRole('link', { name: 'Касса' });
-      expect(screen.getByText('Смена')).toBeInTheDocument();
-      expect(motivation).toHaveAttribute('href', '/admin/motivation');
-      expect(reports).toHaveAttribute('href', '/admin/shift-reports');
-      expect(cash).toHaveAttribute('href', '/admin/shift-cash');
-      expect(
-        motivation.compareDocumentPosition(reports) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-      expect(
-        reports.compareDocumentPosition(cash) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
+      const shift = screen.getByRole('link', { name: 'Смена' });
+      const workdayLabel = screen.getByText('Рабочий день');
+      const workdayGroup = workdayLabel.parentElement;
+
+      expect(shift).toHaveAttribute('href', '/admin/shift/motivation');
+      expect(workdayGroup).toContainElement(shift);
+      expect(screen.queryByRole('link', { name: 'Мотивация' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Отчеты' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Касса' })).not.toBeInTheDocument();
     },
   );
 
@@ -186,8 +182,40 @@ describe('AppSidebar shift navigation', () => {
     'hides the Shift section from %s',
     (role) => {
       renderSidebar(role);
-      expect(screen.queryByText('Смена')).not.toBeInTheDocument();
-      expect(screen.queryByRole('link', { name: 'Касса' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Смена' })).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    '/admin/shift/motivation',
+    '/admin/shift/reports',
+    '/admin/shift/cash',
+  ])('keeps the Shift item active on %s', (path) => {
+    renderSidebar('owner', path);
+    expect(screen.getByRole('link', { name: 'Смена' })).toHaveAttribute(
+      'data-active',
+      'true',
+    );
+  });
+
+  it.each<AccountRole>(['owner', 'manager'])(
+    'shows Shift settings for %s',
+    (role) => {
+      renderSidebar(role);
+      expect(screen.getByRole('link', { name: 'Настройки смены' })).toHaveAttribute(
+        'href',
+        '/admin/shift-settings',
+      );
+    },
+  );
+
+  it.each<AccountRole>(['admin', 'accountant', 'viewer', 'trainer'])(
+    'hides Shift settings from %s',
+    (role) => {
+      renderSidebar(role);
+      expect(
+        screen.queryByRole('link', { name: 'Настройки смены' }),
+      ).not.toBeInTheDocument();
     },
   );
 
@@ -200,14 +228,14 @@ describe('AppSidebar shift navigation', () => {
       ],
       shift: { id: 12 },
     });
-    renderSidebar('admin', '/admin/shift-reports');
+    renderSidebar('admin', '/admin/shift/reports');
 
     const badge = await screen.findByLabelText(
       '2 отчетов требуют внимания, есть просроченные',
     );
     expect(badge).toHaveTextContent('2');
     expect(badge).toHaveClass('bg-destructive');
-    expect(screen.getByRole('link', { name: 'Отчеты' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Смена' })).toHaveAttribute(
       'data-active',
       'true',
     );
@@ -217,6 +245,15 @@ describe('AppSidebar shift navigation', () => {
     renderSidebar('owner');
     await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
     expect(screen.queryByText('0')).not.toBeInTheDocument();
+  });
+
+  it('keeps navigation usable when the badge API fails', async () => {
+    mocks.listActiveShiftReports.mockRejectedValueOnce(new Error('offline'));
+    renderSidebar('owner', '/admin/shift/cash');
+
+    await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('link', { name: 'Смена' })).toBeInTheDocument();
+    expect(screen.queryByLabelText(/отчетов требуют внимания/)).not.toBeInTheDocument();
   });
 
   it('refreshes the badge from realtime and caps large counts at 99+', async () => {
