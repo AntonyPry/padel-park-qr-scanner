@@ -1,6 +1,7 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { useEffect } from 'react';
+import { type ReactElement, useEffect } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LegacyShiftRedirect } from '@/components/legacy-shift-redirect';
@@ -8,6 +9,7 @@ import ShiftWorkspaceLayout from '@/components/shift-workspace-layout';
 
 const mocks = vi.hoisted(() => ({
   apiFetch: vi.fn(),
+  listActiveShiftReports: vi.fn(),
 }));
 
 vi.mock('@/lib/api', async () => {
@@ -17,6 +19,10 @@ vi.mock('@/lib/api', async () => {
 
 vi.mock('@/lib/realtime', () => ({
   useRealtimeRefresh: vi.fn(),
+}));
+
+vi.mock('@/api/shift-reports', () => ({
+  listActiveShiftReports: mocks.listActiveShiftReports,
 }));
 
 const sections = [
@@ -51,15 +57,26 @@ function activeShift() {
   };
 }
 
+function renderWorkspace(ui: ReactElement) {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>,
+  );
+}
+
 beforeEach(() => {
   mocks.apiFetch.mockReset().mockResolvedValue(jsonResponse({ shift: activeShift() }));
+  mocks.listActiveShiftReports.mockReset();
+  mocks.listActiveShiftReports.mockResolvedValue({ reports: [], shift: null });
 });
 
 afterEach(() => cleanup());
 
 describe('ShiftWorkspaceLayout', () => {
   it.each(sections)('keeps navigation and current shift visible on $label', async (section) => {
-    render(
+    renderWorkspace(
       <MemoryRouter initialEntries={[section.path]}>
         <Routes>
           <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
@@ -98,7 +115,7 @@ describe('ShiftWorkspaceLayout', () => {
 
   it('keeps the active shift context mounted while switching sections', async () => {
     const user = userEvent.setup();
-    render(
+    renderWorkspace(
       <MemoryRouter initialEntries={['/admin/shift/motivation']}>
         <Routes>
           <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
@@ -123,7 +140,7 @@ describe('ShiftWorkspaceLayout', () => {
 
   it('uses a neutral placeholder while the active shift is loading', () => {
     mocks.apiFetch.mockImplementation(() => new Promise(() => undefined));
-    const { container } = render(
+    const { container } = renderWorkspace(
       <MemoryRouter initialEntries={['/admin/shift/reports']}>
         <Routes>
           <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
@@ -143,7 +160,7 @@ describe('ShiftWorkspaceLayout', () => {
       .mockResolvedValueOnce(jsonResponse({ shift: null }))
       .mockResolvedValueOnce(jsonResponse({ shift: activeShift() }));
 
-    render(
+    renderWorkspace(
       <MemoryRouter initialEntries={['/admin/shift/reports']}>
         <Routes>
           <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
@@ -160,6 +177,85 @@ describe('ShiftWorkspaceLayout', () => {
         method: 'POST',
       }),
     );
+  });
+
+  it('shows an overdue attention badge only beside Reports', async () => {
+    mocks.listActiveShiftReports.mockResolvedValueOnce({
+      reports: [
+        { computedStatus: 'draft', id: 1 },
+        { computedStatus: 'overdue', id: 2 },
+        { computedStatus: 'submitted', id: 3 },
+      ],
+      shift: { id: 12 },
+    });
+
+    renderWorkspace(
+      <MemoryRouter initialEntries={['/admin/shift/motivation']}>
+        <Routes>
+          <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
+            <Route path="motivation" element={<div>motivation content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const navigation = screen.getByRole('navigation', { name: 'Разделы смены' });
+    const reportsLink = within(navigation).getByRole('link', { name: 'Отчеты' });
+    const reportsItem = reportsLink.parentElement;
+    const badge = await within(reportsItem!).findByLabelText(
+      '2 отчетов требуют внимания, есть просроченные',
+    );
+
+    expect(badge).toHaveTextContent('2');
+    expect(badge).toHaveClass('bg-destructive');
+    expect(reportsLink).toHaveClass('px-2');
+    expect(reportsLink).not.toContainElement(badge);
+    expect(reportsLink.querySelector('[aria-hidden="true"]')).toBeInTheDocument();
+    for (const label of ['Мотивация', 'Касса']) {
+      const link = within(navigation).getByRole('link', { name: label });
+      expect(
+        within(link.parentElement!).queryByLabelText(/отчетов требуют внимания/),
+      ).not.toBeInTheDocument();
+    }
+  });
+
+  it('keeps the Reports badge slot empty while reports are loading', () => {
+    mocks.listActiveShiftReports.mockImplementation(() => new Promise(() => undefined));
+
+    renderWorkspace(
+      <MemoryRouter initialEntries={['/admin/shift/reports']}>
+        <Routes>
+          <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
+            <Route path="reports" element={<div>reports content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole('link', { name: 'Отчеты' })).toHaveClass('px-2');
+    expect(
+      screen.queryByLabelText(/отчетов требуют внимания/),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the Reports badge slot empty when reports fail to load', async () => {
+    mocks.listActiveShiftReports.mockRejectedValueOnce(new Error('offline'));
+
+    renderWorkspace(
+      <MemoryRouter initialEntries={['/admin/shift/reports']}>
+        <Routes>
+          <Route path="/admin/shift" element={<ShiftWorkspaceLayout />}>
+            <Route path="reports" element={<div>reports content</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await waitFor(() => expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('link', { name: 'Отчеты' })).toHaveClass('px-2');
+    expect(
+      screen.queryByLabelText(/отчетов требуют внимания/),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
@@ -181,7 +277,7 @@ describe('ShiftWorkspaceLayout', () => {
   ])(
     'preserves query and hash while redirecting legacy %s',
     (legacyPath, expectedLocation, canonicalPath) => {
-      render(
+      renderWorkspace(
         <MemoryRouter initialEntries={[legacyPath]}>
           <Routes>
             <Route
@@ -207,7 +303,7 @@ describe('ShiftWorkspaceLayout', () => {
       return <LegacyShiftRedirect to="/admin/shift/motivation" />;
     }
 
-    render(
+    renderWorkspace(
       <MemoryRouter initialEntries={['/admin/motivation?closeShift=1#close']}>
         <Routes>
           <Route path="/admin/motivation" element={<RedirectProbe />} />
