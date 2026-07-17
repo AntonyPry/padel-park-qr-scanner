@@ -1285,7 +1285,7 @@ export default function OnboardingPage() {
     if (!account?.role || !taskKey) return;
 
     const activeQuest = getStoredActiveOnboardingQuest();
-    if (activeQuest && activeQuest.taskKey !== taskKey) {
+    if (activeQuest) {
       clearStoredActiveOnboardingQuest();
     }
 
