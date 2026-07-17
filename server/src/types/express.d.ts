@@ -16,6 +16,10 @@ declare global {
         requested: boolean;
         role?: AccountRole;
       };
+      onboardingQuest?: {
+        role?: AccountRole;
+        taskKey: string;
+      };
     }
   }
 }

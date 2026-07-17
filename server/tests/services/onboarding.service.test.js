@@ -949,6 +949,68 @@ test('pilot client create card task does not match ordinary client creation', ()
   );
 });
 
+test('recordEvent binds product action to exact request quest context only', async () => {
+  const progressRows = new Map();
+  const events = [];
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return null;
+    },
+  };
+  db.OnboardingProgress = {
+    async create(payload) {
+      progressRows.set(payload.taskKey, payload);
+      return payload;
+    },
+    async findOne({ where }) {
+      return progressRows.get(where.taskKey) || null;
+    },
+  };
+  db.OnboardingEvent = {
+    async create(payload) {
+      events.push(payload);
+      return payload;
+    },
+  };
+
+  const ordinary = await recordEvent(
+    { id: 10, role: 'admin' },
+    'client.created',
+    { payload: { id: 100, name: 'Обычный клиент' } },
+  );
+  const sibling = await recordEvent(
+    { id: 10, role: 'admin' },
+    'client.created',
+    {
+      onboardingContext: {
+        role: 'admin',
+        taskKey: 'admin.booking.review-schedule',
+      },
+      payload: { id: 101, name: 'Клиент с соседним заданием' },
+    },
+  );
+  const exact = await recordEvent(
+    { id: 10, role: 'owner' },
+    'client.created',
+    {
+      onboardingContext: {
+        role: 'admin',
+        taskKey: 'admin.client.create',
+      },
+      payload: { id: 102, name: 'Клиент из задания' },
+    },
+  );
+
+  assert.deepEqual(ordinary.progressedTaskKeys, []);
+  assert.deepEqual(sibling.progressedTaskKeys, []);
+  assert.deepEqual(exact.progressedTaskKeys, ['admin.client.create']);
+  assert.equal(exact.role, 'admin');
+  assert.equal(progressRows.size, 1);
+  assert.equal(events[0].payload.taskKey, undefined);
+  assert.equal(events[1].payload.taskKey, 'admin.booking.review-schedule');
+  assert.equal(events[2].payload.taskKey, 'admin.client.create');
+});
+
 test('recordEvent stores event and progresses matching tasks for training role', async () => {
   const progressRows = new Map();
   db.OnboardingTrainingMode = {

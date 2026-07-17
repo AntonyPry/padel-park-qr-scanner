@@ -2,6 +2,7 @@ const express = require('express');
 const { requireAuth } = require('../middleware/auth');
 const { auditMutations } = require('../middleware/audit');
 const { captureTrainingMode } = require('../middleware/training-mode');
+const { captureOnboardingQuest } = require('../middleware/onboarding-quest');
 const db = require('../../models');
 const cacheService = require('../services/cache.service');
 const { getOpenApiDocument } = require('../contracts/openapi');
@@ -73,6 +74,7 @@ router.use('/webhooks', webhookRoutes);
 
 router.use(requireAuth);
 router.use(captureTrainingMode());
+router.use(captureOnboardingQuest());
 router.use(auditMutations);
 router.use(auditRoutes);
 router.use(bookingsRoutes);

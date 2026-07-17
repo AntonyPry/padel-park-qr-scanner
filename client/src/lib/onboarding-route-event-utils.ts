@@ -38,7 +38,6 @@ export function shouldClearActiveQuestAfterRouteEvent(
   activeQuest: ActiveOnboardingQuest | null,
   pathname: string,
   result: { completedTaskKeys?: string[]; progressedTaskKeys?: string[] },
-  routeEvent?: OnboardingClientEventPayload,
 ) {
   if (!activeQuest?.taskKey) return false;
   if (
@@ -47,12 +46,29 @@ export function shouldClearActiveQuestAfterRouteEvent(
   ) {
     return false;
   }
-  if (routeEvent?.payload?.taskKey === activeQuest.taskKey) return true;
-
   const completedTaskKeys = result.completedTaskKeys || [];
   const progressedTaskKeys = result.progressedTaskKeys || [];
   return (
     completedTaskKeys.includes(activeQuest.taskKey) ||
     progressedTaskKeys.includes(activeQuest.taskKey)
   );
+}
+
+export function buildOnboardingRouteEventRecordKey({
+  accountId,
+  eventKey,
+  locationKey,
+  pathname,
+}: {
+  accountId: number;
+  eventKey: string;
+  locationKey: string;
+  pathname: string;
+}) {
+  return [
+    accountId,
+    locationKey,
+    normalizeOnboardingRoutePathname(pathname),
+    eventKey,
+  ].join(':');
 }

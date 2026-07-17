@@ -348,6 +348,33 @@ test('screenshot-backed lessons start with a concrete open-screen card', () => {
   }
 });
 
+test('all taskKey checkpoints are classified and only product actions bypass route-view events', () => {
+  const taskKeyTasks = listOnboardingPaths().flatMap((pathConfig) =>
+    pathConfig.missions.flatMap((mission) =>
+      mission.tasks.filter((task) => task.checkpoint?.conditions?.taskKey),
+    ),
+  );
+  const productActionTasks = taskKeyTasks.filter(
+    (task) => !ONBOARDING_CLIENT_CHECKPOINT_EVENTS.includes(task.checkpoint.event),
+  );
+
+  assert.equal(taskKeyTasks.length, 28);
+  assert.deepEqual(
+    productActionTasks.map((task) => ({
+      event: task.checkpoint.event,
+      key: task.key,
+      route: task.route,
+    })),
+    [
+      {
+        event: 'client.created',
+        key: 'admin.client.create',
+        route: '/admin/clients',
+      },
+    ],
+  );
+});
+
 test('visits analytics onboarding covers deep analytics epic without new checkpoint events', () => {
   const manager = findOnboardingTask('manager', 'manager.visits-analytics.review').task;
   const owner = findOnboardingTask('owner', 'owner.operations.review-visits').task;

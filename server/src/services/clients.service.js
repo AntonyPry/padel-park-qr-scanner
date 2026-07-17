@@ -2260,7 +2260,7 @@ async function generateWebId() {
   throw appError('Не удалось сгенерировать уникальный WEB ID клиента');
 }
 
-async function createClient(data, actor = null) {
+async function createClientWithEventResult(data, actor = null, options = {}) {
   const name = normalizeClientName(data.name);
   const sourceRef = await referencesService.getClientSourceByInput(data);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
@@ -2308,15 +2308,24 @@ async function createClient(data, actor = null) {
       await clientSkillMapService.syncActiveSkillsForClient(client);
 
       const result = await getClientDetails(client.id, actor);
-      await onboardingService.recordEventSafe(actor, 'client.created', {
+      const onboardingEventResult = await onboardingService.recordEventSafe(actor, 'client.created', {
         entityId: result.client?.id || client.id,
         entityType: 'client',
+        onboardingContext: options.onboardingContext,
         payload: result.client || result,
       });
 
-      return result;
+      return {
+        onboardingEventResult,
+        result,
+      };
     },
   );
+}
+
+async function createClient(data, actor = null) {
+  const outcome = await createClientWithEventResult(data, actor);
+  return outcome.result;
 }
 
 async function registerClientFromMessenger({
@@ -2987,6 +2996,7 @@ async function removeArchivedClient(id) {
 module.exports = {
   countClients,
   createClient,
+  createClientWithEventResult,
   createSavedView,
   deleteSavedView,
   findActiveByPhone,
