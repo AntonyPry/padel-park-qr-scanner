@@ -177,6 +177,53 @@ test('completed onboarding task shows when instruction was updated afterwards', 
   );
 });
 
+test('knowledge motivation freshness is published for manager and owner', () => {
+  for (const [role, taskKey] of [
+    ['manager', 'manager.knowledge.motivation'],
+    ['owner', 'owner.knowledge.motivation'],
+  ]) {
+    const outdated = buildOnboardingResponse(
+      { id: 1, role },
+      role,
+      [
+        {
+          completedAt: new Date('2026-07-15T10:00:00.000Z'),
+          metadata: {},
+          status: 'completed',
+          taskKey,
+        },
+      ],
+    );
+    const outdatedTask = findResponseTask(outdated, taskKey);
+
+    assert.equal(Boolean(outdatedTask.progress.lesson.updatedAt), true);
+    assert.equal(outdatedTask.progress.lesson.isUpdatedAfterCompletion, true);
+
+    const acknowledged = buildOnboardingResponse(
+      { id: 1, role },
+      role,
+      [
+        {
+          completedAt: new Date('2026-07-15T10:00:00.000Z'),
+          metadata: {
+            lesson: {
+              contentReviewedAt: '2026-07-17T12:30:00.000+03:00',
+            },
+          },
+          status: 'completed',
+          taskKey,
+        },
+      ],
+    );
+    const acknowledgedTask = findResponseTask(acknowledged, taskKey);
+
+    assert.equal(
+      acknowledgedTask.progress.lesson.isUpdatedAfterCompletion,
+      false,
+    );
+  }
+});
+
 test('training mode persists account role and can be disabled', async () => {
   const rows = new Map();
   db.OnboardingTrainingMode = {
