@@ -159,6 +159,7 @@ class CorporateClientsController {
             req.params.id,
             req.body,
             req.account,
+            req.tenant,
           ),
         );
     } catch (error) {

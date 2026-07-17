@@ -1076,19 +1076,42 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         status: 'active',
         title: 'Unscoped manual certificate',
       });
-      const court = await db.Court.create({ name: 'Unscoped V5.3 revenue court' });
-      await db.Booking.create({
+      const bookingSchema = await queryInterface.describeTable('Bookings');
+      const courtSchema = await queryInterface.describeTable('Courts');
+      const now = new Date();
+      const courtName = 'Feature 5.5 compatibility V5.3 revenue court';
+      await queryInterface.bulkInsert('Courts', [{
+        ...(courtSchema.organizationId
+          ? { clubId: defaultClub.id, organizationId: defaultOrganization.id }
+          : {}),
+        createdAt: now,
+        isActive: true,
+        name: courtName,
+        sortOrder: 0,
+        type: 'padel_double',
+        updatedAt: now,
+      }]);
+      const [courtRows] = await queryInterface.sequelize.query(
+        'SELECT id FROM Courts WHERE name=:name',
+        { replacements: { name: courtName } },
+      );
+      await queryInterface.bulkInsert('Bookings', [{
+        ...(bookingSchema.organizationId
+          ? { clubId: defaultClub.id, organizationId: defaultOrganization.id }
+          : {}),
         clientName: revenueClient.name,
         clientPhone: revenueClient.phone,
-        courtId: court.id,
+        courtId: courtRows[0].id,
+        createdAt: now,
         durationMinutes: 60,
         endsAt: new Date('2088-05-01T10:00:00.000Z'),
         isTraining: false,
         paidAmount: 666,
         startsAt: new Date('2088-05-01T09:00:00.000Z'),
         status: 'confirmed',
+        updatedAt: now,
         userId: revenueClient.id,
-      });
+      }]);
       await db.Finance.create({
         amount: 777,
         category: 'Unscoped V5.3 revenue',

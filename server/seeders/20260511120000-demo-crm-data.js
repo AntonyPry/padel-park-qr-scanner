@@ -58,6 +58,23 @@ async function resolveVisitTenantSeederScope(queryInterface, foundation) {
     : {};
 }
 
+async function resolveUtilizationTenantSeederScope(queryInterface, foundation) {
+  const [columns] = await queryInterface.sequelize.query(
+    `SELECT COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'Utilizations'
+        AND COLUMN_NAME IN ('organizationId', 'clubId')`,
+  );
+  const names = new Set(columns.map((column) => column.columnName));
+  return names.has('organizationId') && names.has('clubId')
+    ? {
+        clubId: foundation.club.id,
+        organizationId: foundation.organization.id,
+      }
+    : {};
+}
+
 async function deleteDemoVisits(queryInterface, userTenantScope) {
   const userSql = `SELECT id FROM Users WHERE ${userTenantScope.sqlPredicate}phone LIKE "+7909%"`;
   await queryInterface.sequelize.query(
@@ -128,6 +145,10 @@ module.exports = {
           queryInterface,
           foundation,
         );
+        const utilizationTenantScope = await resolveUtilizationTenantSeederScope(
+          queryInterface,
+          foundation,
+        );
 
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
@@ -152,6 +173,7 @@ module.exports = {
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
     await queryInterface.bulkDelete('Utilizations', {
+      ...utilizationTenantScope,
       date: { [Sequelize.Op.between]: ['2026-05-01', '2026-05-14'] },
     });
     await queryInterface.sequelize.query(
@@ -589,6 +611,7 @@ module.exports = {
     const utilization = [];
     for (let day = 1; day <= 11; day += 1) {
       utilization.push({
+        ...utilizationTenantScope,
         date: `2026-05-${String(day).padStart(2, '0')}`,
         booked2: 42 + ((day * 7) % 24),
         booked1: 6 + ((day * 3) % 8),
@@ -611,6 +634,10 @@ module.exports = {
       queryInterface,
       async (queryInterface, accountBatch, foundation) => {
         const userTenantScope = await resolveUserTenantSeederScope(
+          queryInterface,
+          foundation,
+        );
+        const utilizationTenantScope = await resolveUtilizationTenantSeederScope(
           queryInterface,
           foundation,
         );
@@ -637,6 +664,7 @@ module.exports = {
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
     await queryInterface.bulkDelete('Utilizations', {
+      ...utilizationTenantScope,
       date: { [Sequelize.Op.between]: ['2026-05-01', '2026-05-14'] },
     });
     await queryInterface.sequelize.query(

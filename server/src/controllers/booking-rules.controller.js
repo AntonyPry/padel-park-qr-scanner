@@ -6,7 +6,7 @@ function send(res, data, status = 200) {
 
 async function getSettings(req, res, next) {
   try {
-    send(res, await bookingRulesService.getSettings());
+    send(res, await bookingRulesService.getSettings(req.tenant));
   } catch (error) {
     next(error);
   }
@@ -14,7 +14,7 @@ async function getSettings(req, res, next) {
 
 async function updateSettings(req, res, next) {
   try {
-    send(res, await bookingRulesService.updateSettings(req.body));
+    send(res, await bookingRulesService.updateSettings(req.body, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -22,7 +22,7 @@ async function updateSettings(req, res, next) {
 
 async function quote(req, res, next) {
   try {
-    send(res, await bookingRulesService.calculateQuote(req.query));
+    send(res, await bookingRulesService.calculateQuote(req.query, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -30,7 +30,7 @@ async function quote(req, res, next) {
 
 async function listPriceRules(req, res, next) {
   try {
-    send(res, await bookingRulesService.listPriceRules(req.query.status || 'active'));
+    send(res, await bookingRulesService.listPriceRules(req.query.status || 'active', req.tenant));
   } catch (error) {
     next(error);
   }
@@ -38,7 +38,7 @@ async function listPriceRules(req, res, next) {
 
 async function createPriceRule(req, res, next) {
   try {
-    send(res, await bookingRulesService.createPriceRule(req.body), 201);
+    send(res, await bookingRulesService.createPriceRule(req.body, req.tenant), 201);
   } catch (error) {
     next(error);
   }
@@ -46,7 +46,7 @@ async function createPriceRule(req, res, next) {
 
 async function updatePriceRule(req, res, next) {
   try {
-    send(res, await bookingRulesService.updatePriceRule(req.params.id, req.body));
+    send(res, await bookingRulesService.updatePriceRule(req.params.id, req.body, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -54,7 +54,7 @@ async function updatePriceRule(req, res, next) {
 
 async function archivePriceRule(req, res, next) {
   try {
-    send(res, await bookingRulesService.archivePriceRule(req.params.id));
+    send(res, await bookingRulesService.archivePriceRule(req.params.id, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -62,7 +62,7 @@ async function archivePriceRule(req, res, next) {
 
 async function listBlocks(req, res, next) {
   try {
-    send(res, await bookingRulesService.listBlocks(req.query));
+    send(res, await bookingRulesService.listBlocks(req.query, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -70,7 +70,7 @@ async function listBlocks(req, res, next) {
 
 async function createBlock(req, res, next) {
   try {
-    send(res, await bookingRulesService.createBlock(req.body, req.account), 201);
+    send(res, await bookingRulesService.createBlock(req.body, req.account, req.tenant), 201);
   } catch (error) {
     next(error);
   }
@@ -78,7 +78,7 @@ async function createBlock(req, res, next) {
 
 async function updateBlock(req, res, next) {
   try {
-    send(res, await bookingRulesService.updateBlock(req.params.id, req.body, req.account));
+    send(res, await bookingRulesService.updateBlock(req.params.id, req.body, req.account, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -86,7 +86,7 @@ async function updateBlock(req, res, next) {
 
 async function archiveBlock(req, res, next) {
   try {
-    send(res, await bookingRulesService.archiveBlock(req.params.id, req.account));
+    send(res, await bookingRulesService.archiveBlock(req.params.id, req.account, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -94,7 +94,7 @@ async function archiveBlock(req, res, next) {
 
 async function listExceptions(req, res, next) {
   try {
-    send(res, await bookingRulesService.listExceptions(req.query.status || 'active'));
+    send(res, await bookingRulesService.listExceptions(req.query.status || 'active', req.tenant));
   } catch (error) {
     next(error);
   }
@@ -102,7 +102,7 @@ async function listExceptions(req, res, next) {
 
 async function upsertException(req, res, next) {
   try {
-    send(res, await bookingRulesService.upsertException(req.body), 201);
+    send(res, await bookingRulesService.upsertException(req.body, req.tenant), 201);
   } catch (error) {
     next(error);
   }
@@ -110,7 +110,7 @@ async function upsertException(req, res, next) {
 
 async function updateException(req, res, next) {
   try {
-    send(res, await bookingRulesService.updateException(req.params.id, req.body));
+    send(res, await bookingRulesService.updateException(req.params.id, req.body, req.tenant));
   } catch (error) {
     next(error);
   }
@@ -118,7 +118,7 @@ async function updateException(req, res, next) {
 
 async function archiveException(req, res, next) {
   try {
-    send(res, await bookingRulesService.archiveException(req.params.id));
+    send(res, await bookingRulesService.archiveException(req.params.id, req.tenant));
   } catch (error) {
     next(error);
   }

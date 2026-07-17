@@ -171,7 +171,9 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.bookings.push(await db.Booking.create({
-      courtId: (await db.Court.findOne()).id,
+      organizationId,
+      clubId,
+      courtId: (await db.Court.findOne({ where: { organizationId, clubId } })).id,
       userId: root.id,
       clientName: root.name,
       clientPhone: root.phone,

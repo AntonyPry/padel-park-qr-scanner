@@ -1,5 +1,13 @@
 module.exports = (sequelize, DataTypes) => {
   const BookingSeries = sequelize.define('BookingSeries', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     name: {
       type: DataTypes.STRING,
       allowNull: false,
@@ -117,9 +125,49 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    creationKeyHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    creationPayloadHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    lastMutationKeyHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    lastMutationPayloadHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        const attributes = options.attributes || {};
+        if (['organizationId', 'clubId', 'creationKeyHash', 'creationPayloadHash'].some(
+          (field) => Object.prototype.hasOwnProperty.call(attributes, field),
+        )) {
+          const error = new Error('Booking series tenant and creation attribution is immutable');
+          error.code = 'BOOKING_SERIES_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+      beforeUpdate(series) {
+        if (['organizationId', 'clubId', 'creationKeyHash', 'creationPayloadHash'].some(
+          (field) => series.changed(field),
+        )) {
+          const error = new Error('Booking series tenant and creation attribution is immutable');
+          error.code = 'BOOKING_SERIES_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   BookingSeries.associate = (models) => {
+    BookingSeries.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    BookingSeries.belongsTo(models.Club, { foreignKey: 'clubId' });
     BookingSeries.belongsTo(models.Court, { foreignKey: 'courtId' });
     BookingSeries.belongsTo(models.User, { foreignKey: 'userId' });
     BookingSeries.belongsTo(models.Account, {

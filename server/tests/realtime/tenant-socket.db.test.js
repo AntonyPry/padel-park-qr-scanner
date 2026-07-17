@@ -163,6 +163,13 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
     });
     const organizationA = await db.Organization.findOne({ where: { slug: 'padel-park' } });
     const clubA = await db.Club.findOne({ where: { slug: 'padel-park' } });
+    const clubA2 = await db.Club.create({
+      name: 'Same organization, isolated club',
+      organizationId: organizationA.id,
+      slug: 'same-organization-isolated-club',
+      status: 'active',
+      timezone: 'Europe/Moscow',
+    });
     const ownerMembershipA = await db.Membership.findOne({
       where: { accountId: ownerSession.account.id, organizationId: organizationA.id },
     });
@@ -368,6 +375,37 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
       assert.equal(membershipEvent.tenantScope, 'membership');
       await delay(50);
       assert.equal(receivedByB, 0);
+    });
+
+    await t.test('booking events stay inside one club within the same organization', async () => {
+      const ownerA = sockets[0];
+      const ownerA2 = await connectSocket(
+        url,
+        auth(ownerSession.token, organizationA.id, clubA2.id),
+      );
+      sockets.push(ownerA2);
+      const tenantAClub = await tenantContextService.resolveTenantContext({
+        accountId: ownerSession.account.id,
+        clubId: clubA.id,
+        organizationId: organizationA.id,
+        scope: 'club',
+      });
+
+      let receivedByA2 = 0;
+      ownerA2.on(CRM_CHANGED_EVENT, () => { receivedByA2 += 1; });
+      const bookingEventPromise = onceWithTimeout(ownerA, CRM_CHANGED_EVENT);
+      await publishRealtimeChange(
+        io,
+        { action: 'created', domain: 'bookings', entity: 'booking', entityId: 55 },
+        ownerSession.account,
+        tenantAClub,
+      );
+      const bookingEvent = await bookingEventPromise;
+      assert.equal(bookingEvent.organizationId, organizationA.id);
+      assert.equal(bookingEvent.clubId, clubA.id);
+      assert.equal(bookingEvent.tenantScope, 'club');
+      await delay(50);
+      assert.equal(receivedByA2, 0);
     });
 
     await t.test('revoked club access disconnects before the next event is delivered', async () => {

@@ -6,18 +6,50 @@ function atTime(date, hour, minute = 0) {
   return value;
 }
 
+async function resolveTenantScope(queryInterface) {
+  const [columns] = await queryInterface.sequelize.query(
+    `SELECT COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'Bookings'
+        AND COLUMN_NAME IN ('organizationId', 'clubId')`,
+  );
+  if (columns.length !== 2) {
+    return { insert: {}, predicate: '', replacements: {} };
+  }
+  const [rows] = await queryInterface.sequelize.query(
+    `SELECT organization.id AS organizationId, club.id AS clubId
+       FROM Organizations organization
+       JOIN Clubs club ON club.organizationId = organization.id
+      WHERE organization.slug = 'padel-park'
+        AND organization.status = 'active'
+        AND club.slug = 'padel-park'
+        AND club.status = 'active'`,
+  );
+  if (rows.length !== 1) throw new Error('Demo bookings require the exact default tenant');
+  return {
+    insert: rows[0],
+    predicate: 'organizationId = :organizationId AND clubId = :clubId AND ',
+    replacements: rows[0],
+  };
+}
+
 module.exports = {
   async up(queryInterface) {
+    const tenant = await resolveTenantScope(queryInterface);
     const [existing] = await queryInterface.sequelize.query(
-      'SELECT COUNT(*) AS count FROM Bookings',
+      `SELECT COUNT(*) AS count FROM Bookings WHERE ${tenant.predicate}1=1`,
+      { replacements: tenant.replacements },
     );
     if (Number(existing[0]?.count || 0) > 0) return;
 
     const [courts] = await queryInterface.sequelize.query(
-      'SELECT id, name FROM Courts WHERE isActive = 1 ORDER BY sortOrder ASC LIMIT 6',
+      `SELECT id, name FROM Courts WHERE ${tenant.predicate}isActive = 1 ORDER BY sortOrder ASC LIMIT 6`,
+      { replacements: tenant.replacements },
     );
     const [clients] = await queryInterface.sequelize.query(
-      "SELECT id, name, phone FROM Users WHERE status = 'active' ORDER BY id ASC LIMIT 6",
+      `SELECT id, name, phone FROM Users WHERE ${tenant.insert.organizationId ? 'organizationId = :organizationId AND ' : ''}status = 'active' ORDER BY id ASC LIMIT 6`,
+      { replacements: tenant.replacements },
     );
     const [accounts] = await queryInterface.sequelize.query(
       "SELECT id FROM Accounts WHERE status = 'active' ORDER BY id ASC LIMIT 1",
@@ -29,6 +61,7 @@ module.exports = {
     const now = new Date();
     const rows = [
       {
+        ...tenant.insert,
         courtId: courts[0].id,
         userId: clients[0].id,
         clientName: clients[0].name,
@@ -49,6 +82,7 @@ module.exports = {
         updatedAt: now,
       },
       {
+        ...tenant.insert,
         courtId: courts[1].id,
         userId: clients[1].id,
         clientName: clients[1].name,
@@ -72,7 +106,8 @@ module.exports = {
 
     await queryInterface.bulkInsert('Bookings', rows);
     const [bookings] = await queryInterface.sequelize.query(
-      'SELECT id, status FROM Bookings ORDER BY id DESC LIMIT 2',
+      `SELECT id, status FROM Bookings WHERE ${tenant.predicate}comment LIKE 'Демо:%' ORDER BY id DESC LIMIT 2`,
+      { replacements: tenant.replacements },
     );
     await queryInterface.bulkInsert(
       'BookingChangeLogs',
@@ -91,11 +126,16 @@ module.exports = {
   },
 
   async down(queryInterface) {
+    const tenant = await resolveTenantScope(queryInterface);
     await queryInterface.sequelize.query(
-      "DELETE FROM BookingChangeLogs WHERE reason = 'Demo seed'",
+      `DELETE history FROM BookingChangeLogs history
+        JOIN Bookings booking ON booking.id = history.bookingId
+       WHERE ${tenant.insert.organizationId ? 'booking.organizationId = :organizationId AND booking.clubId = :clubId AND ' : ''}history.reason = 'Demo seed'`,
+      { replacements: tenant.replacements },
     );
     await queryInterface.sequelize.query(
-      "DELETE FROM Bookings WHERE comment LIKE 'Демо:%'",
+      `DELETE FROM Bookings WHERE ${tenant.predicate}comment LIKE 'Демо:%'`,
+      { replacements: tenant.replacements },
     );
   },
 };

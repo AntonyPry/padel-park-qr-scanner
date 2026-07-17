@@ -1,5 +1,9 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
 
 const DEFAULT_SETTINGS = {
   cancellationDeadlineHours: 0,
@@ -19,6 +23,19 @@ function appError(message, statusCode = 400, details = {}) {
   error.statusCode = statusCode;
   Object.assign(error, details);
   return error;
+}
+
+async function resolveRulesContext(authority, options = {}) {
+  if (
+    authority &&
+    Object.isFrozen(authority) &&
+    authority.authority &&
+    authority.organizationId &&
+    authority.clubId
+  ) {
+    return authority;
+  }
+  return resolveBookingAccessContext(authority, options);
 }
 
 function normalizeText(value, label = 'Значение', minLength = 1) {
@@ -198,21 +215,31 @@ function mapException(row) {
   };
 }
 
-async function getSettingsRow(transaction) {
-  let row = await db.BookingSettings.findByPk(1, { transaction });
+async function getSettingsRow(context, transaction) {
+  let row = await db.BookingSettings.findOne({
+    lock: transaction ? transaction.LOCK.UPDATE : undefined,
+    transaction,
+    where: bookingTenantWhere(context, {}, { force: true }),
+  });
   if (!row) {
-    row = await db.BookingSettings.create({ id: 1, ...DEFAULT_SETTINGS }, { transaction });
+    row = await db.BookingSettings.create({
+      ...DEFAULT_SETTINGS,
+      clubId: context.clubId,
+      organizationId: context.organizationId,
+    }, { transaction });
   }
   return row;
 }
 
-async function getSettings(transaction) {
-  return mapSettings(await getSettingsRow(transaction));
+async function getSettings(tenant = null, transaction) {
+  const context = await resolveRulesContext(tenant, { transaction });
+  return mapSettings(await getSettingsRow(context, transaction));
 }
 
-async function updateSettings(data) {
+async function updateSettings(data, tenant = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const row = await getSettingsRow(transaction);
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const row = await getSettingsRow(context, transaction);
     const working = normalizeTimeRange(
       data.workingHoursStart ?? row.workingHoursStart,
       data.workingHoursEnd ?? row.workingHoursEnd,
@@ -257,17 +284,22 @@ async function updateSettings(data) {
   });
 }
 
-async function getScheduleException(date, transaction) {
+async function getScheduleException(date, tenant = null, transaction) {
+  const context = await resolveRulesContext(tenant, { transaction });
   const row = await db.BookingScheduleException.findOne({
     transaction,
-    where: { date: normalizeDateOnly(date), status: 'active' },
+    where: bookingTenantWhere(context, {
+      date: normalizeDateOnly(date),
+      status: 'active',
+    }, { force: true }),
   });
   return row ? mapException(row) : null;
 }
 
-async function getEffectiveSchedule(date, transaction) {
-  const settings = await getSettings(transaction);
-  const exception = await getScheduleException(date, transaction);
+async function getEffectiveSchedule(date, tenant = null, transaction) {
+  const context = await resolveRulesContext(tenant, { transaction });
+  const settings = await getSettings(context, transaction);
+  const exception = await getScheduleException(date, context, transaction);
   return {
     ...settings,
     exception,
@@ -309,9 +341,13 @@ function assertWorkingHours(startsAt, endsAt, schedule) {
   }
 }
 
-async function assertNoBlockConflict({ courtId, endsAt, startsAt, transaction }) {
+async function assertNoBlockConflict({ context, courtId, endsAt, startsAt, transaction }) {
   const block = await db.CourtBlock.findOne({
-    include: [db.Court],
+    include: [{
+      model: db.Court,
+      required: true,
+      where: bookingTenantWhere(context, {}, { force: true }),
+    }],
     transaction,
     where: {
       courtId: Number(courtId),
@@ -358,8 +394,12 @@ function assertDeadline(currentBooking, timing, status, schedule) {
   }
 }
 
-async function assertBookable({ courtId, currentBooking = null, endsAt, startsAt, status = 'new', transaction }) {
-  const schedule = await getEffectiveSchedule(getLocalDateOnly(startsAt), transaction);
+async function assertBookable(
+  { context: inputContext = null, courtId, currentBooking = null, endsAt, startsAt, status = 'new', tenant = null, transaction },
+  authority = null,
+) {
+  const context = await resolveRulesContext(inputContext || tenant || authority, { transaction });
+  const schedule = await getEffectiveSchedule(getLocalDateOnly(startsAt), context, transaction);
   const isNew = !currentBooking;
   const isRescheduled =
     Boolean(currentBooking) &&
@@ -373,15 +413,16 @@ async function assertBookable({ courtId, currentBooking = null, endsAt, startsAt
     assertDuration(Math.round((new Date(endsAt).getTime() - new Date(startsAt).getTime()) / 60000), schedule);
     assertWorkingHours(startsAt, endsAt, schedule);
     if (status !== 'canceled') {
-      await assertNoBlockConflict({ courtId, endsAt, startsAt, transaction });
+      await assertNoBlockConflict({ context, courtId, endsAt, startsAt, transaction });
     }
   }
   assertDeadline(currentBooking, { courtId, endsAt, startsAt }, status, schedule);
   return schedule;
 }
 
-async function listPriceRules(status = 'active') {
-  const where = {};
+async function listPriceRules(status = 'active', tenant = null) {
+  const context = await resolveRulesContext(tenant);
+  const where = bookingTenantWhere(context, {}, { force: true });
   if (status !== 'all') where.status = STATUSES.has(status) ? status : 'active';
   const rows = await db.BookingPriceRule.findAll({
     order: [
@@ -412,23 +453,34 @@ function normalizePriceRulePayload(data, current = {}) {
   };
 }
 
-async function createPriceRule(data) {
-  const row = await db.BookingPriceRule.create(normalizePriceRulePayload(data));
-  return mapPriceRule(row);
+async function createPriceRule(data, tenant = null) {
+  return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const row = await db.BookingPriceRule.create({
+      ...normalizePriceRulePayload(data),
+      clubId: context.clubId,
+      organizationId: context.organizationId,
+    }, { transaction });
+    return mapPriceRule(row);
+  });
 }
 
-async function updatePriceRule(id, data) {
-  const row = await db.BookingPriceRule.findByPk(Number(id));
-  if (!row) throw appError('Тариф не найден', 404);
-  await row.update(normalizePriceRulePayload(data, row));
-  return mapPriceRule(row);
+async function updatePriceRule(id, data, tenant = null) {
+  return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const row = await db.BookingPriceRule.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: bookingTenantWhere(context, { id: Number(id) }, { force: true }),
+    });
+    if (!row) throw appError('Тариф не найден', 404);
+    await row.update(normalizePriceRulePayload(data, row), { transaction });
+    return mapPriceRule(row);
+  });
 }
 
-async function archivePriceRule(id) {
-  const row = await db.BookingPriceRule.findByPk(Number(id));
-  if (!row) throw appError('Тариф не найден', 404);
-  await row.update({ status: 'archived' });
-  return mapPriceRule(row);
+async function archivePriceRule(id, tenant = null) {
+  return updatePriceRule(id, { status: 'archived' }, tenant);
 }
 
 function ruleApplies(rule, courtType, weekday, minute) {
@@ -441,7 +493,7 @@ function ruleApplies(rule, courtType, weekday, minute) {
   );
 }
 
-async function lockCourts(courtIds, transaction) {
+async function lockCourts(courtIds, context, transaction) {
   const ids = Array.from(
     new Set(courtIds.map((courtId) => Number(courtId)).filter(Boolean)),
   ).sort((a, b) => a - b);
@@ -449,7 +501,7 @@ async function lockCourts(courtIds, transaction) {
     lock: transaction.LOCK.UPDATE,
     order: [['id', 'ASC']],
     transaction,
-    where: { id: { [Op.in]: ids } },
+    where: bookingTenantWhere(context, { id: { [Op.in]: ids } }, { force: true }),
   });
   const courtsById = new Map(courts.map((court) => [Number(court.id), court]));
   ids.forEach((id) => {
@@ -459,17 +511,20 @@ async function lockCourts(courtIds, transaction) {
   return courtsById;
 }
 
-async function calculateQuote({ courtId, durationMinutes, startsAt }) {
-  const court = await db.Court.findByPk(Number(courtId));
+async function calculateQuote({ courtId, durationMinutes, startsAt }, tenant = null) {
+  const context = await resolveRulesContext(tenant);
+  const court = await db.Court.findOne({
+    where: bookingTenantWhere(context, { id: Number(courtId) }, { force: true }),
+  });
   if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   const start = normalizeDate(startsAt, 'Время начала');
   const duration = normalizeInteger(durationMinutes, 'Длительность', 1, 720);
   const end = new Date(start.getTime() + duration * 60000);
-  const schedule = await getEffectiveSchedule(getLocalDateOnly(start));
+  const schedule = await getEffectiveSchedule(getLocalDateOnly(start), context);
   assertDuration(duration, schedule);
   assertWorkingHours(start, end, schedule);
 
-  const rules = await listPriceRules('active');
+  const rules = await listPriceRules('active', context);
   let price = 0;
   const applied = new Map();
   for (let offset = 0; offset < duration; offset += schedule.slotStepMinutes) {
@@ -507,7 +562,8 @@ function getDayRange(dateValue) {
   };
 }
 
-async function listBlocks(query = {}) {
+async function listBlocks(query = {}, tenant = null) {
+  const context = await resolveRulesContext(tenant);
   const where = {};
   if (query.status !== 'all') where.status = STATUSES.has(query.status) ? query.status : 'active';
   if (query.date) {
@@ -516,22 +572,26 @@ async function listBlocks(query = {}) {
     where.endsAt = { [Op.gte]: range.from };
   }
   const rows = await db.CourtBlock.findAll({
-    include: [db.Court],
+    include: [{
+      model: db.Court,
+      required: true,
+      where: bookingTenantWhere(context, {}, { force: true }),
+    }],
     order: [['startsAt', 'ASC']],
     where,
   });
   return rows.map(mapBlock);
 }
 
-async function assertNoBookingConflictForBlock({ courtId, endsAt, excludeBlockId = null, startsAt, transaction }) {
+async function assertNoBookingConflictForBlock({ context, courtId, endsAt, excludeBlockId = null, startsAt, transaction }) {
   const booking = await db.Booking.findOne({
     transaction,
-    where: {
+    where: bookingTenantWhere(context, {
       courtId: Number(courtId),
       endsAt: { [Op.gt]: startsAt },
       startsAt: { [Op.lt]: endsAt },
       status: { [Op.ne]: 'canceled' },
-    },
+    }, { force: true }),
   });
   if (booking) throw appError('На это время уже есть бронь, блокировку создать нельзя', 409);
 
@@ -546,8 +606,11 @@ async function assertNoBookingConflictForBlock({ courtId, endsAt, excludeBlockId
   if (block) throw appError('На это время уже есть блокировка ресурса', 409);
 }
 
-async function buildBlockPayload(data, account, transaction) {
-  const court = await db.Court.findByPk(Number(data.courtId), { transaction });
+async function buildBlockPayload(data, account, context, transaction) {
+  const court = await db.Court.findOne({
+    transaction,
+    where: bookingTenantWhere(context, { id: Number(data.courtId) }, { force: true }),
+  });
   if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   const startsAt = normalizeDate(data.startsAt, 'Время начала блокировки');
   const endsAt = normalizeDate(data.endsAt, 'Время окончания блокировки');
@@ -562,11 +625,12 @@ async function buildBlockPayload(data, account, transaction) {
   };
 }
 
-async function createBlock(data, account) {
+async function createBlock(data, account, tenant = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const payload = await buildBlockPayload(data, account, transaction);
-    await lockCourts([payload.courtId], transaction);
-    await assertNoBookingConflictForBlock({ ...payload, transaction });
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const payload = await buildBlockPayload(data, account, context, transaction);
+    await lockCourts([payload.courtId], context, transaction);
+    await assertNoBookingConflictForBlock({ ...payload, context, transaction });
     const row = await db.CourtBlock.create(
       { ...payload, createdByAccountId: account?.id || null },
       { transaction },
@@ -575,26 +639,37 @@ async function createBlock(data, account) {
   });
 }
 
-async function updateBlock(id, data, account) {
+async function updateBlock(id, data, account, tenant = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const row = await db.CourtBlock.findByPk(Number(id), {
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const row = await db.CourtBlock.findOne({
+      include: [{ model: db.Court, required: true, where: bookingTenantWhere(context, {}, { force: true }) }],
       lock: transaction.LOCK.UPDATE,
       transaction,
+      where: { id: Number(id) },
     });
     if (!row) throw appError('Блокировка не найдена', 404);
-    const payload = await buildBlockPayload({ ...row.toJSON(), ...data }, account, transaction);
-    await lockCourts([row.courtId, payload.courtId], transaction);
-    await assertNoBookingConflictForBlock({ ...payload, excludeBlockId: row.id, transaction });
+    const payload = await buildBlockPayload({ ...row.toJSON(), ...data }, account, context, transaction);
+    await lockCourts([row.courtId, payload.courtId], context, transaction);
+    await assertNoBookingConflictForBlock({ ...payload, context, excludeBlockId: row.id, transaction });
     await row.update(payload, { transaction });
     return mapBlock(await db.CourtBlock.findByPk(row.id, { include: [db.Court], transaction }));
   });
 }
 
-async function archiveBlock(id, account) {
-  const row = await db.CourtBlock.findByPk(Number(id), { include: [db.Court] });
-  if (!row) throw appError('Блокировка не найдена', 404);
-  await row.update({ status: 'archived', updatedByAccountId: account?.id || null });
-  return mapBlock(row);
+async function archiveBlock(id, account, tenant = null) {
+  return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const row = await db.CourtBlock.findOne({
+      include: [{ model: db.Court, required: true, where: bookingTenantWhere(context, {}, { force: true }) }],
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: { id: Number(id) },
+    });
+    if (!row) throw appError('Блокировка не найдена', 404);
+    await row.update({ status: 'archived', updatedByAccountId: account?.id || null }, { transaction });
+    return mapBlock(row);
+  });
 }
 
 function normalizeExceptionPayload(data, current = {}) {
@@ -619,8 +694,9 @@ function normalizeExceptionPayload(data, current = {}) {
   };
 }
 
-async function listExceptions(status = 'active') {
-  const where = {};
+async function listExceptions(status = 'active', tenant = null) {
+  const context = await resolveRulesContext(tenant);
+  const where = bookingTenantWhere(context, {}, { force: true });
   if (status !== 'all') where.status = STATUSES.has(status) ? status : 'active';
   const rows = await db.BookingScheduleException.findAll({
     order: [['date', 'ASC']],
@@ -629,28 +705,40 @@ async function listExceptions(status = 'active') {
   return rows.map(mapException);
 }
 
-async function upsertException(data) {
-  const payload = normalizeExceptionPayload(data);
-  const [row, created] = await db.BookingScheduleException.findOrCreate({
-    defaults: payload,
-    where: { date: payload.date },
+async function upsertException(data, tenant = null) {
+  return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const payload = normalizeExceptionPayload(data);
+    const [row, created] = await db.BookingScheduleException.findOrCreate({
+      defaults: {
+        ...payload,
+        clubId: context.clubId,
+        organizationId: context.organizationId,
+      },
+      transaction,
+      where: bookingTenantWhere(context, { date: payload.date }, { force: true }),
+    });
+    if (!created) await row.update(payload, { transaction });
+    return mapException(row);
   });
-  if (!created) await row.update(payload);
-  return mapException(row);
 }
 
-async function updateException(id, data) {
-  const row = await db.BookingScheduleException.findByPk(Number(id));
-  if (!row) throw appError('Исключение не найдено', 404);
-  await row.update(normalizeExceptionPayload(data, row));
-  return mapException(row);
+async function updateException(id, data, tenant = null) {
+  return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveRulesContext(tenant, { lock: true, transaction });
+    const row = await db.BookingScheduleException.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: bookingTenantWhere(context, { id: Number(id) }, { force: true }),
+    });
+    if (!row) throw appError('Исключение не найдено', 404);
+    await row.update(normalizeExceptionPayload(data, row), { transaction });
+    return mapException(row);
+  });
 }
 
-async function archiveException(id) {
-  const row = await db.BookingScheduleException.findByPk(Number(id));
-  if (!row) throw appError('Исключение не найдено', 404);
-  await row.update({ status: 'archived' });
-  return mapException(row);
+async function archiveException(id, tenant = null) {
+  return updateException(id, { status: 'archived' }, tenant);
 }
 
 module.exports = {

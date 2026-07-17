@@ -1,5 +1,13 @@
 module.exports = (sequelize, DataTypes) => {
   const BookingPriceRule = sequelize.define('BookingPriceRule', {
+    organizationId: {
+      allowNull: false,
+      type: DataTypes.INTEGER,
+    },
+    clubId: {
+      allowNull: false,
+      type: DataTypes.INTEGER,
+    },
     name: {
       allowNull: false,
       type: DataTypes.STRING,
@@ -38,7 +46,27 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 'active',
       type: DataTypes.ENUM('active', 'archived'),
     },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        const attributes = options.attributes || {};
+        if (['organizationId', 'clubId'].some((field) =>
+          Object.prototype.hasOwnProperty.call(attributes, field))) {
+          throw new Error('Booking price rule tenant attribution is immutable');
+        }
+      },
+      beforeUpdate(row) {
+        if (row.changed('organizationId') || row.changed('clubId')) {
+          throw new Error('Booking price rule tenant attribution is immutable');
+        }
+      },
+    },
   });
+
+  BookingPriceRule.associate = (models) => {
+    BookingPriceRule.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    BookingPriceRule.belongsTo(models.Club, { foreignKey: 'clubId' });
+  };
 
   return BookingPriceRule;
 };

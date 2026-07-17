@@ -1,5 +1,13 @@
 module.exports = (sequelize, DataTypes) => {
   const BookingSettings = sequelize.define('BookingSettings', {
+    organizationId: {
+      allowNull: false,
+      type: DataTypes.INTEGER,
+    },
+    clubId: {
+      allowNull: false,
+      type: DataTypes.INTEGER,
+    },
     workingHoursStart: {
       allowNull: false,
       defaultValue: '08:00',
@@ -35,7 +43,27 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: 0,
       type: DataTypes.INTEGER,
     },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        const attributes = options.attributes || {};
+        if (['organizationId', 'clubId'].some((field) =>
+          Object.prototype.hasOwnProperty.call(attributes, field))) {
+          throw new Error('Booking settings tenant attribution is immutable');
+        }
+      },
+      beforeUpdate(row) {
+        if (row.changed('organizationId') || row.changed('clubId')) {
+          throw new Error('Booking settings tenant attribution is immutable');
+        }
+      },
+    },
   });
+
+  BookingSettings.associate = (models) => {
+    BookingSettings.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    BookingSettings.belongsTo(models.Club, { foreignKey: 'clubId' });
+  };
 
   return BookingSettings;
 };

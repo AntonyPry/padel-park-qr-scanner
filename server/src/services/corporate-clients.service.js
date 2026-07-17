@@ -3,6 +3,13 @@ const xlsx = require('xlsx');
 const db = require('../../models');
 const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
+const {
+  isTenantBookingsCourtsEnabled,
+} = require('../tenant-context/capabilities');
 
 const CORPORATE_CLIENT_STATUSES = ['active', 'archived'];
 const CORPORATE_LEDGER_ENTRY_STATUSES = ['active', 'canceled'];
@@ -644,7 +651,7 @@ async function loadLinkedFinance(data, trainingMarker, transaction) {
   return finance;
 }
 
-async function buildSpendingMetadata(data, trainingMarker, transaction) {
+async function buildSpendingMetadata(data, trainingMarker, transaction, tenant = null) {
   const metadata = {
     ...(normalizeMetadata(data.metadata) || {}),
     service: normalizeService(data.service),
@@ -667,7 +674,17 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
 
   const bookingId = normalizeOptionalId(data.bookingId, 'ID бронирования');
   if (bookingId) {
-    const booking = await db.Booking.findByPk(bookingId, { transaction });
+    const context = isTenantBookingsCourtsEnabled()
+      ? await resolveBookingAccessContext(tenant, { transaction })
+      : null;
+    const booking = await db.Booking.findOne({
+      transaction,
+      where: bookingTenantWhere(
+        context,
+        { id: bookingId },
+        { force: Boolean(context) },
+      ),
+    });
     if (!booking) throw appError('Бронирование списания не найдено', 404);
     assertEntityMatchesTrainingScope(booking, trainingMarker, 'Бронирование списания');
     const raw = booking.toJSON ? booking.toJSON() : booking;
@@ -846,7 +863,12 @@ async function createDeposit(corporateClientId, data = {}, account = null) {
   };
 }
 
-async function createSpending(corporateClientId, data = {}, account = null) {
+async function createSpending(
+  corporateClientId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   const result = await db.sequelize.transaction(async (transaction) => {
     const client = await findCorporateClient(corporateClientId, {
       transaction,
@@ -866,7 +888,12 @@ async function createSpending(corporateClientId, data = {}, account = null) {
     }
 
     const trainingMarker = await onboardingService.getTrainingDataMarker(account);
-    const metadata = await buildSpendingMetadata(data, trainingMarker, transaction);
+    const metadata = await buildSpendingMetadata(
+      data,
+      trainingMarker,
+      transaction,
+      tenant,
+    );
     const entry = await db.CorporateLedgerEntry.create(
       {
         amount,

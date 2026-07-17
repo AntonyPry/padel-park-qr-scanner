@@ -107,7 +107,12 @@ class TelephonyController {
   async completeCall(req, res) {
     try {
       res.json(
-        await telephonyService.completeCall(req.account, req.params.id, req.body),
+        await telephonyService.completeCall(
+          req.account,
+          req.params.id,
+          req.body,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка завершения обработки звонка');

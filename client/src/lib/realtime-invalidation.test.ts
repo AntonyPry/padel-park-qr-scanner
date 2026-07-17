@@ -145,10 +145,10 @@ describe('realtime invalidation mapping', () => {
       tenantScope: 'club',
     });
     const otherTenantEvent = event({
-      clubId: 12,
+      clubId: 13,
       domain: 'bookings',
-      membershipId: 22,
-      organizationId: 99,
+      membershipId: 21,
+      organizationId: 11,
       tenantScope: 'club',
     });
 

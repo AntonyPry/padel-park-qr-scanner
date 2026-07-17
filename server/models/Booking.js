@@ -1,5 +1,13 @@
 module.exports = (sequelize, DataTypes) => {
   const Booking = sequelize.define('Booking', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     courtId: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -111,9 +119,49 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    creationKeyHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    creationPayloadHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    lastMutationKeyHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    lastMutationPayloadHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        const attributes = options.attributes || {};
+        if (['organizationId', 'clubId', 'creationKeyHash', 'creationPayloadHash'].some(
+          (field) => Object.prototype.hasOwnProperty.call(attributes, field),
+        )) {
+          const error = new Error('Booking tenant and creation attribution is immutable');
+          error.code = 'BOOKING_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+      beforeUpdate(booking) {
+        if (['organizationId', 'clubId', 'creationKeyHash', 'creationPayloadHash'].some(
+          (field) => booking.changed(field),
+        )) {
+          const error = new Error('Booking tenant and creation attribution is immutable');
+          error.code = 'BOOKING_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   Booking.associate = (models) => {
+    Booking.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    Booking.belongsTo(models.Club, { foreignKey: 'clubId' });
     Booking.belongsTo(models.Court, { foreignKey: 'courtId' });
     Booking.belongsTo(models.User, { foreignKey: 'userId' });
     Booking.belongsTo(models.Account, {

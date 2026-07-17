@@ -15,9 +15,14 @@ const {
   resolveClientAccessContext,
 } = require('./client-access-context.service');
 const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
+const {
   resolveCallTaskAccessContext,
 } = require('./call-task-access-context.service');
 const {
+  isTenantBookingsCourtsEnabled,
   isTenantClientBasesCallTasksEnabled,
 } = require('../tenant-context/capabilities');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
@@ -1357,6 +1362,24 @@ async function listClientTelephonyCalls(clientId, account, options = {}) {
 
 async function getClientDetails(id, account = null, tenant = null) {
   const context = await resolveClientAccessContext(tenant);
+  let bookingContext = null;
+  if (isTenantBookingsCourtsEnabled()) {
+    if (tenant?.scope === 'club') {
+      bookingContext = await resolveBookingAccessContext(tenant);
+    } else {
+      const clubs = await db.Club.findAll({
+        attributes: ['id'],
+        where: { organizationId: context.organizationId, status: 'active' },
+      });
+      if (clubs.length === 1 && tenant && Object.isFrozen(tenant)) {
+        bookingContext = await resolveBookingAccessContext(Object.freeze({
+          ...tenant,
+          clubId: Number(clubs[0].id),
+          scope: 'club',
+        }));
+      }
+    }
+  }
   const client = await getClientOrFail(id, context);
 
   await onboardingService.recordEventSafe(account, 'client.viewed', {
@@ -1389,9 +1412,15 @@ async function getClientDetails(id, account = null, tenant = null) {
     canViewTrainingNotes(account)
       ? clientSkillMapService.listForClient(client.id, account)
       : [],
-    includeOperationalHistory ? listClientBookings(client.id, { limit: 50 }) : [],
-    includeOperationalHistory ? listClientBookingSeries(client.id, { limit: 30 }) : [],
-    includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
+    includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
+      ? listClientBookings(client.id, { limit: 50 }, bookingContext)
+      : [],
+    includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
+      ? listClientBookingSeries(client.id, { limit: 30 }, bookingContext)
+      : [],
+    includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
+      ? getClientBookingStats(client.id, bookingContext)
+      : getEmptyBookingStats(),
     includeOperationalHistory
       ? listClientActiveCallTasks(client.id, account, context)
       : [],
@@ -1478,18 +1507,24 @@ async function listClientVisits(clientId, options = {}) {
   });
 }
 
-async function getClientBookingStats(clientId) {
+async function getClientBookingStats(clientId, context = null) {
   if (!db.Booking) return getEmptyBookingStats();
 
   const now = new Date();
-  const activeWhere = {
+  const activeWhere = bookingTenantWhere(context, {
     isTraining: false,
     userId: clientId,
     status: { [Op.ne]: 'canceled' },
-  };
+  }, { force: Boolean(context) });
   const [totalCount, activeCount, upcomingCount, canceledCount, paidAmount, plannedAmount, nextBooking] =
     await Promise.all([
-      db.Booking.count({ where: { userId: clientId, isTraining: false } }),
+      db.Booking.count({
+        where: bookingTenantWhere(
+          context,
+          { userId: clientId, isTraining: false },
+          { force: Boolean(context) },
+        ),
+      }),
       db.Booking.count({ where: activeWhere }),
       db.Booking.count({
         where: {
@@ -1498,15 +1533,16 @@ async function getClientBookingStats(clientId) {
         },
       }),
       db.Booking.count({
-        where: {
+        where: bookingTenantWhere(context, {
           userId: clientId,
           status: 'canceled',
           isTraining: false,
-        },
+        }, { force: Boolean(context) }),
       }),
       db.Booking.sum('paidAmount', { where: activeWhere }),
       db.Booking.sum('price', { where: activeWhere }),
       db.Booking.findOne({
+        attributes: ['startsAt'],
         where: {
           ...activeWhere,
           startsAt: { [Op.gte]: now },
@@ -1526,14 +1562,31 @@ async function getClientBookingStats(clientId) {
   };
 }
 
-async function listClientBookings(clientId, options = {}) {
+async function listClientBookings(clientId, options = {}, context = null) {
   if (!db.Booking) return [];
 
   const limit = Math.min(200, Number(options.limit) || 50);
   const bookings = await db.Booking.findAll({
-    where: { userId: clientId },
+    attributes: {
+      exclude: [
+        'organizationId',
+        'clubId',
+        'creationKeyHash',
+        'creationPayloadHash',
+        'lastMutationKeyHash',
+        'lastMutationPayloadHash',
+      ],
+    },
+    where: bookingTenantWhere(
+      context,
+      { userId: clientId },
+      { force: Boolean(context) },
+    ),
     include: [
-      db.Court,
+      {
+        attributes: { exclude: ['organizationId', 'clubId'] },
+        model: db.Court,
+      },
       {
         as: 'series',
         model: db.BookingSeries,
@@ -1547,13 +1600,30 @@ async function listClientBookings(clientId, options = {}) {
   return bookings.map(mapClientBooking);
 }
 
-async function listClientBookingSeries(clientId, options = {}) {
+async function listClientBookingSeries(clientId, options = {}, context = null) {
   if (!db.BookingSeries) return [];
 
   const limit = Math.min(100, Number(options.limit) || 30);
   const rows = await db.BookingSeries.findAll({
-    where: { userId: clientId },
-    include: [db.Court],
+    attributes: {
+      exclude: [
+        'organizationId',
+        'clubId',
+        'creationKeyHash',
+        'creationPayloadHash',
+        'lastMutationKeyHash',
+        'lastMutationPayloadHash',
+      ],
+    },
+    where: bookingTenantWhere(
+      context,
+      { userId: clientId },
+      { force: Boolean(context) },
+    ),
+    include: [{
+      attributes: { exclude: ['organizationId', 'clubId'] },
+      model: db.Court,
+    }],
     order: [
       ['status', 'ASC'],
       ['weekday', 'ASC'],
@@ -3126,7 +3196,12 @@ async function mergeClients(
             userId: primary.id,
           },
           {
-            where: { userId: duplicate.id },
+            where: {
+              userId: duplicate.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
             transaction,
           },
         );
@@ -3139,9 +3214,40 @@ async function mergeClients(
             userId: primary.id,
           },
           {
-            where: { userId: duplicate.id },
+            where: {
+              userId: duplicate.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
             transaction,
           },
+        );
+      }
+      if (db.BookingParticipant && isTenantBookingsCourtsEnabled()) {
+        const bookingRows = await db.Booking.findAll({
+          attributes: ['id'],
+          raw: true,
+          transaction,
+          where: { organizationId: context.organizationId },
+        });
+        const bookingIds = bookingRows.map((row) => Number(row.id)).filter(Boolean);
+        if (bookingIds.length > 0) {
+          await db.BookingParticipant.update(
+            { userId: primary.id },
+            {
+              transaction,
+              where: {
+                bookingId: { [Op.in]: bookingIds },
+                userId: duplicate.id,
+              },
+            },
+          );
+        }
+      } else if (db.BookingParticipant) {
+        await db.BookingParticipant.update(
+          { userId: primary.id },
+          { transaction, where: { userId: duplicate.id } },
         );
       }
       if (db.TelephonyCall) {
@@ -3154,7 +3260,6 @@ async function mergeClients(
         );
       }
       const directClientRelations = [
-        ['BookingParticipant', 'userId'],
         ['Certificate', 'clientId'],
         ['CertificateRedemption', 'clientId'],
         ['ClientSubscription', 'clientId'],
@@ -3313,10 +3418,26 @@ async function removeArchivedClient(id, tenant = null) {
         ? db.TelephonyCall.count({ transaction, where: { userId: client.id } })
         : 0,
       db.Booking
-        ? db.Booking.count({ transaction, where: { userId: client.id } })
+        ? db.Booking.count({
+            transaction,
+            where: {
+              userId: client.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
+          })
         : 0,
       db.BookingSeries
-        ? db.BookingSeries.count({ transaction, where: { userId: client.id } })
+        ? db.BookingSeries.count({
+            transaction,
+            where: {
+              userId: client.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
+          })
         : 0,
       db.ClientSubscription
         ? db.ClientSubscription.count({

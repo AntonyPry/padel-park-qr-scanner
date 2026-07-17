@@ -9,10 +9,15 @@ const {
   resolveStoredCallTaskContext,
 } = require('./call-task-access-context.service');
 const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
+const {
   assertTenantFoundationInitialized,
 } = require('./tenant-foundation.service');
 const {
   isTenantFilesWorkersEnabled,
+  isTenantBookingsCourtsEnabled,
   isTenantProviderIntegrationsEnabled,
 } = require('../tenant-context/capabilities');
 const {
@@ -2267,7 +2272,7 @@ function normalizeInterest(value) {
   return value;
 }
 
-async function completeCall(actor, id, data = {}) {
+async function completeCall(actor, id, data = {}, tenant = null) {
   const result = normalizeResult(data.result);
   const interest = normalizeInterest(data.interest);
   const nextActionAt = parseDate(data.nextActionAt);
@@ -2282,6 +2287,7 @@ async function completeCall(actor, id, data = {}) {
       data.linkedBookingId,
       call,
       transaction,
+      tenant,
     );
 
     await call.update(
@@ -2307,7 +2313,7 @@ async function completeCall(actor, id, data = {}) {
     return call.id;
   });
 
-  return getCall(actor, callId);
+  return getCall(actor, callId, tenant);
 }
 
 async function startProcessing(actor, id) {
@@ -2334,7 +2340,12 @@ async function ignoreCall(actor, id, data = {}) {
   return getCall(actor, call.id);
 }
 
-async function normalizeLinkedBookingId(linkedBookingId, call, transaction = undefined) {
+async function normalizeLinkedBookingId(
+  linkedBookingId,
+  call,
+  transaction = undefined,
+  tenant = null,
+) {
   if (!linkedBookingId) return null;
 
   const bookingId = Number(linkedBookingId);
@@ -2342,7 +2353,13 @@ async function normalizeLinkedBookingId(linkedBookingId, call, transaction = und
     throw appError('Некорректная бронь для звонка');
   }
 
-  const booking = await db.Booking.findByPk(bookingId, { transaction });
+  const context = isTenantBookingsCourtsEnabled()
+    ? await resolveBookingAccessContext(tenant, { transaction })
+    : null;
+  const booking = await db.Booking.findOne({
+    transaction,
+    where: bookingTenantWhere(context, { id: bookingId }, { force: Boolean(context) }),
+  });
   if (!booking) throw appError('Бронь для звонка не найдена', 404);
   if (call.userId && booking.userId && Number(booking.userId) !== Number(call.userId)) {
     throw appError('Бронь принадлежит другому клиенту', 409);

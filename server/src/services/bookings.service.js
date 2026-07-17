@@ -1,3 +1,4 @@
+const crypto = require('node:crypto');
 const { Op } = require('sequelize');
 const db = require('../../models');
 const bookingRulesService = require('./booking-rules.service');
@@ -6,6 +7,11 @@ const referencesService = require('./references.service');
 const {
   resolveClientAccessContext,
 } = require('./client-access-context.service');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+  resolveEligibleBookingStaff,
+} = require('./booking-access-context.service');
 const trainingPlansService = require('./training-plans.service');
 const {
   formatRussianPhone,
@@ -63,6 +69,61 @@ function appError(message, statusCode = 400, details = {}) {
   error.statusCode = statusCode;
   Object.assign(error, details);
   return error;
+}
+
+function isResolvedBookingContext(value) {
+  return Boolean(
+    value &&
+      Object.isFrozen(value) &&
+      Number.isSafeInteger(Number(value.organizationId)) &&
+      Number.isSafeInteger(Number(value.clubId)) &&
+      typeof value.readScoped === 'boolean',
+  );
+}
+
+async function resolveBookingContext(authority, options = {}) {
+  return isResolvedBookingContext(authority)
+    ? authority
+    : resolveBookingAccessContext(authority, options);
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value)
+      .filter((key) => value[key] !== undefined)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+function getIdempotencyMetadata(idempotencyKey, operation, payload) {
+  const key = String(idempotencyKey || '').trim();
+  if (!key) return null;
+  if (key.length > 200) {
+    throw appError('Idempotency-Key не может быть длиннее 200 символов');
+  }
+  return {
+    keyHash: sha256(key),
+    payloadHash: sha256(stableStringify({ operation, payload })),
+  };
+}
+
+function assertIdempotencyPayload(row, metadata, payloadHashField) {
+  if (!row || !metadata) return;
+  if (row[payloadHashField] !== metadata.payloadHash) {
+    throw appError('Idempotency-Key уже использован с другим запросом', 409, {
+      code: 'IDEMPOTENCY_KEY_REUSED',
+    });
+  }
 }
 
 function normalizeText(value) {
@@ -497,7 +558,8 @@ function getSeriesIncludes() {
   ];
 }
 
-async function markFirstBookingFlags(bookings, transaction) {
+async function markFirstBookingFlags(bookings, transaction, authority = null) {
+  const context = await resolveBookingContext(authority, { transaction });
   const rows = Array.isArray(bookings) ? bookings : [bookings].filter(Boolean);
   const userIds = Array.from(
     new Set(rows.map((booking) => Number(booking.userId)).filter(Boolean)),
@@ -512,10 +574,10 @@ async function markFirstBookingFlags(bookings, transaction) {
       ['id', 'ASC'],
     ],
     transaction,
-    where: {
+    where: bookingTenantWhere(context, {
       status: { [Op.ne]: 'canceled' },
       userId: { [Op.in]: userIds },
-    },
+    }, { force: true }),
   });
   const firstBookingIdByUserId = new Map();
   firstBookings.forEach((booking) => {
@@ -532,9 +594,9 @@ async function markFirstBookingFlags(bookings, transaction) {
       ['id', 'ASC'],
     ],
     transaction,
-    where: {
+    where: bookingTenantWhere(context, {
       userId: { [Op.in]: userIds },
-    },
+    }, { force: true }),
   });
   const firstVisitAtByUserId = new Map();
   visits.forEach((visit) => {
@@ -562,7 +624,8 @@ async function markFirstBookingFlags(bookings, transaction) {
   return bookings;
 }
 
-async function lockCourtsForBooking(courtIds, transaction) {
+async function lockCourtsForBooking(courtIds, transaction, authority = null) {
+  const context = await resolveBookingContext(authority, { lock: true, transaction });
   const ids = Array.from(
     new Set(courtIds.map((courtId) => Number(courtId)).filter(Boolean)),
   ).sort((a, b) => a - b);
@@ -571,7 +634,7 @@ async function lockCourtsForBooking(courtIds, transaction) {
     lock: transaction.LOCK.UPDATE,
     order: [['id', 'ASC']],
     transaction,
-    where: { id: { [Op.in]: ids } },
+    where: bookingTenantWhere(context, { id: { [Op.in]: ids } }, { force: true }),
   });
   const courtsById = new Map(courts.map((court) => [Number(court.id), court]));
 
@@ -583,14 +646,16 @@ async function lockCourtsForBooking(courtIds, transaction) {
   return courtsById;
 }
 
-async function getBookingOrFail(id, transaction) {
-  const booking = await db.Booking.findByPk(Number(id), {
+async function getBookingOrFail(id, transaction, authority = null) {
+  const context = await resolveBookingContext(authority, { lock: Boolean(transaction), transaction });
+  const booking = await db.Booking.findOne({
     include: getBookingIncludes(),
     lock: transaction ? transaction.LOCK.UPDATE : undefined,
     transaction,
+    where: bookingTenantWhere(context, { id: Number(id) }, { force: true }),
   });
   if (!booking) throw appError('Бронь не найдена', 404);
-  await markFirstBookingFlags(booking, transaction);
+  await markFirstBookingFlags(booking, transaction, context);
   return booking;
 }
 
@@ -599,6 +664,7 @@ async function resolveClient(
   transaction,
   trainingMarker = {},
   tenant = null,
+  bookingContext = null,
 ) {
   const context = await resolveClientAccessContext(tenant, {
     lock: true,
@@ -608,6 +674,12 @@ async function resolveClient(
     context.scoped
       ? { ...where, organizationId: context.organizationId }
       : where;
+  if (
+    bookingContext &&
+    Number(context.organizationId) !== Number(bookingContext.organizationId)
+  ) {
+    throw appError('Клиент не найден', 404);
+  }
   if (data.userId) {
     const client = await db.User.findOne({
       transaction,
@@ -724,13 +796,27 @@ async function syncBookingParticipants(booking, participantIds, transaction) {
   );
 }
 
-async function resolveResponsibleStaffId(data, currentBooking = null, transaction) {
+async function resolveResponsibleStaffId(
+  data,
+  currentBooking = null,
+  transaction,
+  authority = null,
+) {
   const rawValue =
     data.responsibleStaffId !== undefined
       ? data.responsibleStaffId
       : currentBooking?.responsibleStaffId || null;
   const responsibleStaffId = normalizeNullableId(rawValue, 'Ответственный сотрудник');
   if (!responsibleStaffId) return null;
+
+  const context = await resolveBookingContext(authority, { lock: true, transaction });
+  if (context.readScoped) {
+    const staff = await resolveEligibleBookingStaff(responsibleStaffId, context, {
+      lock: true,
+      transaction,
+    });
+    return staff.id;
+  }
 
   const staff = await db.Staff.findByPk(responsibleStaffId, { transaction });
   if (!staff || staff.status !== 'active') {
@@ -745,7 +831,9 @@ async function assertNoConflict({
   excludeBookingId = null,
   startsAt,
   transaction,
+  tenant,
 }) {
+  const context = await resolveBookingContext(tenant, { transaction });
   const where = {
     courtId: Number(courtId),
     endsAt: { [Op.gt]: startsAt },
@@ -761,7 +849,7 @@ async function assertNoConflict({
   const conflict = await db.Booking.findOne({
     include: [db.Court],
     transaction,
-    where,
+    where: bookingTenantWhere(context, where, { force: true }),
   });
 
   if (conflict) {
@@ -881,11 +969,12 @@ function buildBookingPayload(data, account, client, timing, currentBooking = nul
   };
 }
 
-async function listCourts() {
-  return listBookingResources({ status: 'active' });
+async function listCourts(authority = null) {
+  return listBookingResources({ status: 'active' }, authority);
 }
 
-async function listBookingResources(query = {}) {
+async function listBookingResources(query = {}, authority = null) {
+  const context = await resolveBookingContext(authority);
   const where = {};
   if (query.status !== 'all') {
     where.isActive = query.status === 'archived' ? false : true;
@@ -895,20 +984,28 @@ async function listBookingResources(query = {}) {
       ['sortOrder', 'ASC'],
       ['name', 'ASC'],
     ],
-    where,
+    where: bookingTenantWhere(context, where, { force: true }),
   });
   return courts.map(mapCourt);
 }
 
-async function getNextResourceSortOrder(transaction) {
-  const maxSortOrder = await db.Court.max('sortOrder', { transaction });
+async function getNextResourceSortOrder(transaction, context) {
+  const maxSortOrder = await db.Court.max('sortOrder', {
+    transaction,
+    where: bookingTenantWhere(context, {}, { force: true }),
+  });
   return Number.isFinite(Number(maxSortOrder)) ? Number(maxSortOrder) + 10 : 10;
 }
 
-async function normalizeBookingResourcePayload(data = {}, current = null, transaction = undefined) {
+async function normalizeBookingResourcePayload(
+  data = {},
+  current = null,
+  transaction = undefined,
+  context,
+) {
   const nextSortOrder = current
     ? Number(current.sortOrder || 0)
-    : await getNextResourceSortOrder(transaction);
+    : await getNextResourceSortOrder(transaction, context);
   const payload = {
     isActive:
       data.isActive === undefined
@@ -921,10 +1018,10 @@ async function normalizeBookingResourcePayload(data = {}, current = null, transa
 
   const existing = await db.Court.findOne({
     transaction,
-    where: {
+    where: bookingTenantWhere(context, {
       name: payload.name,
       ...(current ? { id: { [Op.ne]: current.id } } : {}),
-    },
+    }, { force: true }),
   });
   if (existing) {
     throw appError('Колонка бронирования с таким названием уже существует', 409);
@@ -933,47 +1030,54 @@ async function normalizeBookingResourcePayload(data = {}, current = null, transa
   return payload;
 }
 
-async function createBookingResource(data = {}) {
+async function createBookingResource(data = {}, authority = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const payload = await normalizeBookingResourcePayload(data, null, transaction);
-    const resource = await db.Court.create(payload, { transaction });
+    const context = await resolveBookingContext(authority, { lock: true, transaction });
+    const payload = await normalizeBookingResourcePayload(data, null, transaction, context);
+    const resource = await db.Court.create({
+      ...payload,
+      clubId: context.clubId,
+      organizationId: context.organizationId,
+    }, { transaction });
     return mapCourt(resource);
   });
 }
 
-async function updateBookingResource(id, data = {}) {
+async function updateBookingResource(id, data = {}, authority = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const resource = await db.Court.findByPk(Number(id), {
+    const context = await resolveBookingContext(authority, { lock: true, transaction });
+    const resource = await db.Court.findOne({
       lock: transaction.LOCK.UPDATE,
       transaction,
+      where: bookingTenantWhere(context, { id: Number(id) }, { force: true }),
     });
     if (!resource) throw appError('Колонка бронирования не найдена', 404);
-    const payload = await normalizeBookingResourcePayload(data, resource, transaction);
+    const payload = await normalizeBookingResourcePayload(data, resource, transaction, context);
     if (resource.isActive && payload.isActive === false) {
-      await assertResourceCanBeArchived(resource.id, transaction);
+      await assertResourceCanBeArchived(resource.id, transaction, context);
     }
     await resource.update(payload, { transaction });
     return mapCourt(resource);
   });
 }
 
-async function assertResourceCanBeArchived(resourceId, transaction) {
+async function assertResourceCanBeArchived(resourceId, transaction, context) {
   const now = new Date();
   const [futureBookings, activeSeries, activeBlocks] = await Promise.all([
     db.Booking.count({
       transaction,
-      where: {
+      where: bookingTenantWhere(context, {
         courtId: resourceId,
         endsAt: { [Op.gte]: now },
         status: { [Op.ne]: 'canceled' },
-      },
+      }, { force: true }),
     }),
     db.BookingSeries.count({
       transaction,
-      where: {
+      where: bookingTenantWhere(context, {
         courtId: resourceId,
         status: 'active',
-      },
+      }, { force: true }),
     }),
     db.CourtBlock.count({
       transaction,
@@ -999,31 +1103,44 @@ async function assertResourceCanBeArchived(resourceId, transaction) {
   }
 }
 
-async function archiveBookingResource(id) {
+async function archiveBookingResource(id, authority = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const resource = await db.Court.findByPk(Number(id), {
+    const context = await resolveBookingContext(authority, { lock: true, transaction });
+    const resource = await db.Court.findOne({
       lock: transaction.LOCK.UPDATE,
       transaction,
+      where: bookingTenantWhere(context, { id: Number(id) }, { force: true }),
     });
     if (!resource) throw appError('Колонка бронирования не найдена', 404);
-    await assertResourceCanBeArchived(resource.id, transaction);
+    await assertResourceCanBeArchived(resource.id, transaction, context);
     await resource.update({ isActive: false }, { transaction });
     return mapCourt(resource);
   });
 }
 
-async function listResponsibleStaff() {
+async function listResponsibleStaff(authority = null) {
+  const context = await resolveBookingContext(authority);
   const staff = await db.Staff.findAll({
     order: [
       ['name', 'ASC'],
       ['id', 'ASC'],
     ],
-    where: { status: 'active' },
+    where: context.readScoped
+      ? { organizationId: context.organizationId, status: 'active' }
+      : { status: 'active' },
   });
-  return staff.map(mapStaff);
+  if (!context.readScoped) return staff.map(mapStaff);
+  const eligible = [];
+  for (const row of staff) {
+    if (await resolveEligibleBookingStaff(row.id, context, { allowInvalid: true })) {
+      eligible.push(mapStaff(row));
+    }
+  }
+  return eligible;
 }
 
-async function listBookings(query = {}) {
+async function listBookings(query = {}, authority = null) {
+  const context = await resolveBookingContext(authority);
   const range = getDayRange(query.date);
   const where = {
     startsAt: {
@@ -1042,9 +1159,9 @@ async function listBookings(query = {}) {
       ['startsAt', 'ASC'],
       [db.Court, 'sortOrder', 'ASC'],
     ],
-    where,
+    where: bookingTenantWhere(context, where, { force: true }),
   });
-  await markFirstBookingFlags(bookings);
+  await markFirstBookingFlags(bookings, undefined, context);
 
   return bookings.map(mapBooking);
 }
@@ -1100,13 +1217,13 @@ function addBookingToAnalyticsBucket(bucket, booking) {
   bucket.unpaidAmount = Math.max(0, bucket.plannedAmount - bucket.paidAmount);
 }
 
-async function buildCapacityByDateAndCourt(dates, courts) {
+async function buildCapacityByDateAndCourt(dates, courts, context) {
   const capacityByDate = new Map();
   const capacityByCourt = new Map(courts.map((court) => [Number(court.id), 0]));
 
   await Promise.all(
     dates.map(async (date) => {
-      const schedule = await bookingRulesService.getEffectiveSchedule(date);
+      const schedule = await bookingRulesService.getEffectiveSchedule(date, context);
       const dayCapacity = schedule.isClosed
         ? 0
         : Math.max(
@@ -1154,10 +1271,11 @@ function buildDistribution(items, labels) {
   }));
 }
 
-async function getBookingAnalytics(query = {}) {
+async function getBookingAnalytics(query = {}, authority = null) {
+  const context = await resolveBookingContext(authority);
   const range = getDateRange(query);
   const dates = getDateList(range.from, range.to);
-  const courts = await listCourts();
+  const courts = await listCourts(context);
   const bookings = (
     await db.Booking.findAll({
       include: getBookingIncludes(),
@@ -1165,16 +1283,20 @@ async function getBookingAnalytics(query = {}) {
         ['startsAt', 'ASC'],
         [db.Court, 'sortOrder', 'ASC'],
       ],
-      where: {
+      where: bookingTenantWhere(context, {
         isTraining: false,
         startsAt: {
           [Op.gte]: range.fromDate,
           [Op.lte]: range.toDate,
         },
-      },
+      }, { force: true }),
     })
   ).map(mapBooking);
-  const { capacityByCourt, capacityByDate } = await buildCapacityByDateAndCourt(dates, courts);
+  const { capacityByCourt, capacityByDate } = await buildCapacityByDateAndCourt(
+    dates,
+    courts,
+    context,
+  );
   const totalCapacityMinutes = Array.from(capacityByDate.values()).reduce(
     (sum, value) => sum + Number(value || 0),
     0,
@@ -1258,13 +1380,19 @@ function shouldAutoPrice(data, currentBooking = null) {
   return Boolean(data.courtId || data.startsAt || data.date || data.startTime || data.durationMinutes);
 }
 
-async function applyAutomaticPrice(data, courtId, timing, currentBooking = null) {
+async function applyAutomaticPrice(
+  data,
+  courtId,
+  timing,
+  currentBooking = null,
+  authority = null,
+) {
   if (!shouldAutoPrice(data, currentBooking)) return data;
   const quote = await bookingRulesService.calculateQuote({
     courtId,
     durationMinutes: timing.durationMinutes,
     startsAt: timing.startsAt,
-  });
+  }, authority);
   return { ...data, price: quote.price };
 }
 
@@ -1345,7 +1473,7 @@ function buildOccurrenceTiming(config, date) {
   return { endsAt, startsAt };
 }
 
-async function inspectSeriesOccurrence(config, date, transaction) {
+async function inspectSeriesOccurrence(config, date, transaction, context) {
   const timing = buildOccurrenceTiming(config, date);
   try {
     await bookingRulesService.assertBookable({
@@ -1354,16 +1482,16 @@ async function inspectSeriesOccurrence(config, date, transaction) {
       startsAt: timing.startsAt,
       status: config.status,
       transaction,
-    });
+    }, context);
     const conflict = await db.Booking.findOne({
       include: [db.Court],
       transaction,
-      where: {
+      where: bookingTenantWhere(context, {
         courtId: config.courtId,
         endsAt: { [Op.gt]: timing.startsAt },
         startsAt: { [Op.lt]: timing.endsAt },
         status: { [Op.ne]: 'canceled' },
-      },
+      }, { force: true }),
     });
     if (conflict) {
       return {
@@ -1381,7 +1509,7 @@ async function inspectSeriesOccurrence(config, date, transaction) {
             courtId: config.courtId,
             durationMinutes: config.durationMinutes,
             startsAt: timing.startsAt,
-          })).price
+          }, context)).price
         : config.price;
     return {
       date,
@@ -1401,14 +1529,15 @@ async function inspectSeriesOccurrence(config, date, transaction) {
   }
 }
 
-async function buildSeriesPreview(data, transaction) {
+async function buildSeriesPreview(data, transaction, authority = null) {
+  const context = await resolveBookingContext(authority, { lock: true, transaction });
   const config = buildSeriesConfig(data);
-  await lockCourtsForBooking([config.courtId], transaction);
-  await resolveResponsibleStaffId(data, null, transaction);
+  await lockCourtsForBooking([config.courtId], transaction, context);
+  await resolveResponsibleStaffId(data, null, transaction, context);
   const dates = getSeriesDates(config);
   const occurrences = [];
   for (const date of dates) {
-    occurrences.push(await inspectSeriesOccurrence(config, date, transaction));
+    occurrences.push(await inspectSeriesOccurrence(config, date, transaction, context));
   }
   const available = occurrences.filter((item) => item.status === 'ok');
   const conflicts = occurrences.filter((item) => item.status === 'conflict');
@@ -1422,19 +1551,74 @@ async function buildSeriesPreview(data, transaction) {
   };
 }
 
-async function previewBookingSeries(data) {
-  return db.sequelize.transaction(async (transaction) => buildSeriesPreview(data, transaction));
+async function previewBookingSeries(data, authority = null) {
+  return db.sequelize.transaction(async (transaction) =>
+    buildSeriesPreview(data, transaction, authority));
 }
 
-async function createBookingSeries(data, account, tenant = null) {
+async function loadCreatedSeriesResult(series, context, transaction) {
+  const rows = await db.Booking.findAll({
+    include: getBookingIncludes(),
+    order: [['startsAt', 'ASC']],
+    transaction,
+    where: bookingTenantWhere(context, { bookingSeriesId: series.id }, { force: true }),
+  });
+  await markFirstBookingFlags(rows, transaction, context);
+  const bookings = rows.map(mapBooking);
+  const occurrences = bookings.map((booking) => ({
+    date: getDateOnly(booking.startsAt),
+    endsAt: booking.endsAt,
+    price: booking.price,
+    startsAt: booking.startsAt,
+    status: 'ok',
+  }));
+  return {
+    bookings,
+    preview: {
+      availableCount: occurrences.length,
+      conflictCount: 0,
+      conflicts: [],
+      occurrenceCount: occurrences.length,
+      occurrences,
+      totalPrice: bookings.reduce((sum, booking) => sum + Number(booking.price || 0), 0),
+    },
+    series: mapSeries(series),
+  };
+}
+
+async function createBookingSeries(data, account, tenant = null, options = {}) {
   const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const idempotency = getIdempotencyMetadata(
+    options.idempotencyKey,
+    'booking-series.create',
+    data,
+  );
 
   return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveBookingContext(tenant, { lock: true, transaction });
+    if (idempotency) {
+      const existing = await db.BookingSeries.findOne({
+        include: getSeriesIncludes(),
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: bookingTenantWhere(context, {
+          creationKeyHash: idempotency.keyHash,
+        }, { force: true }),
+      });
+      if (existing) {
+        assertIdempotencyPayload(existing, idempotency, 'creationPayloadHash');
+        return loadCreatedSeriesResult(existing, context, transaction);
+      }
+    }
     const config = buildSeriesConfig(data);
-    const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
-    const courtsById = await lockCourtsForBooking([config.courtId], transaction);
+    const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction, context);
+    const courtsById = await lockCourtsForBooking([config.courtId], transaction, context);
     const court = courtsById.get(config.courtId);
-    const preview = await buildSeriesPreview({ ...data, courtId: config.courtId }, transaction);
+    const preview = await buildSeriesPreview(
+      { ...data, courtId: config.courtId },
+      transaction,
+      context,
+    );
     if (preview.conflictCount > 0) {
       throw appError('Серия пересекается с существующими бронями или недоступными слотами', 409, {
         code: 'BOOKING_SERIES_CONFLICT',
@@ -1442,7 +1626,7 @@ async function createBookingSeries(data, account, tenant = null) {
       });
     }
 
-    const client = await resolveClient(data, transaction, trainingMarker, tenant);
+    const client = await resolveClient(data, transaction, trainingMarker, tenant, context);
     const participantIds = normalizeGroupParticipantIds(
       data,
       client.id,
@@ -1454,13 +1638,17 @@ async function createBookingSeries(data, account, tenant = null) {
         clientName: client.name,
         clientPhone: client.phone,
         bookingType: config.bookingType,
+        clubId: context.clubId,
         comment: config.comment,
         courtId: court.id,
         createdByAccountId: account?.id || null,
+        creationKeyHash: idempotency?.keyHash || null,
+        creationPayloadHash: idempotency?.payloadHash || null,
         durationMinutes: config.durationMinutes,
         endsOn: config.endsOn,
         lastGeneratedUntil: config.endsOn,
         name: config.name,
+        organizationId: context.organizationId,
         paymentMethod: config.paymentMethod,
         paymentStatus: config.paymentStatus,
         price: config.price,
@@ -1507,20 +1695,23 @@ async function createBookingSeries(data, account, tenant = null) {
             client,
             timing,
           ),
+          clubId: context.clubId,
           createdByAccountId: account?.id || null,
+          organizationId: context.organizationId,
           ...trainingMarker,
         },
         { transaction },
       );
       await syncBookingParticipants(booking, participantIds, transaction);
-      const fullBooking = await getBookingOrFail(booking.id, transaction);
+      const fullBooking = await getBookingOrFail(booking.id, transaction, context);
       await recordChange(fullBooking, 'created', account, { reason: `Серия: ${series.name}` }, transaction);
       createdBookings.push(mapBooking(fullBooking));
     }
 
-    const fullSeries = await db.BookingSeries.findByPk(series.id, {
+    const fullSeries = await db.BookingSeries.findOne({
       include: getSeriesIncludes(),
       transaction,
+      where: bookingTenantWhere(context, { id: series.id }, { force: true }),
     });
     return {
       bookings: createdBookings,
@@ -1530,7 +1721,8 @@ async function createBookingSeries(data, account, tenant = null) {
   });
 }
 
-async function listBookingSeries(query = {}) {
+async function listBookingSeries(query = {}, authority = null) {
+  const context = await resolveBookingContext(authority);
   const where = {};
   if (query.status !== 'all') {
     where.status = SERIES_STATUSES.has(query.status) ? query.status : 'active';
@@ -1543,39 +1735,57 @@ async function listBookingSeries(query = {}) {
       ['startTime', 'ASC'],
       ['id', 'DESC'],
     ],
-    where,
+    where: bookingTenantWhere(context, where, { force: true }),
   });
 
   return Promise.all(rows.map(async (row) => {
     const item = mapSeries(row);
     item.generatedBookingsCount = await db.Booking.count({
-      where: { bookingSeriesId: row.id },
+      where: bookingTenantWhere(context, { bookingSeriesId: row.id }, { force: true }),
     });
     item.futureActiveBookingsCount = await db.Booking.count({
-      where: {
+      where: bookingTenantWhere(context, {
         bookingSeriesId: row.id,
         startsAt: { [Op.gte]: new Date() },
         status: { [Op.ne]: 'canceled' },
-      },
+      }, { force: true }),
     });
     return item;
   }));
 }
 
-async function archiveBookingSeries(id, data = {}, account) {
+async function archiveBookingSeries(id, data = {}, account, authority = null, options = {}) {
+  const idempotency = getIdempotencyMetadata(
+    options.idempotencyKey,
+    `booking-series.archive:${Number(id)}`,
+    data,
+  );
   return db.sequelize.transaction(async (transaction) => {
-    const series = await db.BookingSeries.findByPk(Number(id), {
+    const context = await resolveBookingContext(authority, { lock: true, transaction });
+    const series = await db.BookingSeries.findOne({
       include: [db.Court, db.User],
       lock: transaction.LOCK.UPDATE,
       transaction,
+      where: bookingTenantWhere(context, { id: Number(id) }, { force: true }),
     });
     if (!series) throw appError('Серия бронирований не найдена', 404);
+    if (idempotency && series.lastMutationKeyHash === idempotency.keyHash) {
+      assertIdempotencyPayload(series, idempotency, 'lastMutationPayloadHash');
+      const loaded = await db.BookingSeries.findOne({
+        include: getSeriesIncludes(),
+        transaction,
+        where: bookingTenantWhere(context, { id: series.id }, { force: true }),
+      });
+      return { canceledBookingsCount: 0, series: mapSeries(loaded) };
+    }
 
     const reason = normalizeText(data.reason) || 'Серия архивирована';
     await series.update(
       {
         archivedAt: new Date(),
         archiveReason: reason,
+        lastMutationKeyHash: idempotency?.keyHash || null,
+        lastMutationPayloadHash: idempotency?.payloadHash || null,
         status: 'archived',
         updatedByAccountId: account?.id || null,
       },
@@ -1588,11 +1798,11 @@ async function archiveBookingSeries(id, data = {}, account) {
         include: [db.Court, db.User],
         lock: transaction.LOCK.UPDATE,
         transaction,
-        where: {
+        where: bookingTenantWhere(context, {
           bookingSeriesId: series.id,
           startsAt: { [Op.gte]: new Date() },
           status: { [Op.ne]: 'canceled' },
-        },
+        }, { force: true }),
       });
       for (const booking of rows) {
         const fromStatus = booking.status;
@@ -1606,7 +1816,7 @@ async function archiveBookingSeries(id, data = {}, account) {
           },
           { transaction },
         );
-        const updated = await getBookingOrFail(booking.id, transaction);
+        const updated = await getBookingOrFail(booking.id, transaction, context);
         await recordChange(
           updated,
           'canceled',
@@ -1622,9 +1832,10 @@ async function archiveBookingSeries(id, data = {}, account) {
       canceledBookingsCount = rows.length;
     }
 
-    const fullSeries = await db.BookingSeries.findByPk(series.id, {
+    const fullSeries = await db.BookingSeries.findOne({
       include: getSeriesIncludes(),
       transaction,
+      where: bookingTenantWhere(context, { id: series.id }, { force: true }),
     });
 
     return {
@@ -1634,13 +1845,14 @@ async function archiveBookingSeries(id, data = {}, account) {
   });
 }
 
-async function getSchedule(query = {}) {
+async function getSchedule(query = {}, authority = null) {
+  const context = await resolveBookingContext(authority);
   const range = getDayRange(query.date);
   const [courts, bookings, blocks, scheduleRules] = await Promise.all([
-    listCourts(),
-    listBookings({ date: range.date, status: query.status || 'all' }),
-    bookingRulesService.listBlocks({ date: range.date, status: 'active' }),
-    bookingRulesService.getEffectiveSchedule(range.date),
+    listCourts(context),
+    listBookings({ date: range.date, status: query.status || 'all' }, context),
+    bookingRulesService.listBlocks({ date: range.date, status: 'active' }, context),
+    bookingRulesService.getEffectiveSchedule(range.date, context),
   ]);
 
   return {
@@ -1663,11 +1875,32 @@ async function getSchedule(query = {}) {
   };
 }
 
-async function createBooking(data, account, tenant = null) {
+async function createBooking(data, account, tenant = null, options = {}) {
   const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const idempotency = getIdempotencyMetadata(
+    options.idempotencyKey,
+    'booking.create',
+    data,
+  );
 
   const result = await db.sequelize.transaction(async (transaction) => {
-    const courtsById = await lockCourtsForBooking([data.courtId], transaction);
+    const context = await resolveBookingContext(tenant, { lock: true, transaction });
+    if (idempotency) {
+      const existing = await db.Booking.findOne({
+        include: getBookingIncludes(),
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: bookingTenantWhere(context, {
+          creationKeyHash: idempotency.keyHash,
+        }, { force: true }),
+      });
+      if (existing) {
+        assertIdempotencyPayload(existing, idempotency, 'creationPayloadHash');
+        await markFirstBookingFlags(existing, transaction, context);
+        return { booking: mapBooking(existing), replayed: true };
+      }
+    }
+    const courtsById = await lockCourtsForBooking([data.courtId], transaction, context);
     const court = courtsById.get(Number(data.courtId));
     const timing = buildTiming(data);
     await bookingRulesService.assertBookable({
@@ -1676,16 +1909,22 @@ async function createBooking(data, account, tenant = null) {
       startsAt: timing.startsAt,
       status: data.status || 'new',
       transaction,
-    });
+    }, context);
     await assertNoConflict({
       courtId: court.id,
       endsAt: timing.endsAt,
       startsAt: timing.startsAt,
       transaction,
+      tenant: context,
     });
-    const client = await resolveClient(data, transaction, trainingMarker, tenant);
-    const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction);
-    const pricedData = await applyAutomaticPrice(data, court.id, timing);
+    const client = await resolveClient(data, transaction, trainingMarker, tenant, context);
+    const responsibleStaffId = await resolveResponsibleStaffId(
+      data,
+      null,
+      transaction,
+      context,
+    );
+    const pricedData = await applyAutomaticPrice(data, court.id, timing, null, context);
     const bookingPayload = buildBookingPayload(
       { ...pricedData, responsibleStaffId },
       account,
@@ -1702,42 +1941,58 @@ async function createBooking(data, account, tenant = null) {
     const booking = await db.Booking.create(
       {
         ...bookingPayload,
+        clubId: context.clubId,
         createdByAccountId: account?.id || null,
+        creationKeyHash: idempotency?.keyHash || null,
+        creationPayloadHash: idempotency?.payloadHash || null,
+        organizationId: context.organizationId,
         ...trainingMarker,
       },
       { transaction },
     );
     await syncBookingParticipants(booking, participantIds, transaction);
 
-    const fullBooking = await getBookingOrFail(booking.id, transaction);
+    const fullBooking = await getBookingOrFail(booking.id, transaction, context);
     await recordChange(fullBooking, 'created', account, {}, transaction);
-    return mapBooking(fullBooking);
+    return { booking: mapBooking(fullBooking), replayed: false };
   });
 
-  await onboardingService.recordEventSafe(account, 'booking.created', {
-    entityId: result.id,
-    entityType: 'booking',
-    payload: result,
-  });
-  if (result.paymentStatus === 'paid') {
-    await onboardingService.recordEventSafe(account, 'booking.paid', {
-      entityId: result.id,
+  if (!result.replayed) {
+    await onboardingService.recordEventSafe(account, 'booking.created', {
+      entityId: result.booking.id,
       entityType: 'booking',
-      payload: result,
+      payload: result.booking,
     });
+    if (result.booking.paymentStatus === 'paid') {
+      await onboardingService.recordEventSafe(account, 'booking.paid', {
+        entityId: result.booking.id,
+        entityType: 'booking',
+        payload: result.booking,
+      });
+    }
   }
 
-  return result;
+  return result.booking;
 }
 
-async function updateBooking(id, data, account, tenant = null) {
+async function updateBooking(id, data, account, tenant = null, options = {}) {
+  const idempotency = getIdempotencyMetadata(
+    options.idempotencyKey,
+    `booking.update:${Number(id)}`,
+    data,
+  );
   const result = await db.sequelize.transaction(async (transaction) => {
-    const booking = await getBookingOrFail(id, transaction);
+    const context = await resolveBookingContext(tenant, { lock: true, transaction });
+    const booking = await getBookingOrFail(id, transaction, context);
+    if (idempotency && booking.lastMutationKeyHash === idempotency.keyHash) {
+      assertIdempotencyPayload(booking, idempotency, 'lastMutationPayloadHash');
+      return { booking: mapBooking(booking), events: [], replayed: true };
+    }
     const client = data.userId || data.client
-      ? await resolveClient(data, transaction, {}, tenant)
+      ? await resolveClient(data, transaction, {}, tenant, context)
       : booking.User;
     const courtId = Number(data.courtId || booking.courtId);
-    await lockCourtsForBooking([booking.courtId, courtId], transaction);
+    await lockCourtsForBooking([booking.courtId, courtId], transaction, context);
     const timing = buildTiming(data, booking);
     const nextStatus = data.status || booking.status;
 
@@ -1748,7 +2003,7 @@ async function updateBooking(id, data, account, tenant = null) {
       startsAt: timing.startsAt,
       status: nextStatus,
       transaction,
-    });
+    }, context);
 
     if (nextStatus !== 'canceled') {
       await assertNoConflict({
@@ -1757,12 +2012,18 @@ async function updateBooking(id, data, account, tenant = null) {
         excludeBookingId: booking.id,
         startsAt: timing.startsAt,
         transaction,
+        tenant: context,
       });
     }
 
     const before = mapBooking(booking);
-    const responsibleStaffId = await resolveResponsibleStaffId(data, booking, transaction);
-    const pricedData = await applyAutomaticPrice(data, courtId, timing, booking);
+    const responsibleStaffId = await resolveResponsibleStaffId(
+      data,
+      booking,
+      transaction,
+      context,
+    );
+    const pricedData = await applyAutomaticPrice(data, courtId, timing, booking, context);
     const payload = buildBookingPayload(
       { ...pricedData, courtId, responsibleStaffId },
       account,
@@ -1786,11 +2047,19 @@ async function updateBooking(id, data, account, tenant = null) {
     if (participantIds) {
       await loadGroupParticipantsOrFail(participantIds, transaction, tenant);
     }
-    await booking.update(payload, { transaction });
+    await booking.update({
+      ...payload,
+      ...(idempotency
+        ? {
+            lastMutationKeyHash: idempotency.keyHash,
+            lastMutationPayloadHash: idempotency.payloadHash,
+          }
+        : {}),
+    }, { transaction });
     if (participantIds) {
       await syncBookingParticipants(booking, participantIds, transaction);
     }
-    const updated = await getBookingOrFail(booking.id, transaction);
+    const updated = await getBookingOrFail(booking.id, transaction, context);
     const after = mapBooking(updated);
     const isRescheduled =
       before.courtId !== after.courtId ||
@@ -1825,7 +2094,7 @@ async function updateBooking(id, data, account, tenant = null) {
       events.push('booking.paid');
     }
 
-    return { booking: after, events };
+    return { booking: after, events, replayed: false };
   });
 
   for (const eventKey of result.events) {
@@ -1839,7 +2108,7 @@ async function updateBooking(id, data, account, tenant = null) {
   return result.booking;
 }
 
-async function changeBookingStatus(id, data, account) {
+async function changeBookingStatus(id, data, account, tenant = null, options = {}) {
   if (data.status === 'canceled' && !normalizeText(data.reason)) {
     throw appError('Укажите причину отмены брони');
   }
@@ -1851,28 +2120,30 @@ async function changeBookingStatus(id, data, account) {
       status: data.status,
     },
     account,
+    tenant,
+    options,
   );
 }
 
-async function getBooking(id) {
-  return mapBooking(await getBookingOrFail(id));
+async function getBooking(id, authority = null) {
+  return mapBooking(await getBookingOrFail(id, undefined, authority));
 }
 
-async function getBookingTrainingPlan(id, account) {
-  const booking = await getBookingOrFail(id);
+async function getBookingTrainingPlan(id, account, authority = null) {
+  const booking = await getBookingOrFail(id, undefined, authority);
   if (!TRAINING_BOOKING_TYPES.has(booking.bookingType)) return null;
   return trainingPlansService.getByBookingId(booking.id, account, {
     allowBookingViewer: true,
   });
 }
 
-async function createBookingTrainingPlan(id, account) {
-  await getBookingOrFail(id);
+async function createBookingTrainingPlan(id, account, authority = null) {
+  await getBookingOrFail(id, undefined, authority);
   return trainingPlansService.createFromBooking(id, account);
 }
 
-async function listBookingHistory(id) {
-  await getBookingOrFail(id);
+async function listBookingHistory(id, authority = null) {
+  await getBookingOrFail(id, undefined, authority);
   const rows = await db.BookingChangeLog.findAll({
     include: [{ as: 'actor', model: db.Account, include: [db.Staff] }],
     order: [['createdAt', 'DESC']],

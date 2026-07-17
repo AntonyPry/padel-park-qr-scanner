@@ -188,7 +188,7 @@ export const apiEndpoints = {
   "clients.trainingRecommendation": { method: "GET", path: "/clients/{clientId}/training-recommendation", responseType: "json", tenantScope: "organization" },
   "clients.skillMap.list": { method: "GET", path: "/clients/{clientId}/skill-map", responseType: "json", tenantScope: "organization" },
   "clients.skillMap.update": { method: "PUT", path: "/clients/{clientId}/skill-map/{skillId}", responseType: "json", tenantScope: "organization" },
-  "clients.get": { method: "GET", path: "/clients/{id}", responseType: "json", tenantScope: "organization" },
+  "clients.get": { method: "GET", path: "/clients/{id}", responseType: "json", tenantScope: "club" },
   "clients.update": { method: "PUT", path: "/clients/{id}", responseType: "json", tenantScope: "organization" },
   "clients.deletePermanent": { method: "DELETE", path: "/clients/{id}/permanent", responseType: "json", tenantScope: "organization" },
   "clients.merge": { method: "POST", path: "/clients/{id}/merge", responseType: "json", tenantScope: "organization" },

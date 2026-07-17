@@ -14,7 +14,12 @@ const {
 } = require('./call-task-access-context.service');
 const {
   isTenantClientBasesCallTasksEnabled,
+  isTenantBookingsCourtsEnabled,
 } = require('../tenant-context/capabilities');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -69,6 +74,7 @@ const CALL_TASK_TRAINING_MODELS = new Set([
   'CallTaskClient',
   'ClientBase',
 ]);
+const BOOKING_TRAINING_MODELS = new Set(['Booking', 'BookingSeries']);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -158,8 +164,18 @@ async function resolveTrainingCallTaskContext(actor, tenant, options = {}) {
   });
 }
 
-function getTrainingEntityQuery(entity, role, context) {
+async function resolveTrainingBookingContext(tenant, options = {}) {
+  if (!isTenantBookingsCourtsEnabled()) return null;
+  return resolveBookingAccessContext(tenant, options);
+}
+
+function getTrainingEntityQuery(entity, role, context, bookingContext = null) {
   const where = getTrainingEntityWhere(entity, role);
+  if (bookingContext && BOOKING_TRAINING_MODELS.has(entity.modelName)) {
+    return {
+      where: bookingTenantWhere(bookingContext, where, { force: true }),
+    };
+  }
   if (!context || !CALL_TASK_TRAINING_MODELS.has(entity.modelName)) {
     return { where };
   }
@@ -920,12 +936,18 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   assertOwner(actor);
   const role = resolveOptionalTrainingRole(query.role);
   const callTaskContext = await resolveTrainingCallTaskContext(actor, tenant);
+  const bookingContext = await resolveTrainingBookingContext(tenant);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
       const model = db[entity.modelName];
       const count = model
-        ? await model.count(getTrainingEntityQuery(entity, role, callTaskContext))
+        ? await model.count(getTrainingEntityQuery(
+            entity,
+            role,
+            callTaskContext,
+            bookingContext,
+          ))
         : 0;
 
       return {
@@ -1102,10 +1124,17 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       tenant,
       { lock: true, transaction },
     );
-    const bookingWhere = getTrainingEntityWhere(
-      { modelName: 'Booking' },
-      role,
-    );
+    const bookingContext = await resolveTrainingBookingContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const bookingWhere = bookingContext
+      ? bookingTenantWhere(
+          bookingContext,
+          getTrainingEntityWhere({ modelName: 'Booking' }, role),
+          { force: true },
+        )
+      : getTrainingEntityWhere({ modelName: 'Booking' }, role);
     const visitWhere = getTrainingEntityWhere({ modelName: 'Visit' }, role);
 
     const [bookingIds, visitIds, userIds] = await Promise.all([
@@ -1208,6 +1237,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
         entity,
         role,
         callTaskContext,
+        bookingContext,
       );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],

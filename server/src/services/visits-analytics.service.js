@@ -1,6 +1,7 @@
 const XLSX = require('xlsx');
 const db = require('../../models');
 const {
+  isTenantBookingsCourtsEnabled,
   isTenantVisitsScannerEnabled,
 } = require('../tenant-context/capabilities');
 const {
@@ -704,7 +705,17 @@ function unscopedRevenueCoverageSelect(sourceFilterSql, context) {
       0 certificateReceiptDuplicateRisk,
       0 legacySalesCount,
       0 legacySalesAmount,
-      0 bookingPaymentsReference,
+      ${isTenantBookingsCourtsEnabled()
+        ? `(SELECT COALESCE(SUM(bookings.paidAmount),0) FROM Bookings bookings
+            JOIN canonical_clients booking_clients ON booking_clients.originUserId=bookings.userId
+            JOIN Users root ON root.id=booking_clients.canonicalUserId
+           WHERE bookings.organizationId=:visitOrganizationId
+             AND bookings.clubId=:visitClubId
+             AND bookings.startsAt BETWEEN :from AND :to
+             AND bookings.status<>'canceled'
+             AND COALESCE(bookings.isTraining,0)=0
+             AND COALESCE(root.isTraining,0)=0 ${sourceFilterSql})`
+        : '0'} bookingPaymentsReference,
       0 manualFinanceWithoutClient,
       0 corporateLedgerExcludedAmount`;
   }

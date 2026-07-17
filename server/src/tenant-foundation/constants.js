@@ -42,7 +42,7 @@ const BLOCKING_LATER_TENANT_MIGRATIONS = Object.freeze([
   '20260716120000-add-tenant-isolation-infrastructure.js',
   '20260716140000-add-tenant-staff-access-identity.js',
   '20260717120000-add-tenant-crm-users-wave.js',
-  '20260718120000-add-tenant-bookings-training-wave.js',
+  '20260718120000-add-tenant-bookings-courts.js',
   '20260719120000-add-tenant-finance-prepayments-wave.js',
   '20260720120000-add-tenant-ops-audit-onboarding-wave.js',
   '20260721120000-enforce-tenant-isolation.js',
