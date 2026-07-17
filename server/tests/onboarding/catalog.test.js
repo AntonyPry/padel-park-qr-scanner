@@ -1000,6 +1000,21 @@ test('shift report template onboarding matches post-scope-fields UI', () => {
     assert.equal(visibleText.includes('Архивировать шаблон'), true, task.key);
     assert.equal(visibleText.includes('Восстановить шаблон'), true, task.key);
     assert.equal(visibleText.includes('read-only') || visibleText.includes('disabled'), true, task.key);
+    assert.doesNotMatch(
+      visibleText,
+      /карточк[^\n.]*пункт/i,
+      `${task.key} should not say template cards show report items`,
+    );
+    assert.doesNotMatch(
+      screenshotText,
+      /карточк[^\n.]*пункт/i,
+      `${task.key} screenshots should not say template cards show report items`,
+    );
+    assert.match(
+      visibleText,
+      /пункт[^\n.]*внутри модал/i,
+      `${task.key} should explain report items are inside the modal`,
+    );
     assert.match(
       visibleText,
       /сотрудник определяется (самой )?сменой/i,

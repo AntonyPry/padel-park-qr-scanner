@@ -7,9 +7,15 @@ import {
 } from '@/api/onboarding';
 import { queryKeys } from '@/api/query-keys';
 import {
+  clearStoredActiveOnboardingQuest,
   getStoredActiveOnboardingQuest,
   ONBOARDING_QUEST_EVENT,
 } from '@/lib/onboarding-quest';
+import {
+  buildOnboardingRouteEventForPath,
+  normalizeOnboardingRoutePathname,
+  shouldClearActiveQuestAfterRouteEvent,
+} from '@/lib/onboarding-route-event-utils';
 import { useAuth } from '@/lib/useAuth';
 
 const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
@@ -123,14 +129,6 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
   },
 };
 
-function normalizePathname(pathname: string) {
-  if (pathname.length > 1 && pathname.endsWith('/')) {
-    return pathname.slice(0, -1);
-  }
-
-  return pathname;
-}
-
 export function OnboardingRouteEvents() {
   const { account } = useAuth();
   const location = useLocation();
@@ -139,25 +137,14 @@ export function OnboardingRouteEvents() {
   const [activeQuest, setActiveQuest] = useState(() =>
     getStoredActiveOnboardingQuest(),
   );
-  const normalizedPathname = normalizePathname(location.pathname);
+  const normalizedPathname = normalizeOnboardingRoutePathname(location.pathname);
   const baseRouteEvent = ROUTE_EVENTS[normalizedPathname];
   const routeEvent = useMemo(() => {
-    if (!baseRouteEvent) return undefined;
-    if (
-      !activeQuest?.taskKey ||
-      normalizePathname(activeQuest.route) !== normalizedPathname
-    ) {
-      return baseRouteEvent;
-    }
-
-    return {
-      ...baseRouteEvent,
-      ...(activeQuest.role ? { role: activeQuest.role } : {}),
-      payload: {
-        ...(baseRouteEvent.payload || {}),
-        taskKey: activeQuest.taskKey,
-      },
-    };
+    return buildOnboardingRouteEventForPath(
+      baseRouteEvent,
+      normalizedPathname,
+      activeQuest,
+    );
   }, [activeQuest, baseRouteEvent, normalizedPathname]);
   const eventKey = routeEvent?.eventKey;
   const payloadSignature = useMemo(
@@ -194,7 +181,21 @@ export function OnboardingRouteEvents() {
 
     void recordOnboardingEvent(routeEvent)
       .then((result) => {
-        if (result.completedTaskKeys.length > 0) {
+        if (
+          shouldClearActiveQuestAfterRouteEvent(
+            activeQuest,
+            location.pathname,
+            result,
+            routeEvent,
+          )
+        ) {
+          clearStoredActiveOnboardingQuest();
+          setActiveQuest(null);
+        }
+        if (
+          result.completedTaskKeys.length > 0 ||
+          (result.progressedTaskKeys?.length || 0) > 0
+        ) {
           queryClient.invalidateQueries({ queryKey: queryKeys.onboarding.all });
         }
       })
@@ -208,6 +209,7 @@ export function OnboardingRouteEvents() {
     payloadSignature,
     queryClient,
     routeEvent,
+    activeQuest,
   ]);
 
   return null;
