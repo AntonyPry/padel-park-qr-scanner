@@ -7,32 +7,48 @@ const {
 
 const MIGRATION_NAME = '20260717100000-add-tenant-client-bases-call-tasks.js';
 
-const NEW_COLUMNS = Object.freeze({
-  ClientSavedViews: ['organizationId', 'clubId', 'membershipId'],
-  ClientBases: [
-    'organizationId',
-    'clubId',
-    'originOrganizationId',
-    'originClubId',
-  ],
-  CallTasks: ['organizationId', 'clubId'],
-});
+const EXPECTED_COLUMN_PAIRS = Object.freeze([
+  ['ClientSavedViews', 'organizationId'],
+  ['ClientSavedViews', 'clubId'],
+  ['ClientSavedViews', 'membershipId'],
+  ['ClientBases', 'organizationId'],
+  ['ClientBases', 'clubId'],
+  ['ClientBases', 'originOrganizationId'],
+  ['ClientBases', 'originClubId'],
+  ['CallTasks', 'organizationId'],
+  ['CallTasks', 'clubId'],
+].map(([table, name]) => Object.freeze({ name, table })));
+
+const NEW_COLUMNS = Object.freeze(
+  EXPECTED_COLUMN_PAIRS.reduce((columnsByTable, { name, table }) => {
+    if (!columnsByTable[table]) columnsByTable[table] = [];
+    columnsByTable[table].push(name);
+    return columnsByTable;
+  }, {}),
+);
+
+for (const columns of Object.values(NEW_COLUMNS)) Object.freeze(columns);
+
+const FEATURE_COLUMN_TABLES = Object.freeze([...new Set(
+  EXPECTED_COLUMN_PAIRS.map(({ table }) => table),
+)]);
+const RESERVED_FEATURE_COLUMN_NAMES = Object.freeze([...new Set(
+  EXPECTED_COLUMN_PAIRS.map(({ name }) => name),
+)]);
 
 const COLUMN_DEFINITIONS = Object.freeze(
-  Object.entries(NEW_COLUMNS).flatMap(([table, columns]) =>
-    columns.map((name) => Object.freeze({
-      characterMaximumLength: null,
-      columnType: 'int',
-      dataType: 'int',
-      defaultValue: null,
-      extra: '',
-      name,
-      nullable: table === 'ClientBases' && name.startsWith('origin'),
-      numericPrecision: 10,
-      numericScale: 0,
-      table,
-    })),
-  ),
+  EXPECTED_COLUMN_PAIRS.map(({ name, table }) => Object.freeze({
+    characterMaximumLength: null,
+    columnType: 'int',
+    dataType: 'int',
+    defaultValue: null,
+    extra: '',
+    name,
+    nullable: table === 'ClientBases' && name.startsWith('origin'),
+    numericPrecision: 10,
+    numericScale: 0,
+    table,
+  })),
 );
 
 const INDEX_DEFINITIONS = Object.freeze([
@@ -254,11 +270,10 @@ async function readFeatureArtifactInventory(queryInterface) {
               CHARACTER_MAXIMUM_LENGTH
          FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME IN ('ClientSavedViews', 'ClientBases', 'CallTasks')
-          AND COLUMN_NAME IN (
-            'organizationId', 'clubId', 'membershipId',
-            'originOrganizationId', 'originClubId'
-          )
+          AND TABLE_NAME IN (${FEATURE_COLUMN_TABLES.map((name) =>
+            `'${name}'`).join(', ')})
+          AND COLUMN_NAME IN (${RESERVED_FEATURE_COLUMN_NAMES.map((name) =>
+            `'${name}'`).join(', ')})
         ORDER BY TABLE_NAME, COLUMN_NAME`,
     ),
     queryRows(
@@ -376,13 +391,21 @@ function triggerMatches(row, expected) {
 }
 
 function inventoryHasOnlyExpectedNames(inventory) {
+  const expectedColumnPairs = new Set(
+    EXPECTED_COLUMN_PAIRS.map(({ name, table }) => `${table}\u0000${name}`),
+  );
+  const actualColumnPairs = inventory.columns.map((row) =>
+    `${rowValue(row, 'TABLE_NAME')}\u0000${rowValue(row, 'COLUMN_NAME')}`);
   const indexNamesExpected = new Set(INDEX_DEFINITIONS.map(({ name }) => name));
   const foreignKeyNamesExpected = new Set(
     FOREIGN_KEY_DEFINITIONS.map(({ name }) => name),
   );
   const triggerNamesExpected = new Set(TRIGGERS);
-  return inventory.indexes.every((row) =>
-    indexNamesExpected.has(rowValue(row, 'INDEX_NAME'))) &&
+  return actualColumnPairs.length === expectedColumnPairs.size &&
+    new Set(actualColumnPairs).size === expectedColumnPairs.size &&
+    actualColumnPairs.every((pair) => expectedColumnPairs.has(pair)) &&
+    inventory.indexes.every((row) =>
+      indexNamesExpected.has(rowValue(row, 'INDEX_NAME'))) &&
     inventory.foreignKeys.every((row) =>
       foreignKeyNamesExpected.has(rowValue(row, 'CONSTRAINT_NAME'))) &&
     inventory.triggers.every((row) =>

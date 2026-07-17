@@ -11,13 +11,42 @@ const SequelizePackage = require('sequelize');
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260717100000-add-tenant-client-bases-call-tasks.js';
+const FEATURE_TABLES = Object.freeze([
+  'ClientSavedViews',
+  'ClientBases',
+  'CallTasks',
+]);
+const RESERVED_COLUMN_NAMES = Object.freeze([
+  'organizationId',
+  'clubId',
+  'membershipId',
+  'originOrganizationId',
+  'originClubId',
+]);
+const EXPECTED_COLUMN_PAIRS = new Set([
+  'ClientSavedViews.organizationId',
+  'ClientSavedViews.clubId',
+  'ClientSavedViews.membershipId',
+  'ClientBases.organizationId',
+  'ClientBases.clubId',
+  'ClientBases.originOrganizationId',
+  'ClientBases.originClubId',
+  'CallTasks.organizationId',
+  'CallTasks.clubId',
+]);
+const WRONG_TABLE_RESERVED_COLUMN_PAIRS = Object.freeze(
+  FEATURE_TABLES.flatMap((table) =>
+    RESERVED_COLUMN_NAMES
+      .filter((column) => !EXPECTED_COLUMN_PAIRS.has(`${table}.${column}`))
+      .map((column) => Object.freeze({ column, table }))),
+);
 
 function databaseName() {
   return process.env.CLIENT_BASES_CALL_TASKS_DEFINITIONS_TEST_DB_NAME ||
     `setly_client_base_definitions_${process.pid}_${Date.now()}`;
 }
 
-async function createReadySchema(database) {
+async function createSchemaThroughFeature(database, includeFeature) {
   const sequelize = new SequelizePackage.Sequelize(
     database,
     process.env.DB_USER,
@@ -39,7 +68,11 @@ async function createReadySchema(database) {
   });
   const migrations = fs
     .readdirSync(path.join(SERVER_ROOT, 'migrations'))
-    .filter((file) => file.endsWith('.js') && file <= FEATURE_MIGRATION_FILE)
+    .filter((file) => file.endsWith('.js') && (
+      includeFeature
+        ? file <= FEATURE_MIGRATION_FILE
+        : file < FEATURE_MIGRATION_FILE
+    ))
     .sort();
   for (const file of migrations) {
     const migration = require(path.join(SERVER_ROOT, 'migrations', file));
@@ -47,6 +80,14 @@ async function createReadySchema(database) {
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
   }
   return sequelize;
+}
+
+async function createReadySchema(database) {
+  return createSchemaThroughFeature(database, true);
+}
+
+async function createLegacySchema(database) {
+  return createSchemaThroughFeature(database, false);
 }
 
 async function selectRows(sequelize, sql, replacements = {}) {
@@ -346,19 +387,24 @@ async function snapshotDatabaseInvariants(sequelize) {
       .digest('hex');
   }
   const attribution = {};
+  const existingColumns = new Set(schema.columns.map((column) =>
+    `${column.tableName}.${column.columnName}`));
   for (const tableName of [
     'ClientSavedViews',
     'ClientBases',
     'CallTasks',
     'TelephonyCalls',
   ]) {
-    attribution[tableName] = await selectRows(
-      sequelize,
-      `SELECT organizationId,clubId,COUNT(*) rowCount
-         FROM \`${tableName}\`
-        GROUP BY organizationId,clubId
-        ORDER BY organizationId,clubId`,
-    );
+    attribution[tableName] = existingColumns.has(`${tableName}.organizationId`) &&
+      existingColumns.has(`${tableName}.clubId`)
+      ? await selectRows(
+        sequelize,
+        `SELECT organizationId,clubId,COUNT(*) rowCount
+           FROM \`${tableName}\`
+          GROUP BY organizationId,clubId
+          ORDER BY organizationId,clubId`,
+      )
+      : null;
   }
   return { attribution, checksums, counts, data, schema };
 }
@@ -376,6 +422,22 @@ async function triggerDefinition(sequelize, name) {
   return row;
 }
 
+async function columnDefinition(sequelize, table, column) {
+  const [row] = await selectRows(
+    sequelize,
+    `SELECT TABLE_NAME tableName,COLUMN_NAME columnName,
+            ORDINAL_POSITION ordinalPosition,COLUMN_DEFAULT columnDefault,
+            IS_NULLABLE isNullable,DATA_TYPE dataType,COLUMN_TYPE columnType,
+            NUMERIC_PRECISION numericPrecision,NUMERIC_SCALE numericScale,
+            CHARACTER_MAXIMUM_LENGTH characterMaximumLength,EXTRA extra
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA=DATABASE()
+        AND TABLE_NAME=:table AND COLUMN_NAME=:column`,
+    { column, table },
+  );
+  return row;
+}
+
 async function createTrigger(sequelize, definition) {
   await sequelize.query(
     `CREATE TRIGGER \`${definition.name}\` ${definition.timing} ${definition.eventName}
@@ -383,19 +445,85 @@ async function createTrigger(sequelize, definition) {
   );
 }
 
+async function traceMigrationQueries(sequelize, operation) {
+  const queries = [];
+  const originalQuery = sequelize.query;
+  sequelize.query = function tracedQuery(sql, ...args) {
+    queries.push(String(sql?.query || sql));
+    return originalQuery.call(this, sql, ...args);
+  };
+  try {
+    await operation();
+  } finally {
+    sequelize.query = originalQuery;
+  }
+  return queries;
+}
+
+function assertClassificationOnlyQueries(queries, label) {
+  assert.equal(queries.length, 4, `${label} must run only four inventory reads`);
+  for (const sql of queries) {
+    assert.match(sql.trim(), /^SELECT\b/i, `${label} attempted a non-read query`);
+    assert.match(
+      sql,
+      /INFORMATION_SCHEMA\./i,
+      `${label} reached default-tenant or business preflight`,
+    );
+  }
+}
+
+async function expectPartialBeforePreflight({
+  label,
+  migration,
+  queryInterface,
+  sequelize,
+}) {
+  const queries = await traceMigrationQueries(sequelize, () =>
+    assert.rejects(
+      () => migration.up(queryInterface, SequelizePackage),
+      (error) => error.code === 'TENANT_CLIENT_BASES_PARTIAL_SCHEMA',
+    ));
+  assertClassificationOnlyQueries(queries, label);
+}
+
+async function expectReadyWithoutMutation({
+  label,
+  migration,
+  queryInterface,
+  sequelize,
+}) {
+  const before = await snapshotDatabaseInvariants(sequelize);
+  const queries = await traceMigrationQueries(
+    sequelize,
+    () => migration.up(queryInterface, SequelizePackage),
+  );
+  assertClassificationOnlyQueries(queries, label);
+  assert.deepEqual(
+    await snapshotDatabaseInvariants(sequelize),
+    before,
+    `${label} changed a ready schema or its rows`,
+  );
+}
+
 test('Feature 5.4 migration rejects definition lookalikes without mutation', async (t) => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for DB-backed tenant tests');
   const database = databaseName();
+  const legacyDatabase = `${database}_legacy`;
   const admin = await mysql.createConnection({
     host: process.env.DB_HOST || '127.0.0.1',
     password: process.env.DB_PASSWORD,
     user: process.env.DB_USER,
   });
   await admin.query(`DROP DATABASE IF EXISTS \`${database}\``);
+  await admin.query(`DROP DATABASE IF EXISTS \`${legacyDatabase}\``);
   await admin.query(
     `CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
   );
+  await admin.query(
+    `CREATE DATABASE \`${legacyDatabase}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+  );
   let schema;
+  let legacySchema;
   try {
     schema = await createReadySchema(database);
     await seedMultiTenantGraph(schema);
@@ -405,23 +533,154 @@ test('Feature 5.4 migration rejects definition lookalikes without mutation', asy
       'trg_telephony_calls_follow_up_task_tenant_insert';
     const originalTrigger = await triggerDefinition(schema, triggerName);
 
-    async function probe(name, damage, restore) {
+    async function probe(name, damage, restore, unexpectedColumn) {
       await t.test(name, async () => {
         await damage();
         const before = await snapshotDatabaseInvariants(schema);
-        await assert.rejects(
-          () => migration.up(queryInterface, SequelizePackage),
-          (error) => error.code === 'TENANT_CLIENT_BASES_PARTIAL_SCHEMA',
-        );
+        const unexpectedBefore = unexpectedColumn
+          ? await columnDefinition(
+            schema,
+            unexpectedColumn.table,
+            unexpectedColumn.column,
+          )
+          : null;
+        await expectPartialBeforePreflight({
+          label: name,
+          migration,
+          queryInterface,
+          sequelize: schema,
+        });
         assert.deepEqual(
           await snapshotDatabaseInvariants(schema),
           before,
           `${name} changed schema, rows, attribution, graph or checksums`,
         );
+        if (unexpectedColumn) {
+          assert.deepEqual(
+            await columnDefinition(
+              schema,
+              unexpectedColumn.table,
+              unexpectedColumn.column,
+            ),
+            unexpectedBefore,
+            `${name} removed or repaired the unexpected column`,
+          );
+        }
         await restore();
-        await migration.up(queryInterface, SequelizePackage);
+        await expectReadyWithoutMutation({
+          label: `${name} restored canonical schema`,
+          migration,
+          queryInterface,
+          sequelize: schema,
+        });
       });
     }
+
+    await t.test('canonical exact nine-column schema remains ready', () =>
+      expectReadyWithoutMutation({
+        label: 'canonical exact nine-column schema',
+        migration,
+        queryInterface,
+        sequelize: schema,
+      }));
+
+    assert.deepEqual(
+      WRONG_TABLE_RESERVED_COLUMN_PAIRS,
+      [
+        { column: 'originOrganizationId', table: 'ClientSavedViews' },
+        { column: 'originClubId', table: 'ClientSavedViews' },
+        { column: 'membershipId', table: 'ClientBases' },
+        { column: 'membershipId', table: 'CallTasks' },
+        { column: 'originOrganizationId', table: 'CallTasks' },
+        { column: 'originClubId', table: 'CallTasks' },
+      ],
+      'generated wrong-table matrix must cover every non-canonical reserved pair',
+    );
+    for (const pair of WRONG_TABLE_RESERVED_COLUMN_PAIRS) {
+      await probe(
+        `ready plus unexpected ${pair.table}.${pair.column}`,
+        () => queryInterface.addColumn(pair.table, pair.column, {
+          allowNull: true,
+          type: SequelizePackage.INTEGER,
+        }),
+        () => queryInterface.removeColumn(pair.table, pair.column),
+        pair,
+      );
+    }
+
+    await t.test(
+      'legacy plus unexpected ClientBases.membershipId remains partial and untouched',
+      async () => {
+        legacySchema = await createLegacySchema(legacyDatabase);
+        const legacyQueryInterface = legacySchema.getQueryInterface();
+        const unexpectedColumn = {
+          column: 'membershipId',
+          table: 'ClientBases',
+        };
+        await legacyQueryInterface.addColumn(
+          unexpectedColumn.table,
+          unexpectedColumn.column,
+          { allowNull: true, type: SequelizePackage.INTEGER },
+        );
+        const before = await snapshotDatabaseInvariants(legacySchema);
+        const unexpectedBefore = await columnDefinition(
+          legacySchema,
+          unexpectedColumn.table,
+          unexpectedColumn.column,
+        );
+        await expectPartialBeforePreflight({
+          label: 'legacy plus unexpected ClientBases.membershipId',
+          migration,
+          queryInterface: legacyQueryInterface,
+          sequelize: legacySchema,
+        });
+        assert.deepEqual(
+          await snapshotDatabaseInvariants(legacySchema),
+          before,
+          'legacy wrong-table pair changed schema, rows, relationships or checksums',
+        );
+        assert.deepEqual(
+          await columnDefinition(
+            legacySchema,
+            unexpectedColumn.table,
+            unexpectedColumn.column,
+          ),
+          unexpectedBefore,
+          'legacy wrong-table pair was removed or repaired',
+        );
+      },
+    );
+
+    await t.test(
+      'semantically valid trigger formatting remains ready',
+      async () => {
+        await schema.query(`DROP TRIGGER \`${triggerName}\``);
+        await createTrigger(schema, {
+          ...originalTrigger,
+          actionStatement: originalTrigger.actionStatement.replace(
+            /^BEGIN/i,
+            'BEGIN /* semantically valid Feature 5.4 formatting */',
+          ),
+        });
+        try {
+          await expectReadyWithoutMutation({
+            label: 'semantically valid trigger formatting',
+            migration,
+            queryInterface,
+            sequelize: schema,
+          });
+        } finally {
+          await schema.query(`DROP TRIGGER \`${triggerName}\``);
+          await createTrigger(schema, originalTrigger);
+        }
+        await expectReadyWithoutMutation({
+          label: 'restored canonical trigger definition',
+          migration,
+          queryInterface,
+          sequelize: schema,
+        });
+      },
+    );
 
     const triggerVariants = [
       {
@@ -611,7 +870,9 @@ test('Feature 5.4 migration rejects definition lookalikes without mutation', asy
     );
   } finally {
     if (schema) await schema.close().catch(() => {});
+    if (legacySchema) await legacySchema.close().catch(() => {});
     await admin.query(`DROP DATABASE IF EXISTS \`${database}\``);
+    await admin.query(`DROP DATABASE IF EXISTS \`${legacyDatabase}\``);
     await admin.end();
   }
 });
