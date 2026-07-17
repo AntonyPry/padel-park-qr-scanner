@@ -7,6 +7,10 @@ const {
   TRAINING_SKILL_DIRECTION_VALUES,
   TRAINING_SKILL_STATUS_VALUES,
 } = require('../constants/training-methodology');
+const {
+  methodologyTenantWhere,
+  resolveMethodologyAccessContext,
+} = require('./methodology-access-context.service');
 
 const MANAGER_ROLES = new Set(['owner', 'manager']);
 const VIEW_ROLES = new Set(['owner', 'manager', 'trainer']);
@@ -233,16 +237,23 @@ function accountInclude(alias) {
   };
 }
 
-function exerciseInclude() {
+function exerciseInclude(context) {
+  const skillWhere = context?.readScoped
+    ? { organizationId: context.organizationId }
+    : undefined;
   return [
     {
       as: 'mainSkill',
       model: db.TrainingSkill,
+      required: false,
+      where: skillWhere,
     },
     {
       as: 'additionalSkills',
       model: db.TrainingSkill,
+      required: false,
       through: { attributes: [] },
+      where: skillWhere,
     },
     accountInclude('createdBy'),
     accountInclude('updatedBy'),
@@ -250,7 +261,7 @@ function exerciseInclude() {
   ];
 }
 
-async function assertSkillNameAvailable(name, id = null) {
+async function assertSkillNameAvailable(name, id = null, context, options = {}) {
   const where = {
     [Op.and]: [
       db.Sequelize.where(
@@ -259,30 +270,38 @@ async function assertSkillNameAvailable(name, id = null) {
       ),
     ],
   };
+  if (context?.readScoped) where.organizationId = context.organizationId;
   if (id) where.id = { [Op.ne]: Number(id) };
 
-  const existing = await db.TrainingSkill.findOne({ where });
+  const existing = await db.TrainingSkill.findOne({
+    transaction: options.transaction,
+    where,
+  });
   if (existing) {
     throw appError('Навык с таким названием уже есть', 409);
   }
 }
 
-async function loadSkillOrFail(id) {
-  const skill = await db.TrainingSkill.findByPk(Number(id), {
+async function loadSkillOrFail(id, context, options = {}) {
+  const skill = await db.TrainingSkill.findOne({
     include: [accountInclude('createdBy'), accountInclude('updatedBy')],
+    lock: options.lock,
+    transaction: options.transaction,
+    where: methodologyTenantWhere(context, { id: Number(id) }),
   });
   if (!skill) throw appError('Навык не найден', 404);
   return skill;
 }
 
-async function loadSkillsByIds(ids, { requireActive = true } = {}) {
+async function loadSkillsByIds(ids, context, { requireActive = true, transaction } = {}) {
   const uniqueIds = Array.from(new Set((ids || []).filter(Boolean)));
   if (uniqueIds.length === 0) return [];
 
   const rows = await db.TrainingSkill.findAll({
-    where: {
+    transaction,
+    where: methodologyTenantWhere(context, {
       id: { [Op.in]: uniqueIds },
-    },
+    }, { force: true }),
   });
 
   if (rows.length !== uniqueIds.length) {
@@ -296,9 +315,12 @@ async function loadSkillsByIds(ids, { requireActive = true } = {}) {
   return rows;
 }
 
-async function loadExerciseOrFail(id) {
-  const exercise = await db.TrainingExercise.findByPk(Number(id), {
-    include: exerciseInclude(),
+async function loadExerciseOrFail(id, context, options = {}) {
+  const exercise = await db.TrainingExercise.findOne({
+    include: exerciseInclude(context),
+    lock: options.lock,
+    transaction: options.transaction,
+    where: methodologyTenantWhere(context, { id: Number(id) }),
   });
   if (!exercise) throw appError('Упражнение не найдено', 404);
   return exercise;
@@ -469,10 +491,11 @@ function filterExercises(rows, query = {}) {
     });
 }
 
-async function listSkills(query = {}, actor) {
+async function listSkills(query = {}, actor, tenant = null) {
   assertCanView(actor);
+  const context = await resolveMethodologyAccessContext(tenant);
 
-  const where = {};
+  const where = methodologyTenantWhere(context, {});
   const requestedStatus = query.status || 'active';
   if (actor?.role === 'trainer') {
     where.status = 'active';
@@ -511,25 +534,45 @@ async function listSkills(query = {}, actor) {
   return rows.map(mapSkill);
 }
 
-async function createSkill(data, actor) {
+async function createSkill(data, actor, tenant = null) {
   assertCanManage(actor);
   const payload = normalizeSkillPayload(data, actor);
-  await assertSkillNameAvailable(payload.name);
-  const skill = await db.TrainingSkill.create(payload);
-  return mapSkill(await loadSkillOrFail(skill.id));
+  const skillId = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    await assertSkillNameAvailable(payload.name, null, context, { transaction });
+    const skill = await db.TrainingSkill.create(
+      { ...payload, organizationId: context.organizationId },
+      { transaction },
+    );
+    return skill.id;
+  });
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapSkill(await loadSkillOrFail(skillId, context));
 }
 
-async function updateSkill(id, data, actor) {
+async function updateSkill(id, data, actor, tenant = null) {
   assertCanManage(actor);
-  const skill = await loadSkillOrFail(id);
-  const payload = normalizeSkillPayload(data, actor, skill);
-
-  if (payload.name && payload.name !== skill.name) {
-    await assertSkillNameAvailable(payload.name, skill.id);
-  }
-
-  await skill.update(payload);
-  return mapSkill(await loadSkillOrFail(skill.id));
+  const skillId = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const skill = await loadSkillOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    const payload = normalizeSkillPayload(data, actor, skill);
+    if (payload.name && payload.name !== skill.name) {
+      await assertSkillNameAvailable(payload.name, skill.id, context, { transaction });
+    }
+    await skill.update(payload, { transaction });
+    return skill.id;
+  });
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapSkill(await loadSkillOrFail(skillId, context));
 }
 
 function buildExerciseWhere(query = {}, actor) {
@@ -592,39 +635,46 @@ function buildExerciseWhere(query = {}, actor) {
   return where;
 }
 
-async function listExercises(query = {}, actor) {
+async function listExercises(query = {}, actor, tenant = null) {
   assertCanView(actor);
+  const context = await resolveMethodologyAccessContext(tenant);
   const rows = await db.TrainingExercise.findAll({
-    include: exerciseInclude(),
+    include: exerciseInclude(context),
     order: [
       ['status', 'ASC'],
       ['updatedAt', 'DESC'],
       ['name', 'ASC'],
     ],
-    where: buildExerciseWhere(query, actor),
+    where: methodologyTenantWhere(context, buildExerciseWhere(query, actor)),
   });
 
   return filterExercises(rows, query);
 }
 
-async function createExercise(data, actor) {
+async function createExercise(data, actor, tenant = null) {
   assertCanView(actor);
   const payload = normalizeExercisePayload(data, actor);
   const additionalSkillIds = getExerciseAdditionalSkillIds(data, payload);
-  await loadSkillsByIds(
-    [payload.mainSkillId, ...(additionalSkillIds || [])].filter(Boolean),
-    { requireActive: true },
-  );
 
   const exercise = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    await loadSkillsByIds(
+      [payload.mainSkillId, ...(additionalSkillIds || [])].filter(Boolean),
+      context,
+      { requireActive: true, transaction },
+    );
     const created = await db.TrainingExercise.create(
       payload.status === 'approved'
         ? {
             ...payload,
             approvedAt: new Date(),
             approvedByAccountId: actor?.id || null,
+            organizationId: context.organizationId,
           }
-        : payload,
+        : { ...payload, organizationId: context.organizationId },
       { transaction },
     );
     if (additionalSkillIds) {
@@ -633,32 +683,34 @@ async function createExercise(data, actor) {
     return created;
   });
 
-  return mapExercise(await loadExerciseOrFail(exercise.id));
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapExercise(await loadExerciseOrFail(exercise.id, context));
 }
 
-async function updateExercise(id, data, actor) {
-  const exercise = await loadExerciseOrFail(id);
-  assertCanChangeExercise(exercise, actor);
-
-  const payload = normalizeExercisePayload(data, actor, exercise);
-  const additionalSkillIds = getExerciseAdditionalSkillIds(data, payload, exercise);
-  const skillIdsToValidate =
-    payload.status === 'approved'
+async function updateExercise(id, data, actor, tenant = null) {
+  const exerciseId = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const exercise = await loadExerciseOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    assertCanChangeExercise(exercise, actor);
+    const payload = normalizeExercisePayload(data, actor, exercise);
+    const additionalSkillIds = getExerciseAdditionalSkillIds(data, payload, exercise);
+    const skillIdsToValidate = payload.status === 'approved'
       ? [
           payload.mainSkillId ?? exercise.mainSkillId,
-          ...(
-            additionalSkillIds ||
-            (exercise.additionalSkills || []).map((skill) => skill.id)
-          ),
+          ...(additionalSkillIds ||
+            (exercise.additionalSkills || []).map((skill) => skill.id)),
         ].filter(Boolean)
       : [payload.mainSkillId, ...(additionalSkillIds || [])].filter(Boolean);
-
-  await loadSkillsByIds(
-    skillIdsToValidate,
-    { requireActive: true },
-  );
-
-  await db.sequelize.transaction(async (transaction) => {
+    await loadSkillsByIds(skillIdsToValidate, context, {
+      requireActive: true,
+      transaction,
+    });
     await exercise.update(
       payload.status === 'approved' && exercise.status !== 'approved'
         ? {
@@ -672,57 +724,78 @@ async function updateExercise(id, data, actor) {
     if (additionalSkillIds) {
       await exercise.setAdditionalSkills(additionalSkillIds, { transaction });
     }
+    return exercise.id;
   });
 
-  return mapExercise(await loadExerciseOrFail(exercise.id));
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapExercise(await loadExerciseOrFail(exerciseId, context));
 }
 
-async function approveExercise(id, actor) {
+async function approveExercise(id, actor, tenant = null) {
   assertCanManage(actor);
-  const exercise = await loadExerciseOrFail(id);
-  assertExerciseCanBeApproved({
-    eLevel: exercise.eLevel,
-    mainSkillId: exercise.mainSkillId,
-    status: 'approved',
-  });
-  await loadSkillsByIds(
-    [
+  const exerciseId = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, { lock: true, transaction });
+    const exercise = await loadExerciseOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    assertExerciseCanBeApproved({
+      eLevel: exercise.eLevel,
+      mainSkillId: exercise.mainSkillId,
+      status: 'approved',
+    });
+    await loadSkillsByIds([
       exercise.mainSkillId,
       ...(exercise.additionalSkills || []).map((skill) => skill.id),
-    ],
-    { requireActive: true },
-  );
-
-  await exercise.update({
-    approvedAt: new Date(),
-    approvedByAccountId: actor?.id || null,
-    status: 'approved',
-    updatedByAccountId: actor?.id || null,
+    ], context, { requireActive: true, transaction });
+    await exercise.update({
+      approvedAt: new Date(),
+      approvedByAccountId: actor?.id || null,
+      status: 'approved',
+      updatedByAccountId: actor?.id || null,
+    }, { transaction });
+    return exercise.id;
   });
-
-  return mapExercise(await loadExerciseOrFail(exercise.id));
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapExercise(await loadExerciseOrFail(exerciseId, context));
 }
 
-async function archiveExercise(id, actor) {
+async function archiveExercise(id, actor, tenant = null) {
   assertCanManage(actor);
-  const exercise = await loadExerciseOrFail(id);
-  await exercise.update({
-    status: 'archived',
-    updatedByAccountId: actor?.id || null,
+  const exerciseId = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, { lock: true, transaction });
+    const exercise = await loadExerciseOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    await exercise.update({
+      status: 'archived',
+      updatedByAccountId: actor?.id || null,
+    }, { transaction });
+    return exercise.id;
   });
-  return mapExercise(await loadExerciseOrFail(exercise.id));
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapExercise(await loadExerciseOrFail(exerciseId, context));
 }
 
-async function restoreExercise(id, actor) {
+async function restoreExercise(id, actor, tenant = null) {
   assertCanManage(actor);
-  const exercise = await loadExerciseOrFail(id);
-  await exercise.update({
-    approvedAt: null,
-    approvedByAccountId: null,
-    status: 'draft',
-    updatedByAccountId: actor?.id || null,
+  const exerciseId = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, { lock: true, transaction });
+    const exercise = await loadExerciseOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    await exercise.update({
+      approvedAt: null,
+      approvedByAccountId: null,
+      status: 'draft',
+      updatedByAccountId: actor?.id || null,
+    }, { transaction });
+    return exercise.id;
   });
-  return mapExercise(await loadExerciseOrFail(exercise.id));
+  const context = await resolveMethodologyAccessContext(tenant);
+  return mapExercise(await loadExerciseOrFail(exerciseId, context));
 }
 
 module.exports = {

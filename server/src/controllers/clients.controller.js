@@ -167,6 +167,7 @@ class ClientsController {
         await clientSkillMapService.listForClient(
           req.params.clientId,
           req.account,
+          { tenant: req.tenant },
         ),
       );
     } catch (error) {
@@ -183,6 +184,7 @@ class ClientsController {
           req.params.skillId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -198,6 +200,7 @@ class ClientsController {
           req.params.clientId,
           req.query,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -216,6 +219,7 @@ class ClientsController {
         await trainingRecommendationsService.recommendForGroup(
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

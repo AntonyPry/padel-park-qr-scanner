@@ -5,6 +5,10 @@ const {
 } = require('../constants/training-methodology');
 const clientSkillMapService = require('./client-skill-map.service');
 const trainingNotesService = require('./training-notes.service');
+const {
+  methodologyTenantWhere,
+  resolveMethodologyAccessContext,
+} = require('./methodology-access-context.service');
 
 const VIEW_ROLES = new Set(['owner', 'manager', 'trainer']);
 const MAX_SKILL_LEVEL = 5;
@@ -1476,25 +1480,25 @@ function buildGroupRecommendation({
   };
 }
 
-async function loadClientOrFail(clientId) {
+async function loadClientOrFail(clientId, context) {
   const client = await db.User.findOne({
-    attributes: ['id', 'status', 'mergedIntoUserId'],
-    where: {
+    attributes: ['id', 'organizationId', 'status', 'mergedIntoUserId'],
+    where: methodologyTenantWhere(context, {
       id: Number(clientId),
       mergedIntoUserId: null,
-    },
+    }),
   });
   if (!client) throw appError('Клиент не найден', 404);
   return client;
 }
 
-async function loadGroupClientsOrFail(clientIds) {
+async function loadGroupClientsOrFail(clientIds, context) {
   const clients = await db.User.findAll({
-    attributes: ['id', 'name', 'status', 'mergedIntoUserId'],
-    where: {
+    attributes: ['id', 'name', 'organizationId', 'status', 'mergedIntoUserId'],
+    where: methodologyTenantWhere(context, {
       id: { [Op.in]: clientIds },
       mergedIntoUserId: null,
-    },
+    }),
   });
   const clientById = new Map(clients.map((client) => [Number(client.id), client]));
   const missingId = clientIds.find((clientId) => !clientById.has(Number(clientId)));
@@ -1509,7 +1513,7 @@ async function loadGroupClientsOrFail(clientIds) {
   return clientIds.map((clientId) => clientById.get(Number(clientId)));
 }
 
-async function loadApprovedExercises() {
+async function loadApprovedExercises(context) {
   if (!db.TrainingExercise) return [];
 
   const rows = await db.TrainingExercise.findAll({
@@ -1517,39 +1521,50 @@ async function loadApprovedExercises() {
       {
         as: 'mainSkill',
         model: db.TrainingSkill,
+        required: true,
+        where: methodologyTenantWhere(context, {}),
       },
       {
         as: 'additionalSkills',
         model: db.TrainingSkill,
+        required: false,
         through: { attributes: [] },
+        where: methodologyTenantWhere(context, {}),
       },
     ],
     order: [
       ['eLevel', 'ASC'],
       ['name', 'ASC'],
     ],
-    where: {
+    where: methodologyTenantWhere(context, {
       status: 'approved',
       mainSkillId: { [Op.ne]: null },
-    },
+    }),
   });
 
   return rows.map(mapExercise);
 }
 
-async function recommendForClient(clientId, query = {}, actor = null) {
+async function recommendForClient(
+  clientId,
+  query = {},
+  actor = null,
+  tenant = null,
+) {
   assertCanView(actor);
+  const context = await resolveMethodologyAccessContext(tenant);
   const id = normalizeClientId(clientId);
   const asOfDate = normalizeDateOnly(query.date);
   const goal = normalizeGoal(query.goal);
-  const client = await loadClientOrFail(id);
+  const client = await loadClientOrFail(id, context);
   const [skillMap, trainingNotes, exercises] = await Promise.all([
-    clientSkillMapService.listForClient(id, actor),
+    clientSkillMapService.listForClient(id, actor, { tenant }),
     trainingNotesService.listByClient(id, {
       limit: 50,
       skipClientCheck: true,
+      tenant,
     }),
-    loadApprovedExercises(),
+    loadApprovedExercises(context),
   ]);
 
   return {
@@ -1565,21 +1580,23 @@ async function recommendForClient(clientId, query = {}, actor = null) {
   };
 }
 
-async function recommendForGroup(data = {}, actor = null) {
+async function recommendForGroup(data = {}, actor = null, tenant = null) {
   assertCanView(actor);
+  const context = await resolveMethodologyAccessContext(tenant);
   const clientIds = normalizeClientIds(data.clientIds);
   const asOfDate = normalizeDateOnly(data.date);
   const goal = normalizeGoal(data.goal);
-  const clients = await loadGroupClientsOrFail(clientIds);
-  const exercises = await loadApprovedExercises();
+  const clients = await loadGroupClientsOrFail(clientIds, context);
+  const exercises = await loadApprovedExercises(context);
   const participantRows = await Promise.all(
     clients.map(async (client) => {
       const clientId = Number(client.id);
       const [skillMap, trainingNotes] = await Promise.all([
-        clientSkillMapService.listForClient(clientId, actor),
+        clientSkillMapService.listForClient(clientId, actor, { tenant }),
         trainingNotesService.listByClient(clientId, {
           limit: 50,
           skipClientCheck: true,
+          tenant,
         }),
       ]);
 

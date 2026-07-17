@@ -15,11 +15,16 @@ const {
 const {
   isTenantClientBasesCallTasksEnabled,
   isTenantBookingsCourtsEnabled,
+  isTenantMethodologySkillMapEnabled,
 } = require('../tenant-context/capabilities');
 const {
   bookingTenantWhere,
   resolveBookingAccessContext,
 } = require('./booking-access-context.service');
+const {
+  methodologyTenantWhere,
+  resolveMethodologyAccessContext,
+} = require('./methodology-access-context.service');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -75,6 +80,10 @@ const CALL_TASK_TRAINING_MODELS = new Set([
   'ClientBase',
 ]);
 const BOOKING_TRAINING_MODELS = new Set(['Booking', 'BookingSeries']);
+const METHODOLOGY_TRAINING_MODELS = new Set([
+  'ClientTrainingSkill',
+  'ClientTrainingSkillHistory',
+]);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -169,8 +178,38 @@ async function resolveTrainingBookingContext(tenant, options = {}) {
   return resolveBookingAccessContext(tenant, options);
 }
 
-function getTrainingEntityQuery(entity, role, context, bookingContext = null) {
+async function resolveTrainingMethodologyContext(tenant, options = {}) {
+  if (!isTenantMethodologySkillMapEnabled()) return null;
+  return resolveMethodologyAccessContext(tenant, options);
+}
+
+function getTrainingEntityQuery(
+  entity,
+  role,
+  context,
+  bookingContext = null,
+  methodologyContext = null,
+) {
   const where = getTrainingEntityWhere(entity, role);
+  if (methodologyContext && entity.modelName === 'User') {
+    return {
+      where: methodologyTenantWhere(methodologyContext, where, { force: true }),
+    };
+  }
+  if (
+    methodologyContext &&
+    METHODOLOGY_TRAINING_MODELS.has(entity.modelName)
+  ) {
+    return {
+      include: [{
+        attributes: [],
+        model: db.User,
+        required: true,
+        where: { organizationId: methodologyContext.organizationId },
+      }],
+      where,
+    };
+  }
   if (bookingContext && BOOKING_TRAINING_MODELS.has(entity.modelName)) {
     return {
       where: bookingTenantWhere(bookingContext, where, { force: true }),
@@ -937,6 +976,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   const role = resolveOptionalTrainingRole(query.role);
   const callTaskContext = await resolveTrainingCallTaskContext(actor, tenant);
   const bookingContext = await resolveTrainingBookingContext(tenant);
+  const methodologyContext = await resolveTrainingMethodologyContext(tenant);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
@@ -947,6 +987,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
             role,
             callTaskContext,
             bookingContext,
+            methodologyContext,
           ))
         : 0;
 
@@ -1128,6 +1169,10 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       lock: true,
       transaction,
     });
+    const methodologyContext = await resolveTrainingMethodologyContext(tenant, {
+      lock: true,
+      transaction,
+    });
     const bookingWhere = bookingContext
       ? bookingTenantWhere(
           bookingContext,
@@ -1142,7 +1187,13 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       listTrainingIds(db.Visit, visitWhere, transaction),
       listTrainingIds(
         db.User,
-        getTrainingEntityWhere({ modelName: 'User' }, role),
+        getTrainingEntityQuery(
+          { modelName: 'User' },
+          role,
+          callTaskContext,
+          bookingContext,
+          methodologyContext,
+        ).where,
         transaction,
       ),
     ]);
@@ -1238,6 +1289,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
         role,
         callTaskContext,
         bookingContext,
+        methodologyContext,
       );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],

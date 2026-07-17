@@ -53,6 +53,13 @@ function isTenantBookingsCourtsEnabled() {
   );
 }
 
+function isTenantMethodologySkillMapEnabled() {
+  return readBooleanEnv(
+    process.env.TENANT_METHODOLOGY_SKILL_MAP_ENABLED,
+    false,
+  );
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -138,6 +145,12 @@ function assertTenantCapabilityDependencies() {
       'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
     );
   }
+  if (isTenantMethodologySkillMapEnabled() && !isTenantBookingsCourtsEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_METHODOLOGY_SKILL_MAP_ENABLED',
+      'TENANT_BOOKINGS_COURTS_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
@@ -148,6 +161,7 @@ function assertTenantCapabilityDependencies() {
     tenantClientsReferences: isTenantClientsReferencesEnabled(),
     tenantClientBasesCallTasks: isTenantClientBasesCallTasksEnabled(),
     tenantBookingsCourts: isTenantBookingsCourtsEnabled(),
+    tenantMethodologySkillMap: isTenantMethodologySkillMapEnabled(),
     tenantVisitsScanner: isTenantVisitsScannerEnabled(),
   });
 }
@@ -169,6 +183,7 @@ module.exports = {
   isTenantClientsReferencesEnabled,
   isTenantContextEnabled,
   isTenantFilesWorkersEnabled,
+  isTenantMethodologySkillMapEnabled,
   isTenantProviderIntegrationsEnabled,
   isTenantStaffAccessEnabled,
   isTenantVisitsScannerEnabled,

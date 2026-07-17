@@ -8,7 +8,9 @@ function handleError(res, error, fallback) {
 class TrainingNotesController {
   async getByClient(req, res) {
     try {
-      res.json(await trainingNotesService.listByClient(req.params.clientId));
+      res.json(await trainingNotesService.listByClient(req.params.clientId, {
+        tenant: req.tenant,
+      }));
     } catch (error) {
       handleError(res, error, 'Ошибка получения дневника тренировок');
     }
@@ -23,6 +25,7 @@ class TrainingNotesController {
             req.params.clientId,
             req.body,
             req.account,
+            req.tenant,
           ),
         );
     } catch (error) {
@@ -37,6 +40,7 @@ class TrainingNotesController {
           req.params.noteId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -46,7 +50,11 @@ class TrainingNotesController {
 
   async remove(req, res) {
     try {
-      res.json(await trainingNotesService.remove(req.params.noteId, req.account));
+      res.json(await trainingNotesService.remove(
+        req.params.noteId,
+        req.account,
+        req.tenant,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления записи тренировки');
     }

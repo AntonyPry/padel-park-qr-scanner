@@ -1,5 +1,9 @@
 module.exports = (sequelize, DataTypes) => {
   const TrainingExercise = sequelize.define('TrainingExercise', {
+    organizationId: {
+      allowNull: false,
+      type: DataTypes.INTEGER,
+    },
     name: {
       allowNull: false,
       type: DataTypes.STRING,
@@ -61,9 +65,30 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       type: DataTypes.DATE,
     },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        if (Object.prototype.hasOwnProperty.call(
+          options.attributes || {},
+          'organizationId',
+        )) {
+          const error = new Error('TrainingExercise organization attribution is immutable');
+          error.code = 'TRAINING_EXERCISE_ORGANIZATION_IMMUTABLE';
+          throw error;
+        }
+      },
+      beforeUpdate(exercise) {
+        if (exercise.changed('organizationId')) {
+          const error = new Error('TrainingExercise organization attribution is immutable');
+          error.code = 'TRAINING_EXERCISE_ORGANIZATION_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   TrainingExercise.associate = (models) => {
+    TrainingExercise.belongsTo(models.Organization, { foreignKey: 'organizationId' });
     TrainingExercise.belongsTo(models.TrainingSkill, {
       as: 'mainSkill',
       foreignKey: 'mainSkillId',

@@ -2122,12 +2122,13 @@ async function getBookingTrainingPlan(id, account, authority = null) {
   if (!TRAINING_BOOKING_TYPES.has(booking.bookingType)) return null;
   return trainingPlansService.getByBookingId(booking.id, account, {
     allowBookingViewer: true,
+    tenant: authority,
   });
 }
 
 async function createBookingTrainingPlan(id, account, authority = null) {
   await getBookingOrFail(id, undefined, authority);
-  return trainingPlansService.createFromBooking(id, account);
+  return trainingPlansService.createFromBooking(id, account, authority);
 }
 
 async function listBookingHistory(id, authority = null) {

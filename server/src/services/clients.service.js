@@ -1281,10 +1281,11 @@ async function getStatsByClientIds(ids) {
   );
 }
 
-async function listTrainingNotes(clientId) {
+async function listTrainingNotes(clientId, tenant = null) {
   return trainingNotesService.listByClient(clientId, {
     limit: 50,
     skipClientCheck: true,
+    tenant,
   });
 }
 
@@ -1396,9 +1397,9 @@ async function getClientDetails(id, account = null, tenant = null) {
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
     isTrainer(account) ? [] : getDuplicateCandidates(client, context),
-    canViewTrainingNotes(account) ? listTrainingNotes(client.id) : [],
+    canViewTrainingNotes(account) ? listTrainingNotes(client.id, tenant) : [],
     canViewTrainingNotes(account)
-      ? clientSkillMapService.listForClient(client.id, account)
+      ? clientSkillMapService.listForClient(client.id, account, { tenant })
       : [],
     includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
       ? listClientBookings(client.id, { limit: 50 }, bookingContext)
@@ -2571,7 +2572,7 @@ async function createClient(data, actor = null, tenant = null) {
     }),
   );
 
-  await clientSkillMapService.syncActiveSkillsForClient(client);
+  await clientSkillMapService.syncActiveSkillsForClient(client, { tenant });
   const result = await getClientDetails(client.id, actor, tenant);
   await onboardingService.recordEventSafe(actor, 'client.created', {
     entityId: result.client?.id || client.id,
@@ -2719,7 +2720,7 @@ async function registerClientFromMessenger({
   );
 
   if (result.created) {
-    await clientSkillMapService.syncActiveSkillsForClient(result.client);
+    await clientSkillMapService.syncActiveSkillsForClient(result.client, { tenant });
   }
   return getClientDetails(result.client.id, null, tenant);
 }
@@ -3056,10 +3057,19 @@ function shouldUseDuplicateSkillMapText(primaryRow, duplicateRow) {
   return false;
 }
 
-async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction) {
+async function mergeSkillMapForDuplicate(
+  primary,
+  duplicate,
+  actor,
+  transaction,
+  tenant,
+) {
   if (!db.ClientTrainingSkill) return;
 
-  await clientSkillMapService.syncActiveSkillsForClient(primary, { transaction });
+  await clientSkillMapService.syncActiveSkillsForClient(primary, {
+    tenant,
+    transaction,
+  });
   const duplicateRows = await db.ClientTrainingSkill.findAll({
     transaction,
     where: { userId: duplicate.id },
@@ -3083,6 +3093,15 @@ async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction)
         },
         { transaction },
       );
+      if (db.ClientTrainingSkillHistory) {
+        await db.ClientTrainingSkillHistory.update(
+          { userId: primary.id },
+          {
+            transaction,
+            where: { clientTrainingSkillId: duplicateRow.id },
+          },
+        );
+      }
       continue;
     }
 
@@ -3111,6 +3130,19 @@ async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction)
       },
       { transaction },
     );
+
+    if (db.ClientTrainingSkillHistory) {
+      await db.ClientTrainingSkillHistory.update(
+        {
+          clientTrainingSkillId: primaryRow.id,
+          userId: primary.id,
+        },
+        {
+          transaction,
+          where: { clientTrainingSkillId: duplicateRow.id },
+        },
+      );
+    }
 
     await duplicateRow.destroy({ transaction });
   }
@@ -3252,7 +3284,6 @@ async function mergeClients(
         ['CertificateRedemption', 'clientId'],
         ['ClientSubscription', 'clientId'],
         ['ClientSubscriptionRedemption', 'clientId'],
-        ['ClientTrainingSkillHistory', 'userId'],
         ['PendingSale', 'clientId'],
         ['ScannerEvent', 'userId'],
         ['TrainingPlanParticipant', 'userId'],
@@ -3264,7 +3295,13 @@ async function mergeClients(
           { where: { [foreignKey]: duplicate.id }, transaction },
         );
       }
-      await mergeSkillMapForDuplicate(primary, duplicate, actor, transaction);
+      await mergeSkillMapForDuplicate(
+        primary,
+        duplicate,
+        actor,
+        transaction,
+        tenant,
+      );
       await mergeCallTaskClientsForDuplicate(primary, duplicate, transaction);
 
       const primaryUpdates = {};
