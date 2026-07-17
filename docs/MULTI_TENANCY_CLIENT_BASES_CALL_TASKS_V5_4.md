@@ -1,6 +1,6 @@
 # Feature 5.4 — Client bases, saved views and call tasks
 
-Статус: `implementation complete; feature gate green; ready for independent QA; not accepted or integrated`.
+Статус: `independent QA rejected 4b973484; P1 remediation complete; full gate green; ready for repeat independent QA; not accepted or integrated`.
 
 Exact base: `3b2ac656c0e861ca9bf0d2898b7866f1539f8161` from `codex/saas-multitenancy-integration`.
 
@@ -83,7 +83,7 @@ Permissions remain unchanged:
 
 ## Data and migration contract
 
-Forward migration uses nullable → exact-default backfill → graph validation → constraints/indexes/triggers → `NOT NULL` for authoritative root attribution. It covers fresh and production-shaped data and fails closed on pre-existing partial schema.
+Forward migration first classifies the complete reserved Feature 5.4 schema using only `INFORMATION_SCHEMA`, then uses nullable → exact-default backfill → graph validation → `NOT NULL` → indexes/constraints/triggers. It covers fresh and production-shaped data and fails closed on pre-existing partial schema before default-tenant/business reads or any mutation.
 
 Required schema rules:
 
@@ -92,6 +92,10 @@ Required schema rules:
 - CallTask→ClientBase, TelephonyCall→CallTask and analytics source Club are same-tenant composite links;
 - CallTaskClient insert/update trigger rejects cross-Organization User and cross-tenant task moves;
 - root tenant attribution and analytics provenance are immutable for instance, bulk and raw-SQL writes;
+- exact column type/precision/null/default/extra, ordered index columns/uniqueness/type/direction/prefix, ordered FK graph/actions and normalized trigger table/timing/event/body are part of the migration state; missing, extra reserved, replaced, no-op and lookalike artifacts are `partial`, never auto-repaired;
+- forced-current-invocation cleanup tracks and removes only definitions created by that invocation; legacy FK/index removal is deferred until the successful tail so forced cleanup restores byte-for-byte equivalent schema/data inventory;
+- Account/Membership/Staff authority accepts only `NULL/NULL` or equal non-null Staff links to an active same-Organization Staff; one-sided null, unequal, stale, inactive and cross-Organization links fail in runtime and DB triggers;
+- non-null `TelephonyCall.followUpCallTaskId` requires non-null exact task Organization/Club at INSERT and UPDATE; linked tenant attribution cannot be changed, while same-tenant reparent and clearing the link remain allowed;
 - `down` preflight requires exact single-default tenant, complete attribution/graph, no second tenant and no later migration; runtime rollback is flag-off, not schema erasure.
 
 ## Boundaries
@@ -108,7 +112,8 @@ Final status: `N/A`. Итоговый diff не содержит файлов и
 - `ClientSavedView`, `ClientBase` и `CallTask` получили authoritative tenant attribution; `CallTaskClient` и `CallTaskAttempt` остаются дочерними сущностями, ограниченными parent graph.
 - Все CRUD/list/detail/archive/delete/report/sync/history paths для баз и задач получают tenant только из повторно валидированного frozen request context. Flag-off сохраняет current exact-default bridge.
 - Analytics filters/provenance создаются только server-owned visits analytics path, сохраняют source Organization/Club и immutable через service, ORM hooks и DB triggers.
-- Assignee/creator/attempt actor проверяются через active Account → Membership → Club access/effective role → optional Staff graph. Reassignment, recurrence и provider-created follow-up links не могут пересечь tenant.
+- Assignee/creator/attempt actor проверяются через active Account → Membership → Club access/effective role → строгую Account/Membership/Staff parity. `NULL/NULL` сохраняет compatibility, но любая односторонняя `NULL`, несовпадение или stale/inactive/cross-Organization Staff отклоняется. Reassignment, recurrence и provider-created follow-up links не могут пересечь tenant.
+- Telephony follow-up composite FK дополнен `BEFORE INSERT/UPDATE` triggers, закрывающими SQL `NULL` bypass: non-null link требует exact non-null Organization/Club, а linked attribution нельзя очистить или сменить. Same-tenant reparent, link clear и legacy nullable tenant при `followUpCallTaskId=NULL` сохранены; весь Telephony root tenant-safe не объявляется.
 - Snapshot/dynamic generation сериализуется parent locks; child uniqueness и transactions защищают population; recurring runner обрабатывает один stored tenant root за транзакцию и повторный concurrent run не создаёт дубль.
 - Attempt history нельзя переписать или перенести в другую задачу; разрешён только технический reparent внутри той же `CallTask` при merge клиентских дублей.
 - Owner training-data summary/cleanup для `ClientBase`, `CallTask`, `CallTaskClient`, `CallTaskAttempt` теперь Club-scoped; соседний Club остаётся нетронутым.
@@ -116,21 +121,23 @@ Final status: `N/A`. Итоговый diff не содержит файлов и
 
 ## Verification at feature handoff
 
-- Fresh isolated database: все `89/89` migrations, production-shaped legacy backfill, forced failure cleanup, pre-existing partial fail-closed, down/up/reapply и second-tenant rollback refusal — green.
-- Реальная локальная production-shaped DB: Feature 5.4 `down 1.169s → up 0.473s`, schema/data preflight green.
+- Fresh isolated database: все `89/89` migrations и migration status `89 up`; production-shaped legacy backfill, exact deep-equal forced failure cleanup, down/up/reapply и mutation-free second-tenant rollback refusal — green.
+- Definition-aware migration matrix: `11/11` independent-style subtests (no-op/lookalike body, wrong timing/event/table, wrong FK columns/actions, wrong index order/uniqueness, wrong column nullability/default/type/precision, extra reserved artifact) с двумя Organizations, тремя Clubs, реальными rows и deep-equal full `INFORMATION_SCHEMA`/payload/count/attribution/SHA checksums — green.
+- Account/Membership/Staff runtime + DB matrix покрывает обе one-sided-NULL стороны, unequal/missing/inactive/cross-Organization Staff, inactive Account/Membership/Organization/Club, revoked Club access, creator/assignee/attempt/training paths и ORM/raw/bulk INSERT/UPDATE. `NULL/NULL` valid compatibility — green.
+- Telephony follow-up matrix покрывает INSERT/UPDATE/raw/bulk `NULL` attribution bypass, cross-Organization/Club, inconsistent reparent, linked attribution clear/change, valid same-tenant link/reparent/clear и legacy `followUp=NULL` — green.
 - Feature 5.4 DB/security/concurrency/IDOR/training-cleanup matrix: `1/1` comprehensive DB-backed test green; historical analytics → preview → base → task population parity также green.
-- Full server suite с `--test-concurrency=1`: `486/486`, failures `0`.
-- Targeted onboarding service: `22/22`; infrastructure/foundation/Socket.IO rerun: `30/30`.
+- Full server suite с `--test-concurrency=1`: `498/498`, failures `0`.
+- Targeted foundation/realtime/provider/onboarding/telephony rerun: `116/116`.
 - Client unchanged: `31/31` test files, `205/205` tests; lint and production build green.
 - Server typecheck and JS syntax checks green.
 - Tenant route audit: `284` endpoints, digest `373ec5dd4bb9389f11b9f516df6611d3e8b0036da6adde2c2fd76a019c1439aa`.
 - Account, Staff/Membership, User/reference, Visit/scanner, ClientBase/CallTask, cache/realtime, files/workers and provider audits — green.
-- Strict onboarding audit: PASS; `177/177` required screenshot-backed cards, `40/40` checkpoint events.
+- Strict onboarding audit: PASS; `177/177` required screenshot-backed cards, `174` instruction screenshots, `40/40` checkpoint events.
 - OpenAPI and generated client hashes identical before/after generation; contract drift отсутствует.
 
 ## Handoff boundaries
 
-- Independent QA ещё не выполнен; feature не accepted и не promoted.
+- Independent QA отклонил reviewed parent `4b973484060183337475e88347c02f1d59a5a5be` по трём P1; remediation готова ровно одним локальным fix commit поверх этого parent и требует повторного independent QA. Feature не accepted и не promoted.
 - Второй production tenant по-прежнему hard-blocked; provisioning, billing и tenant switcher не входят в этот срез.
 - Telephony provider/call/recording/transcription roots остаются out of scope; проверена только уже существующая task link tenant parity.
 - Следующий разрешённый шаг: independent QA/release review exact feature commit. Push, merge, integration promotion и deploy требуют отдельного разрешения HQ.

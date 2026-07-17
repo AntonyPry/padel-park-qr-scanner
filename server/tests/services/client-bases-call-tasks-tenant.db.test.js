@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { test } = require('node:test');
@@ -71,6 +72,79 @@ async function selectOne(sequelize, sql, replacements = {}) {
     type: SequelizePackage.QueryTypes.SELECT,
   });
   return rows[0] || null;
+}
+
+async function snapshotMigrationInvariants(sequelize) {
+  const schema = {};
+  const queries = {
+    columns: `SELECT TABLE_NAME tableName,COLUMN_NAME columnName,
+        ORDINAL_POSITION ordinalPosition,COLUMN_DEFAULT columnDefault,
+        IS_NULLABLE isNullable,DATA_TYPE dataType,COLUMN_TYPE columnType,
+        NUMERIC_PRECISION numericPrecision,NUMERIC_SCALE numericScale,
+        CHARACTER_MAXIMUM_LENGTH characterMaximumLength,EXTRA extra
+      FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,ORDINAL_POSITION`,
+    constraints: `SELECT TABLE_NAME tableName,CONSTRAINT_NAME constraintName,
+        CONSTRAINT_TYPE constraintType
+      FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME`,
+    indexes: `SELECT TABLE_NAME tableName,INDEX_NAME indexName,
+        NON_UNIQUE nonUnique,INDEX_TYPE indexType,SEQ_IN_INDEX sequenceInIndex,
+        COLUMN_NAME columnName,SUB_PART subPart,COLLATION collation
+      FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX`,
+    keyUsage: `SELECT TABLE_NAME tableName,CONSTRAINT_NAME constraintName,
+        COLUMN_NAME columnName,ORDINAL_POSITION ordinalPosition,
+        REFERENCED_TABLE_NAME referencedTableName,
+        REFERENCED_COLUMN_NAME referencedColumnName
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME,ORDINAL_POSITION`,
+    rules: `SELECT TABLE_NAME tableName,CONSTRAINT_NAME constraintName,
+        UPDATE_RULE updateRule,DELETE_RULE deleteRule
+      FROM INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS
+      WHERE CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME`,
+    triggers: `SELECT TRIGGER_NAME triggerName,
+        EVENT_MANIPULATION eventManipulation,EVENT_OBJECT_TABLE eventObjectTable,
+        ACTION_TIMING actionTiming,ACTION_STATEMENT actionStatement
+      FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()
+      ORDER BY TRIGGER_NAME`,
+  };
+  for (const [key, sql] of Object.entries(queries)) {
+    schema[key] = await sequelize.query(sql, {
+      type: SequelizePackage.QueryTypes.SELECT,
+    });
+  }
+  const data = {};
+  const counts = {};
+  const checksums = {};
+  for (const tableName of [
+    'Organizations',
+    'Clubs',
+    'Accounts',
+    'Memberships',
+    'MembershipClubAccesses',
+    'Staffs',
+    'Users',
+    'ClientSavedViews',
+    'ClientBases',
+    'CallTasks',
+    'CallTaskClients',
+    'CallTaskAttempts',
+    'TelephonyCalls',
+  ]) {
+    const rows = await sequelize.query(
+      `SELECT * FROM \`${tableName}\` ORDER BY 1`,
+      { type: SequelizePackage.QueryTypes.SELECT },
+    );
+    data[tableName] = rows;
+    counts[tableName] = rows.length;
+    checksums[tableName] = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(rows))
+      .digest('hex');
+  }
+  return { checksums, counts, data, schema };
 }
 
 async function seedLegacyGraph(sequelize) {
@@ -281,12 +355,18 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
     );
     await queryInterface.removeColumn('ClientBases', 'organizationId');
 
+    const beforeForcedFailure = await snapshotMigrationInvariants(schema);
     process.env.TENANT_CLIENT_BASES_CALL_TASKS_MIGRATION_FAIL_STEP = 'triggers';
     await assert.rejects(
       () => migration.up(queryInterface, SequelizePackage),
       (error) => error.code === 'TENANT_CLIENT_BASES_MIGRATION_FORCED_FAILURE',
     );
     delete process.env.TENANT_CLIENT_BASES_CALL_TASKS_MIGRATION_FAIL_STEP;
+    assert.deepEqual(
+      await snapshotMigrationInvariants(schema),
+      beforeForcedFailure,
+      'forced invocation cleanup must restore exact schema, rows and checksums',
+    );
     assert.equal(
       Boolean((await queryInterface.describeTable('ClientBases')).organizationId),
       false,
@@ -746,6 +826,204 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
     const taskClient = await db.CallTaskClient.findOne({
       where: { callTaskId: taskA.id, userId: clientA.id },
     });
+    const {
+      resolveEligibleCallTaskAccount,
+    } = require('../../src/services/call-task-access-context.service');
+    const authorityStaffA = await db.Staff.create({
+      name: `Feature 5.4 authority staff A ${suffix}`,
+      organizationId: legacy.organizationId,
+      role: 'Администратор',
+      status: 'active',
+    });
+    const authorityStaffB = await db.Staff.create({
+      name: `Feature 5.4 authority staff B ${suffix}`,
+      organizationId: legacy.organizationId,
+      role: 'Администратор',
+      status: 'active',
+    });
+    const authorityStaffC = await db.Staff.create({
+      name: `Feature 5.4 authority staff C ${suffix}`,
+      organizationId: legacy.organizationId,
+      role: 'Администратор',
+      status: 'active',
+    });
+    const authorityStaffD = await db.Staff.create({
+      name: `Feature 5.4 authority staff D ${suffix}`,
+      organizationId: legacy.organizationId,
+      role: 'Администратор',
+      status: 'active',
+    });
+    const inactiveAuthorityStaff = await db.Staff.create({
+      name: `Feature 5.4 inactive authority staff ${suffix}`,
+      organizationId: legacy.organizationId,
+      role: 'Администратор',
+      status: 'inactive',
+    });
+    const foreignAuthorityStaff = await db.Staff.create({
+      name: `Feature 5.4 foreign authority staff ${suffix}`,
+      organizationId: foreignOrganization.id,
+      role: 'Администратор',
+      status: 'active',
+    });
+
+    async function createAuthorityProbe(label, options = {}) {
+      const account = await db.Account.create({
+        email: `feature-5-4-authority-${label}-${suffix}@example.test`,
+        passwordHash: 'test-only',
+        role: 'manager',
+        staffId: options.accountStaffId ?? null,
+        status: options.accountStatus || 'active',
+      });
+      const membership = await db.Membership.create({
+        accountId: account.id,
+        organizationId: legacy.organizationId,
+        role: 'manager',
+        staffId: options.membershipStaffId ?? null,
+        status: options.membershipStatus || 'active',
+      });
+      await db.MembershipClubAccess.create({
+        clubId: legacy.clubId,
+        membershipId: membership.id,
+        organizationId: legacy.organizationId,
+        roleOverride: null,
+        status: options.accessStatus || 'active',
+      });
+      if (options.unsafeStaffId !== undefined) {
+        const unsafeTransaction = await schema.transaction();
+        try {
+          await schema.query('SET FOREIGN_KEY_CHECKS=0', {
+            transaction: unsafeTransaction,
+          });
+          await schema.query(
+            'UPDATE Accounts SET staffId=:staffId WHERE id=:accountId',
+            {
+              replacements: {
+                accountId: account.id,
+                staffId: options.unsafeStaffId,
+              },
+              transaction: unsafeTransaction,
+            },
+          );
+          await schema.query(
+            'UPDATE Memberships SET staffId=:staffId WHERE id=:membershipId',
+            {
+              replacements: {
+                membershipId: membership.id,
+                staffId: options.unsafeStaffId,
+              },
+              transaction: unsafeTransaction,
+            },
+          );
+          await schema.query('SET FOREIGN_KEY_CHECKS=1', {
+            transaction: unsafeTransaction,
+          });
+          await unsafeTransaction.commit();
+        } catch (error) {
+          await unsafeTransaction.rollback();
+          throw error;
+        }
+      }
+      return { account, membership };
+    }
+
+    const authorityCases = [
+      ['account-staff-membership-null', {
+        accountStaffId: authorityStaffA.id,
+        membershipStaffId: null,
+      }],
+      ['account-null-membership-staff', {
+        accountStaffId: null,
+        membershipStaffId: authorityStaffB.id,
+      }],
+      ['unequal-staff', {
+        accountStaffId: authorityStaffC.id,
+        membershipStaffId: authorityStaffD.id,
+      }],
+      ['inactive-staff', {
+        accountStaffId: inactiveAuthorityStaff.id,
+        membershipStaffId: inactiveAuthorityStaff.id,
+      }],
+      ['inactive-account', { accountStatus: 'inactive' }],
+      ['inactive-membership', { membershipStatus: 'inactive' }],
+      ['revoked-access', { accessStatus: 'archived' }],
+      ['cross-organization-staff', {
+        unsafeStaffId: foreignAuthorityStaff.id,
+      }],
+      ['missing-staff', { unsafeStaffId: 2147483000 }],
+    ];
+    for (const [label, options] of authorityCases) {
+      const probe = await createAuthorityProbe(label, options);
+      assert.equal(
+        await resolveEligibleCallTaskAccount(probe.account.id, legacyTenant, {
+          allowInvalid: true,
+        }),
+        null,
+        `${label} runtime authority unexpectedly accepted`,
+      );
+      await assert.rejects(
+        () => db.ClientBase.create({
+          clubId: legacy.clubId,
+          createdByAccountId: probe.account.id,
+          filters: { status: 'active' },
+          name: `Feature 5.4 rejected authority base ${label} ${suffix}`,
+          organizationId: legacy.organizationId,
+          recurringEnabled: false,
+          recurringInterval: 'none',
+          recurringScopeType: 'snapshot',
+          status: 'active',
+        }),
+        (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+        `${label} creator INSERT unexpectedly accepted`,
+      );
+      await assert.rejects(
+        () => schema.query(
+          `UPDATE CallTasks
+              SET assignedToAccountId=:accountId, updatedAt=updatedAt
+            WHERE id=:taskId`,
+          { replacements: { accountId: probe.account.id, taskId: taskA.id } },
+        ),
+        (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+        `${label} assignee raw UPDATE unexpectedly accepted`,
+      );
+      await assert.rejects(
+        () => db.CallTaskAttempt.bulkCreate([{
+          actorAccountId: probe.account.id,
+          callTaskClientId: taskClient.id,
+          status: 'no_answer',
+          summary: `Rejected ${label}`,
+        }]),
+        (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+        `${label} attempt actor bulk INSERT unexpectedly accepted`,
+      );
+      await assert.rejects(
+        () => db.CallTaskClient.create({
+          callTaskId: taskA.id,
+          clientName: `Rejected training ${label}`,
+          isTraining: true,
+          status: 'new',
+          trainingAccountId: probe.account.id,
+          trainingRole: 'manager',
+          visitCount: 0,
+        }),
+        (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+        `${label} training account INSERT unexpectedly accepted`,
+      );
+    }
+    assert.equal(
+      await resolveEligibleCallTaskAccount(managerA.id, legacyTenant),
+      Number(managerA.id),
+      'NULL/NULL Staff compatibility must remain accepted',
+    );
+    await secondClub.update({ status: 'archived' });
+    await assert.rejects(
+      () => schema.query(
+        'UPDATE ClientBases SET name=name WHERE id=:baseId',
+        { replacements: { baseId: analyticsBaseB.id } },
+      ),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await secondClub.update({ status: 'active' });
+
     const concurrentExplicitTasks = await Promise.all([
       callTasksService.createFromBase(
         legacyActor,
@@ -769,6 +1047,180 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
         [Number(clientB.id)],
       );
     }
+    const sameTenantReparentTask = await callTasksService.createFromBase(
+      legacyActor,
+      analyticsBaseA.id,
+      { title: `Feature 5.4 same-tenant reparent ${suffix}` },
+      legacyTenant,
+    );
+    const foreignTask = await callTasksService.createFromBase(
+      legacyActor,
+      foreignBase.id,
+      { title: `Feature 5.4 foreign task ${suffix}` },
+      foreignTenant,
+    );
+    const validFollowUpCall = await db.TelephonyCall.create({
+      callStatus: 'completed',
+      clubId: legacy.clubId,
+      direction: 'outbound',
+      followUpCallTaskId: taskA.id,
+      organizationId: legacy.organizationId,
+      processingStatus: 'processed',
+      provider: 'beeline',
+      recordingStatus: 'unknown',
+      userId: clientA.id,
+    });
+    await assert.rejects(
+      () => db.TelephonyCall.bulkCreate([{
+        callStatus: 'completed',
+        clubId: null,
+        direction: 'outbound',
+        followUpCallTaskId: taskA.id,
+        organizationId: null,
+        processingStatus: 'processed',
+        provider: 'beeline',
+        recordingStatus: 'unknown',
+      }]),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await assert.rejects(
+      () => schema.query(
+        `INSERT INTO TelephonyCalls
+          (provider,direction,callStatus,recordingStatus,processingStatus,
+           organizationId,clubId,followUpCallTaskId,createdAt,updatedAt)
+         VALUES
+          ('beeline','outbound','completed','unknown','processed',
+           NULL,NULL,:taskId,NOW(),NOW())`,
+        { replacements: { taskId: taskA.id } },
+      ),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await assert.rejects(
+      () => db.TelephonyCall.bulkCreate([{
+        callStatus: 'completed',
+        clubId: legacy.clubId,
+        direction: 'outbound',
+        followUpCallTaskId: concurrentExplicitTasks[0].id,
+        organizationId: legacy.organizationId,
+        processingStatus: 'processed',
+        provider: 'beeline',
+        recordingStatus: 'unknown',
+      }]),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await assert.rejects(
+      () => schema.query(
+        `UPDATE TelephonyCalls
+            SET followUpCallTaskId=:taskId,
+                organizationId=:organizationId,
+                clubId=:clubId
+          WHERE id=:callId`,
+        {
+          replacements: {
+            callId: validFollowUpCall.id,
+            clubId: secondClub.id,
+            organizationId: legacy.organizationId,
+            taskId: concurrentExplicitTasks[0].id,
+          },
+        },
+      ),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await assert.rejects(
+      () => schema.query(
+        `UPDATE TelephonyCalls
+            SET followUpCallTaskId=:taskId,
+                organizationId=:organizationId,
+                clubId=:clubId
+          WHERE id=:callId`,
+        {
+          replacements: {
+            callId: validFollowUpCall.id,
+            clubId: foreignClub.id,
+            organizationId: foreignOrganization.id,
+            taskId: foreignTask.id,
+          },
+        },
+      ),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await assert.rejects(
+      () => schema.query(
+        `UPDATE TelephonyCalls
+            SET followUpCallTaskId=:taskId,
+                organizationId=:organizationId,
+                clubId=:clubId
+          WHERE id=:callId`,
+        {
+          replacements: {
+            callId: validFollowUpCall.id,
+            clubId: legacy.clubId,
+            organizationId: legacy.organizationId,
+            taskId: foreignTask.id,
+          },
+        },
+      ),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    await assert.rejects(
+      () => schema.query(
+        `UPDATE TelephonyCalls
+            SET organizationId=NULL, clubId=NULL
+          WHERE id=:callId`,
+        { replacements: { callId: validFollowUpCall.id } },
+      ),
+      (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
+    );
+    let persistedFollowUp = await selectOne(
+      schema,
+      `SELECT organizationId,clubId,followUpCallTaskId
+         FROM TelephonyCalls WHERE id=:callId`,
+      { callId: validFollowUpCall.id },
+    );
+    assert.deepEqual(
+      [
+        Number(persistedFollowUp.organizationId),
+        Number(persistedFollowUp.clubId),
+        Number(persistedFollowUp.followUpCallTaskId),
+      ],
+      [legacy.organizationId, legacy.clubId, Number(taskA.id)],
+      'rejected DB writes must leave only an API-mappable valid follow-up link',
+    );
+    await schema.query(
+      'UPDATE TelephonyCalls SET followUpCallTaskId=:taskId WHERE id=:callId',
+      {
+        replacements: {
+          callId: validFollowUpCall.id,
+          taskId: sameTenantReparentTask.id,
+        },
+      },
+    );
+    persistedFollowUp = await selectOne(
+      schema,
+      'SELECT followUpCallTaskId FROM TelephonyCalls WHERE id=:callId',
+      { callId: validFollowUpCall.id },
+    );
+    assert.equal(
+      Number(persistedFollowUp.followUpCallTaskId),
+      Number(sameTenantReparentTask.id),
+    );
+    await schema.query(
+      `UPDATE TelephonyCalls
+          SET followUpCallTaskId=NULL
+        WHERE id=:callId`,
+      { replacements: { callId: validFollowUpCall.id } },
+    );
+    await db.TelephonyCall.create({
+      callStatus: 'completed',
+      clubId: null,
+      direction: 'outbound',
+      followUpCallTaskId: null,
+      organizationId: null,
+      processingStatus: 'processed',
+      provider: 'beeline',
+      recordingStatus: 'unknown',
+    });
+
     await callTasksService.addAttempt(
       managerA,
       taskClient.id,
@@ -952,9 +1404,15 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       (error) => error.statusCode === 409 && /задачи обзвона/.test(error.message),
     );
 
+    const beforeSecondTenantRollback = await snapshotMigrationInvariants(schema);
     await assert.rejects(
       () => migration.down(queryInterface),
       (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
+    );
+    assert.deepEqual(
+      await snapshotMigrationInvariants(schema),
+      beforeSecondTenantRollback,
+      'second-tenant rollback refusal must be mutation-free',
     );
   } finally {
     if (db?.sequelize) await db.sequelize.close();

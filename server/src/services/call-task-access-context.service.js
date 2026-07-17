@@ -30,6 +30,21 @@ function freezeContext(values) {
   });
 }
 
+function staffIdentityIsAuthoritative(account, membership, staff) {
+  const accountStaffId = positiveId(account?.staffId);
+  const membershipStaffId = positiveId(membership?.staffId);
+  if (!accountStaffId && !membershipStaffId) return true;
+  return Boolean(
+    accountStaffId &&
+    membershipStaffId &&
+    accountStaffId === membershipStaffId &&
+    staff &&
+    Number(staff.id) === membershipStaffId &&
+    Number(staff.organizationId) === Number(membership.organizationId) &&
+    staff.status === 'active',
+  );
+}
+
 async function loadActiveOrganizationAndClub(
   organizationId,
   clubId,
@@ -57,6 +72,95 @@ async function loadActiveOrganizationAndClub(
   return { club, organization };
 }
 
+async function loadAuthoritativeAccountMembership({
+  accountId,
+  allowInvalid = false,
+  clubId,
+  lock,
+  membershipId = null,
+  organizationId,
+  roles = null,
+  transaction,
+}) {
+  const invalid = () => {
+    if (allowInvalid) return null;
+    throw safeTenantDenial();
+  };
+  const id = positiveId(accountId);
+  if (!id) return invalid();
+
+  let tenantRoot;
+  try {
+    tenantRoot = await loadActiveOrganizationAndClub(
+      organizationId,
+      clubId,
+      { lock, transaction },
+    );
+  } catch (error) {
+    if (allowInvalid) return null;
+    throw error;
+  }
+  const { club, organization } = tenantRoot;
+  const account = await db.Account.findOne({
+    attributes: ['id', 'role', 'staffId', 'status'],
+    lock: queryLock(transaction, lock),
+    transaction,
+    where: { id, status: 'active' },
+  });
+  if (!account) return invalid();
+
+  const membershipWhere = {
+    accountId: account.id,
+    organizationId: organization.id,
+    status: 'active',
+  };
+  if (positiveId(membershipId)) membershipWhere.id = positiveId(membershipId);
+  const membership = await db.Membership.findOne({
+    attributes: ['id', 'accountId', 'organizationId', 'role', 'staffId', 'status'],
+    lock: queryLock(transaction, lock),
+    transaction,
+    where: membershipWhere,
+  });
+  if (!membership) return invalid();
+
+  const linkedStaffId = positiveId(membership.staffId);
+  const staff = linkedStaffId
+    ? await db.Staff.findOne({
+      attributes: ['id', 'organizationId', 'status'],
+      lock: queryLock(transaction, lock),
+      transaction,
+      where: {
+        id: linkedStaffId,
+        organizationId: organization.id,
+        status: 'active',
+      },
+    })
+    : null;
+  if (!staffIdentityIsAuthoritative(account, membership, staff)) {
+    return invalid();
+  }
+
+  let effectiveRole = membership.role;
+  if (membership.role !== 'owner') {
+    const access = await db.MembershipClubAccess.findOne({
+      attributes: ['membershipId', 'roleOverride', 'status'],
+      lock: queryLock(transaction, lock),
+      transaction,
+      where: {
+        clubId: club.id,
+        membershipId: membership.id,
+        organizationId: organization.id,
+        status: 'active',
+      },
+    });
+    if (!access || access.roleOverride === 'owner') return invalid();
+    effectiveRole = access.roleOverride || membership.role;
+  }
+  if (roles && !roles.includes(effectiveRole)) return invalid();
+
+  return { account, club, effectiveRole, membership, organization };
+}
+
 async function resolveLegacyContext(options = {}) {
   const organization = await db.Organization.findOne({
     attributes: ['id'],
@@ -78,30 +182,29 @@ async function resolveLegacyContext(options = {}) {
   });
   if (!club) throw safeTenantDenial();
 
-  let membership = null;
+  let authority = null;
   if (positiveId(options.accountId)) {
-    membership = await db.Membership.findOne({
-      attributes: ['id', 'accountId', 'role', 'staffId'],
-      lock: queryLock(options.transaction, options.lock),
+    authority = await loadAuthoritativeAccountMembership({
+      accountId: options.accountId,
+      clubId: club.id,
+      lock: options.lock,
+      organizationId: organization.id,
       transaction: options.transaction,
-      where: {
-        accountId: positiveId(options.accountId),
-        organizationId: organization.id,
-      },
     });
-    if (!membership) throw safeTenantDenial();
   }
 
   return freezeContext({
-    accountId: membership ? Number(membership.accountId) : null,
+    accountId: authority ? Number(authority.membership.accountId) : null,
     authority: 'legacy-default',
     clubId: Number(club.id),
-    effectiveRole: null,
-    membershipId: membership ? Number(membership.id) : null,
-    membershipRole: membership?.role || null,
+    effectiveRole: authority?.effectiveRole || null,
+    membershipId: authority ? Number(authority.membership.id) : null,
+    membershipRole: authority?.membership.role || null,
     organizationId: Number(organization.id),
     readScoped: false,
-    staffId: membership?.staffId ? Number(membership.staffId) : null,
+    staffId: authority?.membership.staffId
+      ? Number(authority.membership.staffId)
+      : null,
   });
 }
 
@@ -118,40 +221,15 @@ async function resolveRequestContext(tenant, options = {}) {
     throw safeTenantDenial();
   }
 
-  const { club, organization } = await loadActiveOrganizationAndClub(
-    tenant.organizationId,
-    tenant.clubId,
-    options,
-  );
-  const membership = await db.Membership.findOne({
-    attributes: ['id', 'accountId', 'organizationId', 'role', 'staffId'],
-    lock: queryLock(options.transaction, options.lock),
+  const authority = await loadAuthoritativeAccountMembership({
+    accountId: tenant.accountId,
+    clubId: tenant.clubId,
+    lock: options.lock,
+    membershipId: tenant.membershipId,
+    organizationId: tenant.organizationId,
     transaction: options.transaction,
-    where: {
-      accountId: positiveId(tenant.accountId),
-      id: positiveId(tenant.membershipId),
-      organizationId: organization.id,
-      status: 'active',
-    },
   });
-  if (!membership) throw safeTenantDenial();
-
-  let effectiveRole = membership.role;
-  if (membership.role !== 'owner') {
-    const access = await db.MembershipClubAccess.findOne({
-      attributes: ['membershipId', 'roleOverride'],
-      lock: queryLock(options.transaction, options.lock),
-      transaction: options.transaction,
-      where: {
-        clubId: club.id,
-        membershipId: membership.id,
-        organizationId: organization.id,
-        status: 'active',
-      },
-    });
-    if (!access || access.roleOverride === 'owner') throw safeTenantDenial();
-    effectiveRole = access.roleOverride || membership.role;
-  }
+  const { club, effectiveRole, membership, organization } = authority;
 
   return freezeContext({
     accountId: Number(membership.accountId),
@@ -210,98 +288,25 @@ async function resolveEligibleCallTaskAccount(
 ) {
   const id = positiveId(accountId);
   if (!id) return null;
-
-  const account = await db.Account.findOne({
-    attributes: ['id', 'role', 'staffId', 'status'],
+  const authority = await loadAuthoritativeAccountMembership({
+    accountId: id,
+    allowInvalid,
+    clubId: context?.clubId,
+    organizationId: context?.organizationId,
+    roles,
     transaction,
-    where: { id, status: 'active' },
   });
-  if (!account) {
-    if (allowInvalid) return null;
-    throw safeTenantDenial();
-  }
-
-  if (!context?.readScoped) {
-    if (!roles.includes(account.role)) {
-      if (allowInvalid) return null;
-      throw safeTenantDenial();
-    }
-    return Number(account.id);
-  }
-
-  const membership = await db.Membership.findOne({
-    attributes: ['id', 'role', 'staffId'],
-    transaction,
-    where: {
-      accountId: account.id,
-      organizationId: context.organizationId,
-      status: 'active',
-    },
-  });
-  if (!membership) {
-    if (allowInvalid) return null;
-    throw safeTenantDenial();
-  }
-
-  if (membership.staffId) {
-    const staff = await db.Staff.findOne({
-      attributes: ['id'],
-      transaction,
-      where: {
-        id: membership.staffId,
-        organizationId: context.organizationId,
-        status: 'active',
-      },
-    });
-    if (
-      !staff ||
-      (account.staffId && Number(account.staffId) !== Number(membership.staffId))
-    ) {
-      if (allowInvalid) return null;
-      throw safeTenantDenial();
-    }
-  }
-
-  let effectiveRole = membership.role;
-  if (membership.role !== 'owner') {
-    const access = await db.MembershipClubAccess.findOne({
-      attributes: ['roleOverride'],
-      transaction,
-      where: {
-        clubId: context.clubId,
-        membershipId: membership.id,
-        organizationId: context.organizationId,
-        status: 'active',
-      },
-    });
-    if (!access || access.roleOverride === 'owner') {
-      if (allowInvalid) return null;
-      throw safeTenantDenial();
-    }
-    effectiveRole = access.roleOverride || membership.role;
-  }
-
-  if (!roles.includes(effectiveRole)) {
-    if (allowInvalid) return null;
-    throw safeTenantDenial();
-  }
-  if (
-    membership.staffId &&
-    account.staffId &&
-    Number(membership.staffId) !== Number(account.staffId)
-  ) {
-    if (allowInvalid) return null;
-    throw safeTenantDenial();
-  }
-  return Number(account.id);
+  return authority ? Number(authority.account.id) : null;
 }
 
 module.exports = {
   _private: {
+    loadAuthoritativeAccountMembership,
     loadActiveOrganizationAndClub,
     positiveId,
     resolveLegacyContext,
     resolveRequestContext,
+    staffIdentityIsAuthoritative,
   },
   callTaskTenantWhere,
   resolveCallTaskAccessContext,
