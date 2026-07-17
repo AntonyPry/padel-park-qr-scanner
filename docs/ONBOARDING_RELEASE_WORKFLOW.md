@@ -206,7 +206,7 @@ The current Guided Onboarding card-reader baseline is release-ready when:
 - owner and manager knowledge guides cover every CRM section they can use;
 - every screenshot-backed lesson starts with a real section screenshot;
 - form/result cards have real screenshots when they directly illustrate the taught state;
-- complex analytics/review screenshots may use small embedded numbered arrows only when they are real CRM screenshots and every number has a caption in the lesson;
+- do not require arrows, numbers or other graphical annotations on screenshots unless the user explicitly asks for them;
 - click-only, conceptual and formula cards are intentionally text-only;
 - every lesson has `updatedAt`, and completed lessons updated afterwards are visibly marked until acknowledged again;
 - `server npm run onboarding:audit:strict` reports screenshot coverage with no warnings;
@@ -214,8 +214,6 @@ The current Guided Onboarding card-reader baseline is release-ready when:
 - browser QA verifies card navigation, image loading and no return of `Попробовать`, `Практика` or `Мини-тест`.
 
 For Visits Analytics releases, the handoff must also verify owner/manager segment-to-client-base-to-call-task flow, accountant/viewer read-only filters and exports, the four tabs of `/admin/visits-analytics`, and no new checkpoint event beyond the existing `report.viewed` route-review event.
-
-For Shift Cash releases, the handoff must also verify `/admin/shift/cash` instructions inside the `Смена` workspace for admin opening cash and expense with receipt photo, owner/manager closing reconciliation with variance comment, related Shift Reports lessons/routes on `/admin/shift/reports`, motivation rule/settings lessons on `/admin/shift-settings`, accountant read-only review of linked `Finance` expenses in `/admin/finances`, backend-only checkpoint events `shift_cash.opening_recorded`, `shift_cash.attachment_uploaded`, `shift_cash.closed`, and training cleanup for `ShiftCashSession`, `ShiftCashExpense`, receipt attachments and linked finance rows.
 
 ## Handoff text for another Codex chat
 
