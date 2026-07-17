@@ -257,6 +257,7 @@ async function assertReferenceNotUsed(type, row, transaction) {
   const bases = await db.ClientBase.findAll({
     attributes: ['id', 'filters'],
     transaction,
+    where: { organizationId: row.organizationId },
   });
   const fieldName =
     type === 'client-sources' ? 'sourceId' : 'visitCategoryId';

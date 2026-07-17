@@ -13,6 +13,8 @@ const original = {
   TENANT_CACHE_REALTIME_ENABLED: process.env.TENANT_CACHE_REALTIME_ENABLED,
   TENANT_FILES_WORKERS_ENABLED: process.env.TENANT_FILES_WORKERS_ENABLED,
   TENANT_PROVIDER_INTEGRATIONS_ENABLED: process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED,
+  TENANT_CLIENT_BASES_CALL_TASKS_ENABLED:
+    process.env.TENANT_CLIENT_BASES_CALL_TASKS_ENABLED,
 };
 
 afterEach(() => {
@@ -58,11 +60,12 @@ test('transcription run context contains only opaque routing and job-attempt ide
   assert.equal(JSON.stringify(context).includes('organizationId'), false);
 });
 
-test('Feature 4.3 enables provider-routed loops but keeps recurring call tasks deferred', () => {
+test('Feature 5.4 enables tenant-routed recurring call tasks behind its capability', () => {
   process.env.TENANT_CONTEXT_ENABLED = 'true';
   process.env.TENANT_CACHE_REALTIME_ENABLED = 'true';
   process.env.TENANT_FILES_WORKERS_ENABLED = 'true';
   process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED = 'true';
+  process.env.TENANT_CLIENT_BASES_CALL_TASKS_ENABLED = 'true';
 
   assert.equal(
     assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.TELEPHONY_SUBSCRIPTION)
@@ -73,8 +76,9 @@ test('Feature 4.3 enables provider-routed loops but keeps recurring call tasks d
     assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.TELEGRAM_BOT).classification,
     'provider-routed',
   );
-  assert.throws(
-    () => assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.CALL_TASKS_RECURRING),
-    (error) => error.code === 'TENANT_BACKGROUND_COMPONENT_DEFERRED',
+  assert.equal(
+    assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.CALL_TASKS_RECURRING)
+      .classification,
+    'tenant-routed',
   );
 });

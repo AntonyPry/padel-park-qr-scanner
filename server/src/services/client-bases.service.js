@@ -2,6 +2,11 @@ const db = require('../../models');
 const clientsService = require('./clients.service');
 const onboardingService = require('./onboarding.service');
 const visitsAnalyticsService = require('./visits-analytics.service');
+const {
+  callTaskTenantWhere,
+  resolveCallTaskAccessContext,
+  resolveEligibleCallTaskAccount,
+} = require('./call-task-access-context.service');
 
 const STATUS_VALUES = new Set(['active', 'archived']);
 const RECURRENCE_INTERVALS = new Set(['none', 'daily', 'weekly']);
@@ -174,16 +179,18 @@ function normalizeRecurrence(data = {}, current = {}) {
   };
 }
 
-async function assertRecurringAssignee(accountId) {
+async function assertRecurringAssignee(accountId, context, transaction) {
   if (!accountId) return;
-
-  const account = await db.Account.findByPk(accountId);
-  if (!account || account.status !== 'active') {
+  let resolved = null;
+  try {
+    resolved = await resolveEligibleCallTaskAccount(accountId, context, {
+      roles: Array.from(RECURRENCE_ASSIGNEE_ROLES),
+      transaction,
+    });
+  } catch {
     throw appError('Исполнитель автозадачи не найден или отключен', 404);
   }
-  if (!RECURRENCE_ASSIGNEE_ROLES.has(account.role)) {
-    throw appError('У этого пользователя нет доступа к задачам обзвона', 409);
-  }
+  if (!resolved) throw appError('Исполнитель автозадачи не найден или отключен', 404);
 }
 
 function normalizeFilters(filters = {}) {
@@ -236,24 +243,37 @@ function isVisitsAnalyticsFilters(filters = {}) {
   return Boolean(filters?.visitsAnalytics);
 }
 
-async function countBaseClients(filters = {}, tenant = null) {
+async function countBaseClients(filters = {}, tenant = null, options = {}) {
   if (isVisitsAnalyticsFilters(filters)) {
     return visitsAnalyticsService.countVisitAnalyticsSegmentClients(
       filters.visitsAnalytics,
-      { tenant },
+      options.context?.readScoped
+        ? { visitContext: options.context }
+        : { tenant },
     );
   }
-  return clientsService.countClients(filters, tenant);
+  return clientsService.countClients(filters, tenant, {
+    context: options.context,
+  });
 }
 
 async function listBaseClientsForSnapshot(filters = {}, options = {}) {
   if (isVisitsAnalyticsFilters(filters)) {
     return (await visitsAnalyticsService.listVisitAnalyticsSegmentClients(
       filters.visitsAnalytics,
-      { limit: options.limit || 20000, offset: 0, tenant: options.tenant },
+      options.context?.readScoped
+        ? {
+            limit: options.limit || 20000,
+            offset: 0,
+            visitContext: options.context,
+          }
+        : { limit: options.limit || 20000, offset: 0, tenant: options.tenant },
     )).items;
   }
-  return clientsService.listClientsForSnapshot(filters, options);
+  return clientsService.listClientsForSnapshot(filters, {
+    ...options,
+    context: options.context,
+  });
 }
 
 function assertTaskableFilters(filters) {
@@ -278,11 +298,35 @@ function parseFilters(filters) {
   return filters;
 }
 
-async function mapBase(base, { includeCount = true, tenant = null } = {}) {
+function accountTenantInclude(context) {
+  return [
+    {
+      model: db.Membership,
+      attributes: ['id', 'staffId'],
+      required: false,
+      where: {
+        organizationId: context.organizationId,
+        status: 'active',
+      },
+      include: [
+        {
+          model: db.Staff,
+          attributes: ['id', 'name'],
+          required: false,
+        },
+      ],
+    },
+  ];
+}
+
+async function mapBase(
+  base,
+  { context = null, includeCount = true, tenant = null } = {},
+) {
   const raw = base.toJSON ? base.toJSON() : base;
   const filters = normalizeFilters(parseFilters(raw.filters));
   const currentClientCount = includeCount
-    ? await countBaseClients(filters, tenant)
+    ? await countBaseClients(filters, tenant, { context })
     : null;
   const lastTaskClientCount =
     raw.lastTaskClientCount === null || raw.lastTaskClientCount === undefined
@@ -315,8 +359,8 @@ async function mapBase(base, { includeCount = true, tenant = null } = {}) {
             email: raw.recurringAssignedToAccount.email,
             id: raw.recurringAssignedToAccount.id,
             name:
-              raw.recurringAssignedToAccount.Staff?.name ||
-              raw.recurringAssignedToAccount.email,
+              (raw.recurringAssignedToAccount.Memberships || [])[0]?.Staff
+                ?.name || raw.recurringAssignedToAccount.email,
           }
         : null,
       assignedToAccountId: raw.recurringAssignedToAccountId,
@@ -345,8 +389,8 @@ async function mapBase(base, { includeCount = true, tenant = null } = {}) {
   };
 }
 
-async function getBaseOrFail(id) {
-  const base = await db.ClientBase.findByPk(Number(id), {
+async function getBaseOrFail(id, context, options = {}) {
+  const base = await db.ClientBase.findOne({
     include: [
       {
         model: db.Account,
@@ -357,9 +401,12 @@ async function getBaseOrFail(id) {
         model: db.Account,
         as: 'recurringAssignedToAccount',
         attributes: ['id', 'email', 'role', 'staffId'],
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        include: accountTenantInclude(context),
       },
     ],
+    lock: options.lock,
+    transaction: options.transaction,
+    where: callTaskTenantWhere(context, { id: Number(id) }),
   });
 
   if (!base) throw appError('База клиентов не найдена', 404);
@@ -367,7 +414,8 @@ async function getBaseOrFail(id) {
 }
 
 async function list(query = {}, tenant = null) {
-  const where = {};
+  const context = await resolveCallTaskAccessContext(tenant);
+  const where = callTaskTenantWhere(context);
   if (query.status && query.status !== 'all') {
     where.status = normalizeStatus(query.status);
   } else if (!query.status) {
@@ -386,13 +434,15 @@ async function list(query = {}, tenant = null) {
         model: db.Account,
         as: 'recurringAssignedToAccount',
         attributes: ['id', 'email', 'role', 'staffId'],
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        include: accountTenantInclude(context),
       },
     ],
     order: [['updatedAt', 'DESC']],
   });
 
-  return Promise.all(bases.map((base) => mapBase(base, { tenant })));
+  return Promise.all(
+    bases.map((base) => mapBase(base, { context, tenant })),
+  );
 }
 
 async function persistBase(actor, data, provenance = null, tenant = null) {
@@ -404,31 +454,53 @@ async function persistBase(actor, data, provenance = null, tenant = null) {
   if (origin === 'visits_analytics' && !isVisitsAnalyticsFilters(filters)) {
     throw appError('Для базы из аналитики не передан аналитический фильтр');
   }
-  if (
-    origin === 'visits_analytics' &&
-    (await countBaseClients(filters, tenant)) === 0
-  ) {
-    throw appError('Пустой сегмент нельзя сохранить как клиентскую базу', 409);
-  }
   const recurrencePayload = normalizeRecurrence(data.recurrence || {});
   if (recurrencePayload.recurringEnabled) {
     assertTaskableFilters(filters);
   }
-  await assertRecurringAssignee(recurrencePayload.recurringAssignedToAccountId);
   const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
-
-  const base = await db.ClientBase.create({
-    name,
-    description: String(data.description || '').trim() || null,
-    filters,
-    origin,
-    originMetadata: origin === 'visits_analytics' ? provenance.originMetadata : null,
-    slaDays: normalizeSlaDays(data.slaDays),
-    ...recurrencePayload,
-    status: normalizeStatus(data.status),
-    createdByAccountId: actor?.id || null,
-    ...trainingMarker,
-    lastCalculatedAt: new Date(),
+  const base = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    if (
+      context.readScoped &&
+      actor?.id &&
+      Number(context.accountId) !== Number(actor.id)
+    ) {
+      throw appError('Контекст клуба недоступен', 404);
+    }
+    if (
+      origin === 'visits_analytics' &&
+      (await countBaseClients(filters, tenant, { context })) === 0
+    ) {
+      throw appError('Пустой сегмент нельзя сохранить как клиентскую базу', 409);
+    }
+    await assertRecurringAssignee(
+      recurrencePayload.recurringAssignedToAccountId,
+      context,
+      transaction,
+    );
+    return db.ClientBase.create({
+      clubId: context.clubId,
+      createdByAccountId: actor?.id || null,
+      description: String(data.description || '').trim() || null,
+      filters,
+      lastCalculatedAt: new Date(),
+      name,
+      organizationId: context.organizationId,
+      origin,
+      originClubId: origin === 'visits_analytics' ? context.clubId : null,
+      originMetadata: origin === 'visits_analytics' ? provenance.originMetadata : null,
+      originOrganizationId:
+        origin === 'visits_analytics' ? context.organizationId : null,
+      slaDays: normalizeSlaDays(data.slaDays),
+      ...recurrencePayload,
+      status: normalizeStatus(data.status),
+      ...trainingMarker,
+    }, { transaction });
   });
 
   await onboardingService.recordEventSafe(actor, 'client_base.created', {
@@ -441,7 +513,13 @@ async function persistBase(actor, data, provenance = null, tenant = null) {
     },
   });
 
-  return mapBase(await getBaseOrFail(base.id), { tenant });
+  const context = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
+  return mapBase(await getBaseOrFail(base.id, context), {
+    context,
+    tenant,
+  });
 }
 
 async function create(actor, data, tenant = null) {
@@ -480,7 +558,8 @@ async function createFromVisitsAnalytics(actor, data, tenant = null) {
 }
 
 async function update(id, data, tenant = null) {
-  const base = await getBaseOrFail(id);
+  const initialContext = await resolveCallTaskAccessContext(tenant);
+  const initialBase = await getBaseOrFail(id, initialContext);
   const payload = {};
 
   if ('name' in data) {
@@ -494,7 +573,7 @@ async function update(id, data, tenant = null) {
   }
 
   if ('filters' in data) {
-    if (base.origin === 'visits_analytics') {
+    if (initialBase.origin === 'visits_analytics') {
       throw appError(
         'Фильтр базы из аналитики посещений нельзя изменить',
         409,
@@ -513,64 +592,117 @@ async function update(id, data, tenant = null) {
   }
 
   if ('recurrence' in data) {
-    Object.assign(payload, normalizeRecurrence(data.recurrence, base));
-    await assertRecurringAssignee(payload.recurringAssignedToAccountId);
+    Object.assign(payload, normalizeRecurrence(data.recurrence, initialBase));
   }
 
-  const nextFilters = payload.filters || normalizeFilters(parseFilters(base.filters));
+  const nextFilters = payload.filters || normalizeFilters(parseFilters(initialBase.filters));
   const nextRecurringEnabled =
     'recurrence' in data
       ? Boolean(payload.recurringEnabled)
-      : Boolean(base.recurringEnabled);
+      : Boolean(initialBase.recurringEnabled);
   if (nextRecurringEnabled) {
     assertTaskableFilters(nextFilters);
   }
 
-  await base.update(payload);
-  return mapBase(await getBaseOrFail(id), { tenant });
+  const context = await db.sequelize.transaction(async (transaction) => {
+    const writeContext = await resolveCallTaskAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const base = await getBaseOrFail(id, writeContext, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (base.origin === 'visits_analytics' && 'filters' in data) {
+      throw appError('Фильтр базы из аналитики посещений нельзя изменить', 409);
+    }
+    if ('recurrence' in data) {
+      await assertRecurringAssignee(
+        payload.recurringAssignedToAccountId,
+        writeContext,
+        transaction,
+      );
+    }
+    await base.update(payload, { transaction });
+    return writeContext;
+  });
+  return mapBase(await getBaseOrFail(id, context), { context, tenant });
 }
 
 async function archive(id, tenant = null) {
-  const base = await getBaseOrFail(id);
-  await base.update({ status: 'archived' });
-  return mapBase(await getBaseOrFail(id), { tenant });
+  const context = await db.sequelize.transaction(async (transaction) => {
+    const writeContext = await resolveCallTaskAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const base = await getBaseOrFail(id, writeContext, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    await base.update({ status: 'archived' }, { transaction });
+    return writeContext;
+  });
+  return mapBase(await getBaseOrFail(id, context), { context, tenant });
 }
 
 async function restore(id, tenant = null) {
-  const base = await getBaseOrFail(id);
-  await base.update({ status: 'active' });
-  return mapBase(await getBaseOrFail(id), { tenant });
+  const context = await db.sequelize.transaction(async (transaction) => {
+    const writeContext = await resolveCallTaskAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const base = await getBaseOrFail(id, writeContext, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    await base.update({ status: 'active' }, { transaction });
+    return writeContext;
+  });
+  return mapBase(await getBaseOrFail(id, context), { context, tenant });
 }
 
-async function removeArchived(id) {
-  const base = await getBaseOrFail(id);
-  if (base.status !== 'archived') {
-    throw appError('Удалять безвозвратно можно только базы из архива', 409);
-  }
+async function removeArchived(id, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const base = await getBaseOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (base.status !== 'archived') {
+      throw appError('Удалять безвозвратно можно только базы из архива', 409);
+    }
 
-  const tasksCount = await db.CallTask.count({
-    where: { clientBaseId: base.id },
+    const tasksCount = await db.CallTask.count({
+      transaction,
+      where: callTaskTenantWhere(context, { clientBaseId: base.id }),
+    });
+    if (tasksCount > 0) {
+      throw appError(
+        'Базу нельзя удалить безвозвратно: по ней уже есть задачи обзвона. Оставьте ее в архиве.',
+        409,
+      );
+    }
+
+    await base.destroy({ transaction });
   });
-  if (tasksCount > 0) {
-    throw appError(
-      'Базу нельзя удалить безвозвратно: по ней уже есть задачи обзвона. Оставьте ее в архиве.',
-      409,
-    );
-  }
-
-  await base.destroy();
   return { success: true };
 }
 
 async function getClients(id, query = {}, tenant = null) {
-  const base = await getBaseOrFail(id);
+  const context = await resolveCallTaskAccessContext(tenant);
+  const base = await getBaseOrFail(id, context);
   const filters = normalizeFilters(parseFilters(base.filters));
   const page = query.page || 1;
   const pageSize = query.pageSize || 10;
   if (isVisitsAnalyticsFilters(filters)) {
     const result = await visitsAnalyticsService.listVisitAnalyticsSegmentClients(
       filters.visitsAnalytics,
-      { limit: pageSize, offset: (page - 1) * pageSize, tenant },
+      context.readScoped
+        ? { limit: pageSize, offset: (page - 1) * pageSize, visitContext: context }
+        : { limit: pageSize, offset: (page - 1) * pageSize, tenant },
     );
     return {
       items: result.items,
@@ -580,11 +712,21 @@ async function getClients(id, query = {}, tenant = null) {
       totalPages: Math.max(1, Math.ceil(result.total / pageSize)),
     };
   }
-  return clientsService.listClients(
-    { ...filters, page, pageSize },
-    null,
-    tenant,
-  );
+  if (context.readScoped) {
+    const result = await clientsService.listClientsForSnapshot(
+      { ...filters },
+      { context, limit: 20000, tenant },
+    );
+    const start = (page - 1) * pageSize;
+    return {
+      items: result.slice(start, start + pageSize),
+      page,
+      pageSize,
+      total: result.length,
+      totalPages: Math.max(1, Math.ceil(result.length / pageSize)),
+    };
+  }
+  return clientsService.listClients({ ...filters, page, pageSize }, null, tenant);
 }
 
 module.exports = {

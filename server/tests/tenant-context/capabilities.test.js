@@ -207,3 +207,39 @@ test('visits/scanner capability is server-owned and depends on accepted clients/
     for (const name of names) restore(name, previous[name]);
   }
 });
+
+test('client bases/call tasks capability is server-owned and depends on visits/scanner', () => {
+  const names = [
+    'TENANT_CONTEXT_ENABLED',
+    'TENANT_CACHE_REALTIME_ENABLED',
+    'TENANT_FILES_WORKERS_ENABLED',
+    'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+    'TENANT_STAFF_ACCESS_ENABLED',
+    'TENANT_CLIENTS_REFERENCES_ENABLED',
+    'TENANT_VISITS_SCANNER_ENABLED',
+    'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) process.env[name] = 'true';
+    const capabilities = assertTenantCapabilityDependencies();
+    assert.equal(capabilities.tenantClientBasesCallTasks, true);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        tenantContextCapability(),
+        'tenantClientBasesCallTasks',
+      ),
+      false,
+    );
+
+    process.env.TENANT_VISITS_SCANNER_ENABLED = 'false';
+    assert.throws(
+      () => assertTenantCapabilityDependencies(),
+      (error) =>
+        error.code === 'TENANT_CAPABILITY_DEPENDENCY_INVALID' &&
+        error.message.includes('TENANT_VISITS_SCANNER_ENABLED'),
+    );
+  } finally {
+    for (const name of names) restore(name, previous[name]);
+  }
+});

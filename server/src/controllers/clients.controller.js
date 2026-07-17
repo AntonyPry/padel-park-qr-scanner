@@ -115,7 +115,7 @@ class ClientsController {
 
   async getSavedViews(req, res) {
     try {
-      res.json(await clientsService.listSavedViews(req.account));
+      res.json(await clientsService.listSavedViews(req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения представлений клиентов');
     }
@@ -124,7 +124,7 @@ class ClientsController {
   async createSavedView(req, res) {
     try {
       res.status(201).json(
-        await clientsService.createSavedView(req.account, req.body),
+        await clientsService.createSavedView(req.account, req.body, req.tenant),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка сохранения представления клиентов');
@@ -138,6 +138,7 @@ class ClientsController {
           req.account,
           req.params.viewId,
           req.body,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -147,7 +148,13 @@ class ClientsController {
 
   async deleteSavedView(req, res) {
     try {
-      res.json(await clientsService.deleteSavedView(req.account, req.params.viewId));
+      res.json(
+        await clientsService.deleteSavedView(
+          req.account,
+          req.params.viewId,
+          req.tenant,
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка удаления представления клиентов');
     }

@@ -39,6 +39,13 @@ function isTenantVisitsScannerEnabled() {
   );
 }
 
+function isTenantClientBasesCallTasksEnabled() {
+  return readBooleanEnv(
+    process.env.TENANT_CLIENT_BASES_CALL_TASKS_ENABLED,
+    false,
+  );
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -112,6 +119,12 @@ function assertTenantCapabilityDependencies() {
       'TENANT_CLIENTS_REFERENCES_ENABLED',
     );
   }
+  if (isTenantClientBasesCallTasksEnabled() && !isTenantVisitsScannerEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
+      'TENANT_VISITS_SCANNER_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
@@ -120,6 +133,7 @@ function assertTenantCapabilityDependencies() {
     tenantProviderIntegrations: isTenantProviderIntegrationsEnabled(),
     tenantStaffAccess: isTenantStaffAccessEnabled(),
     tenantClientsReferences: isTenantClientsReferencesEnabled(),
+    tenantClientBasesCallTasks: isTenantClientBasesCallTasksEnabled(),
     tenantVisitsScanner: isTenantVisitsScannerEnabled(),
   });
 }
@@ -136,6 +150,7 @@ module.exports = {
   assertTenantCapabilityDependencies,
   capabilityDependencyError,
   isTenantCacheRealtimeEnabled,
+  isTenantClientBasesCallTasksEnabled,
   isTenantClientsReferencesEnabled,
   isTenantContextEnabled,
   isTenantFilesWorkersEnabled,

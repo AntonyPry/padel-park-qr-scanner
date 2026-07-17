@@ -8,6 +8,13 @@ const {
   ONBOARDING_CLIENT_CHECKPOINT_EVENTS,
 } = require('../onboarding/catalog');
 const shiftCashAttachmentStorage = require('./shift-cash-attachments');
+const {
+  callTaskTenantWhere,
+  resolveCallTaskAccessContext,
+} = require('./call-task-access-context.service');
+const {
+  isTenantClientBasesCallTasksEnabled,
+} = require('../tenant-context/capabilities');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -56,6 +63,12 @@ const TRAINING_DATA_ENTITIES = [
 ];
 
 const DEFAULT_QUIZ_PASSING_SCORE_PERCENT = 100;
+const CALL_TASK_TRAINING_MODELS = new Set([
+  'CallTask',
+  'CallTaskAttempt',
+  'CallTaskClient',
+  'ClientBase',
+]);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -111,10 +124,11 @@ function getTrainingEntityWhere(entity, role) {
   return where;
 }
 
-async function listTrainingIds(model, where, transaction) {
+async function listTrainingIds(model, where, transaction, options = {}) {
   if (!model) return [];
   const rows = await model.findAll({
     attributes: ['id'],
+    include: options.include,
     raw: true,
     transaction,
     where,
@@ -123,9 +137,63 @@ async function listTrainingIds(model, where, transaction) {
   return rows.map((row) => Number(row.id)).filter(Boolean);
 }
 
-async function destroyTrainingRows(model, where, transaction) {
+async function destroyTrainingRows(model, where, transaction, options = {}) {
   if (!model) return 0;
+  if (options.include) {
+    const ids = await listTrainingIds(model, where, transaction, options);
+    if (ids.length === 0) return 0;
+    return model.destroy({
+      transaction,
+      where: { id: { [db.Sequelize.Op.in]: ids } },
+    });
+  }
   return model.destroy({ transaction, where });
+}
+
+async function resolveTrainingCallTaskContext(actor, tenant, options = {}) {
+  if (!isTenantClientBasesCallTasksEnabled()) return null;
+  return resolveCallTaskAccessContext(tenant, {
+    ...options,
+    accountId: actor.id,
+  });
+}
+
+function getTrainingEntityQuery(entity, role, context) {
+  const where = getTrainingEntityWhere(entity, role);
+  if (!context || !CALL_TASK_TRAINING_MODELS.has(entity.modelName)) {
+    return { where };
+  }
+  if (entity.modelName === 'ClientBase' || entity.modelName === 'CallTask') {
+    return { where: callTaskTenantWhere(context, where, { force: true }) };
+  }
+  if (entity.modelName === 'CallTaskClient') {
+    return {
+      include: [{
+        as: 'callTask',
+        attributes: [],
+        model: db.CallTask,
+        required: true,
+        where: callTaskTenantWhere(context, {}, { force: true }),
+      }],
+      where,
+    };
+  }
+  return {
+    include: [{
+      as: 'taskClient',
+      attributes: [],
+      model: db.CallTaskClient,
+      required: true,
+      include: [{
+        as: 'callTask',
+        attributes: [],
+        model: db.CallTask,
+        required: true,
+        where: callTaskTenantWhere(context, {}, { force: true }),
+      }],
+    }],
+    where,
+  };
 }
 
 function getAvailableRoles(actor) {
@@ -848,15 +916,16 @@ async function getTrainingDataMarker(actor) {
   };
 }
 
-async function getTrainingDataSummary(actor, query = {}) {
+async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   assertOwner(actor);
   const role = resolveOptionalTrainingRole(query.role);
+  const callTaskContext = await resolveTrainingCallTaskContext(actor, tenant);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
       const model = db[entity.modelName];
       const count = model
-        ? await model.count({ where: getTrainingEntityWhere(entity, role) })
+        ? await model.count(getTrainingEntityQuery(entity, role, callTaskContext))
         : 0;
 
       return {
@@ -1021,13 +1090,18 @@ async function getOnboardingMetrics(actor) {
   };
 }
 
-async function cleanupTrainingData(actor, query = {}) {
+async function cleanupTrainingData(actor, query = {}, tenant = null) {
   assertOwner(actor);
   const role = resolveOptionalTrainingRole(query.role);
   const deleted = {};
   const shiftCashAttachments = [];
 
   await db.sequelize.transaction(async (transaction) => {
+    const callTaskContext = await resolveTrainingCallTaskContext(
+      actor,
+      tenant,
+      { lock: true, transaction },
+    );
     const bookingWhere = getTrainingEntityWhere(
       { modelName: 'Booking' },
       role,
@@ -1130,10 +1204,16 @@ async function cleanupTrainingData(actor, query = {}) {
     ];
 
     for (const entity of deletionOrder) {
+      const entityQuery = getTrainingEntityQuery(
+        entity,
+        role,
+        callTaskContext,
+      );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],
-        getTrainingEntityWhere(entity, role),
+        entityQuery.where,
         transaction,
+        { include: entityQuery.include },
       );
     }
   });
@@ -1142,7 +1222,7 @@ async function cleanupTrainingData(actor, query = {}) {
 
   return {
     deleted,
-    remaining: await getTrainingDataSummary(actor, { role }),
+    remaining: await getTrainingDataSummary(actor, { role }, tenant),
     role,
   };
 }

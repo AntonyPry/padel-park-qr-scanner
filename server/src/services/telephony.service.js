@@ -4,6 +4,11 @@ const { Op } = require('sequelize');
 const db = require('../../models');
 const clientsService = require('./clients.service');
 const {
+  callTaskTenantWhere,
+  resolveEligibleCallTaskAccount,
+  resolveStoredCallTaskContext,
+} = require('./call-task-access-context.service');
+const {
   assertTenantFoundationInitialized,
 } = require('./tenant-foundation.service');
 const {
@@ -1319,15 +1324,26 @@ async function createMissedCallTask(call, transaction = undefined) {
   }
 
   const dueAt = new Date(referenceDate.getTime() + DEFAULT_MISSED_CALL_DEADLINE_MINUTES * 60 * 1000);
+  const context = await resolveStoredCallTaskContext(call, { transaction });
   const client = call.userId
-    ? await db.User.findByPk(call.userId, { transaction })
+    ? await db.User.findOne({
+        transaction,
+        where: {
+          id: call.userId,
+          organizationId: context.organizationId,
+        },
+      })
     : null;
+  if (call.userId && !client) {
+    throw appError('Клиент звонка не принадлежит организации клуба', 409);
+  }
   const fallbackName = call.clientPhone || 'Новый клиент';
   const taskTitleName = client?.name || fallbackName;
 
   const task = await db.CallTask.create(
     {
       assignedToAccountId: null,
+      clubId: context.clubId,
       clientBaseId: null,
       createdByAccountId: null,
       description: [
@@ -1335,6 +1351,7 @@ async function createMissedCallTask(call, transaction = undefined) {
         client ? null : 'Номер не найден в клиентской базе CRM.',
       ].filter(Boolean).join(' '),
       dueAt,
+      organizationId: context.organizationId,
       scopeType: 'snapshot',
       snapshotClientCount: 1,
       status: 'backlog',
@@ -2109,10 +2126,19 @@ async function getActiveClientForCall(
 async function syncFollowUpTaskClient(call, client, transaction = undefined) {
   if (!call.followUpCallTaskId) return null;
 
-  const task = await db.CallTask.findByPk(call.followUpCallTaskId, {
+  const context = await resolveStoredCallTaskContext(call, { transaction });
+  if (Number(client.organizationId) !== Number(context.organizationId)) {
+    throw appError('Клиент звонка не принадлежит организации клуба', 409);
+  }
+  const task = await db.CallTask.findOne({
     transaction,
+    where: callTaskTenantWhere(
+      context,
+      { id: call.followUpCallTaskId },
+      { force: true },
+    ),
   });
-  if (!task) return null;
+  if (!task) throw appError('Связанная задача обзвона не найдена', 404);
 
   const payload = {
     clientName: client.name,
@@ -2326,16 +2352,28 @@ async function normalizeLinkedBookingId(linkedBookingId, call, transaction = und
 }
 
 async function createFollowUpTaskFromCall(call, actor, dueAt, transaction = undefined) {
-  const client = await db.User.findByPk(call.userId, { transaction });
+  const context = await resolveStoredCallTaskContext(call, { transaction });
+  const client = await db.User.findOne({
+    transaction,
+    where: {
+      id: call.userId,
+      organizationId: context.organizationId,
+    },
+  });
   if (!client) throw appError('Клиент для задачи не найден', 404);
+  const assignedToAccountId = actor?.id
+    ? await resolveEligibleCallTaskAccount(actor.id, context, { transaction })
+    : null;
 
   const task = await db.CallTask.create(
     {
-      assignedToAccountId: actor?.id || null,
+      assignedToAccountId,
+      clubId: context.clubId,
       clientBaseId: null,
-      createdByAccountId: actor?.id || null,
+      createdByAccountId: assignedToAccountId,
       description: call.nextActionText || `Следующий шаг по звонку ${call.clientPhone || ''}`,
       dueAt,
+      organizationId: context.organizationId,
       scopeType: 'snapshot',
       snapshotClientCount: 1,
       status: 'backlog',

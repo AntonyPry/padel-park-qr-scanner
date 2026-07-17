@@ -1,6 +1,7 @@
 'use strict';
 
 const {
+  isTenantClientBasesCallTasksEnabled,
   isTenantFilesWorkersEnabled,
   isTenantProviderIntegrationsEnabled,
 } = require('../tenant-context/capabilities');
@@ -16,9 +17,8 @@ const BACKGROUND_COMPONENTS = Object.freeze({
 
 const BACKGROUND_COMPONENT_POLICIES = Object.freeze({
   [BACKGROUND_COMPONENTS.CALL_TASKS_RECURRING]: Object.freeze({
-    classification: 'deferred',
-    deferredTo: 'Feature 5',
-    reason: 'ClientBase and CallTask are not tenant-scoped yet',
+    classification: 'tenant-routed',
+    reason: 'Feature 5.4 locks and processes one attributed ClientBase tenant root at a time',
   }),
   [BACKGROUND_COMPONENTS.TELEPHONY_SUBSCRIPTION]: Object.freeze({
     classification: 'provider-routed',
@@ -52,6 +52,13 @@ function backgroundIsolationError(component) {
 function assertBackgroundComponentCanRun(component) {
   const policy = BACKGROUND_COMPONENT_POLICIES[component];
   if (!policy) throw new Error(`Unknown background component: ${component}`);
+  if (
+    component === BACKGROUND_COMPONENTS.CALL_TASKS_RECURRING &&
+    isTenantFilesWorkersEnabled() &&
+    !isTenantClientBasesCallTasksEnabled()
+  ) {
+    throw backgroundIsolationError(component);
+  }
   if (
     isTenantFilesWorkersEnabled() &&
     policy.classification === 'deferred'

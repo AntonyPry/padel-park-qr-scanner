@@ -96,8 +96,8 @@ function runAudit() {
     'credentialId: getWorkerCredentialId()',
   ], findings);
   assertContains('server/src/files-workers/background-run-context.js', [
-    "classification: 'deferred'",
     "classification: 'tenant-routed'",
+    'isTenantClientBasesCallTasksEnabled()',
   ], findings);
   assertContains('workers/transcription-worker/src/crm-client.js', [
     "'X-Worker-Protocol-Version': '2'",

@@ -134,6 +134,7 @@ class OnboardingController {
       const result = await onboardingService.getTrainingDataSummary(
         req.account,
         req.query,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -155,6 +156,7 @@ class OnboardingController {
       const result = await onboardingService.cleanupTrainingData(
         req.account,
         req.query,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {

@@ -50,7 +50,9 @@ class CallTasksController {
 
   async getReport(req, res) {
     try {
-      res.json(await callTasksService.getReport(req.account, req.query));
+      res.json(
+        await callTasksService.getReport(req.account, req.query, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка получения отчета обзвона');
     }
@@ -83,7 +85,13 @@ class CallTasksController {
 
   async removeArchived(req, res) {
     try {
-      res.json(await callTasksService.removeArchived(req.account, req.params.id));
+      res.json(
+        await callTasksService.removeArchived(
+          req.account,
+          req.params.id,
+          req.tenant,
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка удаления задачи обзвона из архива');
     }
@@ -101,7 +109,13 @@ class CallTasksController {
 
   async runRecurring(req, res) {
     try {
-      res.json(await callTasksService.runDueRecurringTasks(new Date()));
+      res.json(
+        await callTasksService.runDueRecurringTasks(
+          new Date(),
+          req.tenant,
+          req.account,
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка запуска автозадач обзвона');
     }
@@ -129,6 +143,7 @@ class CallTasksController {
           req.account,
           req.params.id,
           req.body,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -143,6 +158,7 @@ class CallTasksController {
           req.account,
           req.params.taskClientId,
           req.body,
+          req.tenant,
         ),
       );
     } catch (error) {

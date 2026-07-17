@@ -29,6 +29,7 @@ test('DB-backed analytics → preview → client base → call task keeps count 
   const users = [];
   let source;
   let actor;
+  let actorMembership;
   let base;
   let task;
   try {
@@ -37,6 +38,13 @@ test('DB-backed analytics → preview → client base → call task keeps count 
       email: `visits-segment-${suffix}@example.test`,
       passwordHash: 'not-used-in-test',
       role: 'owner',
+      status: 'active',
+    });
+    actorMembership = await db.Membership.create({
+      accountId: actor.id,
+      organizationId,
+      role: 'owner',
+      staffId: null,
       status: 'active',
     });
     const makeUser = async (name, extra = {}) => {
@@ -290,6 +298,7 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     }
     if (actor?.id) {
       await db.OnboardingEvent.destroy({ where: { accountId: actor.id } });
+      if (actorMembership?.id) await actorMembership.destroy();
       await db.Account.destroy({ force: true, where: { id: actor.id } });
     }
     if (source?.id) await source.destroy();

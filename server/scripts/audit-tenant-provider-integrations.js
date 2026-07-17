@@ -98,7 +98,8 @@ function auditTenantProviderIntegrations() {
     /Provider connection task failed/u,
   ]);
   requireText('src/files-workers/background-run-context.js', [
-    /CALL_TASKS_RECURRING[\s\S]*classification: 'deferred'/u,
+    /CALL_TASKS_RECURRING[\s\S]*classification: 'tenant-routed'/u,
+    /CALL_TASKS_RECURRING[\s\S]*isTenantClientBasesCallTasksEnabled/u,
     /TELEPHONY_SUBSCRIPTION[\s\S]*classification: 'provider-routed'/u,
   ]);
 

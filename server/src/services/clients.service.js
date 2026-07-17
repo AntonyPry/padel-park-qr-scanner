@@ -14,6 +14,12 @@ const trainingNotesService = require('./training-notes.service');
 const {
   resolveClientAccessContext,
 } = require('./client-access-context.service');
+const {
+  resolveCallTaskAccessContext,
+} = require('./call-task-access-context.service');
+const {
+  isTenantClientBasesCallTasksEnabled,
+} = require('../tenant-context/capabilities');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const CLIENT_ATTRIBUTES = [
@@ -958,7 +964,7 @@ async function listClients(query = {}, account = null, tenant = null) {
 }
 
 async function listClientsForSnapshot(query = {}, options = {}) {
-  const context = await resolveClientAccessContext(options.tenant || null);
+  const context = options.context || await resolveClientAccessContext(options.tenant || null);
   const limit = Math.min(
     20000,
     Math.max(1, Number.parseInt(options.limit, 10) || 5000),
@@ -974,8 +980,8 @@ async function listClientsForSnapshot(query = {}, options = {}) {
   return rows.map(mapClient);
 }
 
-async function countClients(query = {}, tenant = null) {
-  const context = await resolveClientAccessContext(tenant);
+async function countClients(query = {}, tenant = null, options = {}) {
+  const context = options.context || await resolveClientAccessContext(tenant);
   const paging = parsePaging({ ...query, page: 1, pageSize: 10 });
   const countQuery = buildClientListSql(query, paging, true, { context });
   const rows = await db.sequelize.query(countQuery.sql, {
@@ -1015,39 +1021,81 @@ function mapSavedView(row) {
   };
 }
 
-async function listSavedViews(account) {
+async function resolveSavedViewContext(account, tenant, options = {}) {
   assertSavedViewsAccount(account);
+  const context = await resolveCallTaskAccessContext(tenant, {
+    ...options,
+    accountId: account.id,
+  });
+  if (context.readScoped && Number(context.accountId) !== Number(account.id)) {
+    throw appError('Представление клиентов не найдено', 404);
+  }
+  if (!context.membershipId) {
+    throw appError('Представление клиентов недоступно', 404);
+  }
+  return context;
+}
+
+function savedViewWhere(account, context, values = {}) {
+  const where = { ...values, accountId: account.id };
+  if (!context.readScoped) return where;
+  return {
+    ...where,
+    clubId: context.clubId,
+    membershipId: context.membershipId,
+    organizationId: context.organizationId,
+  };
+}
+
+async function listSavedViews(account, tenant = null) {
+  assertSavedViewsAccount(account);
+  const context = await resolveSavedViewContext(account, tenant);
   const views = await db.ClientSavedView.findAll({
     order: [['name', 'ASC']],
-    where: { accountId: account.id },
+    where: savedViewWhere(account, context),
   });
 
   return views.map(mapSavedView);
 }
 
-async function getSavedViewOrFail(account, id) {
+async function getSavedViewOrFail(account, id, tenant = null, options = {}) {
   assertSavedViewsAccount(account);
+  const context = options.context || await resolveSavedViewContext(
+    account,
+    tenant,
+    options,
+  );
   const view = await db.ClientSavedView.findOne({
-    where: {
-      accountId: account.id,
+    lock: options.lock,
+    transaction: options.transaction,
+    where: savedViewWhere(account, context, {
       id: Number(id),
-    },
+    }),
   });
 
   if (!view) throw appError('Представление клиентов не найдено', 404);
   return view;
 }
 
-async function createSavedView(account, data) {
+async function createSavedView(account, data, tenant = null) {
   assertSavedViewsAccount(account);
   const name = normalizeSavedViewName(data.name);
   const filters = normalizeClientViewFilters(data.filters);
 
   try {
-    const view = await db.ClientSavedView.create({
-      accountId: account.id,
-      filters,
-      name,
+    const view = await db.sequelize.transaction(async (transaction) => {
+      const context = await resolveSavedViewContext(account, tenant, {
+        lock: true,
+        transaction,
+      });
+      return db.ClientSavedView.create({
+        accountId: account.id,
+        clubId: context.clubId,
+        filters,
+        membershipId: context.membershipId,
+        name,
+        organizationId: context.organizationId,
+      }, { transaction });
     });
 
     return mapSavedView(view);
@@ -1059,15 +1107,27 @@ async function createSavedView(account, data) {
   }
 }
 
-async function updateSavedView(account, id, data) {
-  const view = await getSavedViewOrFail(account, id);
-  const payload = {};
-
-  if ('name' in data) payload.name = normalizeSavedViewName(data.name);
-  if ('filters' in data) payload.filters = normalizeClientViewFilters(data.filters);
-
+async function updateSavedView(account, id, data, tenant = null) {
   try {
-    await view.update(payload);
+    const view = await db.sequelize.transaction(async (transaction) => {
+      const context = await resolveSavedViewContext(account, tenant, {
+        lock: true,
+        transaction,
+      });
+      const lockedView = await getSavedViewOrFail(account, id, tenant, {
+        context,
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      const payload = {};
+      if ('name' in data) payload.name = normalizeSavedViewName(data.name);
+      if ('filters' in data) {
+        payload.filters = normalizeClientViewFilters(data.filters);
+      }
+      await lockedView.update(payload, { transaction });
+      return lockedView;
+    });
+    return mapSavedView(view);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
       throw appError('Представление с таким названием уже существует', 409);
@@ -1075,12 +1135,21 @@ async function updateSavedView(account, id, data) {
     throw error;
   }
 
-  return mapSavedView(view);
 }
 
-async function deleteSavedView(account, id) {
-  const view = await getSavedViewOrFail(account, id);
-  await view.destroy();
+async function deleteSavedView(account, id, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveSavedViewContext(account, tenant, {
+      lock: true,
+      transaction,
+    });
+    const view = await getSavedViewOrFail(account, id, tenant, {
+      context,
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    await view.destroy({ transaction });
+  });
   return { success: true };
 }
 
@@ -1323,7 +1392,9 @@ async function getClientDetails(id, account = null, tenant = null) {
     includeOperationalHistory ? listClientBookings(client.id, { limit: 50 }) : [],
     includeOperationalHistory ? listClientBookingSeries(client.id, { limit: 30 }) : [],
     includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
-    includeOperationalHistory ? listClientActiveCallTasks(client.id, account) : [],
+    includeOperationalHistory
+      ? listClientActiveCallTasks(client.id, account, context)
+      : [],
     includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
     includeOperationalHistory
       ? getClientPrepaymentContext(client.id, account)
@@ -1365,6 +1436,7 @@ async function getClientDetails(id, account = null, tenant = null) {
           trainingNotes,
           telephonyCalls,
           visits,
+          clientContext: context,
         })
       : [],
     telephonyCalls,
@@ -1555,8 +1627,94 @@ function summarizeClientAudit(raw) {
   return `Изменены поля: ${Array.from(new Set(fields)).join(', ')}`;
 }
 
-async function listClientCallTimeline(clientId, account) {
+async function resolveClientCallTaskWhere(clientContext) {
+  if (!isTenantClientBasesCallTasksEnabled()) return {};
+  if (!clientContext?.scoped || !clientContext.membershipId) {
+    const error = appError('Контекст организации недоступен', 404);
+    error.code = 'TENANT_CONTEXT_DENIED';
+    throw error;
+  }
+
+  const membership = await db.Membership.findOne({
+    attributes: ['id', 'role'],
+    where: {
+      id: clientContext.membershipId,
+      organizationId: clientContext.organizationId,
+      status: 'active',
+    },
+  });
+  if (!membership) throw appError('Контекст организации недоступен', 404);
+
+  let clubIds = [];
+  if (membership.role === 'owner') {
+    const clubs = await db.Club.findAll({
+      attributes: ['id'],
+      raw: true,
+      where: {
+        organizationId: clientContext.organizationId,
+        status: 'active',
+      },
+    });
+    clubIds = clubs.map((club) => Number(club.id));
+  } else {
+    const accesses = await db.MembershipClubAccess.findAll({
+      attributes: ['clubId'],
+      include: [
+        {
+          as: 'Club',
+          attributes: [],
+          model: db.Club,
+          required: true,
+          where: {
+            organizationId: clientContext.organizationId,
+            status: 'active',
+          },
+        },
+      ],
+      raw: true,
+      where: {
+        membershipId: membership.id,
+        organizationId: clientContext.organizationId,
+        status: 'active',
+      },
+    });
+    clubIds = accesses.map((access) => Number(access.clubId));
+  }
+
+  return {
+    clubId: { [Op.in]: clubIds.length > 0 ? clubIds : [-1] },
+    organizationId: clientContext.organizationId,
+  };
+}
+
+function accountMembershipInclude(organizationId) {
+  return [
+    {
+      model: db.Membership,
+      attributes: ['id', 'staffId'],
+      required: false,
+      where: { organizationId, status: 'active' },
+      include: [
+        {
+          model: db.Staff,
+          attributes: ['id', 'name'],
+          required: false,
+        },
+      ],
+    },
+  ];
+}
+
+function mapTenantAccount(account) {
+  if (!account) return null;
+  const raw = account.toJSON ? account.toJSON() : account;
+  const staff = (raw.Memberships || [])[0]?.Staff || null;
+  return mapAccount({ ...raw, Staff: staff });
+}
+
+async function listClientCallTimeline(clientId, account, clientContext = null) {
   if (!canViewCallTimeline(account)) return [];
+  const taskWhere = await resolveClientCallTaskWhere(clientContext);
 
   const rows = await db.CallTaskClient.findAll({
     include: [
@@ -1571,6 +1729,8 @@ async function listClientCallTimeline(clientId, account) {
             attributes: ['id', 'name'],
           },
         ],
+        required: true,
+        where: taskWhere,
       },
       {
         model: db.CallTaskAttempt,
@@ -1580,7 +1740,7 @@ async function listClientCallTimeline(clientId, account) {
             model: db.Account,
             as: 'actorAccount',
             attributes: ['id', 'email', 'role', 'staffId'],
-            include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+            include: accountMembershipInclude(clientContext?.organizationId),
           },
         ],
       },
@@ -1615,7 +1775,7 @@ async function listClientCallTimeline(clientId, account) {
     (raw.attempts || []).forEach((attempt) => {
       items.push(
         createTimelineItem({
-          actor: mapAccount(attempt.actorAccount),
+          actor: mapTenantAccount(attempt.actorAccount),
           description: attempt.summary || '',
           id: `call-attempt-${attempt.id}`,
           meta: {
@@ -1634,8 +1794,9 @@ async function listClientCallTimeline(clientId, account) {
   });
 }
 
-async function listClientActiveCallTasks(clientId, account) {
+async function listClientActiveCallTasks(clientId, account, clientContext = null) {
   if (!canViewCallTimeline(account)) return [];
+  const taskWhere = await resolveClientCallTaskWhere(clientContext);
 
   const rows = await db.CallTaskClient.findAll({
     include: [
@@ -1662,11 +1823,12 @@ async function listClientActiveCallTasks(clientId, account) {
             model: db.Account,
             as: 'assignedToAccount',
             attributes: ['id', 'email', 'role', 'staffId'],
-            include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+            include: accountMembershipInclude(clientContext?.organizationId),
           },
         ],
         required: true,
         where: {
+          ...taskWhere,
           status: { [Op.in]: ['backlog', 'in_progress'] },
         },
       },
@@ -1693,7 +1855,7 @@ async function listClientActiveCallTasks(clientId, account) {
     const task = raw.callTask;
 
     return {
-      assignedTo: mapAccount(task?.assignedToAccount),
+      assignedTo: mapTenantAccount(task?.assignedToAccount),
       clientBase: task?.clientBase
         ? {
             id: task.clientBase.id,
@@ -1936,10 +2098,11 @@ async function listClientTimeline(
     visits,
     trainingNotes,
     telephonyCalls,
+    clientContext,
   } = {},
 ) {
   const [callItems, auditItems] = await Promise.all([
-    listClientCallTimeline(clientId, account),
+    listClientCallTimeline(clientId, account, clientContext),
     listClientAuditTimeline(clientId, account),
   ]);
   const visitItems = (visits || []).map((visit) =>

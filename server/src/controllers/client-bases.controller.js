@@ -52,7 +52,9 @@ class ClientBasesController {
 
   async removeArchived(req, res) {
     try {
-      res.json(await clientBasesService.removeArchived(req.params.id));
+      res.json(
+        await clientBasesService.removeArchived(req.params.id, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка удаления базы клиентов из архива');
     }
