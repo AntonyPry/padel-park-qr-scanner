@@ -156,4 +156,36 @@ describe('apiRequest', () => {
     expect(headers.has('X-Onboarding-Quest-Task-Key')).toBe(false);
     expect(getStoredActiveOnboardingQuest()).not.toBeNull();
   });
+
+  it('does not send quest headers for a late ordinary create after abandonment', async () => {
+    window.history.replaceState(null, '', '/admin/clients');
+    activateOnboardingQuest(
+      {
+        key: 'admin.client.create',
+        route: '/admin/clients',
+        title: 'Создать клиента из обращения',
+      },
+      'admin',
+    );
+    clearStoredActiveOnboardingQuest();
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => {
+        void _input;
+        void _init;
+        return new Response(JSON.stringify({ ok: true }), {
+          headers: { 'Content-Type': 'application/json' },
+          status: 201,
+        });
+      },
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await apiRequest('/api/clients', { method: 'POST', body: '{}' });
+
+    const [, init] = fetchMock.mock.calls[0] || [];
+    const headers = new Headers(init?.headers);
+    expect(headers.has('X-Onboarding-Quest-Task-Key')).toBe(false);
+    expect(headers.has('X-Onboarding-Quest-Role')).toBe(false);
+    expect(getStoredActiveOnboardingQuest()).toBeNull();
+  });
 });
