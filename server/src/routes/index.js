@@ -3,6 +3,7 @@ const { requireAuth } = require('../middleware/auth');
 const { auditMutations } = require('../middleware/audit');
 const { captureTrainingMode } = require('../middleware/training-mode');
 const { realtimeMutations } = require('../realtime');
+const { captureOnboardingQuest } = require('../middleware/onboarding-quest');
 const db = require('../../models');
 const cacheService = require('../services/cache.service');
 const { getOpenApiDocument } = require('../contracts/openapi');
@@ -79,6 +80,7 @@ router.use(telephonyTranscriptionWorkerRoutes);
 
 router.use(requireAuth);
 router.use(captureTrainingMode());
+router.use(captureOnboardingQuest());
 router.use(auditMutations);
 router.use(auditRoutes);
 router.use(bookingsRoutes);

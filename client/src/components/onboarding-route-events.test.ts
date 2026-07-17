@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildOnboardingRouteEventRecordKey,
   buildOnboardingRouteEventForPath,
   shouldClearActiveQuestAfterRouteEvent,
 } from '@/lib/onboarding-route-event-utils';
@@ -65,21 +66,14 @@ describe('onboarding route event activation', () => {
     });
   });
 
-  it('clears exact quest after successful route event to avoid stale duplicate progress', () => {
-    const routeEvent = buildOnboardingRouteEventForPath(
-      prepaymentsRouteEvent,
-      '/admin/prepayments',
-      managerQuest,
-    );
-
+  it('keeps an action quest when the route event did not progress it', () => {
     expect(
       shouldClearActiveQuestAfterRouteEvent(
         managerQuest,
         '/admin/prepayments',
         { completedTaskKeys: [], progressedTaskKeys: [] },
-        routeEvent,
       ),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('clears when backend reports exact progressed task and keeps unrelated quests', () => {
@@ -138,5 +132,29 @@ describe('onboarding route event activation', () => {
         taskKey: 'manager.shift-report-templates.manage',
       },
     });
+  });
+
+  it('deduplicates task-scoped and generic variants on the same navigation', () => {
+    const exactKey = buildOnboardingRouteEventRecordKey({
+      accountId: 10,
+      eventKey: 'prepayments.viewed',
+      locationKey: 'navigation-1',
+      pathname: '/admin/prepayments',
+    });
+    const genericKeyAfterClear = buildOnboardingRouteEventRecordKey({
+      accountId: 10,
+      eventKey: 'prepayments.viewed',
+      locationKey: 'navigation-1',
+      pathname: '/admin/prepayments/',
+    });
+    const separateNavigationKey = buildOnboardingRouteEventRecordKey({
+      accountId: 10,
+      eventKey: 'prepayments.viewed',
+      locationKey: 'navigation-2',
+      pathname: '/admin/prepayments',
+    });
+
+    expect(genericKeyAfterClear).toBe(exactKey);
+    expect(separateNavigationKey).not.toBe(exactKey);
   });
 });

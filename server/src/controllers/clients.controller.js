@@ -2,6 +2,9 @@ const clientsService = require('../services/clients.service');
 const clientSkillMapService = require('../services/client-skill-map.service');
 const trainingRecommendationsService = require('../services/training-recommendations.service');
 const { sendError } = require('../utils/api-error');
+const {
+  setOnboardingEventResultHeaders,
+} = require('../middleware/onboarding-quest');
 
 function handleError(res, error, fallback) {
   sendError(res, error, fallback);
@@ -26,7 +29,13 @@ class ClientsController {
 
   async create(req, res) {
     try {
-      res.status(201).json(await clientsService.createClient(req.body, req.account));
+      const outcome = await clientsService.createClientWithEventResult(
+        req.body,
+        req.account,
+        { onboardingContext: req.onboardingQuest },
+      );
+      setOnboardingEventResultHeaders(res, outcome.onboardingEventResult);
+      res.status(201).json(outcome.result);
     } catch (error) {
       handleError(res, error, 'Ошибка создания клиента');
     }

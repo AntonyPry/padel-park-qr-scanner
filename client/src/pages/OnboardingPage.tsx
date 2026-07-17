@@ -66,6 +66,7 @@ import { getApiErrorMessage } from '@/lib/api';
 import {
   activateOnboardingQuest,
   clearStoredActiveOnboardingQuest,
+  getStoredActiveOnboardingQuest,
 } from '@/lib/onboarding-quest';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
 import { useTheme } from '@/lib/theme-context';
@@ -1282,6 +1283,11 @@ export default function OnboardingPage() {
 
   useEffect(() => {
     if (!account?.role || !taskKey) return;
+
+    const activeQuest = getStoredActiveOnboardingQuest();
+    if (activeQuest && activeQuest.taskKey !== taskKey) {
+      clearStoredActiveOnboardingQuest();
+    }
 
     void queryClient.invalidateQueries({
       queryKey: queryKeys.onboarding.task(taskKey, roleForQueryKey),

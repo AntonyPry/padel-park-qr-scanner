@@ -3,7 +3,9 @@ import {
   activateOnboardingQuest,
   buildActiveOnboardingQuest,
   clearStoredActiveOnboardingQuest,
+  clearStoredActiveOnboardingQuestAfterProgress,
   getStoredActiveOnboardingQuest,
+  getStoredActiveOnboardingQuestForPath,
   ONBOARDING_QUEST_STORAGE_KEY,
 } from './onboarding-quest';
 
@@ -92,5 +94,68 @@ describe('onboarding quest activation', () => {
       ),
     ).toBeNull();
     expect(window.localStorage.getItem(ONBOARDING_QUEST_STORAGE_KEY)).toBeNull();
+  });
+
+  it('replaces the previous task intentionally and only exposes it on its CRM route', () => {
+    activateOnboardingQuest(
+      {
+        key: 'manager.prepayments.dashboard-review',
+        route: '/admin/prepayments',
+        title: 'Проверить предоплаты',
+      },
+      'manager',
+    );
+    activateOnboardingQuest(
+      {
+        key: 'manager.shift-report-templates.manage',
+        route: '/admin/shift-settings',
+        title: 'Настроить шаблон отчета смены',
+      },
+      'manager',
+    );
+
+    expect(getStoredActiveOnboardingQuest()?.taskKey).toBe(
+      'manager.shift-report-templates.manage',
+    );
+    expect(
+      getStoredActiveOnboardingQuestForPath('/admin/prepayments'),
+    ).toBeNull();
+    expect(
+      getStoredActiveOnboardingQuestForPath('/admin/shift-settings/'),
+    ).toMatchObject({
+      taskKey: 'manager.shift-report-templates.manage',
+    });
+  });
+
+  it('clears only after backend confirms exact progress or completion', () => {
+    activateOnboardingQuest(
+      {
+        key: 'admin.client.create',
+        route: '/admin/clients',
+        title: 'Создать клиента из обращения',
+      },
+      'admin',
+    );
+
+    expect(
+      clearStoredActiveOnboardingQuestAfterProgress({
+        progressedTaskKeys: [],
+      }),
+    ).toBeNull();
+    expect(getStoredActiveOnboardingQuest()).not.toBeNull();
+
+    expect(
+      clearStoredActiveOnboardingQuestAfterProgress({
+        completedTaskKeys: ['admin.booking.review-schedule'],
+      }),
+    ).toBeNull();
+    expect(getStoredActiveOnboardingQuest()).not.toBeNull();
+
+    expect(
+      clearStoredActiveOnboardingQuestAfterProgress({
+        progressedTaskKeys: ['admin.client.create'],
+      }),
+    ).toMatchObject({ taskKey: 'admin.client.create' });
+    expect(getStoredActiveOnboardingQuest()).toBeNull();
   });
 });

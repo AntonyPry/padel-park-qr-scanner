@@ -1434,8 +1434,25 @@ async function recordEvent(actor, eventKey, options = {}) {
     };
   }
 
-  const target = await getEventTargetContext(actor);
-  return recordEventForTarget(actor, target, eventKey, options);
+  const currentTarget = await getEventTargetContext(actor);
+  const requestedRole = options.onboardingContext?.role;
+  const targetRole = requestedRole
+    ? resolveTargetRole(actor, requestedRole)
+    : currentTarget.role;
+  const target = {
+    isTraining:
+      currentTarget.isTraining && currentTarget.role === targetRole,
+    role: targetRole,
+  };
+  const taskKey = options.onboardingContext?.taskKey;
+
+  return recordEventForTarget(actor, target, eventKey, {
+    ...options,
+    payload: {
+      ...(options.payload || {}),
+      ...(taskKey ? { taskKey } : {}),
+    },
+  });
 }
 
 async function recordClientEvent(actor, body = {}) {

@@ -12,6 +12,7 @@ import {
   ONBOARDING_QUEST_EVENT,
 } from '@/lib/onboarding-quest';
 import {
+  buildOnboardingRouteEventRecordKey,
   buildOnboardingRouteEventForPath,
   normalizeOnboardingRoutePathname,
   shouldClearActiveQuestAfterRouteEvent,
@@ -147,10 +148,6 @@ export function OnboardingRouteEvents() {
     );
   }, [activeQuest, baseRouteEvent, normalizedPathname]);
   const eventKey = routeEvent?.eventKey;
-  const payloadSignature = useMemo(
-    () => JSON.stringify(routeEvent?.payload || {}),
-    [routeEvent],
-  );
 
   useEffect(() => {
     const refreshActiveQuest = () => {
@@ -169,12 +166,12 @@ export function OnboardingRouteEvents() {
   useEffect(() => {
     if (!account?.id || !routeEvent || !eventKey) return;
 
-    const recordKey = [
-      account.id,
-      location.pathname,
+    const recordKey = buildOnboardingRouteEventRecordKey({
+      accountId: account.id,
       eventKey,
-      payloadSignature,
-    ].join(':');
+      locationKey: location.key,
+      pathname: location.pathname,
+    });
 
     if (recordedKeys.current.has(recordKey)) return;
     recordedKeys.current.add(recordKey);
@@ -186,7 +183,6 @@ export function OnboardingRouteEvents() {
             activeQuest,
             location.pathname,
             result,
-            routeEvent,
           )
         ) {
           clearStoredActiveOnboardingQuest();
@@ -205,8 +201,8 @@ export function OnboardingRouteEvents() {
   }, [
     account?.id,
     eventKey,
+    location.key,
     location.pathname,
-    payloadSignature,
     queryClient,
     routeEvent,
     activeQuest,
