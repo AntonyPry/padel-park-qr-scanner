@@ -859,6 +859,32 @@ test('manager control route checkpoint requires active task context', () => {
   );
 });
 
+test('shift report templates route checkpoint requires active task context', () => {
+  assert.deepEqual(
+    listMatchingTasks('manager', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+    }).map((task) => task.key),
+    [],
+  );
+  assert.deepEqual(
+    listMatchingTasks('manager', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+      taskKey: 'manager.shift-report-templates.manage',
+    }).map((task) => task.key),
+    ['manager.shift-report-templates.manage'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('owner', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+      taskKey: 'owner.shift-report-templates.manage',
+    }).map((task) => task.key),
+    ['owner.shift-report-templates.manage'],
+  );
+});
+
 test('pilot client create card task does not match ordinary client creation', () => {
   assert.deepEqual(
     listMatchingTasks('admin', 'client.created', {

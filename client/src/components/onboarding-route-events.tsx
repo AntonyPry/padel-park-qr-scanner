@@ -97,6 +97,12 @@ const ROUTE_EVENTS: Record<string, OnboardingClientEventPayload> = {
     eventKey: 'reference.viewed',
     payload: { route: '/admin/references' },
   },
+  '/admin/shift-settings': {
+    entityId: '/admin/shift-settings',
+    entityType: 'route',
+    eventKey: 'report.viewed',
+    payload: { report: 'shift_report_templates', route: '/admin/shift-settings' },
+  },
   '/admin/trainer': {
     entityId: '/admin/trainer',
     entityType: 'route',
