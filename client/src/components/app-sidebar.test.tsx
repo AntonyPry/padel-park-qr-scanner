@@ -295,7 +295,7 @@ describe('AppSidebar shift navigation', () => {
     for (const badge of initialBadges) {
       expect(badge).toHaveAttribute('aria-atomic', 'true');
       expect(badge).toHaveAttribute('aria-live', 'polite');
-      expect(badge).toHaveClass('bg-primary');
+      expect(badge).toHaveClass('bg-destructive');
       expect(badge).toHaveTextContent('2');
     }
     expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(1);
@@ -330,7 +330,7 @@ describe('AppSidebar shift navigation', () => {
     });
     for (const badge of refreshedBadges) {
       expect(badge).toHaveTextContent('1');
-      expect(badge).toHaveClass('bg-primary');
+      expect(badge).toHaveClass('bg-destructive');
     }
     expect(mocks.listActiveShiftReports).toHaveBeenCalledTimes(2);
   });

@@ -46135,42 +46135,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "appliesToRole": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "enum": [
-                          "owner",
-                          "manager",
-                          "admin",
-                          "accountant",
-                          "viewer",
-                          "trainer"
-                        ]
-                      },
-                      {
-                        "type": "string",
-                        "const": ""
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "appliesToShiftType": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "string",
-                        "const": ""
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "description": {
                     "anyOf": [
                       {
@@ -46306,8 +46270,7 @@
                 "required": [
                   "name",
                   "scheduleType"
-                ],
-                "additionalProperties": {}
+                ]
               }
             }
           },
@@ -46470,42 +46433,6 @@
               "schema": {
                 "type": "object",
                 "properties": {
-                  "appliesToRole": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "enum": [
-                          "owner",
-                          "manager",
-                          "admin",
-                          "accountant",
-                          "viewer",
-                          "trainer"
-                        ]
-                      },
-                      {
-                        "type": "string",
-                        "const": ""
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "appliesToShiftType": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "string",
-                        "const": ""
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
                   "description": {
                     "anyOf": [
                       {
@@ -46637,8 +46564,7 @@
                       "archived"
                     ]
                   }
-                },
-                "additionalProperties": {}
+                }
               }
             }
           },

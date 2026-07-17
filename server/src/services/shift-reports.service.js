@@ -179,9 +179,6 @@ function normalizeTemplatePayload(payload, existing = null) {
   }
 
   return {
-    appliesToRole: normalizeString(payload.appliesToRole ?? existing?.appliesToRole) || null,
-    appliesToShiftType:
-      normalizeString(payload.appliesToShiftType ?? existing?.appliesToShiftType) || null,
     description: normalizeString(payload.description ?? existing?.description) || null,
     gracePeriodMinutes,
     name,
@@ -217,8 +214,6 @@ function normalizeItemPayload(payload, existing = null) {
 function buildTemplateSnapshot(template) {
   const plain = toPlain(template);
   return {
-    appliesToRole: plain.appliesToRole || null,
-    appliesToShiftType: plain.appliesToShiftType || null,
     description: plain.description || '',
     gracePeriodMinutes: Number(plain.gracePeriodMinutes) || 0,
     id: plain.id,
@@ -301,19 +296,31 @@ function serializeReport(report, now = new Date()) {
     computedStatus: getComputedReportStatus(plain, now),
     deadlineAt: getReportDeadline(plain).toISOString(),
     itemsSnapshot: readJson(plain.itemsSnapshot, []),
-    templateSnapshot: readJson(plain.templateSnapshot, {}),
+    templateSnapshot: buildTemplateSnapshot(readJson(plain.templateSnapshot, {})),
   };
 }
 
 function serializeTemplate(template) {
   const plain = toPlain(template);
   return {
-    ...plain,
+    archivedAt: plain.archivedAt ?? null,
+    createdAt: plain.createdAt,
+    createdByAccountId: plain.createdByAccountId ?? null,
+    description: plain.description ?? null,
+    gracePeriodMinutes: Number(plain.gracePeriodMinutes) || 0,
+    id: plain.id,
     items: getTemplateItems(plain, { activeOnly: true }).map((item) => ({
       ...item,
       photoRequired: Boolean(item.photoRequired),
     })),
+    name: plain.name,
     scheduleConfig: readJson(plain.scheduleConfig, {}),
+    scheduleType: plain.scheduleType,
+    sortOrder: Number(plain.sortOrder) || 0,
+    status: plain.status,
+    updatedAt: plain.updatedAt,
+    updatedByAccountId: plain.updatedByAccountId ?? null,
+    version: Number(plain.version) || 1,
   };
 }
 
