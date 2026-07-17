@@ -4,6 +4,17 @@ const db = require('../../models');
 const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 
 const ACTIVE = 'active';
+const trustedTenantContexts = new WeakSet();
+
+function freezeTenantContext(values) {
+  const context = Object.freeze(values);
+  trustedTenantContexts.add(context);
+  return context;
+}
+
+function isTrustedTenantContext(value) {
+  return Boolean(value && trustedTenantContexts.has(value));
+}
 
 function tenantError(message, statusCode, code) {
   const error = new Error(message);
@@ -35,7 +46,7 @@ async function findActiveMembership(accountId, organizationId) {
 
 async function resolveTenantContext({ accountId, clubId = null, organizationId = null, scope }) {
   if (scope === TENANT_SCOPES.GLOBAL) {
-    return Object.freeze({
+    return freezeTenantContext({
       accountId,
       clubId: null,
       effectiveRole: null,
@@ -61,7 +72,7 @@ async function resolveTenantContext({ accountId, clubId = null, organizationId =
   };
 
   if (scope === TENANT_SCOPES.MEMBERSHIP || scope === TENANT_SCOPES.ORGANIZATION) {
-    return Object.freeze(baseContext);
+    return freezeTenantContext(baseContext);
   }
 
   if (scope !== TENANT_SCOPES.CLUB || !clubId) {
@@ -91,7 +102,7 @@ async function resolveTenantContext({ accountId, clubId = null, organizationId =
     effectiveRole = access.roleOverride || membershipRole;
   }
 
-  return Object.freeze({
+  return freezeTenantContext({
     ...baseContext,
     clubId: club.id,
     effectiveRole,
@@ -182,6 +193,7 @@ async function discoverMemberships(accountId) {
 
 module.exports = {
   discoverMemberships,
+  isTrustedTenantContext,
   resolveTenantContext,
   safeTenantDenial,
 };

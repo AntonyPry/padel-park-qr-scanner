@@ -1366,18 +1366,6 @@ async function getClientDetails(id, account = null, tenant = null) {
   if (isTenantBookingsCourtsEnabled()) {
     if (tenant?.scope === 'club') {
       bookingContext = await resolveBookingAccessContext(tenant);
-    } else {
-      const clubs = await db.Club.findAll({
-        attributes: ['id'],
-        where: { organizationId: context.organizationId, status: 'active' },
-      });
-      if (clubs.length === 1 && tenant && Object.isFrozen(tenant)) {
-        bookingContext = await resolveBookingAccessContext(Object.freeze({
-          ...tenant,
-          clubId: Number(clubs[0].id),
-          scope: 'club',
-        }));
-      }
     }
   }
   const client = await getClientOrFail(id, context);

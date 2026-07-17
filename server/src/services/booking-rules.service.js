@@ -26,15 +26,6 @@ function appError(message, statusCode = 400, details = {}) {
 }
 
 async function resolveRulesContext(authority, options = {}) {
-  if (
-    authority &&
-    Object.isFrozen(authority) &&
-    authority.authority &&
-    authority.organizationId &&
-    authority.clubId
-  ) {
-    return authority;
-  }
   return resolveBookingAccessContext(authority, options);
 }
 

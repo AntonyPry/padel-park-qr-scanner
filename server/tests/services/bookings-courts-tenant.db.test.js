@@ -71,13 +71,33 @@ async function selectOne(sequelize, sql, replacements = {}) {
   return rows[0] || null;
 }
 
-function tenantFor(account, membership, organizationId, clubId, role = null) {
-  return Object.freeze({
+async function touchedRowsSnapshot(sequelize) {
+  const snapshot = {};
+  for (const table of [
+    'Courts',
+    'BookingSettings',
+    'BookingPriceRules',
+    'BookingScheduleExceptions',
+    'BookingSeries',
+    'Bookings',
+    'Utilizations',
+    'CourtBlocks',
+    'BookingParticipants',
+    'BookingChangeLogs',
+  ]) {
+    snapshot[table] = await sequelize.query(
+      `SELECT * FROM \`${table}\` ORDER BY id`,
+      { type: SequelizePackage.QueryTypes.SELECT },
+    );
+  }
+  return JSON.stringify(snapshot);
+}
+
+async function tenantFor(account, membership, organizationId, clubId) {
+  const tenantContextService = require('../../src/services/tenant-context.service');
+  return tenantContextService.resolveTenantContext({
     accountId: Number(account.id),
     clubId: Number(clubId),
-    effectiveRole: role || membership.role,
-    membershipId: Number(membership.id),
-    membershipRole: membership.role,
     organizationId: Number(organizationId),
     scope: 'club',
   });
@@ -418,19 +438,19 @@ test('Feature 5.5 migration, tenant isolation, races and idempotency', async () 
       staffId: null,
       status: 'active',
     });
-    const defaultTenant = tenantFor(
+    const defaultTenant = await tenantFor(
       owner,
       ownerMembership,
       defaultOrganization.id,
       defaultClub.id,
     );
-    const secondTenant = tenantFor(
+    const secondTenant = await tenantFor(
       owner,
       ownerMembership,
       defaultOrganization.id,
       secondClub.id,
     );
-    const foreignTenant = tenantFor(
+    const foreignTenant = await tenantFor(
       owner,
       foreignMembership,
       foreignOrganization.id,
@@ -660,6 +680,207 @@ test('Feature 5.5 migration, tenant isolation, races and idempotency', async () 
     assert.deepEqual(
       (await utilizationService.getAll(defaultTenant)).find((row) => row.date === '2099-01-05'),
       { date: '2099-01-05', booked1: 1, booked2: 2, sessions1: 3, sessions2: 4 },
+    );
+
+    const tenantPriceRule = await bookingRulesService.createPriceRule({
+      courtType: 'all',
+      endTime: '24:00',
+      name: 'Feature 5.5 tenant rule',
+      pricePerHour: 1000,
+      priority: 500,
+      startTime: '08:00',
+      weekdays: [1, 2, 3, 4, 5, 6, 7],
+    }, defaultTenant);
+    const tenantBlock = await bookingRulesService.createBlock({
+      courtId: defaultCourt.id,
+      endsAt: '2099-04-01T11:00:00.000Z',
+      reason: 'Feature 5.5 context boundary',
+      startsAt: '2099-04-01T10:00:00.000Z',
+    }, owner, defaultTenant);
+    const tenantException = await bookingRulesService.upsertException({
+      date: '2099-04-02',
+      isClosed: true,
+      reason: 'Feature 5.5 context boundary',
+    }, defaultTenant);
+    await bookingRulesService.getSettings(defaultTenant);
+
+    const invalidContexts = [
+      Object.freeze({
+        clubId: Number(defaultClub.id),
+        organizationId: Number(defaultOrganization.id),
+        readScoped: true,
+      }),
+      Object.freeze({ ...defaultTenant }),
+    ];
+    const touchedBeforeForgedCalls = await touchedRowsSnapshot(db.sequelize);
+    for (const invalidContext of invalidContexts) {
+      const rejectedCalls = [
+        () => bookingsService.listBookingResources({}, invalidContext),
+        () => bookingsService.listBookings({ date: '2099-01-05' }, invalidContext),
+        () => bookingsService.getSchedule({ date: '2099-01-05' }, invalidContext),
+        () => bookingsService.getBookingAnalytics(
+          { from: '2099-01-05', to: '2099-01-05' },
+          invalidContext,
+        ),
+        () => bookingsService.listResponsibleStaff(invalidContext),
+        () => bookingsService.getBooking(first.id, invalidContext),
+        () => bookingsService.createBookingResource({ name: 'Forged resource' }, invalidContext),
+        () => bookingsService.updateBookingResource(defaultCourt.id, { name: 'Forged update' }, invalidContext),
+        () => bookingsService.archiveBookingResource(defaultCourt.id, invalidContext),
+        () => bookingsService.createBooking(
+          bookingBody(defaultCourt.id, sharedClient.id, '2099-05-01T10:00:00.000Z'),
+          owner,
+          invalidContext,
+        ),
+        () => bookingsService.updateBooking(first.id, { comment: 'Forged update' }, owner, invalidContext),
+        () => bookingsService.listBookingHistory(first.id, invalidContext),
+        () => bookingsService.listBookingSeries({}, invalidContext),
+        () => bookingsService.previewBookingSeries(seriesBody, invalidContext),
+        () => bookingsService.createBookingSeries(
+          { ...seriesBody, name: 'Forged series', startsOn: '2099-06-01', endsOn: '2099-06-08' },
+          owner,
+          invalidContext,
+        ),
+        () => bookingsService.archiveBookingSeries(
+          createdSeries.series.id,
+          { reason: 'Forged archive' },
+          owner,
+          invalidContext,
+        ),
+        () => bookingRulesService.getSettings(invalidContext),
+        () => bookingRulesService.calculateQuote({
+          courtId: defaultCourt.id,
+          durationMinutes: 60,
+          startsAt: '2099-05-01T10:00:00.000Z',
+        }, invalidContext),
+        () => bookingRulesService.updateSettings({ slotStepMinutes: 30 }, invalidContext),
+        () => bookingRulesService.listPriceRules('all', invalidContext),
+        () => bookingRulesService.createPriceRule({
+          name: 'Forged rule',
+          pricePerHour: 1,
+        }, invalidContext),
+        () => bookingRulesService.updatePriceRule(
+          tenantPriceRule.id,
+          { name: 'Forged rule update' },
+          invalidContext,
+        ),
+        () => bookingRulesService.archivePriceRule(tenantPriceRule.id, invalidContext),
+        () => bookingRulesService.listBlocks({}, invalidContext),
+        () => bookingRulesService.createBlock({
+          courtId: defaultCourt.id,
+          endsAt: '2099-05-02T11:00:00.000Z',
+          reason: 'Forged block',
+          startsAt: '2099-05-02T10:00:00.000Z',
+        }, owner, invalidContext),
+        () => bookingRulesService.updateBlock(
+          tenantBlock.id,
+          { reason: 'Forged block update' },
+          owner,
+          invalidContext,
+        ),
+        () => bookingRulesService.archiveBlock(tenantBlock.id, owner, invalidContext),
+        () => bookingRulesService.listExceptions('all', invalidContext),
+        () => bookingRulesService.upsertException({
+          date: '2099-05-03',
+          isClosed: true,
+        }, invalidContext),
+        () => bookingRulesService.updateException(
+          tenantException.id,
+          { reason: 'Forged exception update' },
+          invalidContext,
+        ),
+        () => bookingRulesService.archiveException(tenantException.id, invalidContext),
+        () => utilizationService.getAll(invalidContext),
+        () => utilizationService.upsertMany([{
+          booked1: 99,
+          booked2: 99,
+          date: '2099-05-04',
+          sessions1: 99,
+          sessions2: 99,
+        }], invalidContext),
+      ];
+      for (const rejectedCall of rejectedCalls) {
+        await assert.rejects(
+          rejectedCall,
+          (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND' && error.statusCode === 404,
+        );
+      }
+    }
+    assert.equal(await touchedRowsSnapshot(db.sequelize), touchedBeforeForgedCalls);
+
+    const managerAccount = await db.Account.create({
+      email: `feature-5-5-manager-${Date.now()}@example.test`,
+      passwordHash: 'test-only',
+      role: 'manager',
+      status: 'active',
+    });
+    const managerMembership = await db.Membership.create({
+      accountId: managerAccount.id,
+      organizationId: defaultOrganization.id,
+      role: 'manager',
+      staffId: null,
+      status: 'active',
+    });
+    const managerAccess = await db.MembershipClubAccess.create({
+      clubId: defaultClub.id,
+      membershipId: managerMembership.id,
+      organizationId: defaultOrganization.id,
+      roleOverride: null,
+      status: 'active',
+    });
+    const managerTenant = await tenantFor(
+      managerAccount,
+      managerMembership,
+      defaultOrganization.id,
+      defaultClub.id,
+    );
+    assert.ok((await bookingsService.listBookingResources({}, managerTenant)).length > 0);
+
+    await managerAccess.update({ status: 'inactive' });
+    await assert.rejects(
+      () => bookingsService.listBookingResources({}, managerTenant),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await managerAccess.update({ status: 'active' });
+
+    await managerAccount.update({ status: 'inactive' });
+    await assert.rejects(
+      () => bookingRulesService.getSettings(managerTenant),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await managerAccount.update({ status: 'active' });
+
+    await managerMembership.update({ status: 'inactive' });
+    await assert.rejects(
+      () => utilizationService.getAll(managerTenant),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await managerMembership.update({ status: 'active' });
+
+    await db.Club.update(
+      { status: 'inactive' },
+      { where: { id: defaultClub.id } },
+    );
+    await assert.rejects(
+      () => bookingsService.getBooking(first.id, defaultTenant),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await db.Club.update(
+      { status: 'active' },
+      { where: { id: defaultClub.id } },
+    );
+
+    await db.Organization.update(
+      { status: 'inactive' },
+      { where: { id: defaultOrganization.id } },
+    );
+    await assert.rejects(
+      () => bookingsService.getSchedule({ date: '2099-01-05' }, defaultTenant),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await db.Organization.update(
+      { status: 'active' },
+      { where: { id: defaultOrganization.id } },
     );
 
     const row = await db.Booking.findByPk(first.id);

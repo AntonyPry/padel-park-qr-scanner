@@ -9,7 +9,12 @@ const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const {
   isTenantBookingsCourtsEnabled,
 } = require('../tenant-context/capabilities');
-const { safeTenantDenial } = require('./tenant-context.service');
+const {
+  isTrustedTenantContext,
+  safeTenantDenial,
+} = require('./tenant-context.service');
+
+const resolvedBookingContexts = new WeakSet();
 
 function positiveId(value) {
   const normalized = Number(value);
@@ -152,10 +157,12 @@ async function loadAuthoritativeMembership(
 }
 
 function freezeContext(values) {
-  return Object.freeze({
+  const context = Object.freeze({
     ...values,
     scoped: Boolean(values.readScoped),
   });
+  resolvedBookingContexts.add(context);
+  return context;
 }
 
 async function resolveLegacyContext(options = {}) {
@@ -186,12 +193,16 @@ async function resolveLegacyContext(options = {}) {
     membershipRole: null,
     organizationId: Number(organization.id),
     readScoped: false,
+    scope: TENANT_SCOPES.CLUB,
   });
 }
 
 async function resolveRequestContext(tenant, options = {}) {
+  const trustedInput = isTrustedTenantContext(tenant) ||
+    resolvedBookingContexts.has(tenant);
   if (
     !tenant ||
+    !trustedInput ||
     !Object.isFrozen(tenant) ||
     tenant.scope !== TENANT_SCOPES.CLUB ||
     !positiveId(tenant.accountId) ||
@@ -214,6 +225,7 @@ async function resolveRequestContext(tenant, options = {}) {
     membershipRole: authority.membership.role,
     organizationId: Number(authority.organization.id),
     readScoped: true,
+    scope: TENANT_SCOPES.CLUB,
   });
 }
 

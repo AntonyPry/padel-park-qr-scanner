@@ -1,7 +1,7 @@
 # Feature 5.5 — tenant-safe бронирования и корты
 
-Статус документа: feature implementation contract. Независимый QA и promotion в
-`codex/saas-multitenancy-integration` ещё не выполнены.
+Статус документа: QA fixes applied, independent re-review pending. Promotion в
+`codex/saas-multitenancy-integration` ещё не выполнен.
 
 ## Domain classification
 
@@ -32,6 +32,13 @@
 Request body/query/header `organizationId` and `clubId` are never authority and
 are never copied into these fields. Existing response shapes deliberately omit
 all tenant and idempotency columns.
+
+Frozen object shape is not authority. Feature 3 `TenantContext` instances are
+registered by the foundation resolver in a module-private `WeakSet`; copied or
+hand-built objects are rejected. Every public booking/court/rules/utilization
+service boundary reloads the active Account → Membership → Organization → Club
+and non-owner access graph. Internally resolved booking contexts use a separate
+non-forgeable brand but are revalidated again when they cross a public boundary.
 
 ## Invariants and runtime scope
 
@@ -78,8 +85,13 @@ production tenant.
 Migration `20260718120000-add-tenant-bookings-courts.js` is additive and
 data-aware:
 
-1. It inventories exact reserved columns, indexes, foreign keys and trigger
-   definitions and classifies only `legacy`, `ready` or `partial`.
+1. It inventories the exact reserved column/table multiset and compares full
+   canonical column metadata: authoritative integer type/signedness, varchar
+   length, nullability, default, `EXTRA`, charset/collation, comment and
+   generation expression. Index definitions include table/name/uniqueness,
+   exact ordered fields, prefix length, direction and index type; FK order/actions
+   and normalized trigger definitions remain exact. Classification is only
+   `legacy`, `ready` or `partial`.
 2. Any partial/lookalike state fails before default-tenant/business preflight and
    before DDL/DML.
 3. Legacy preflight requires the exact active default Organization/Club and a
@@ -89,8 +101,11 @@ data-aware:
 5. Global unique Court name, schedule date and utilization date indexes are
    replaced with Club-scoped uniques, allowing identical values in different
    Clubs.
-6. Forced-stage cleanup removes only artifacts tracked by the current invocation
-   and restores only global uniques removed by that invocation.
+6. Forced-stage cleanup captures the INFORMATION_SCHEMA signature of every
+   artifact created or removed by the current invocation. Before any cleanup it
+   reloads all signatures; a same-name changed/moved artifact is preserved and
+   cleanup fails with an ownership error instead of deleting it. Only exact
+   owned artifacts are removed and only exact captured global uniques restored.
 7. Down migration requires exact ready definitions, exact single-default data,
    no later migrations and no external tenant references. A second tenant or
    partial schema is mutation-free refusal.

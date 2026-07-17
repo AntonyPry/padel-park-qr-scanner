@@ -71,20 +71,8 @@ function appError(message, statusCode = 400, details = {}) {
   return error;
 }
 
-function isResolvedBookingContext(value) {
-  return Boolean(
-    value &&
-      Object.isFrozen(value) &&
-      Number.isSafeInteger(Number(value.organizationId)) &&
-      Number.isSafeInteger(Number(value.clubId)) &&
-      typeof value.readScoped === 'boolean',
-  );
-}
-
 async function resolveBookingContext(authority, options = {}) {
-  return isResolvedBookingContext(authority)
-    ? authority
-    : resolveBookingAccessContext(authority, options);
+  return resolveBookingAccessContext(authority, options);
 }
 
 function stableStringify(value) {
