@@ -1,7 +1,9 @@
 # Feature 5.5 — tenant-safe бронирования и корты
 
-Статус документа: QA fixes applied, independent re-review pending. Promotion в
-`codex/saas-multitenancy-integration` ещё не выполнен.
+Статус документа: accepted exact SHA
+`d9ff18c27bb663203c5713ce27b8a9e513f67770` после независимого re-review без
+P0–P3 findings и fast-forwarded в `codex/saas-multitenancy-integration` без
+reconciliation merge. `main` и production не изменялись.
 
 ## Domain classification
 
