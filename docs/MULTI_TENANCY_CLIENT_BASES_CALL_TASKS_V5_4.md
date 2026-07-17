@@ -1,6 +1,6 @@
 # Feature 5.4 — Client bases, saved views and call tasks
 
-Статус: `independent QA rejected 4b973484; P1 remediation complete; full gate green; ready for repeat independent QA; not accepted or integrated`.
+Статус: `accepted exact SHA 8b70e9df; integrated by fast-forward; integration gate green; ready as base for the next separately authorized slice`.
 
 Exact base: `3b2ac656c0e861ca9bf0d2898b7866f1539f8161` from `codex/saas-multitenancy-integration`.
 
@@ -119,15 +119,28 @@ Final status: `N/A`. Итоговый diff не содержит файлов и
 - Owner training-data summary/cleanup для `ClientBase`, `CallTask`, `CallTaskClient`, `CallTaskAttempt` теперь Club-scoped; соседний Club остаётся нетронутым.
 - Добавлен AST direct-write audit для всех пяти domain models, включая aliases, instance/bulk mutation и raw SQL.
 
+## Data model impact
+
+Все девять новых persisted fields имеют текущего backend-consumer и не раскрываются в public response/OpenAPI/generated client:
+
+| Fields | Текущий смысл и authoritative writer | Текущие consumers | Visibility, lifecycle и regression |
+| --- | --- | --- | --- |
+| `ClientSavedViews.organizationId`, `clubId`, `membershipId` | membership-owned saved view активного Club; только `createSavedView` из повторно проверенного request context | `savedViewWhere`, per-membership/Club uniqueness, composite Membership/Club FKs и DB immutability triggers | `mapSavedView` скрывает attribution; row удаляется штатным saved-view delete; cross-tenant/ORM/raw/bulk tests и writer audit |
+| `ClientBases.organizationId`, `clubId` | club-local base root; только base create/analytics create из server-owned context | list/detail/count, archive/delete, dynamic sync, task generation, recurring runner и training cleanup | `mapBase` не публикует tenant IDs; immutable до permanent delete; two-Organization/two-Club IDOR, concurrency и writer audit |
+| `ClientBases.originOrganizationId`, `originClubId` | server-owned source Club только для `visits_analytics`; manual bases получают `NULL/NULL` | provenance graph validation, immutable analytics filters, exact population resolver и DB triggers | public mapper публикует business `origin/originMetadata`, но не raw tenant IDs; immutable для analytics base; preview→base→task parity и forged provenance tests |
+| `CallTasks.organizationId`, `clubId` | club-local operational task root; base/direct/provider/runner writers получают tenant только из validated context | list/detail/report, task clients/attempts, dynamic sync, recurring runner, manager dashboard, realtime и constrained Telephony follow-up | `mapTask` скрывает raw tenant IDs; immutable до permitted permanent delete; snapshot/dynamic/runner concurrency, actor graph, Telephony link и writer audit |
+
+Dormant «future» fields, accidental client selectors или новые API-visible tenant fields не добавлены.
+
 ## Verification at feature handoff
 
 - Fresh isolated database: все `89/89` migrations и migration status `89 up`; production-shaped legacy backfill, exact deep-equal forced failure cleanup, down/up/reapply и mutation-free second-tenant rollback refusal — green.
-- Definition-aware migration matrix: `11/11` independent-style subtests (no-op/lookalike body, wrong timing/event/table, wrong FK columns/actions, wrong index order/uniqueness, wrong column nullability/default/type/precision, extra reserved artifact) с двумя Organizations, тремя Clubs, реальными rows и deep-equal full `INFORMATION_SCHEMA`/payload/count/attribution/SHA checksums — green.
+- Definition-aware migration и comprehensive DB/security/concurrency/IDOR/training matrix: `22/22`, включая exact canonical set из девяти `(table, column)` pairs, все `6/6` wrong-table cross-product cases, no-op/lookalike body, wrong timing/event/table, wrong FK/index/column definitions, extra reserved artifacts, production-shaped backfill, forced cleanup, down/up/reapply и second-tenant rollback refusal — green.
 - Account/Membership/Staff runtime + DB matrix покрывает обе one-sided-NULL стороны, unequal/missing/inactive/cross-Organization Staff, inactive Account/Membership/Organization/Club, revoked Club access, creator/assignee/attempt/training paths и ORM/raw/bulk INSERT/UPDATE. `NULL/NULL` valid compatibility — green.
 - Telephony follow-up matrix покрывает INSERT/UPDATE/raw/bulk `NULL` attribution bypass, cross-Organization/Club, inconsistent reparent, linked attribution clear/change, valid same-tenant link/reparent/clear и legacy `followUp=NULL` — green.
-- Feature 5.4 DB/security/concurrency/IDOR/training-cleanup matrix: `1/1` comprehensive DB-backed test green; historical analytics → preview → base → task population parity также green.
-- Full server suite с `--test-concurrency=1`: `498/498`, failures `0`.
-- Targeted foundation/realtime/provider/onboarding/telephony rerun: `116/116`.
+- Historical analytics → preview → base → task exact population parity: `1/1` green после отдельного DB-backed запуска с явной QA DB.
+- Full server suite с `--test-concurrency=1`: `507/507`, failures/skips `0`.
+- Six-role flag-on/off HTTP reconciliation для saved views, Client Bases, Call Tasks, Visits Analytics и Telephony list соответствует access matrix; missing tenant headers `400`, forged Organization `404`.
 - Client unchanged: `31/31` test files, `205/205` tests; lint and production build green.
 - Server typecheck and JS syntax checks green.
 - Tenant route audit: `284` endpoints, digest `373ec5dd4bb9389f11b9f516df6611d3e8b0036da6adde2c2fd76a019c1439aa`.
@@ -137,7 +150,7 @@ Final status: `N/A`. Итоговый diff не содержит файлов и
 
 ## Handoff boundaries
 
-- Independent QA отклонил reviewed parent `4b973484060183337475e88347c02f1d59a5a5be` по трём P1; remediation готова ровно одним локальным fix commit поверх этого parent и требует повторного independent QA. Feature не accepted и не promoted.
+- Independent QA отклонил reviewed parent `4b973484060183337475e88347c02f1d59a5a5be` по трём P1; remediation `bb35f000353bf623cb6c17db04a00521eaf83b27` и narrow pair-set fix `8b70e9df8edbb113d593b059a4d2280f2c2b9dea` приняты без P0–P3. Все три feature commits сохранены и fast-forwarded в SaaS integration без rewrite.
 - Второй production tenant по-прежнему hard-blocked; provisioning, billing и tenant switcher не входят в этот срез.
 - Telephony provider/call/recording/transcription roots остаются out of scope; проверена только уже существующая task link tenant parity.
-- Следующий разрешённый шаг: independent QA/release review exact feature commit. Push, merge, integration promotion и deploy требуют отдельного разрешения HQ.
+- Актуальный `origin/main` `bf902a7bf476b2a68e7bf0aff8ba83abea644912` уже входит в accepted feature history, поэтому reconciliation merge не потребовался. Следующий product slice, merge в `main` и deploy требуют отдельного решения HQ.
