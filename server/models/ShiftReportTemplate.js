@@ -24,14 +24,6 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       allowNull: true,
     },
-    appliesToRole: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
-    appliesToShiftType: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
     gracePeriodMinutes: {
       type: DataTypes.INTEGER,
       allowNull: false,

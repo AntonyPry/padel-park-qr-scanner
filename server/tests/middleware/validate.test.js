@@ -216,23 +216,34 @@ test('accepts manual shift payload used by staff page', () => {
 });
 
 test('accepts shift report template and answer payloads', () => {
+  const templateRequest = {
+    body: {
+      appliesToRole: 'admin',
+      appliesToShiftType: 'day',
+      description: '',
+      gracePeriodMinutes: '15',
+      name: 'Утренний отчет',
+      scheduleConfig: { times: ['09:00', '13:30'] },
+      scheduleType: 'daily_times',
+      status: 'active',
+    },
+    params: {},
+    query: {},
+  };
   const templateResult = runValidation(
     { body: apiSchemas.shiftReports.templateBody },
-    {
-      body: {
-        description: '',
-        gracePeriodMinutes: '15',
-        name: 'Утренний отчет',
-        scheduleConfig: { times: ['09:00', '13:30'] },
-        scheduleType: 'daily_times',
-        status: 'active',
-      },
-      params: {},
-      query: {},
-    },
+    templateRequest,
   );
   assert.equal(templateResult.nextCalled, true);
   assert.equal(templateResult.res.statusCode, null);
+  assert.deepEqual(templateRequest.body, {
+    description: '',
+    gracePeriodMinutes: '15',
+    name: 'Утренний отчет',
+    scheduleConfig: { times: ['09:00', '13:30'] },
+    scheduleType: 'daily_times',
+    status: 'active',
+  });
 
   const itemResult = runValidation(
     { body: apiSchemas.shiftReports.templateItemBody },

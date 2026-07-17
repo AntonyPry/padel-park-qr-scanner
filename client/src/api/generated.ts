@@ -1960,8 +1960,6 @@ export type ShiftReportTemplatesListQuery = {
   [key: string]: unknown;
 };
 export type ShiftReportTemplatesCreateBody = {
-  appliesToRole?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer" | "" | null;
-  appliesToShiftType?: string | "" | null;
   description?: string | "" | null;
   gracePeriodMinutes?: number | string | "" | null;
   name: string;
@@ -1976,14 +1974,11 @@ export type ShiftReportTemplatesCreateBody = {
   scheduleType: "once_daily" | "daily_times" | "interval_hours" | "shift_start" | "shift_end";
   sortOrder?: number | string | "" | null;
   status?: "active" | "archived";
-  [key: string]: unknown;
 };
 export type ShiftReportTemplatesUpdateParams = {
   id: number | string;
 };
 export type ShiftReportTemplatesUpdateBody = {
-  appliesToRole?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer" | "" | null;
-  appliesToShiftType?: string | "" | null;
   description?: string | "" | null;
   gracePeriodMinutes?: number | string | "" | null;
   name?: string;
@@ -1998,7 +1993,6 @@ export type ShiftReportTemplatesUpdateBody = {
   scheduleType?: "once_daily" | "daily_times" | "interval_hours" | "shift_start" | "shift_end";
   sortOrder?: number | string | "" | null;
   status?: "active" | "archived";
-  [key: string]: unknown;
 };
 export type ShiftReportTemplatesArchiveParams = {
   id: number | string;
