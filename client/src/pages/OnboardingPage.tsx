@@ -22,7 +22,14 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import {
+  Link,
+  matchPath,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import {
   cleanupOnboardingTrainingData,
   completeOnboardingTask,
@@ -1253,6 +1260,11 @@ function TaskDetailView({
 
 export default function OnboardingPage() {
   const { taskKey } = useParams<{ taskKey?: string }>();
+  const location = useLocation();
+  const locationTaskKey = matchPath(
+    '/admin/onboarding/:taskKey',
+    location.pathname,
+  )?.params.taskKey;
   const [searchParams, setSearchParams] = useSearchParams();
   const { account } = useAuth();
   const queryClient = useQueryClient();
@@ -1282,7 +1294,7 @@ export default function OnboardingPage() {
   });
 
   useEffect(() => {
-    if (!account?.role || !taskKey) return;
+    if (!account?.role || !taskKey || locationTaskKey !== taskKey) return;
 
     const activeQuest = getStoredActiveOnboardingQuest();
     if (activeQuest) {
@@ -1292,7 +1304,14 @@ export default function OnboardingPage() {
     void queryClient.invalidateQueries({
       queryKey: queryKeys.onboarding.task(taskKey, roleForQueryKey),
     });
-  }, [account?.role, queryClient, roleForQueryKey, taskKey]);
+  }, [
+    account?.role,
+    location.key,
+    locationTaskKey,
+    queryClient,
+    roleForQueryKey,
+    taskKey,
+  ]);
 
   const completeInstructionMutation = useMutation({
     mutationFn: (detail: OnboardingTaskDetail) =>
