@@ -704,7 +704,58 @@ async function restoreLegacyUnique(queryInterface, item) {
   });
 }
 
-async function cleanupInvocation(queryInterface, created) {
+function cleanupOwnershipError(message) {
+  return migrationError(
+    `${message}; operator repair is required before cleanup can be retried`,
+    'TENANT_CLIENT_MONEY_CLEANUP_OWNERSHIP_LOST',
+  );
+}
+
+function parseArtifactSignature(signature) {
+  try {
+    const rows = JSON.parse(signature);
+    return Array.isArray(rows) ? rows : null;
+  } catch (_error) {
+    return null;
+  }
+}
+
+async function captureRemovedLegacyUnique(queryInterface, item) {
+  const rows = await readArtifact(queryInterface, 'index', item);
+  const columnSignatures = {};
+  for (const column of item.columns) {
+    const columnRows = await readArtifact(queryInterface, 'column', {
+      name: column,
+      table: item.table,
+    });
+    if (columnRows.length === 0) {
+      throw migrationError(
+        `Cannot inventory legacy unique column ${item.table}.${column}`,
+      );
+    }
+    columnSignatures[column] = artifactSignature('column', columnRows);
+  }
+  return {
+    ...item,
+    columnSignatures,
+    signature: artifactSignature('index', rows),
+  };
+}
+
+async function legacyUniqueHasDuplicates(queryInterface, item) {
+  const quotedColumns = item.columns.map((column) => `\`${column}\``);
+  const rows = await selectRows(queryInterface, `
+    SELECT 1 AS duplicate
+    FROM \`${item.table}\`
+    WHERE ${quotedColumns.map((column) => `${column} IS NOT NULL`).join(' AND ')}
+    GROUP BY ${quotedColumns.join(',')}
+    HAVING COUNT(*)>1
+    LIMIT 1
+  `);
+  return rows.length > 0;
+}
+
+async function preflightCleanupInvocation(queryInterface, created) {
   const items = [
     ...created.column.map((item) => ['column', item]),
     ...created.index.map((item) => ['index', item]),
@@ -717,12 +768,62 @@ async function cleanupInvocation(queryInterface, created) {
       rows.length === 0 ||
       artifactSignature(kind, rows) !== item.signature
     ) {
-      throw migrationError(
+      throw cleanupOwnershipError(
         `Client money cleanup ownership lost for ${kind} ${item.table}.${item.name}`,
-        'TENANT_CLIENT_MONEY_CLEANUP_OWNERSHIP_LOST',
       );
     }
   }
+
+  for (const item of created.removedLegacyUnique) {
+    const capturedRows = parseArtifactSignature(item.signature);
+    if (
+      !capturedRows ||
+      !capturedRows.every((row) =>
+        sameIdentifier(rowValue(row, 'INDEX_NAME'), item.name)) ||
+      !indexIsCanonical(capturedRows, {
+        columns: item.columns,
+        table: item.table,
+        unique: true,
+      })
+    ) {
+      throw cleanupOwnershipError(
+        `Captured legacy unique signature is not restorable for ${item.table}.${item.name}`,
+      );
+    }
+
+    for (const column of item.columns) {
+      const rows = await readArtifact(queryInterface, 'column', {
+        name: column,
+        table: item.table,
+      });
+      if (
+        rows.length === 0 ||
+        !item.columnSignatures ||
+        artifactSignature('column', rows) !== item.columnSignatures[column]
+      ) {
+        throw cleanupOwnershipError(
+          `Legacy unique column ownership lost for ${item.table}.${column}`,
+        );
+      }
+    }
+
+    const collision = await readArtifact(queryInterface, 'index', item);
+    if (collision.length > 0) {
+      throw cleanupOwnershipError(
+        `Legacy unique name is no longer free for ${item.table}.${item.name}`,
+      );
+    }
+    if (await legacyUniqueHasDuplicates(queryInterface, item)) {
+      throw cleanupOwnershipError(
+        `Legacy unique data is no longer restorable for ${item.table}.${item.name}`,
+      );
+    }
+  }
+}
+
+async function cleanupInvocation(queryInterface, created) {
+  await preflightCleanupInvocation(queryInterface, created);
+
   for (const item of [...created.trigger].reverse()) {
     await queryInterface.sequelize.query(`DROP TRIGGER \`${item.name}\``);
   }
@@ -733,19 +834,11 @@ async function cleanupInvocation(queryInterface, created) {
     await queryInterface.removeIndex(item.table, item.name);
   }
   for (const item of [...created.removedLegacyUnique].reverse()) {
-    const collision = await readArtifact(queryInterface, 'index', item);
-    if (collision.length > 0) {
-      throw migrationError(
-        `Cannot restore legacy unique ${item.table}.${item.name}`,
-        'TENANT_CLIENT_MONEY_CLEANUP_OWNERSHIP_LOST',
-      );
-    }
     await restoreLegacyUnique(queryInterface, item);
     const restored = await readArtifact(queryInterface, 'index', item);
     if (artifactSignature('index', restored) !== item.signature) {
-      throw migrationError(
+      throw cleanupOwnershipError(
         `Legacy unique restoration changed ${item.table}.${item.name}`,
-        'TENANT_CLIENT_MONEY_CLEANUP_OWNERSHIP_LOST',
       );
     }
   }
@@ -841,11 +934,7 @@ module.exports = {
       maybeFail('after_triggers');
 
       for (const item of LEGACY_UNIQUES) {
-        const rows = await readArtifact(queryInterface, 'index', item);
-        const tracked = {
-          ...item,
-          signature: artifactSignature('index', rows),
-        };
+        const tracked = await captureRemovedLegacyUnique(queryInterface, item);
         await queryInterface.removeIndex(item.table, item.name);
         created.removedLegacyUnique.push(tracked);
       }
@@ -930,9 +1019,12 @@ module.exports = {
     LEGACY_UNIQUES,
     TRIGGERS,
     artifactSignature,
+    captureRemovedLegacyUnique,
     classifyState,
     cleanupInvocation,
+    legacyUniqueHasDuplicates,
     normalizeSql,
+    preflightCleanupInvocation,
     readArtifact,
   },
 };

@@ -75,6 +75,128 @@ async function selectOne(sequelize, sql, replacements = {}) {
   return rows[0] || null;
 }
 
+async function captureCleanupPlan(queryInterface, migration, removedLegacyUnique) {
+  const capture = async (kind, items) => Promise.all(items.map(async (item) => {
+    const rows = await migration.__testing.readArtifact(
+      queryInterface,
+      kind,
+      item,
+    );
+    assert.ok(rows.length > 0, `missing ${kind} ${item.table}.${item.name}`);
+    return {
+      ...item,
+      signature: migration.__testing.artifactSignature(kind, rows),
+    };
+  }));
+  return {
+    column: await capture('column', migration.__testing.COLUMNS.map((item) => ({
+      name: item.column,
+      table: item.table,
+    }))),
+    foreignKey: await capture(
+      'foreignKey',
+      Object.entries(migration.__testing.FOREIGN_KEYS).map(([name, item]) => ({
+        name,
+        table: item.table,
+      })),
+    ),
+    index: await capture(
+      'index',
+      Object.entries(migration.__testing.INDEXES).map(([name, item]) => ({
+        name,
+        table: item.table,
+      })),
+    ),
+    removedLegacyUnique,
+    trigger: await capture(
+      'trigger',
+      Object.entries(migration.__testing.TRIGGERS).map(([name, item]) => ({
+        name,
+        table: item.table,
+      })),
+    ),
+  };
+}
+
+async function snapshotCleanupState(sequelize, migration) {
+  const schemaQueries = {
+    columns: `SELECT TABLE_NAME,COLUMN_NAME,ORDINAL_POSITION,COLUMN_TYPE,
+      IS_NULLABLE,COLUMN_DEFAULT,EXTRA,CHARACTER_SET_NAME,COLLATION_NAME,
+      COLUMN_COMMENT,GENERATION_EXPRESSION
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,ORDINAL_POSITION`,
+    foreignKeys: `SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,
+      k.REFERENCED_TABLE_NAME,k.REFERENCED_COLUMN_NAME,
+      r.UPDATE_RULE,r.DELETE_RULE
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
+      JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r
+        ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA
+       AND r.TABLE_NAME=k.TABLE_NAME
+       AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
+      WHERE k.CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION`,
+    indexes: `SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,SEQ_IN_INDEX,COLUMN_NAME,
+      SUB_PART,COLLATION,INDEX_TYPE
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX`,
+    triggers: `SELECT TRIGGER_NAME,EVENT_OBJECT_TABLE,EVENT_MANIPULATION,
+      ACTION_TIMING,ACTION_STATEMENT
+      FROM INFORMATION_SCHEMA.TRIGGERS
+      WHERE TRIGGER_SCHEMA=DATABASE()
+      ORDER BY TRIGGER_NAME`,
+  };
+  const informationSchema = {};
+  for (const [key, sql] of Object.entries(schemaQueries)) {
+    informationSchema[key] = await sequelize.query(sql, {
+      type: SequelizePackage.QueryTypes.SELECT,
+    });
+  }
+  const businessTables = [
+    'Organizations',
+    'Clubs',
+    ...new Set(migration.__testing.COLUMNS.map((item) => item.table)),
+  ];
+  const [checksums] = await sequelize.query(
+    `CHECKSUM TABLE ${businessTables.map((table) => `\`${table}\``).join(',')} EXTENDED`,
+  );
+  return JSON.stringify({ checksums, informationSchema });
+}
+
+async function assertCleanupRefusalPreserves(
+  sequelize,
+  queryInterface,
+  migration,
+  cleanupPlan,
+) {
+  const before = await snapshotCleanupState(sequelize, migration);
+  await assert.rejects(
+    migration.__testing.cleanupInvocation(queryInterface, cleanupPlan),
+    (error) =>
+      error.code === 'TENANT_CLIENT_MONEY_CLEANUP_OWNERSHIP_LOST' &&
+      /operator repair/.test(error.message),
+  );
+  assert.equal(await snapshotCleanupState(sequelize, migration), before);
+}
+
+async function assertTrackedArtifact(
+  queryInterface,
+  migration,
+  kind,
+  tracked,
+) {
+  const rows = await migration.__testing.readArtifact(
+    queryInterface,
+    kind,
+    tracked,
+  );
+  assert.equal(
+    migration.__testing.artifactSignature(kind, rows),
+    tracked.signature,
+  );
+}
+
 function restoreEnv(previous) {
   for (const [name, value] of Object.entries(previous)) {
     if (value === undefined) delete process.env[name];
@@ -161,6 +283,242 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
       delete process.env.TENANT_CLIENT_MONEY_MIGRATION_FAIL_STEP;
       assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     }
+
+    const removedLegacyUnique = await Promise.all(
+      migration.__testing.LEGACY_UNIQUES.map((item) =>
+        migration.__testing.captureRemovedLegacyUnique(queryInterface, item)),
+    );
+    await migration.up(queryInterface, SequelizePackage);
+    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
+    const cleanupPlan = await captureCleanupPlan(
+      queryInterface,
+      migration,
+      removedLegacyUnique,
+    );
+
+    const changedColumn = cleanupPlan.column.find((item) =>
+      item.table === 'Finances' && item.name === 'organizationId');
+    await schema.query(
+      "ALTER TABLE `Finances` MODIFY COLUMN `organizationId` INT NULL COMMENT 'ownership loss'",
+    );
+    await assertCleanupRefusalPreserves(
+      schema,
+      queryInterface,
+      migration,
+      cleanupPlan,
+    );
+    await schema.query(
+      "ALTER TABLE `Finances` MODIFY COLUMN `organizationId` INT NULL COMMENT ''",
+    );
+    await assertTrackedArtifact(
+      queryInterface,
+      migration,
+      'column',
+      changedColumn,
+    );
+
+    const changedIndex = cleanupPlan.index.find((item) =>
+      item.name === 'certificates_club_client_status_expires_idx');
+    await queryInterface.removeIndex(changedIndex.table, changedIndex.name);
+    await queryInterface.addIndex(
+      changedIndex.table,
+      ['clubId', 'status', 'clientId', 'expiresAt'],
+      { name: changedIndex.name },
+    );
+    await assertCleanupRefusalPreserves(
+      schema,
+      queryInterface,
+      migration,
+      cleanupPlan,
+    );
+    await queryInterface.removeIndex(changedIndex.table, changedIndex.name);
+    await queryInterface.addIndex(
+      changedIndex.table,
+      migration.__testing.INDEXES[changedIndex.name].columns,
+      { name: changedIndex.name },
+    );
+    await assertTrackedArtifact(
+      queryInterface,
+      migration,
+      'index',
+      changedIndex,
+    );
+
+    const changedForeignKey = cleanupPlan.foreignKey.find((item) =>
+      item.name === 'finances_organization_fk');
+    const foreignKeyDefinition =
+      migration.__testing.FOREIGN_KEYS[changedForeignKey.name];
+    const addFinanceOrganizationForeignKey = (onDelete) =>
+      queryInterface.addConstraint(changedForeignKey.table, {
+        fields: [foreignKeyDefinition.column],
+        name: changedForeignKey.name,
+        onDelete,
+        onUpdate: foreignKeyDefinition.onUpdate,
+        references: {
+          field: foreignKeyDefinition.referencedColumn,
+          table: foreignKeyDefinition.referencedTable,
+        },
+        type: 'foreign key',
+      });
+    await queryInterface.removeConstraint(
+      changedForeignKey.table,
+      changedForeignKey.name,
+    );
+    await addFinanceOrganizationForeignKey('CASCADE');
+    await assertCleanupRefusalPreserves(
+      schema,
+      queryInterface,
+      migration,
+      cleanupPlan,
+    );
+    await queryInterface.removeConstraint(
+      changedForeignKey.table,
+      changedForeignKey.name,
+    );
+    await addFinanceOrganizationForeignKey(foreignKeyDefinition.onDelete);
+    await assertTrackedArtifact(
+      queryInterface,
+      migration,
+      'foreignKey',
+      changedForeignKey,
+    );
+
+    const legacyNameCollision = removedLegacyUnique.find((item) =>
+      item.table === 'EvotorSaleSettings' && item.name === 'itemName');
+    await queryInterface.addIndex(
+      legacyNameCollision.table,
+      ['saleIntent'],
+      { name: legacyNameCollision.name },
+    );
+    await assertCleanupRefusalPreserves(
+      schema,
+      queryInterface,
+      migration,
+      cleanupPlan,
+    );
+    await queryInterface.removeIndex(
+      legacyNameCollision.table,
+      legacyNameCollision.name,
+    );
+
+    const changedTrigger = cleanupPlan.trigger.find((item) =>
+      item.name === 'evotor_sale_settings_tenant_bi');
+    const triggerDefinition = migration.__testing.TRIGGERS[changedTrigger.name];
+    const restorationConflict = removedLegacyUnique.find((item) =>
+      item.table === 'SubscriptionTypes' &&
+      item.name === 'subscription_types_name_unique');
+    await schema.query(`DROP TRIGGER \`${changedTrigger.name}\``);
+    await schema.query(
+      `CREATE TRIGGER \`${changedTrigger.name}\` BEFORE INSERT ON ` +
+        `\`${triggerDefinition.table}\` FOR EACH ROW BEGIN SET @ownership_loss=1; END`,
+    );
+    await queryInterface.addIndex(
+      restorationConflict.table,
+      ['status'],
+      { name: restorationConflict.name },
+    );
+    await assertCleanupRefusalPreserves(
+      schema,
+      queryInterface,
+      migration,
+      cleanupPlan,
+    );
+    await queryInterface.removeIndex(
+      restorationConflict.table,
+      restorationConflict.name,
+    );
+    await schema.query(`DROP TRIGGER \`${changedTrigger.name}\``);
+    await schema.query(
+      `CREATE TRIGGER \`${changedTrigger.name}\` BEFORE ` +
+        `${triggerDefinition.event} ON \`${triggerDefinition.table}\` FOR EACH ROW ` +
+        triggerDefinition.body,
+    );
+    await assertTrackedArtifact(
+      queryInterface,
+      migration,
+      'trigger',
+      changedTrigger,
+    );
+
+    const defaultTenant = await selectOne(schema, `
+      SELECT o.id AS organizationId,c.id AS clubId
+      FROM Organizations o JOIN Clubs c ON c.organizationId=o.id
+      WHERE o.slug=:organizationSlug AND c.slug=:clubSlug
+    `, {
+      clubSlug: DEFAULT_CLUB_SLUG,
+      organizationSlug: DEFAULT_ORGANIZATION_SLUG,
+    });
+    const duplicateSuffix = `${process.pid}-${Date.now()}`;
+    const duplicateNow = new Date();
+    await queryInterface.bulkInsert('Clubs', [{
+      createdAt: duplicateNow,
+      name: 'Feature 7.1 cleanup duplicate club',
+      organizationId: defaultTenant.organizationId,
+      slug: `feature-7-1-cleanup-${duplicateSuffix}`,
+      status: 'active',
+      timezone: 'Europe/Moscow',
+      updatedAt: duplicateNow,
+    }]);
+    const duplicateClub = await selectOne(
+      schema,
+      'SELECT id FROM Clubs WHERE organizationId=:organizationId AND slug=:slug',
+      {
+        organizationId: defaultTenant.organizationId,
+        slug: `feature-7-1-cleanup-${duplicateSuffix}`,
+      },
+    );
+    const duplicateItemName = `Feature 7.1 duplicate ${duplicateSuffix}`;
+    await queryInterface.bulkInsert('EvotorSaleSettings', [
+      {
+        clubId: defaultTenant.clubId,
+        createdAt: duplicateNow,
+        itemName: duplicateItemName,
+        organizationId: defaultTenant.organizationId,
+        saleIntent: 'normal',
+        updatedAt: duplicateNow,
+      },
+      {
+        clubId: duplicateClub.id,
+        createdAt: duplicateNow,
+        itemName: duplicateItemName,
+        organizationId: defaultTenant.organizationId,
+        saleIntent: 'normal',
+        updatedAt: duplicateNow,
+      },
+    ]);
+    assert.equal(
+      await migration.__testing.legacyUniqueHasDuplicates(
+        queryInterface,
+        legacyNameCollision,
+      ),
+      true,
+    );
+    await assertCleanupRefusalPreserves(
+      schema,
+      queryInterface,
+      migration,
+      cleanupPlan,
+    );
+    await queryInterface.bulkDelete(
+      'EvotorSaleSettings',
+      { itemName: duplicateItemName },
+    );
+    await queryInterface.bulkDelete('Clubs', { id: duplicateClub.id });
+
+    await migration.__testing.cleanupInvocation(queryInterface, cleanupPlan);
+    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    for (const item of removedLegacyUnique) {
+      await assertTrackedArtifact(
+        queryInterface,
+        migration,
+        'index',
+        item,
+      );
+    }
+    assert.equal(JSON.stringify(await schema.query(
+      'SELECT id,name,status FROM SubscriptionTypes ORDER BY id',
+      { type: SequelizePackage.QueryTypes.SELECT },
+    )), legacyTypes);
 
     await migration.up(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
