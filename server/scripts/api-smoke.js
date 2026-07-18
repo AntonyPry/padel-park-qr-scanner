@@ -42,12 +42,27 @@ async function login() {
   const data = await response.json();
   const token = data.token || data.data?.token;
   if (!token) throw new Error('Login response does not contain token');
-  return token;
+  const discoveryResponse = await fetch(`${API_URL}/auth/me/memberships`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!discoveryResponse.ok) {
+    throw new Error(`Tenant discovery failed: ${discoveryResponse.status}`);
+  }
+  const discovery = await discoveryResponse.json();
+  const context = discovery.recommendedContext;
+  if (!context?.organizationId || !context?.clubId) {
+    throw new Error('Smoke account has no exact recommended Organization/Club');
+  }
+  return { context, token };
 }
 
-async function checkEndpoint(token, [name, url]) {
+async function checkEndpoint(session, [name, url]) {
   const startedAt = Date.now();
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  const headers = session ? {
+    Authorization: `Bearer ${session.token}`,
+    'X-Organization-Id': String(session.context.organizationId),
+    'X-Club-Id': String(session.context.clubId),
+  } : {};
   const response = await fetch(`${API_URL}${url}`, {
     headers,
   });
@@ -99,7 +114,7 @@ async function checkRequiredOpenApiOperations() {
 }
 
 async function main() {
-  const token = await login();
+  const session = await login();
   const results = [];
 
   for (const check of PUBLIC_CHECKS) {
@@ -108,7 +123,7 @@ async function main() {
   results.push(await checkRequiredOpenApiOperations());
 
   for (const check of CHECKS) {
-    results.push(await checkEndpoint(token, check));
+    results.push(await checkEndpoint(session, check));
   }
 
   console.log(JSON.stringify({ apiUrl: API_URL, results }, null, 2));

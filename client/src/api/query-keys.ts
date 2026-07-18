@@ -221,7 +221,7 @@ export const queryKeys = {
     metrics: () => key('organization', 'onboarding', 'metrics'),
     trainingData: (role?: string | null) =>
       key('club', 'onboarding', 'training-data', role || 'all'),
-    trainingMode: () => key('membership', 'onboarding', 'training-mode'),
+    trainingMode: () => key('club', 'onboarding', 'training-mode'),
   },
   payroll: domainKeys('organization', 'payroll'),
   prepayments: domainKeys('club', 'prepayments'),

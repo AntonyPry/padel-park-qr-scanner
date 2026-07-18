@@ -445,7 +445,7 @@ async function createRecord(clientId, data, actor, options = {}) {
       throw appError('Заполните упражнения или заметку');
     }
     const trainingMarker = options.trainingMarker ||
-      await onboardingService.getTrainingDataMarker(authorityActor);
+      await onboardingService.getTrainingDataMarker(authorityActor, options.tenant);
     const created = await db.TrainingNote.create(
       {
         clubId: context.clubId,
@@ -483,6 +483,7 @@ async function create(clientId, data, actor, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'training_note.created', {
     entityId: trainingNote.id,
     entityType: 'training_note',
+    tenant,
     payload: {
       clientId: Number(clientId),
       level: trainingNote.level,
@@ -493,6 +494,7 @@ async function create(clientId, data, actor, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'training_level.updated', {
     entityId: clientId,
     entityType: 'client',
+    tenant,
     payload: {
       clientId: Number(clientId),
       level: trainingNote.level,
@@ -604,6 +606,7 @@ async function update(noteId, data, actor, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'training_note.updated', {
     entityId: note.id,
     entityType: 'training_note',
+    tenant,
     payload: {
       clientId: note.userId,
       level: note.level,

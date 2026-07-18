@@ -15,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
     isTraining: { allowNull: false, defaultValue: false, type: DataTypes.BOOLEAN },
     trainingRole: { allowNull: true, type: DataTypes.STRING },
     trainingAccountId: { allowNull: true, type: DataTypes.INTEGER },
+    trainingSessionId: { allowNull: true, type: DataTypes.UUID },
   });
 
   ShiftCashExpense.associate = (models) => {

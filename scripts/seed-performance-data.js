@@ -4,6 +4,14 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const db = require(path.join(ROOT, 'server', 'models'));
+const accountLifecycle = require(path.join(
+  ROOT,
+  'server',
+  'src',
+  'services',
+  'account-lifecycle.service',
+));
+let fixtureContext = null;
 
 const DEFAULT_OPTIONS = {
   callTaskClientCount: 15000,
@@ -80,6 +88,24 @@ async function bulkCreateInChunks(model, rows, options = {}) {
   }
 }
 
+async function resolveFixtureContext() {
+  const foundation = await db.sequelize.transaction((transaction) =>
+    accountLifecycle._private.lockDefaultFoundation(transaction));
+  const membership = await db.Membership.findOne({
+    order: [['id', 'ASC']],
+    where: {
+      organizationId: foundation.organization.id,
+      status: 'active',
+    },
+  });
+  if (!membership) throw new Error('Performance fixture requires an active default Membership');
+  return Object.freeze({
+    accountId: Number(membership.accountId),
+    clubId: Number(foundation.club.id),
+    organizationId: Number(foundation.organization.id),
+  });
+}
+
 function dateFromIndex(index, hourOffset = 0) {
   const date = new Date(Date.UTC(2026, 4, 1, 6, 0, 0));
   date.setUTCDate(date.getUTCDate() + (index % 90));
@@ -92,6 +118,7 @@ async function cleanup() {
     attributes: ['id'],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
       phone: {
         [db.Sequelize.Op.like]: '+7988%',
       },
@@ -103,6 +130,8 @@ async function cleanup() {
     attributes: ['id'],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       title: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
@@ -114,6 +143,8 @@ async function cleanup() {
     attributes: ['id'],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       name: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
@@ -149,7 +180,10 @@ async function cleanup() {
 
   if (userIds.length > 0) {
     await db.TrainingNote.destroy({
-      where: { userId: { [db.Sequelize.Op.in]: userIds } },
+      where: {
+        clubId: fixtureContext.clubId,
+        userId: { [db.Sequelize.Op.in]: userIds },
+      },
     });
     await db.Visit.destroy({
       where: { userId: { [db.Sequelize.Op.in]: userIds } },
@@ -164,6 +198,8 @@ async function cleanup() {
       attributes: ['id'],
       raw: true,
       where: {
+        organizationId: fixtureContext.organizationId,
+        clubId: fixtureContext.clubId,
         evotorId: {
           [db.Sequelize.Op.like]: 'perf-%',
         },
@@ -188,6 +224,7 @@ async function seedClients(options) {
     const isArchived = index % 23 === 0;
     return {
       createdAt: dateFromIndex(index),
+      organizationId: fixtureContext.organizationId,
       name: `[perf] Клиент ${serial}`,
       phone: `+7988${serial}`,
       phoneNormalized: `988${serial}`,
@@ -207,6 +244,7 @@ async function seedClients(options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
       phone: {
         [db.Sequelize.Op.like]: '+7988%',
       },
@@ -221,6 +259,8 @@ async function seedVisits(users, options) {
     const scannedAt = dateFromIndex(index, index % 5);
     return {
       category: VISIT_CATEGORIES[index % VISIT_CATEGORIES.length],
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       clientEventId: `perf-event-${index + 1}`,
       createdAt: scannedAt,
       entrySource: index % 5 === 0 ? 'manual' : 'qr',
@@ -236,12 +276,13 @@ async function seedVisits(users, options) {
 
 async function seedTrainingNotes(users) {
   const activeUsers = users.filter((user) => user.status === 'active');
-  const account = await db.Account.findOne({ order: [['id', 'ASC']] });
+  const account = await db.Account.findByPk(fixtureContext.accountId);
   if (!account) return;
 
   const levels = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
   const rows = activeUsers.slice(0, 2500).map((user, index) => ({
     createdAt: dateFromIndex(index),
+    clubId: fixtureContext.clubId,
     exercises: 'Разминка, удары справа/слева, игра на счет',
     level: levels[index % levels.length],
     note: `[perf] Тренировочная заметка ${index + 1}`,
@@ -269,6 +310,8 @@ async function seedReceipts(options) {
     const isCash = index % 4 === 0;
 
     receipts.push({
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       cash: isCash ? totalAmount : 0,
       cashless: isCash ? 0 : totalAmount,
       createdAt: dateTime,
@@ -321,6 +364,8 @@ async function seedReceipts(options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       evotorId: {
         [db.Sequelize.Op.like]: 'perf-%',
       },
@@ -345,7 +390,7 @@ async function seedReceipts(options) {
 async function seedCallTasks(users, options) {
   const now = new Date();
   const activeUsers = users.filter((user) => user.status === 'active');
-  const account = await db.Account.findOne({ order: [['id', 'ASC']] });
+  const account = await db.Account.findByPk(fixtureContext.accountId);
   const baseDefinitions = [
     ['[perf] Все активные', { status: 'active', segment: 'all' }],
     ['[perf] Новички', { status: 'active', segment: 'new' }],
@@ -357,6 +402,8 @@ async function seedCallTasks(users, options) {
   await db.ClientBase.bulkCreate(
     baseDefinitions.map(([name, filters], index) => ({
       createdAt: now,
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       createdByAccountId: account?.id || null,
       description: '[perf] Нагрузочная база',
       filters,
@@ -380,6 +427,8 @@ async function seedCallTasks(users, options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       name: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
@@ -390,6 +439,8 @@ async function seedCallTasks(users, options) {
     const base = bases[index % bases.length];
     tasks.push({
       assignedToAccountId: account?.id || null,
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       clientBaseId: base.id,
       createdAt: now,
       createdByAccountId: account?.id || null,
@@ -409,6 +460,8 @@ async function seedCallTasks(users, options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       title: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
@@ -472,6 +525,7 @@ async function seedCallTasks(users, options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  fixtureContext = await resolveFixtureContext();
   console.log('Cleaning previous [perf] data...');
   await cleanup();
   if (options.cleanupOnly) {
@@ -506,10 +560,20 @@ async function main() {
   await db.sequelize.close();
 }
 
-main().catch(async (error) => {
-  console.error(error);
-  try {
-    await db.sequelize.close();
-  } catch {}
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(async (error) => {
+    console.error(error);
+    try {
+      await db.sequelize.close();
+    } catch {}
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  _private: {
+    cleanup,
+    parseArgs,
+    resolveFixtureContext,
+  },
+};

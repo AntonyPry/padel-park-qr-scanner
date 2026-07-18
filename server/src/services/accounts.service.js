@@ -213,6 +213,7 @@ async function create(actor, data, tenant = null) {
     await onboardingService.recordEventSafe(actor, 'account.created', {
       entityId: account.id,
       entityType: 'account',
+      tenant,
       payload: {
         role,
         staffId,

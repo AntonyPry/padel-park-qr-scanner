@@ -43,12 +43,9 @@ const WORKER_ENDPOINT_IDS = new Set([
 
 const MEMBERSHIP_ENDPOINT_IDS = new Set([
   'onboarding.overview',
-  'onboarding.trainingMode',
-  'onboarding.trainingModeUpdate',
   'onboarding.taskDetail',
   'onboarding.completeTask',
   'onboarding.lessonRead',
-  'onboarding.practiceStart',
   'onboarding.practiceStep',
   'onboarding.quizAttempt',
   'onboarding.resetProgress',
@@ -119,6 +116,9 @@ const CLUB_ENDPOINT_PREFIXES = Object.freeze([
 ]);
 
 const CLUB_ENDPOINT_IDS = new Set([
+  'onboarding.trainingMode',
+  'onboarding.trainingModeUpdate',
+  'onboarding.practiceStart',
   'onboarding.trainingData',
   'onboarding.trainingDataCleanup',
   'onboarding.recordEvent',
@@ -172,7 +172,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  'bcd860009ec791af401f3d8b0904103ba52c357e729a8078aef87e651427ade3';
+  '669189de4b6d59b4525d1e00ef24b446b5924857a36958ef6019e8160a32e7f6';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

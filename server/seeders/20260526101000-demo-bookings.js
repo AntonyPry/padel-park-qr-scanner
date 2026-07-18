@@ -1,5 +1,10 @@
 'use strict';
 
+const {
+  DEFAULT_CLUB_SLUG,
+  DEFAULT_ORGANIZATION_SLUG,
+} = require('../src/tenant-foundation/constants');
+
 function atTime(date, hour, minute = 0) {
   const value = new Date(date);
   value.setHours(hour, minute, 0, 0);
@@ -21,12 +26,29 @@ async function resolveTenantScope(queryInterface) {
     `SELECT organization.id AS organizationId, club.id AS clubId
        FROM Organizations organization
        JOIN Clubs club ON club.organizationId = organization.id
-      WHERE organization.slug = 'padel-park'
+      WHERE organization.slug = :organizationSlug
         AND organization.status = 'active'
-        AND club.slug = 'padel-park'
+        AND club.slug = :clubSlug
         AND club.status = 'active'`,
+    {
+      replacements: {
+        clubSlug: DEFAULT_CLUB_SLUG,
+        organizationSlug: DEFAULT_ORGANIZATION_SLUG,
+      },
+    },
   );
-  if (rows.length !== 1) throw new Error('Demo bookings require the exact default tenant');
+  const [[counts]] = await queryInterface.sequelize.query(
+    'SELECT (SELECT COUNT(*) FROM Organizations) organizations,(SELECT COUNT(*) FROM Clubs) clubs',
+  );
+  if (
+    rows.length !== 1 ||
+    Number(counts.organizations) !== 1 ||
+    Number(counts.clubs) !== 1
+  ) {
+    const error = new Error('Demo bookings require the exact default tenant');
+    error.code = 'TENANT_SEEDER_DEFAULT_ONLY';
+    throw error;
+  }
   return {
     insert: rows[0],
     predicate: 'organizationId = :organizationId AND clubId = :clubId AND ',
@@ -52,7 +74,12 @@ module.exports = {
       { replacements: tenant.replacements },
     );
     const [accounts] = await queryInterface.sequelize.query(
-      "SELECT id FROM Accounts WHERE status = 'active' ORDER BY id ASC LIMIT 1",
+      `SELECT account.id FROM Accounts account
+       JOIN Memberships membership ON membership.accountId=account.id
+       WHERE membership.organizationId=:organizationId
+         AND membership.status='active' AND account.status='active'
+       ORDER BY account.id ASC LIMIT 1`,
+      { replacements: tenant.replacements },
     );
     if (courts.length < 2 || clients.length < 2) return;
 
@@ -128,9 +155,9 @@ module.exports = {
   async down(queryInterface) {
     const tenant = await resolveTenantScope(queryInterface);
     await queryInterface.sequelize.query(
-      `DELETE history FROM BookingChangeLogs history
-        JOIN Bookings booking ON booking.id = history.bookingId
-       WHERE ${tenant.insert.organizationId ? 'booking.organizationId = :organizationId AND booking.clubId = :clubId AND ' : ''}history.reason = 'Demo seed'`,
+      `DELETE h FROM BookingChangeLogs AS h
+        JOIN Bookings AS b ON b.id = h.bookingId
+       WHERE ${tenant.insert.organizationId ? 'b.organizationId = :organizationId AND b.clubId = :clubId AND ' : ''}h.reason = 'Demo seed'`,
       { replacements: tenant.replacements },
     );
     await queryInterface.sequelize.query(

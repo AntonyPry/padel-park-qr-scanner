@@ -25,7 +25,11 @@ class FinanceController {
 
   async addManualFinance(req, res) {
     try {
-      const record = await financeService.createManualRecord(req.body, req.account);
+      const record = await financeService.createManualRecord(
+        req.body,
+        req.account,
+        req.tenant,
+      );
       res.status(201).json(record);
     } catch (error) {
       sendError(res, error, 'Ошибка добавления записи');
@@ -35,7 +39,12 @@ class FinanceController {
   async exportFinance(req, res) {
     try {
       const { from, to } = req.query;
-      const file = await financeService.exportFinanceReport(from, to, req.account);
+      const file = await financeService.exportFinanceReport(
+        from,
+        to,
+        req.account,
+        req.tenant,
+      );
       sendXlsx(res, file);
     } catch (error) {
       sendError(res, error, 'Ошибка экспорта финансового отчета');

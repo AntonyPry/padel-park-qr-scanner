@@ -208,11 +208,11 @@ function serializeExpense(expense) {
 
 function contextKeyForMarker(marker) {
   if (!marker?.isTraining) return 'production';
-  return `training:${Number(marker.trainingAccountId)}:${marker.trainingRole}`;
+  return `training:${marker.trainingSessionId}`;
 }
 
-async function getDataContext(account) {
-  const marker = await onboardingService.getTrainingDataMarker(account);
+async function getDataContext(account, tenant) {
+  const marker = await onboardingService.getTrainingDataMarker(account, tenant);
   return { contextKey: contextKeyForMarker(marker), marker };
 }
 
@@ -230,7 +230,8 @@ function assertTrainingScopeMatches(row, marker) {
   if (
     marker.isTraining &&
     (Number(raw.trainingAccountId) !== Number(marker.trainingAccountId) ||
-      raw.trainingRole !== marker.trainingRole)
+      raw.trainingRole !== marker.trainingRole ||
+      raw.trainingSessionId !== marker.trainingSessionId)
   ) {
     throw appError('Кассовые данные не найдены', 404);
   }
@@ -366,7 +367,7 @@ async function getActiveCash(account, tenant) {
   const boundary = await resolveBoundary(account, tenant);
   const [shift, context] = await Promise.all([
     findActiveShift({ context: boundary.context }),
-    getDataContext(boundary.account),
+    getDataContext(boundary.account, tenant),
   ]);
   if (!shift) {
     return {
@@ -413,7 +414,7 @@ async function saveOpening(data, account, tenant) {
       lock: true,
       transaction,
     });
-    const context = await getDataContext(boundary.account);
+    const context = await getDataContext(boundary.account, tenant);
     const shift = await findActiveShift({
       context: boundary.context,
       transaction,
@@ -451,6 +452,7 @@ async function saveOpening(data, account, tenant) {
   await onboardingService.recordEventSafe(result.account, 'shift_cash.opening_recorded', {
     entityId: result.sessionId,
     entityType: 'shift_cash_session',
+    tenant,
     payload: { shiftId: result.shiftId },
   });
   return getActiveCash(account, tenant);
@@ -487,7 +489,7 @@ async function createExpense(data, account, tenant) {
       lock: true,
       transaction,
     });
-    const context = await getDataContext(boundary.account);
+    const context = await getDataContext(boundary.account, tenant);
     const shift = await findActiveShift({
       context: boundary.context,
       transaction,
@@ -508,7 +510,7 @@ async function createExpense(data, account, tenant) {
         date: shift.date,
       },
       boundary.account,
-      { trainingMarker: context.marker, transaction },
+      { tenant, trainingMarker: context.marker, transaction },
     );
     const expense = await db.ShiftCashExpense.create(
       {
@@ -545,6 +547,7 @@ async function createExpense(data, account, tenant) {
   await onboardingService.recordEventSafe(result.account, 'shift_cash.expense_created', {
     entityId: result.expenseId,
     entityType: 'shift_cash_expense',
+    tenant,
     payload: { shiftId: result.shiftId },
   });
   return {
@@ -553,7 +556,7 @@ async function createExpense(data, account, tenant) {
   };
 }
 
-async function loadExpenseForMutation(expenseId, boundary, transaction) {
+async function loadExpenseForMutation(expenseId, boundary, transaction, tenant) {
   const expense = await db.ShiftCashExpense.findByPk(expenseId, {
     include: [{
       as: 'shift',
@@ -565,7 +568,7 @@ async function loadExpenseForMutation(expenseId, boundary, transaction) {
     transaction,
   });
   if (!expense) throw appError('Кассовый расход не найден', 404);
-  const context = await getDataContext(boundary.account);
+  const context = await getDataContext(boundary.account, tenant);
   assertTrainingScopeMatches(expense, context.marker);
   const shift = expense.shift || expense.Shift;
   assertShiftViewAccess(shift, boundary.account);
@@ -609,6 +612,7 @@ async function updateExpense(expenseId, data, account, tenant) {
       expenseId,
       boundary,
       transaction,
+      tenant,
     );
     if (expense.status !== 'active') throw appError('Отмененный расход нельзя менять', 409);
     await payrollService.assertDateEditable(shift.date, 'кассовый расход');
@@ -623,7 +627,7 @@ async function updateExpense(expenseId, data, account, tenant) {
         date: shift.date,
       },
       boundary.account,
-      { trainingMarker: context.marker, transaction },
+      { tenant, trainingMarker: context.marker, transaction },
     );
     await expense.update(
       {
@@ -662,12 +666,14 @@ async function cancelExpense(expenseId, data, account, tenant) {
       expenseId,
       boundary,
       transaction,
+      tenant,
     );
     if (expense.status === 'canceled') throw appError('Расход уже отменен', 409);
     await payrollService.assertDateEditable(shift.date, 'отмену кассового расхода');
     const beforeData = expense.toJSON();
     await financeService.deleteLinkedExpenseRecord(expense.financeId, boundary.account, {
       reason,
+      tenant,
       trainingMarker: context.marker,
       transaction,
     });
@@ -710,6 +716,7 @@ async function getCashForMutationResult(shiftId, account, tenant) {
 async function loadExpenseForAttachment(
   expenseId,
   boundary,
+  tenant,
   { write = false } = {},
 ) {
   const expense = await db.ShiftCashExpense.findByPk(expenseId, {
@@ -721,7 +728,7 @@ async function loadExpenseForAttachment(
     }],
   });
   if (!expense) throw appError('Кассовый расход не найден', 404);
-  const context = await getDataContext(boundary.account);
+  const context = await getDataContext(boundary.account, tenant);
   assertTrainingScopeMatches(expense, context.marker);
   const shift = expense.shift || expense.Shift;
   assertShiftViewAccess(shift, boundary.account);
@@ -740,6 +747,7 @@ async function uploadAttachment(expenseId, payload, account, requestTenant = nul
   const { expense, shift } = await loadExpenseForAttachment(
     expenseId,
     boundary,
+    requestTenant,
     { write: true },
   );
   const attachments = readJson(expense.attachments, []);
@@ -774,6 +782,7 @@ async function uploadAttachment(expenseId, payload, account, requestTenant = nul
   await onboardingService.recordEventSafe(boundary.account, 'shift_cash.attachment_uploaded', {
     entityId: attachment.id,
     entityType: 'shift_cash_attachment',
+    tenant: requestTenant,
     payload: {
       attachmentId: attachment.id,
       expenseId: expense.id,
@@ -788,6 +797,7 @@ async function removeAttachment(expenseId, attachmentId, account, requestTenant 
   const { expense, shift } = await loadExpenseForAttachment(
     expenseId,
     boundary,
+    requestTenant,
     { write: true },
   );
   const attachments = readJson(expense.attachments, []);
@@ -808,7 +818,11 @@ async function removeAttachment(expenseId, attachmentId, account, requestTenant 
 
 async function getAttachment(expenseId, attachmentId, account, requestTenant = null) {
   const boundary = await resolveBoundary(account, requestTenant);
-  const { expense } = await loadExpenseForAttachment(expenseId, boundary);
+  const { expense } = await loadExpenseForAttachment(
+    expenseId,
+    boundary,
+    requestTenant,
+  );
   const attachment = readJson(expense.attachments, []).find(
     (item) => item.id === attachmentId,
   );

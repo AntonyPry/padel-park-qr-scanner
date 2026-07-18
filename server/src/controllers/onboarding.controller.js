@@ -4,7 +4,11 @@ const { sendError } = require('../utils/api-error');
 class OnboardingController {
   async getOverview(req, res) {
     try {
-      const result = await onboardingService.getOverview(req.account, req.query);
+      const result = await onboardingService.getOverview(
+        req.account,
+        req.query,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка получения обучения');
@@ -17,6 +21,7 @@ class OnboardingController {
         req.account,
         req.params.taskKey,
         req.body,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -30,6 +35,7 @@ class OnboardingController {
         req.account,
         req.params.taskKey,
         req.query,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -43,6 +49,7 @@ class OnboardingController {
         req.account,
         req.params.taskKey,
         req.body,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -56,6 +63,7 @@ class OnboardingController {
         req.account,
         req.params.taskKey,
         req.body,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -70,6 +78,7 @@ class OnboardingController {
         req.params.taskKey,
         req.params.stepKey,
         req.body,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -83,6 +92,7 @@ class OnboardingController {
         req.account,
         req.params.taskKey,
         req.body,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -95,6 +105,7 @@ class OnboardingController {
       const result = await onboardingService.recordClientEvent(
         req.account,
         req.body,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {
@@ -104,7 +115,11 @@ class OnboardingController {
 
   async resetProgress(req, res) {
     try {
-      const result = await onboardingService.resetProgress(req.account, req.query);
+      const result = await onboardingService.resetProgress(
+        req.account,
+        req.query,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка сброса прогресса обучения');
@@ -113,7 +128,10 @@ class OnboardingController {
 
   async getTrainingMode(req, res) {
     try {
-      const result = await onboardingService.getTrainingMode(req.account);
+      const result = await onboardingService.getTrainingMode(
+        req.account,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка получения режима тренировки');
@@ -122,7 +140,11 @@ class OnboardingController {
 
   async setTrainingMode(req, res) {
     try {
-      const result = await onboardingService.setTrainingMode(req.account, req.body);
+      const result = await onboardingService.setTrainingMode(
+        req.account,
+        req.body,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка изменения режима тренировки');
@@ -144,7 +166,10 @@ class OnboardingController {
 
   async getMetrics(req, res) {
     try {
-      const result = await onboardingService.getOnboardingMetrics(req.account);
+      const result = await onboardingService.getOnboardingMetrics(
+        req.account,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка получения метрик обучения');

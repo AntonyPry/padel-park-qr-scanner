@@ -119,6 +119,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    trainingSessionId: { type: DataTypes.UUID, allowNull: true },
     creationKeyHash: {
       type: DataTypes.STRING(64),
       allowNull: true,

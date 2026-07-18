@@ -118,6 +118,29 @@ const DEMO_CATALOG_RULES = [
   ['Ракетка шефа', 'Прокат инвентаря'],
   ['Тубус мячей', 'Мячи и тубусы'],
 ];
+const DEMO_CATALOG_RULE_ID_START = 910000;
+
+const DEMO_CATEGORIES = [
+  ['Аренда кортов', 'income', 'REVENUE_POS', 0, true],
+  ['Бар / Кафе', 'income', 'REVENUE_POS', 0, true],
+  ['Магазин (Товары)', 'income', 'REVENUE_POS', 0, true],
+  ['Прокат инвентаря / VIP', 'income', 'REVENUE_POS', 0, true],
+  ['Доп. услуги', 'income', 'REVENUE_POS', 0, true],
+  ['Кофе', 'income', 'REVENUE_POS', 0, false],
+  ['Напитки', 'income', 'REVENUE_POS', 0, false],
+  ['Снеки', 'income', 'REVENUE_POS', 0, false],
+  ['Молочные коктейли', 'income', 'REVENUE_POS', 0, false],
+  ['Пивко', 'income', 'REVENUE_POS', 0, false],
+  ['Мячи и тубусы', 'income', 'REVENUE_POS', 0, false],
+  ['Аксессуары магазина', 'income', 'REVENUE_POS', 0, false],
+  ['VIP-услуги', 'income', 'REVENUE_POS', 0, false],
+  ['Прокат инвентаря', 'income', 'REVENUE_POS', 0, false],
+  ['Корпоративные мероприятия', 'income', 'REVENUE_EXT', 3, false],
+  ['Закупка бара', 'expense', 'COGS', 0, false],
+  ['Маркетинг', 'expense', 'OPEX', 0, false],
+  ['Аренда помещения', 'expense', 'OPEX', 0, false],
+];
+const DEMO_CATEGORY_ID_START = 912000;
 
 const DEMO_MOTIVATION_RULES = [
   {
@@ -148,6 +171,52 @@ const DEMO_MOTIVATION_RULES = [
     sortOrder: 30,
   },
 ];
+const DEMO_MOTIVATION_RULE_ID_START = 911000;
+
+function demoIds(start, rows) {
+  return rows.map((_, index) => start + index);
+}
+
+function fixtureOwnershipError(table, id) {
+  const error = new Error(`Demo fixture ownership lost for ${table} id ${id}`);
+  error.code = 'TENANT_SEEDER_ARTIFACT_OWNERSHIP_LOST';
+  return error;
+}
+
+async function assertDemoArtifactOwnership(queryInterface) {
+  const [catalogRows] = await queryInterface.sequelize.query(
+    'SELECT id,itemName,category FROM CatalogRules WHERE id IN (:ids)',
+    { replacements: { ids: demoIds(DEMO_CATALOG_RULE_ID_START, DEMO_CATALOG_RULES) } },
+  );
+  for (const row of catalogRows) {
+    const expected = DEMO_CATALOG_RULES[Number(row.id) - DEMO_CATALOG_RULE_ID_START];
+    if (!expected || row.itemName !== expected[0] || row.category !== expected[1]) {
+      throw fixtureOwnershipError('CatalogRules', row.id);
+    }
+  }
+  const [motivationRows] = await queryInterface.sequelize.query(
+    'SELECT id,name,description FROM MotivationBonusRules WHERE id IN (:ids)',
+    { replacements: { ids: demoIds(DEMO_MOTIVATION_RULE_ID_START, DEMO_MOTIVATION_RULES) } },
+  );
+  for (const row of motivationRows) {
+    const expected = DEMO_MOTIVATION_RULES[Number(row.id) - DEMO_MOTIVATION_RULE_ID_START];
+    if (!expected || row.name !== expected.name || row.description !== expected.description) {
+      throw fixtureOwnershipError('MotivationBonusRules', row.id);
+    }
+  }
+  const [categoryRows] = await queryInterface.sequelize.query(
+    'SELECT id,name,type,`group`,commissionPercent,isSystem FROM Categories WHERE id IN (:ids)',
+    { replacements: { ids: demoIds(DEMO_CATEGORY_ID_START, DEMO_CATEGORIES) } },
+  );
+  for (const row of categoryRows) {
+    const expected = DEMO_CATEGORIES[Number(row.id) - DEMO_CATEGORY_ID_START];
+    if (!expected || row.name !== expected[0] || row.type !== expected[1] ||
+      row.group !== expected[2] || Number(row.commissionPercent) !== expected[3] ||
+      Boolean(row.isSystem) !== expected[4]) {
+      throw fixtureOwnershipError('Categories', row.id);
+    }
+  }
+}
 
 module.exports = {
   async up(queryInterface, Sequelize) {
@@ -168,12 +237,15 @@ module.exports = {
           queryInterface,
           foundation,
         );
+        await assertDemoArtifactOwnership(queryInterface);
 
     await queryInterface.sequelize.query(
-      'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
+      'DELETE FROM ReceiptItems WHERE receiptId IN (SELECT id FROM Receipts WHERE organizationId=:organizationId AND clubId=:clubId AND id BETWEEN 20000 AND 29999)',
+      { replacements: { organizationId: foundation.organization.id, clubId: foundation.club.id } },
     );
     await queryInterface.sequelize.query(
-      'DELETE FROM Receipts WHERE id BETWEEN 20000 AND 29999',
+      'DELETE FROM Receipts WHERE organizationId=:organizationId AND clubId=:clubId AND id BETWEEN 20000 AND 29999',
+      { replacements: { organizationId: foundation.organization.id, clubId: foundation.club.id } },
     );
     await deleteDemoVisits(queryInterface, userTenantScope);
     await queryInterface.bulkDelete('Users', {
@@ -190,6 +262,8 @@ module.exports = {
       phone: { [Sequelize.Op.like]: '+790000001%' },
     });
     await queryInterface.bulkDelete('Finances', {
+      organizationId: foundation.organization.id,
+      clubId: foundation.club.id,
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
     await queryInterface.bulkDelete('Utilizations', {
@@ -197,39 +271,20 @@ module.exports = {
       date: { [Sequelize.Op.between]: ['2026-05-01', '2026-05-14'] },
     });
     await queryInterface.sequelize.query(
-      'DELETE FROM MotivationBonusRuleCategories WHERE bonusRuleId IN (SELECT id FROM MotivationBonusRules WHERE description LIKE "Демо:%")',
+      'DELETE FROM MotivationBonusRuleCategories WHERE bonusRuleId IN (:bonusRuleIds)',
+      { replacements: { bonusRuleIds: demoIds(DEMO_MOTIVATION_RULE_ID_START, DEMO_MOTIVATION_RULES) } },
     );
     await queryInterface.bulkDelete('MotivationBonusRules', {
-      description: { [Sequelize.Op.like]: 'Демо:%' },
+      id: { [Sequelize.Op.in]: demoIds(DEMO_MOTIVATION_RULE_ID_START, DEMO_MOTIVATION_RULES) },
     });
     await queryInterface.bulkDelete('CatalogRules', {
-      itemName: {
-        [Sequelize.Op.in]: DEMO_CATALOG_RULES.map(([itemName]) => itemName),
-      },
+      id: { [Sequelize.Op.in]: demoIds(DEMO_CATALOG_RULE_ID_START, DEMO_CATALOG_RULES) },
     });
 
     await queryInterface.bulkInsert(
       'Categories',
-      [
-        ['Аренда кортов', 'income', 'REVENUE_POS', 0, true],
-        ['Бар / Кафе', 'income', 'REVENUE_POS', 0, true],
-        ['Магазин (Товары)', 'income', 'REVENUE_POS', 0, true],
-        ['Прокат инвентаря / VIP', 'income', 'REVENUE_POS', 0, true],
-        ['Доп. услуги', 'income', 'REVENUE_POS', 0, true],
-        ['Кофе', 'income', 'REVENUE_POS', 0, false],
-        ['Напитки', 'income', 'REVENUE_POS', 0, false],
-        ['Снеки', 'income', 'REVENUE_POS', 0, false],
-        ['Молочные коктейли', 'income', 'REVENUE_POS', 0, false],
-        ['Пивко', 'income', 'REVENUE_POS', 0, false],
-        ['Мячи и тубусы', 'income', 'REVENUE_POS', 0, false],
-        ['Аксессуары магазина', 'income', 'REVENUE_POS', 0, false],
-        ['VIP-услуги', 'income', 'REVENUE_POS', 0, false],
-        ['Прокат инвентаря', 'income', 'REVENUE_POS', 0, false],
-        ['Корпоративные мероприятия', 'income', 'REVENUE_EXT', 3, false],
-        ['Закупка бара', 'expense', 'COGS', 0, false],
-        ['Маркетинг', 'expense', 'OPEX', 0, false],
-        ['Аренда помещения', 'expense', 'OPEX', 0, false],
-      ].map(([name, type, group, commissionPercent, isSystem]) => ({
+      DEMO_CATEGORIES.map(([name, type, group, commissionPercent, isSystem], index) => ({
+        id: DEMO_CATEGORY_ID_START + index,
         name,
         type,
         group,
@@ -244,7 +299,8 @@ module.exports = {
 
     await queryInterface.bulkInsert(
       'CatalogRules',
-      DEMO_CATALOG_RULES.map(([itemName, category]) => ({
+      DEMO_CATALOG_RULES.map(([itemName, category], index) => ({
+        id: DEMO_CATALOG_RULE_ID_START + index,
         itemName,
         category,
         createdAt: now,
@@ -255,7 +311,8 @@ module.exports = {
 
     await queryInterface.bulkInsert(
       'MotivationBonusRules',
-      DEMO_MOTIVATION_RULES.map((rule) => ({
+      DEMO_MOTIVATION_RULES.map((rule, index) => ({
+        id: DEMO_MOTIVATION_RULE_ID_START + index,
         name: rule.name,
         description: rule.description,
         bonusPercent: rule.bonusPercent,
@@ -272,7 +329,8 @@ module.exports = {
       'SELECT id, name FROM Categories',
     );
     const [bonusRuleRows] = await queryInterface.sequelize.query(
-      'SELECT id, name FROM MotivationBonusRules WHERE description LIKE "Демо:%"',
+      'SELECT id, name FROM MotivationBonusRules WHERE id IN (:bonusRuleIds)',
+      { replacements: { bonusRuleIds: demoIds(DEMO_MOTIVATION_RULE_ID_START, DEMO_MOTIVATION_RULES) } },
     );
     const categoryByName = Object.fromEntries(
       categoryRows.map((category) => [category.name, category.id]),
@@ -547,6 +605,8 @@ module.exports = {
 
         const isCash = receiptIndex === 3;
         receipts.push({
+          organizationId: foundation.organization.id,
+          clubId: foundation.club.id,
           id,
           evotorId: `demo-padel-${id}`,
           dateTime: date,
@@ -573,11 +633,11 @@ module.exports = {
       const staffId =
         day % 2 === 0
           ? staffByPhone['+79000000102']
-          : staffByPhone['+79000000103'];
+          : staffByPhone['+79000000101'];
       shifts.push({
         ...shiftTenantScope.insert,
         date: `2026-05-${String(day).padStart(2, '0')}`,
-        adminName: day % 2 === 0 ? 'Илья Смирнов' : 'Софья Ким',
+        adminName: day % 2 === 0 ? 'Илья Смирнов' : 'Мария Орлова',
         staffId,
         hours: day % 5 === 0 ? 13 : 12,
         actualHours: day % 5 === 0 ? 13 : 12,
@@ -592,6 +652,8 @@ module.exports = {
 
     await queryInterface.bulkInsert('Finances', [
       {
+        organizationId: foundation.organization.id,
+        clubId: foundation.club.id,
         date: '2026-05-03',
         category: 'Корпоративные мероприятия',
         amount: 45000,
@@ -601,6 +663,8 @@ module.exports = {
         updatedAt: now,
       },
       {
+        organizationId: foundation.organization.id,
+        clubId: foundation.club.id,
         date: '2026-05-04',
         category: 'Закупка бара',
         amount: 18500,
@@ -610,6 +674,8 @@ module.exports = {
         updatedAt: now,
       },
       {
+        organizationId: foundation.organization.id,
+        clubId: foundation.club.id,
         date: '2026-05-06',
         category: 'Маркетинг',
         amount: 12000,
@@ -619,6 +685,8 @@ module.exports = {
         updatedAt: now,
       },
       {
+        organizationId: foundation.organization.id,
+        clubId: foundation.club.id,
         date: '2026-05-01',
         category: 'Аренда помещения',
         amount: 180000,
@@ -666,11 +734,14 @@ module.exports = {
           queryInterface,
           foundation,
         );
+        await assertDemoArtifactOwnership(queryInterface);
     await queryInterface.sequelize.query(
-      'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
+      'DELETE FROM ReceiptItems WHERE receiptId IN (SELECT id FROM Receipts WHERE organizationId=:organizationId AND clubId=:clubId AND id BETWEEN 20000 AND 29999)',
+      { replacements: { organizationId: foundation.organization.id, clubId: foundation.club.id } },
     );
     await queryInterface.sequelize.query(
-      'DELETE FROM Receipts WHERE id BETWEEN 20000 AND 29999',
+      'DELETE FROM Receipts WHERE organizationId=:organizationId AND clubId=:clubId AND id BETWEEN 20000 AND 29999',
+      { replacements: { organizationId: foundation.organization.id, clubId: foundation.club.id } },
     );
     await deleteDemoVisits(queryInterface, userTenantScope);
     await queryInterface.bulkDelete('Users', {
@@ -687,6 +758,8 @@ module.exports = {
       phone: { [Sequelize.Op.like]: '+790000001%' },
     });
     await queryInterface.bulkDelete('Finances', {
+      organizationId: foundation.organization.id,
+      clubId: foundation.club.id,
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
     await queryInterface.bulkDelete('Utilizations', {
@@ -694,15 +767,14 @@ module.exports = {
       date: { [Sequelize.Op.between]: ['2026-05-01', '2026-05-14'] },
     });
     await queryInterface.sequelize.query(
-      'DELETE FROM MotivationBonusRuleCategories WHERE bonusRuleId IN (SELECT id FROM MotivationBonusRules WHERE description LIKE "Демо:%")',
+      'DELETE FROM MotivationBonusRuleCategories WHERE bonusRuleId IN (:bonusRuleIds)',
+      { replacements: { bonusRuleIds: demoIds(DEMO_MOTIVATION_RULE_ID_START, DEMO_MOTIVATION_RULES) } },
     );
     await queryInterface.bulkDelete('MotivationBonusRules', {
-      description: { [Sequelize.Op.like]: 'Демо:%' },
+      id: { [Sequelize.Op.in]: demoIds(DEMO_MOTIVATION_RULE_ID_START, DEMO_MOTIVATION_RULES) },
     });
         await queryInterface.bulkDelete('CatalogRules', {
-          itemName: {
-            [Sequelize.Op.in]: DEMO_CATALOG_RULES.map(([itemName]) => itemName),
-          },
+          id: { [Sequelize.Op.in]: demoIds(DEMO_CATALOG_RULE_ID_START, DEMO_CATALOG_RULES) },
         });
       },
     );

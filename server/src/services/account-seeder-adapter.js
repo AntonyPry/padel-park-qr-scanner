@@ -13,6 +13,10 @@ const {
   stateError,
 } = require('./tenant-foundation.service');
 const accountLifecycle = require('./account-lifecycle.service');
+const {
+  DEFAULT_CLUB_SLUG,
+  DEFAULT_ORGANIZATION_SLUG,
+} = require('../tenant-foundation/constants');
 
 function seederError(message, code = 'TENANT_SEEDER_INVALID') {
   const error = new Error(message);
@@ -83,10 +87,13 @@ async function deleteAccountsByEmailLike(
   queryInterface,
   transaction,
   emailPattern,
+  organizationId,
 ) {
   const [accounts] = await queryInterface.sequelize.query(
-    'SELECT id FROM Accounts WHERE email LIKE :emailPattern ORDER BY id FOR UPDATE',
-    { replacements: { emailPattern }, transaction },
+    `SELECT a.id FROM Accounts a JOIN Memberships m ON m.accountId=a.id
+      WHERE a.email LIKE :emailPattern AND m.organizationId=:organizationId
+      ORDER BY a.id FOR UPDATE`,
+    { replacements: { emailPattern, organizationId }, transaction },
   );
   if (accounts.length === 0) return [];
   const accountIds = accounts.map((row) => row.id);
@@ -176,12 +183,44 @@ async function runInitializedSeederBatch(
   execute,
   options = {},
 ) {
+  const [[tenantShape]] = await queryInterface.sequelize.query(
+    `SELECT
+       (SELECT COUNT(*) FROM Organizations) organizations,
+       (SELECT COUNT(*) FROM Clubs) clubs,
+       (SELECT COUNT(*) FROM Organizations
+         WHERE slug=:organizationSlug AND status='active') defaultOrganizations,
+       (SELECT COUNT(*) FROM Clubs c JOIN Organizations o ON o.id=c.organizationId
+         WHERE o.slug=:organizationSlug AND c.slug=:clubSlug
+           AND o.status='active' AND c.status='active') defaultClubs`,
+    {
+      replacements: {
+        clubSlug: DEFAULT_CLUB_SLUG,
+        organizationSlug: DEFAULT_ORGANIZATION_SLUG,
+      },
+    },
+  );
+  if (
+    Number(tenantShape.organizations) !== 1 ||
+    Number(tenantShape.clubs) !== 1 ||
+    Number(tenantShape.defaultOrganizations) !== 1 ||
+    Number(tenantShape.defaultClubs) !== 1
+  ) {
+    throw seederError(
+      'Demo seeder requires the exact initialized default Organization and Club; it is not a provisioning mechanism',
+      'TENANT_SEEDER_DEFAULT_ONLY',
+    );
+  }
   await assertTenantFoundationInitialized({
     sequelize: queryInterface.sequelize,
   });
   const result = await queryInterface.sequelize.transaction(async (transaction) => {
     const [organizations] = await queryInterface.sequelize.query(
-      'SELECT id FROM Organizations ORDER BY id FOR UPDATE',
+      `SELECT id FROM Organizations
+        WHERE slug=:organizationSlug AND status='active' ORDER BY id FOR UPDATE`,
+      {
+        replacements: { organizationSlug: DEFAULT_ORGANIZATION_SLUG },
+        transaction,
+      },
       { transaction },
     );
     const classification = await classifyTenantFoundation({
@@ -191,13 +230,32 @@ async function runInitializedSeederBatch(
     if (classification.state !== TENANT_FOUNDATION_STATES.INITIALIZED) {
       throw stateError(classification);
     }
+    const [[tenantCounts]] = await queryInterface.sequelize.query(
+      'SELECT (SELECT COUNT(*) FROM Organizations) organizations,(SELECT COUNT(*) FROM Clubs) clubs',
+      { transaction },
+    );
     const [clubs] = await queryInterface.sequelize.query(
-      'SELECT id FROM Clubs WHERE organizationId = :organizationId ORDER BY id',
+      `SELECT id FROM Clubs WHERE organizationId=:organizationId
+        AND slug=:clubSlug AND status='active' ORDER BY id FOR UPDATE`,
       {
-        replacements: { organizationId: organizations[0].id },
+        replacements: {
+          clubSlug: DEFAULT_CLUB_SLUG,
+          organizationId: organizations[0]?.id || 0,
+        },
         transaction,
       },
     );
+    if (
+      organizations.length !== 1 ||
+      clubs.length !== 1 ||
+      Number(tenantCounts.organizations) !== 1 ||
+      Number(tenantCounts.clubs) !== 1
+    ) {
+      throw seederError(
+        'Demo seeder requires the exact initialized default Organization and Club; it is not a provisioning mechanism',
+        'TENANT_SEEDER_DEFAULT_ONLY',
+      );
+    }
     const foundation = { club: clubs[0], organization: organizations[0] };
     const scopedQueryInterface = createTransactionQueryInterface(
       queryInterface,
@@ -209,6 +267,7 @@ async function runInitializedSeederBatch(
           queryInterface,
           transaction,
           emailPattern,
+          foundation.organization.id,
         ),
       insertAccounts: (rows) =>
         insertAccountsWithParity(
@@ -226,6 +285,23 @@ async function runInitializedSeederBatch(
     );
     if (options.failAfter === 'batch') {
       throw seederError('Forced seeder batch failure');
+    }
+    const [[ownerParity]] = await queryInterface.sequelize.query(
+      `SELECT COUNT(*) activeOwners FROM Memberships membership
+       JOIN Accounts account ON account.id=membership.accountId
+       WHERE membership.organizationId=:organizationId
+         AND membership.role='owner' AND membership.status='active'
+         AND account.status='active'`,
+      {
+        replacements: { organizationId: foundation.organization.id },
+        transaction,
+      },
+    );
+    if (Number(ownerParity.activeOwners) < 1) {
+      throw seederError(
+        'Demo seeder would remove the last active Organization owner',
+        'TENANT_SEEDER_LAST_OWNER',
+      );
     }
     const finalState = await classifyTenantFoundation({
       sequelize: queryInterface.sequelize,

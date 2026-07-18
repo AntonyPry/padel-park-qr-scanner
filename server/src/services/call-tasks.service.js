@@ -714,8 +714,9 @@ async function createTaskForBase({
         isTraining: true,
         trainingAccountId: base.trainingAccountId || null,
         trainingRole: base.trainingRole || null,
+        trainingSessionId: base.trainingSessionId || null,
       }
-    : await onboardingService.getTrainingDataMarker(actor);
+    : await onboardingService.getTrainingDataMarker(actor, tenant);
 
   const createdTask = await db.CallTask.create(
     {
@@ -764,7 +765,7 @@ async function createTaskForBase({
 async function createForClient(actor, clientId, data = {}, tenant = null) {
   assertCanManageTask(actor);
   const dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
-  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor, tenant);
 
   const created = await db.sequelize.transaction(async (transaction) => {
     const context = await resolveCallTaskAccessContext(tenant, {
@@ -819,6 +820,7 @@ async function createForClient(actor, clientId, data = {}, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'call_task.created', {
     entityId: created.task.id,
     entityType: 'call_task',
+    tenant,
     payload: {
       clientId: created.clientId,
       scopeType: 'snapshot',
@@ -908,6 +910,7 @@ async function createFromBase(actor, baseId, data = {}, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'call_task.created', {
     entityId: task.id,
     entityType: 'call_task',
+    tenant,
     payload: {
       baseId: Number(baseId),
       scopeType: data.scopeType || 'snapshot',
@@ -1189,8 +1192,9 @@ async function addAttempt(actor, taskClientId, data = {}, tenant = null) {
           isTraining: true,
           trainingAccountId: taskClient.trainingAccountId || null,
           trainingRole: taskClient.trainingRole || null,
+          trainingSessionId: taskClient.trainingSessionId || null,
         }
-      : await onboardingService.getTrainingDataMarker(actor);
+      : await onboardingService.getTrainingDataMarker(actor, tenant);
 
     await db.CallTaskAttempt.create(
       {
@@ -1223,6 +1227,7 @@ async function addAttempt(actor, taskClientId, data = {}, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'call_task.attempt_logged', {
     entityId: updated.id,
     entityType: 'call_task_client',
+    tenant,
     payload: {
       callTaskId: updated.callTaskId,
       status: updated.status,

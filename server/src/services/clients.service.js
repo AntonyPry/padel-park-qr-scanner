@@ -1380,6 +1380,7 @@ async function getClientDetails(id, account = null, tenant = null) {
   await onboardingService.recordEventSafe(account, 'client.viewed', {
     entityId: client.id,
     entityType: 'client',
+    tenant,
     payload: {
       clientId: client.id,
       isMerged: Boolean(client.mergedIntoUserId),
@@ -2526,7 +2527,7 @@ async function createClientWithEventResult(
   const context = await resolveClientAccessContext(tenant);
   const name = normalizeClientName(data.name);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
-  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor, tenant);
   const client = await withClientIdentityLocks(
     scopeClientIdentityLockKeys(
       getClientIdentityLockKeys(data, phoneNormalized),
@@ -2606,6 +2607,7 @@ async function createClientWithEventResult(
       entityId: result.client?.id || client.id,
       entityType: 'client',
       onboardingContext,
+      tenant,
       payload: result.client || result,
     },
   );

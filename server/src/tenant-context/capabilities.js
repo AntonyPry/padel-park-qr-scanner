@@ -88,6 +88,13 @@ function isTenantAuditLogEnabled() {
   );
 }
 
+function isTenantOnboardingEnabled() {
+  return readBooleanEnv(
+    process.env.TENANT_ONBOARDING_ENABLED,
+    false,
+  );
+}
+
 function capabilityDependencyError(
   capability = 'TENANT_CACHE_REALTIME_ENABLED',
   dependency = 'TENANT_CONTEXT_ENABLED',
@@ -212,6 +219,12 @@ function assertTenantCapabilityDependencies() {
       'TENANT_SHIFTS_REPORTS_ENABLED',
     );
   }
+  if (isTenantOnboardingEnabled() && !isTenantAuditLogEnabled()) {
+    throw capabilityDependencyError(
+      'TENANT_ONBOARDING_ENABLED',
+      'TENANT_AUDIT_LOG_ENABLED',
+    );
+  }
 
   return Object.freeze({
     tenantCacheRealtime: isTenantCacheRealtimeEnabled(),
@@ -227,6 +240,7 @@ function assertTenantCapabilityDependencies() {
     tenantClientMoneyInstruments: isTenantClientMoneyInstrumentsEnabled(),
     tenantShiftsReports: isTenantShiftsReportsEnabled(),
     tenantAuditLog: isTenantAuditLogEnabled(),
+    tenantOnboarding: isTenantOnboardingEnabled(),
     tenantVisitsScanner: isTenantVisitsScannerEnabled(),
   });
 }
@@ -251,6 +265,7 @@ module.exports = {
   isTenantContextEnabled,
   isTenantFilesWorkersEnabled,
   isTenantMethodologySkillMapEnabled,
+  isTenantOnboardingEnabled,
   isTenantTrainingNotesPlansEnabled,
   isTenantProviderIntegrationsEnabled,
   isTenantShiftsReportsEnabled,

@@ -176,7 +176,7 @@ async function createVisitForUser(user, options = {}) {
   } = options;
 
   const normalizedClientEventId = normalizeClientEventId(clientEventId);
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
 
   let visitResult;
 
@@ -340,6 +340,7 @@ async function createVisitForUser(user, options = {}) {
     await onboardingService.recordEventSafe(account, 'access.visit_created', {
       entityId: result.visitId,
       entityType: 'visit',
+      tenant,
       payload: {
         entrySource,
         userId: result.user.id,

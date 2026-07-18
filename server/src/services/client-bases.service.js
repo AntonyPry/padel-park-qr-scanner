@@ -458,7 +458,7 @@ async function persistBase(actor, data, provenance = null, tenant = null) {
   if (recurrencePayload.recurringEnabled) {
     assertTaskableFilters(filters);
   }
-  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor, tenant);
   const base = await db.sequelize.transaction(async (transaction) => {
     const context = await resolveCallTaskAccessContext(tenant, {
       accountId: actor?.id,
@@ -506,6 +506,7 @@ async function persistBase(actor, data, provenance = null, tenant = null) {
   await onboardingService.recordEventSafe(actor, 'client_base.created', {
     entityId: base.id,
     entityType: 'client_base',
+    tenant,
     payload: {
       baseId: base.id,
       recurrenceEnabled: Boolean(recurrencePayload.recurringEnabled),

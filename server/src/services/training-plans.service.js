@@ -905,6 +905,7 @@ async function createPlanRecord(data = {}, actor = null, options = {}) {
     );
     const trainingMarker = await onboardingService.getTrainingDataMarker(
       authorityActor,
+      options.tenant,
     );
     let bookingId = null;
     let trainerAccountId = authorityActor?.id || null;
@@ -1124,6 +1125,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
     await onboardingService.recordEventSafe(completion.authorityActor, event.eventKey, {
       entityId: event.noteId,
       entityType: 'training_note',
+      tenant,
       payload: {
         clientId: event.clientId,
         level: event.level,
@@ -1138,6 +1140,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
         'training_level.updated', {
         entityId: event.clientId,
         entityType: 'client',
+        tenant,
         payload: {
           clientId: event.clientId,
           level: event.level,

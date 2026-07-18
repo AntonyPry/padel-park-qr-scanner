@@ -1,7 +1,40 @@
 'use strict';
 
+const crypto = require('crypto');
+const {
+  DEFAULT_CLUB_SLUG,
+  DEFAULT_ORGANIZATION_SLUG,
+} = require('../src/tenant-foundation/constants');
+
+async function resolveTenantScope(queryInterface) {
+  const columns = await queryInterface.describeTable('Receipts');
+  if (!columns.organizationId || !columns.clubId) return {};
+  const [rows] = await queryInterface.sequelize.query(
+    `SELECT o.id organizationId,c.id clubId
+       FROM Organizations o JOIN Clubs c ON c.organizationId=o.id
+      WHERE o.slug=:organizationSlug AND c.slug=:clubSlug
+        AND o.status='active' AND c.status='active'`,
+    {
+      replacements: {
+        clubSlug: DEFAULT_CLUB_SLUG,
+        organizationSlug: DEFAULT_ORGANIZATION_SLUG,
+      },
+    },
+  );
+  const [[counts]] = await queryInterface.sequelize.query(
+    'SELECT (SELECT COUNT(*) FROM Organizations) organizations,(SELECT COUNT(*) FROM Clubs) clubs',
+  );
+  if (rows.length !== 1 || Number(counts.organizations) !== 1 || Number(counts.clubs) !== 1) {
+    const error = new Error('Bulk receipt fixture requires the exact default tenant');
+    error.code = 'TENANT_SEEDER_DEFAULT_ONLY';
+    throw error;
+  }
+  return rows[0];
+}
+
 module.exports = {
   async up(queryInterface, Sequelize) {
+    const tenant = await resolveTenantScope(queryInterface);
     const receipts = [];
     const receiptItems = [];
 
@@ -75,6 +108,7 @@ module.exports = {
 
       // Сохраняем заголовок чека
       receipts.push({
+        ...tenant,
         id: currentReceiptId,
         evotorId: `evo-bulk-may-${currentReceiptId}`,
         dateTime: date,
@@ -92,21 +126,38 @@ module.exports = {
       });
     }
 
+    if (tenant.organizationId) {
+      const columns = await queryInterface.describeTable('Receipts');
+      if (columns.idempotencyKey) {
+        receipts.forEach((receipt) => {
+          receipt.idempotencyKey = crypto.createHash('sha256')
+            .update(`fixture|${tenant.organizationId}|${tenant.clubId}|${receipt.evotorId}`)
+            .digest('hex');
+        });
+      }
+    }
+
     // Отправляем всё это добро в базу двумя большими инсертами
     await queryInterface.bulkInsert('Receipts', receipts);
     await queryInterface.bulkInsert('ReceiptItems', receiptItems);
   },
 
   async down(queryInterface, Sequelize) {
+    const tenant = await resolveTenantScope(queryInterface);
     // Команда для отката: удалит только эти 100 тестовых чеков
-    await queryInterface.bulkDelete(
-      'ReceiptItems',
-      { receiptId: { [Sequelize.Op.gte]: 10000 } },
-      {},
+    await queryInterface.sequelize.query(
+      `DELETE FROM ReceiptItems WHERE receiptId IN (
+         SELECT id FROM Receipts WHERE id BETWEEN 10000 AND 10099
+         ${tenant.organizationId ? 'AND organizationId=:organizationId AND clubId=:clubId' : ''}
+       )`,
+      { replacements: tenant },
     );
     await queryInterface.bulkDelete(
       'Receipts',
-      { id: { [Sequelize.Op.gte]: 10000 } },
+      {
+        ...tenant,
+        id: { [Sequelize.Op.between]: [10000, 10099] },
+      },
       {},
     );
   },

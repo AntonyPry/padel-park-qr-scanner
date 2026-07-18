@@ -456,10 +456,20 @@ const BASE_MIXED_PAGE_AUTHORIZATION = {
           'onboarding.taskDetail',
           'onboarding.completeTask',
           'onboarding.lessonRead',
-          'onboarding.practiceStart',
           'onboarding.practiceStep',
           'onboarding.quizAttempt',
           'onboarding.resetProgress',
+        ],
+      },
+      {
+        scope: 'club',
+        section: 'club training mode and practice session start',
+        phases: ['initial', 'section', 'mutation'],
+        gate: 'route',
+        endpoints: [
+          'onboarding.trainingMode',
+          'onboarding.trainingModeUpdate',
+          'onboarding.practiceStart',
         ],
       },
       {

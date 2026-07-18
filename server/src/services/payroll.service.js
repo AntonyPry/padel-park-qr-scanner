@@ -717,6 +717,7 @@ async function createPeriod(data, account, tenant = null) {
     await onboardingService.recordEventSafe(account, 'payroll.reviewed', {
       entityId: period.id,
       entityType: 'payroll_period',
+      tenant,
       payload: {
         fromDate: period.fromDate,
         periodId: period.id,
@@ -750,6 +751,7 @@ async function recalculatePeriod(id, account, reason, tenant = null) {
   await recordChange({
     action: 'payroll_period.recalculate',
     entityType: 'payroll_period',
+    tenant,
     entityId: period.id,
     account: boundary.account,
     reason,
@@ -975,6 +977,7 @@ async function exportPayroll(query, account, tenant = null) {
     entityType: 'payroll_period',
     entityId: period?.id || null,
     account,
+    tenant,
     fromDate: snapshot.fromDate,
     toDate: snapshot.toDate,
     afterData: { totals: snapshot.totals },
@@ -983,6 +986,7 @@ async function exportPayroll(query, account, tenant = null) {
   await onboardingService.recordEventSafe(account, 'report.exported', {
     entityId: period?.id || null,
     entityType: 'payroll_period',
+    tenant,
     payload: {
       fromDate: snapshot.fromDate,
       report: 'payroll',

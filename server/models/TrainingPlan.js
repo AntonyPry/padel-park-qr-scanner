@@ -59,6 +59,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       type: DataTypes.INTEGER,
     },
+    trainingSessionId: { allowNull: true, type: DataTypes.UUID },
   }, {
     hooks: {
       beforeBulkUpdate(options) {

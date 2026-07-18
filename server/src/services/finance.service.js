@@ -41,7 +41,8 @@ function assertTrainingScopeMatches(record, marker) {
   if (
     marker?.isTraining &&
     (Number(raw.trainingAccountId) !== Number(marker.trainingAccountId) ||
-      raw.trainingRole !== marker.trainingRole)
+      raw.trainingRole !== marker.trainingRole ||
+      raw.trainingSessionId !== marker.trainingSessionId)
   ) {
     throw appError('Финансовая запись не соответствует текущему режиму обучения', 409);
   }
@@ -409,7 +410,7 @@ class FinanceService {
     return payrollService.calculatePayroll(from, to, account, tenant);
   }
 
-  async createManualRecord(data, account) {
+  async createManualRecord(data, account, tenant = null) {
     const type = normalizeFinanceType(data.type);
     const amount = Number(data.amount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -433,7 +434,7 @@ class FinanceService {
 
     const date = normalizeDateOnly(data.date);
     await payrollService.assertDateEditable(date, 'ручную финансовую операцию');
-    const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+    const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
 
     const record = await db.Finance.create({
       date,
@@ -448,6 +449,7 @@ class FinanceService {
     await payrollService.recordChange({
       action: 'finance_manual.create',
       entityType: 'finance',
+      tenant,
       entityId: record.id,
       account,
       date,
@@ -458,6 +460,7 @@ class FinanceService {
     await onboardingService.recordEventSafe(account, 'finance.record_created', {
       entityId: record.id,
       entityType: 'finance',
+      tenant,
       payload: {
         amount: record.amount,
         category: record.category,
@@ -482,7 +485,7 @@ class FinanceService {
     await payrollService.assertDateEditable(date, 'кассовый расход');
     const trainingMarker =
       options.trainingMarker ||
-      (await onboardingService.getTrainingDataMarker(account));
+      (await onboardingService.getTrainingDataMarker(account, options.tenant));
     const record = await db.Finance.create(
       {
         amount: Number(amount.toFixed(2)),
@@ -499,6 +502,7 @@ class FinanceService {
     await payrollService.recordChange({
       action: options.auditAction || 'shift_cash_expense.finance_created',
       entityType: 'finance',
+      tenant: options.tenant,
       entityId: record.id,
       account,
       date,
@@ -528,7 +532,7 @@ class FinanceService {
     }
     const trainingMarker =
       options.trainingMarker ||
-      (await onboardingService.getTrainingDataMarker(account));
+      (await onboardingService.getTrainingDataMarker(account, options.tenant));
     assertTrainingScopeMatches(record, trainingMarker);
 
     const date = normalizeDateOnly(data.date || record.date);
@@ -549,6 +553,7 @@ class FinanceService {
     await payrollService.recordChange({
       action: options.auditAction || 'shift_cash_expense.finance_updated',
       entityType: 'finance',
+      tenant: options.tenant,
       entityId: record.id,
       account,
       date,
@@ -571,7 +576,7 @@ class FinanceService {
     if (!record) return null;
     const trainingMarker =
       options.trainingMarker ||
-      (await onboardingService.getTrainingDataMarker(account));
+      (await onboardingService.getTrainingDataMarker(account, options.tenant));
     assertTrainingScopeMatches(record, trainingMarker);
     await payrollService.assertDateEditable(record.date, 'отмену кассового расхода');
 
@@ -580,6 +585,7 @@ class FinanceService {
     await payrollService.recordChange({
       action: options.auditAction || 'shift_cash_expense.finance_deleted',
       entityType: 'finance',
+      tenant: options.tenant,
       entityId: record.id,
       account,
       date: beforeData.date,
@@ -637,12 +643,13 @@ class FinanceService {
     return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
   }
 
-  async exportFinanceReport(from, to, account) {
+  async exportFinanceReport(from, to, account, tenant = null) {
     const report = await this.getFinanceReport(from, to);
 
     await payrollService.recordChange({
       action: 'finance_report.export',
       entityType: 'finance_report',
+      tenant,
       account,
       fromDate: from || null,
       toDate: to || null,
@@ -654,6 +661,7 @@ class FinanceService {
 
     await onboardingService.recordEventSafe(account, 'report.exported', {
       entityType: 'finance_report',
+      tenant,
       payload: {
         fromDate: from || null,
         report: 'finance',

@@ -56,6 +56,7 @@ class MotivationController {
         {
           entityId: req.params.key,
           entityType: 'motivation_rule',
+          tenant: req.tenant,
           payload: { key: req.params.key },
         },
       );
@@ -74,6 +75,7 @@ class MotivationController {
         {
           entityId: rule.id,
           entityType: 'motivation_bonus_rule',
+          tenant: req.tenant,
           payload: { ruleId: rule.id },
         },
       );
@@ -95,6 +97,7 @@ class MotivationController {
         {
           entityId: rule.id,
           entityType: 'motivation_bonus_rule',
+          tenant: req.tenant,
           payload: { ruleId: rule.id },
         },
       );
@@ -116,6 +119,7 @@ class MotivationController {
         {
           entityId: req.params.categoryId,
           entityType: 'motivation_category_rule',
+          tenant: req.tenant,
           payload: {
             bonusRuleId: req.body.bonusRuleId || null,
             categoryId: req.params.categoryId,

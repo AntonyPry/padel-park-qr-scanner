@@ -198,6 +198,7 @@ async function create(data, account, tenant) {
   await payrollService.recordChange({
     action: 'shift.create',
     entityType: 'shift',
+    tenant,
     entityId: shift.id,
     account: boundary.account,
     date,
@@ -208,6 +209,7 @@ async function create(data, account, tenant) {
   await onboardingService.recordEventSafe(boundary.account, 'shift.approved', {
     entityId: shift.id,
     entityType: 'shift',
+    tenant,
     payload: {
       date,
       shiftId: shift.id,
@@ -258,6 +260,7 @@ async function update(data, account, tenant) {
   await payrollService.recordChange({
     action: 'shift.update',
     entityType: 'shift',
+    tenant,
     entityId: shift.id,
     account: boundary.account,
     date: shift.date,
@@ -269,6 +272,7 @@ async function update(data, account, tenant) {
   await onboardingService.recordEventSafe(boundary.account, 'shift.approved', {
     entityId: shift.id,
     entityType: 'shift',
+    tenant,
     payload: {
       date: shift.date,
       shiftId: shift.id,
@@ -378,7 +382,7 @@ async function startActive(account, tenant) {
 }
 
 async function endActive(account, data = {}, tenant) {
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
   if (trainingMarker.isTraining) {
     const error = new Error(
       'Завершение реальной смены недоступно в режиме тренировки. Выключите режим тренировки и повторите действие.',
@@ -456,6 +460,7 @@ async function endActive(account, data = {}, tenant) {
   await onboardingService.recordEventSafe(result.account, 'shift.approved', {
     entityId: activeShift.id,
     entityType: 'shift',
+    tenant,
     payload: {
       date: activeShift.date,
       shiftId: activeShift.id,
@@ -466,6 +471,7 @@ async function endActive(account, data = {}, tenant) {
   await onboardingService.recordEventSafe(result.account, 'shift_cash.closed', {
     entityId: result.cash.id,
     entityType: 'shift_cash_session',
+    tenant,
     payload: {
       shiftId: activeShift.id,
       variance: result.cash.variance,

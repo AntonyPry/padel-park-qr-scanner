@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
-const { after, test } = require('node:test');
+const { after, beforeEach, test } = require('node:test');
 const db = require('../../models');
+const onboardingAccess = require('../../src/services/onboarding-access-context.service');
 const {
   buildOnboardingResponse,
   cleanupTrainingData,
@@ -27,6 +28,7 @@ const originalEventModel = db.OnboardingEvent;
 const originalProgressModel = db.OnboardingProgress;
 const originalTrainingModeModel = db.OnboardingTrainingMode;
 const originalAccountModel = db.Account;
+const originalMembershipModel = db.Membership;
 const originalSequelize = db.sequelize;
 const originalBookingChangeLogModel = db.BookingChangeLog;
 const originalVisitCategoryAssignmentModel = db.VisitCategoryAssignment;
@@ -56,6 +58,23 @@ const originalTrainingModels = new Map(
   trainingModelNames.map((name) => [name, db[name]]),
 );
 
+beforeEach(() => {
+  onboardingAccess._private.setAuthorityResolverOverride(
+    async (actor, tenant, scope, _options, freezeContext) => freezeContext({
+      accountId: Number(actor.id),
+      clubId: scope === 'club' ? Number(tenant?.clubId || 101) : null,
+      effectiveRole: actor.role,
+      membershipId: Number(tenant?.membershipId || actor.id),
+      membershipRole: actor.role,
+      organizationId: Number(tenant?.organizationId || 10),
+      scope,
+    }),
+  );
+  db.sequelize = {
+    transaction: async (callback) => callback({ LOCK: { UPDATE: 'UPDATE' } }),
+  };
+});
+
 function findResponseTask(response, taskKey) {
   for (const mission of response.path.missions) {
     const task = mission.tasks.find((item) => item.key === taskKey);
@@ -65,10 +84,12 @@ function findResponseTask(response, taskKey) {
 }
 
 after(() => {
+  onboardingAccess._private.setAuthorityResolverOverride(null);
   db.OnboardingEvent = originalEventModel;
   db.OnboardingProgress = originalProgressModel;
   db.OnboardingTrainingMode = originalTrainingModeModel;
   db.Account = originalAccountModel;
+  db.Membership = originalMembershipModel;
   db.sequelize = originalSequelize;
   db.BookingChangeLog = originalBookingChangeLogModel;
   db.VisitCategoryAssignment = originalVisitCategoryAssignmentModel;
@@ -237,11 +258,11 @@ test('training mode persists account role and can be disabled', async () => {
           return row;
         },
       };
-      rows.set(payload.accountId, row);
+      rows.set(payload.membershipId, row);
       return row;
     },
     async findOne({ where }) {
-      return rows.get(where.accountId) || null;
+      return rows.get(where.membershipId) || null;
     },
   };
 
@@ -256,6 +277,7 @@ test('training mode persists account role and can be disabled', async () => {
   assert.equal(enabled.role, 'admin');
   assert.equal(Boolean(enabled.enabledAt), true);
   assert.deepEqual(current, enabled);
+  const sessionId = rows.get(10).sessionId;
 
   const disabled = await setTrainingMode(actor, {
     isEnabled: false,
@@ -265,12 +287,23 @@ test('training mode persists account role and can be disabled', async () => {
   assert.equal(disabled.isEnabled, false);
   assert.equal(disabled.role, 'admin');
   assert.equal(Boolean(disabled.disabledAt), true);
+
+  const reenabled = await setTrainingMode(actor, {
+    isEnabled: true,
+    role: 'admin',
+  });
+  assert.equal(reenabled.isEnabled, true);
+  assert.equal(rows.get(10).sessionId, sessionId);
+  await assert.rejects(
+    setTrainingMode(actor, { isEnabled: true, role: 'manager' }),
+    /Сначала очистите сохранённую учебную сессию/,
+  );
 });
 
 test('training data marker mirrors the active training role', async () => {
   db.OnboardingTrainingMode = {
     async findOne() {
-      return { isEnabled: true, role: 'trainer' };
+      return { isEnabled: true, role: 'trainer', sessionId: 'session-trainer' };
     },
   };
 
@@ -280,6 +313,7 @@ test('training data marker mirrors the active training role', async () => {
     isTraining: true,
     trainingAccountId: 10,
     trainingRole: 'trainer',
+    trainingSessionId: 'session-trainer',
   });
 });
 
@@ -446,6 +480,11 @@ test('re-completing an updated instruction acknowledges the current content vers
 
 test('owner can inspect training data summary by role', async () => {
   const seen = [];
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return { sessionId: 'session-admin', isEnabled: false, role: 'admin' };
+    },
+  };
   for (const name of trainingModelNames) {
     db[name] = {
       async count({ where }) {
@@ -475,11 +514,21 @@ test('owner can inspect training data summary by role', async () => {
   );
   assert.deepEqual(
     seen.find((item) => item.name === 'User').where,
-    { isTraining: true, trainingRole: 'admin' },
+    {
+      isTraining: true,
+      trainingAccountId: 1,
+      trainingRole: 'admin',
+      trainingSessionId: 'session-admin',
+    },
   );
   assert.deepEqual(
     seen.find((item) => item.name === 'OnboardingEvent').where,
-    { isTraining: true, role: 'admin' },
+    {
+      accountId: 1,
+      isTraining: true,
+      role: 'admin',
+      trainingSessionId: 'session-admin',
+    },
   );
 });
 
@@ -491,9 +540,9 @@ test('non-owner cannot inspect training data summary', async () => {
 });
 
 test('owner can inspect onboarding completion metrics by role', async () => {
-  db.Account = {
+  db.Membership = {
     async findAll({ where }) {
-      assert.deepEqual(where, { status: 'active' });
+      assert.deepEqual(where, { organizationId: 10, status: 'active' });
       return [
         { id: 1, role: 'admin', status: 'active' },
         { id: 2, role: 'admin', status: 'active' },
@@ -504,7 +553,7 @@ test('owner can inspect onboarding completion metrics by role', async () => {
   };
   db.OnboardingProgress = {
     async findAll({ where }) {
-      assert.deepEqual(where, { status: 'completed' });
+      assert.deepEqual(where, { organizationId: 10, status: 'completed' });
       return [
         {
           accountId: 1,
@@ -597,6 +646,7 @@ test('recordClientEvent progresses matching review task from a safe client event
     },
   };
   db.OnboardingEvent = {
+    async findOne() { return null; },
     async create(payload) {
       return payload;
     },
@@ -646,7 +696,7 @@ test('recordClientEvent rejects action events from the browser', async () => {
 });
 
 test('owner cleanup removes dependent training data without touching progress', async () => {
-  const transaction = { id: 'training-cleanup' };
+  const transaction = { id: 'training-cleanup', LOCK: { UPDATE: 'UPDATE' } };
   const operations = [];
   const opIn = db.Sequelize.Op.in;
 
@@ -658,6 +708,17 @@ test('owner cleanup removes dependent training data without touching progress', 
   db.OnboardingProgress = {
     async destroy() {
       throw new Error('progress should not be cleaned with training data');
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return {
+        disabledAt: new Date(),
+        isEnabled: false,
+        role: 'admin',
+        sessionId: 'session-cleanup',
+        async update(payload) { Object.assign(this, payload); },
+      };
     },
   };
   db.BookingChangeLog = {
@@ -736,6 +797,7 @@ test('owner cleanup removes dependent training data without touching progress', 
   }
 
   db.OnboardingEvent = {
+    async findOne() { return null; },
     async count({ where }) {
       operations.push({ action: 'count', model: 'OnboardingEvent', where });
       return 0;
@@ -769,7 +831,12 @@ test('owner cleanup removes dependent training data without touching progress', 
     operations.find(
       (item) => item.model === 'Booking' && item.action === 'findAll',
     ).where,
-    { isTraining: true, trainingRole: 'admin' },
+    {
+      isTraining: true,
+      trainingAccountId: 1,
+      trainingRole: 'admin',
+      trainingSessionId: 'session-cleanup',
+    },
   );
   assert.deepEqual(
     operations.find((item) => item.model === 'BookingChangeLog').where,
@@ -792,11 +859,21 @@ test('owner cleanup removes dependent training data without touching progress', 
     operations.find(
       (item) => item.model === 'OnboardingEvent' && item.action === 'destroy',
     ).where,
-    { isTraining: true, role: 'admin' },
+    {
+      accountId: 1,
+      isTraining: true,
+      role: 'admin',
+      trainingSessionId: 'session-cleanup',
+    },
   );
   assert.deepEqual(
     operations.find((item) => item.model === 'User' && item.action === 'destroy').where,
-    { isTraining: true, trainingRole: 'admin' },
+    {
+      isTraining: true,
+      trainingAccountId: 1,
+      trainingRole: 'admin',
+      trainingSessionId: 'session-cleanup',
+    },
   );
   assert.deepEqual(
     operations
@@ -999,6 +1076,7 @@ test('recordEvent binds product action to exact request quest context only', asy
     },
   };
   db.OnboardingEvent = {
+    async findOne() { return null; },
     async create(payload) {
       events.push(payload);
       return payload;
@@ -1047,7 +1125,7 @@ test('recordEvent stores event and progresses matching tasks for training role',
   const progressRows = new Map();
   db.OnboardingTrainingMode = {
     async findOne() {
-      return { isEnabled: true, role: 'admin' };
+      return { isEnabled: true, role: 'admin', sessionId: 'session-admin' };
     },
   };
   db.OnboardingProgress = {
@@ -1060,6 +1138,7 @@ test('recordEvent stores event and progresses matching tasks for training role',
     },
   };
   db.OnboardingEvent = {
+    async findOne() { return null; },
     async create(payload) {
       return payload;
     },
@@ -1088,4 +1167,18 @@ test('recordEvent stores event and progresses matching tasks for training role',
     true,
   );
   assert.equal(result.event.isTraining, true);
+  assert.equal(result.event.trainingSessionId, 'session-admin');
+
+  const productionResult = await recordEvent(
+    { id: 10, role: 'owner' },
+    'booking.created',
+    {
+      entityId: 43,
+      entityType: 'booking',
+      onboardingContext: { role: 'manager' },
+      payload: { id: 43, source: 'phone' },
+    },
+  );
+  assert.equal(productionResult.event.isTraining, false);
+  assert.equal(productionResult.event.trainingSessionId, null);
 });

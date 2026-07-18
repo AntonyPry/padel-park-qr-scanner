@@ -377,13 +377,14 @@ function buildCorporateClientInclude({ context = null, withLedger = false } = {}
   return include;
 }
 
-async function getTrainingWhere(account) {
-  const marker = await onboardingService.getTrainingDataMarker(account);
+async function getTrainingWhere(account, tenant) {
+  const marker = await onboardingService.getTrainingDataMarker(account, tenant);
   if (marker.isTraining) {
     return {
       isTraining: true,
       trainingAccountId: marker.trainingAccountId,
       trainingRole: marker.trainingRole,
+      trainingSessionId: marker.trainingSessionId,
     };
   }
   return { isTraining: false };
@@ -470,7 +471,7 @@ async function listCorporateClients(query = {}, account = null, tenant = null) {
     db.CorporateClient,
   );
   const authorityActor = bindClientMoneyActor(account, context);
-  const trainingWhere = await getTrainingWhere(authorityActor);
+  const trainingWhere = await getTrainingWhere(authorityActor, tenant);
   const rows = await db.CorporateClient.findAll({
     where: organizationTenantWhere(
       context,
@@ -518,8 +519,8 @@ async function findCorporateClient(id, options = {}) {
   return row;
 }
 
-async function assertCorporateClientInScope(client, account) {
-  const trainingWhere = await getTrainingWhere(account);
+async function assertCorporateClientInScope(client, account, tenant) {
+  const trainingWhere = await getTrainingWhere(account, tenant);
   const raw = client.toJSON ? client.toJSON() : client;
   if (Boolean(raw.isTraining) !== Boolean(trainingWhere.isTraining)) {
     throw appError('Корпоративный клиент не найден', 404);
@@ -527,7 +528,8 @@ async function assertCorporateClientInScope(client, account) {
   if (
     trainingWhere.isTraining &&
     (Number(raw.trainingAccountId) !== Number(trainingWhere.trainingAccountId) ||
-      raw.trainingRole !== trainingWhere.trainingRole)
+      raw.trainingRole !== trainingWhere.trainingRole ||
+      raw.trainingSessionId !== trainingWhere.trainingSessionId)
   ) {
     throw appError('Корпоративный клиент не найден', 404);
   }
@@ -540,7 +542,7 @@ async function getCorporateClient(id, account = null, tenant = null) {
   );
   const authorityActor = bindClientMoneyActor(account, context);
   const row = await findCorporateClient(id, { context, withLedger: true });
-  await assertCorporateClientInScope(row, authorityActor);
+  await assertCorporateClientInScope(row, authorityActor, tenant);
   return serializeCorporateClient(row);
 }
 
@@ -565,6 +567,7 @@ async function createCorporateClient(data = {}, account = null, tenant = null) {
   const authorityActor = bindClientMoneyActor(account, context);
   const trainingMarker = await onboardingService.getTrainingDataMarker(
     authorityActor,
+    tenant,
   );
   const row = await db.CorporateClient.create(
     {
@@ -591,7 +594,7 @@ async function updateCorporateClient(id, data = {}, account = null, tenant = nul
   );
   const authorityActor = bindClientMoneyActor(account, context);
   const row = await findCorporateClient(id, { context });
-  await assertCorporateClientInScope(row, authorityActor);
+  await assertCorporateClientInScope(row, authorityActor, tenant);
   const beforeData = row.toJSON ? row.toJSON() : { ...row };
   const payload = {};
   if (data.name !== undefined) payload.name = normalizeName(data.name);
@@ -626,7 +629,7 @@ async function archiveCorporateClient(id, data = {}, account = null, tenant = nu
   );
   const authorityActor = bindClientMoneyActor(account, context);
   const row = await findCorporateClient(id, { context });
-  await assertCorporateClientInScope(row, authorityActor);
+  await assertCorporateClientInScope(row, authorityActor, tenant);
   if (row.status === 'archived') {
     return getCorporateClient(row.id, authorityActor, context);
   }
@@ -658,7 +661,7 @@ async function restoreCorporateClient(id, account = null, tenant = null) {
   );
   const authorityActor = bindClientMoneyActor(account, context);
   const row = await findCorporateClient(id, { context });
-  await assertCorporateClientInScope(row, authorityActor);
+  await assertCorporateClientInScope(row, authorityActor, tenant);
   if (row.status === 'active') {
     return getCorporateClient(row.id, authorityActor, context);
   }
@@ -703,7 +706,8 @@ function assertFinanceMatchesTrainingScope(finance, trainingMarker) {
   if (
     trainingMarker.isTraining &&
     (Number(raw.trainingAccountId) !== Number(trainingMarker.trainingAccountId) ||
-      raw.trainingRole !== trainingMarker.trainingRole)
+      raw.trainingRole !== trainingMarker.trainingRole ||
+      raw.trainingSessionId !== trainingMarker.trainingSessionId)
   ) {
     throw appError('Финансовая запись не соответствует текущему режиму обучения', 409);
   }
@@ -718,7 +722,8 @@ function assertEntityMatchesTrainingScope(entity, trainingMarker, entityName) {
   if (
     trainingMarker.isTraining &&
     (Number(raw.trainingAccountId) !== Number(trainingMarker.trainingAccountId) ||
-      raw.trainingRole !== trainingMarker.trainingRole)
+      raw.trainingRole !== trainingMarker.trainingRole ||
+      raw.trainingSessionId !== trainingMarker.trainingSessionId)
   ) {
     throw appError(`${entityName} не соответствует текущему режиму обучения`, 409);
   }
@@ -935,13 +940,14 @@ async function createDeposit(
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, authorityActor);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     if (client.status !== 'active') {
       throw appError('Пополнение доступно только для активной компании', 409);
     }
 
     const trainingMarker = await onboardingService.getTrainingDataMarker(
       authorityActor,
+      tenant,
     );
     const linked = Boolean(data.financeId);
     const finance = linked
@@ -1002,7 +1008,7 @@ async function createDeposit(
     await onboardingService.recordEventSafe(
       result.actor,
       'finance.record_created',
-      result.financeEvent,
+      { ...result.financeEvent, tenant },
     );
   }
 
@@ -1043,7 +1049,7 @@ async function createSpending(
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, authorityActor);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     if (client.status !== 'active') {
       throw appError('Списание доступно только для активной компании', 409);
     }
@@ -1060,6 +1066,7 @@ async function createSpending(
 
     const trainingMarker = await onboardingService.getTrainingDataMarker(
       authorityActor,
+      tenant,
     );
     const metadata = await buildSpendingMetadata(
       data,
@@ -1245,7 +1252,7 @@ async function listLedgerEntries(
   );
   const authorityActor = bindClientMoneyActor(account, context);
   const client = await findCorporateClient(corporateClientId, { context });
-  await assertCorporateClientInScope(client, authorityActor);
+  await assertCorporateClientInScope(client, authorityActor, tenant);
   const filters = normalizeLedgerFilters(query);
   const where = buildLedgerWhere(client.id, filters, {}, context);
 
@@ -1326,7 +1333,7 @@ async function cancelDeposit(
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, authorityActor);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     const entry = await db.CorporateLedgerEntry.findOne({
       where: clubTenantWhere(context, {
         corporateClientId: client.id,
@@ -1433,7 +1440,7 @@ async function reverseSpending(
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, authorityActor);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     const entry = await db.CorporateLedgerEntry.findOne({
       where: clubTenantWhere(context, {
         corporateClientId: client.id,
@@ -1593,6 +1600,7 @@ async function exportLedgerDetails(
 
   await onboardingService.recordEventSafe(authorityActor, 'report.exported', {
     entityType: 'corporate_ledger',
+    tenant,
     payload: {
       corporateClientId: client.id,
       fromDate: exportQuery.from || null,

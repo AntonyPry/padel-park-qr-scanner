@@ -1575,7 +1575,7 @@ async function loadCreatedSeriesResult(series, context, transaction) {
 }
 
 async function createBookingSeries(data, account, tenant = null, options = {}) {
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
   const idempotency = getIdempotencyMetadata(
     options.idempotencyKey,
     'booking-series.create',
@@ -1864,7 +1864,7 @@ async function getSchedule(query = {}, authority = null) {
 }
 
 async function createBooking(data, account, tenant = null, options = {}) {
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
   const idempotency = getIdempotencyMetadata(
     options.idempotencyKey,
     'booking.create',
@@ -1949,12 +1949,14 @@ async function createBooking(data, account, tenant = null, options = {}) {
     await onboardingService.recordEventSafe(account, 'booking.created', {
       entityId: result.booking.id,
       entityType: 'booking',
+      tenant,
       payload: result.booking,
     });
     if (result.booking.paymentStatus === 'paid') {
       await onboardingService.recordEventSafe(account, 'booking.paid', {
         entityId: result.booking.id,
         entityType: 'booking',
+        tenant,
         payload: result.booking,
       });
     }
@@ -2089,6 +2091,7 @@ async function updateBooking(id, data, account, tenant = null, options = {}) {
     await onboardingService.recordEventSafe(account, eventKey, {
       entityId: result.booking.id,
       entityType: 'booking',
+      tenant,
       payload: result.booking,
     });
   }

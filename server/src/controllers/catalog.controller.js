@@ -26,6 +26,7 @@ class CatalogController {
         {
           entityId: category.id,
           entityType: 'catalog_category',
+          tenant: req.tenant,
           payload: { categoryId: category.id, group: category.group },
         },
       );
@@ -72,6 +73,7 @@ class CatalogController {
         {
           entityId: updated.id,
           entityType: 'catalog_category',
+          tenant: req.tenant,
           payload: { categoryId: updated.id, group: updated.group },
         },
       );
@@ -103,6 +105,7 @@ class CatalogController {
       const result = await catalogService.saveRule(req.body, req.tenant);
       await onboardingService.recordEventSafe(req.account, 'catalog.rule_updated', {
         entityType: 'catalog_rule',
+        tenant: req.tenant,
         payload: {
           category: req.body.category,
           itemName: req.body.itemName,
@@ -128,6 +131,7 @@ class CatalogController {
       await onboardingService.recordEventSafe(req.account, 'catalog.rule_updated', {
         entityId: rule.id,
         entityType: 'catalog_rule',
+        tenant: req.tenant,
         payload: {
           category: rule.category,
           itemName: rule.itemName,
