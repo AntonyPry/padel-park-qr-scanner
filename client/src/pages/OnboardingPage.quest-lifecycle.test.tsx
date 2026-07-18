@@ -1,8 +1,16 @@
+import { StrictMode, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { BrowserRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import {
+  BrowserRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { OnboardingTaskDetail } from '@/api/onboarding';
+import { OnboardingQuestRouteObserver } from '@/components/onboarding-quest-route-observer';
 import { apiRequest } from '@/lib/api';
 import {
   activateOnboardingQuest,
@@ -14,6 +22,8 @@ import OnboardingPage from './OnboardingPage';
 const { getOnboardingTaskDetailMock } = vi.hoisted(() => ({
   getOnboardingTaskDetailMock: vi.fn(),
 }));
+const taskDetailPath = '/admin/onboarding/admin.client.create';
+const observedPathnames: string[] = [];
 
 vi.mock('@/api/onboarding', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/api/onboarding')>();
@@ -129,44 +139,41 @@ function ClientsRoute() {
   );
 }
 
-function RouteEntryControls() {
-  const navigate = useNavigate();
+function PersistentLocationTrace() {
+  const location = useLocation();
 
-  return (
-    <button
-      type="button"
-      onClick={() => navigate('/admin/onboarding/admin.client.create')}
-    >
-      enter same task detail
-    </button>
-  );
+  useEffect(() => {
+    observedPathnames.push(location.pathname);
+  }, [location.pathname]);
+
+  return null;
 }
 
-function renderLifecycle() {
+function renderLifecycle(initialPath = taskDetailPath, strictMode = false) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
 
-  window.history.replaceState(
-    null,
-    '',
-    '/admin/onboarding/admin.client.create',
-  );
+  window.history.replaceState(null, '', initialPath);
 
-  return render(
+  const app = (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <RouteEntryControls />
+        <OnboardingQuestRouteObserver />
+        <PersistentLocationTrace />
         <Routes>
           <Route path="/admin/onboarding/:taskKey" element={<OnboardingPage />} />
           <Route path="/admin/clients" element={<ClientsRoute />} />
         </Routes>
       </BrowserRouter>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+
+  return render(strictMode ? <StrictMode>{app}</StrictMode> : app);
 }
 
 beforeEach(() => {
+  observedPathnames.length = 0;
   getOnboardingTaskDetailMock.mockResolvedValue(taskDetail);
 });
 
@@ -176,12 +183,29 @@ afterEach(() => {
   window.localStorage.clear();
   window.history.replaceState(null, '', '/');
   getOnboardingTaskDetailMock.mockReset();
+  observedPathnames.length = 0;
   vi.unstubAllGlobals();
 });
 
-describe('OnboardingPage active quest abandonment', () => {
+describe('global onboarding quest route lifecycle', () => {
   it('clears a stale same-task quest on direct task-detail mount', async () => {
     activateOnboardingQuest(taskDetail.task, 'admin');
+
+    renderLifecycle();
+
+    await waitFor(() => expect(getStoredActiveOnboardingQuest()).toBeNull());
+    expect(await screen.findByText(taskDetail.task.title)).toBeInTheDocument();
+  });
+
+  it('clears a stale sibling quest on direct task-detail entry', async () => {
+    activateOnboardingQuest(
+      {
+        key: 'admin.booking.review-schedule',
+        route: '/admin/bookings',
+        title: 'Проверить расписание',
+      },
+      'admin',
+    );
 
     renderLifecycle();
 
@@ -204,6 +228,11 @@ describe('OnboardingPage active quest abandonment', () => {
 
     expect(await screen.findByText(taskDetail.task.title)).toBeInTheDocument();
     await waitFor(() => expect(getStoredActiveOnboardingQuest()).toBeNull());
+    expect(observedPathnames).toEqual([
+      taskDetailPath,
+      '/admin/clients',
+      taskDetailPath,
+    ]);
 
     const fetchMock = vi.fn(
       async (_input: RequestInfo | URL, _init?: RequestInit) => {
@@ -225,20 +254,15 @@ describe('OnboardingPage active quest abandonment', () => {
     expect(headers.has('X-Onboarding-Quest-Role')).toBe(false);
   });
 
-  it('clears a quest on a new same-task route entry without remounting the page', async () => {
-    renderLifecycle();
-
-    expect(await screen.findByText(taskDetail.task.title)).toBeInTheDocument();
+  it('retains an exact quest when the persistent shell starts on its CRM target', async () => {
     activateOnboardingQuest(taskDetail.task, 'admin');
+
+    renderLifecycle('/admin/clients', true);
+
+    expect(await screen.findByText('CRM clients')).toBeInTheDocument();
     expect(getStoredActiveOnboardingQuest()).toMatchObject({
       taskKey: 'admin.client.create',
     });
-
-    fireEvent.click(
-      screen.getByRole('button', { name: 'enter same task detail' }),
-    );
-
-    await waitFor(() => expect(getStoredActiveOnboardingQuest()).toBeNull());
-    expect(screen.getByText(taskDetail.task.title)).toBeInTheDocument();
+    expect(observedPathnames).toContain('/admin/clients');
   });
 });

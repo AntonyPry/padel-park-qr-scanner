@@ -5,6 +5,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toast';
 import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
+import { OnboardingQuestRouteObserver } from './components/onboarding-quest-route-observer';
 import { OnboardingRouteEvents } from './components/onboarding-route-events';
 import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { ROUTE_ACCESS } from './lib/permissions';
@@ -56,6 +57,7 @@ function App() {
             <TooltipProvider delayDuration={0}>
               <AuthGate>
                 <TrainingModeProvider>
+                <OnboardingQuestRouteObserver />
                 <OnboardingRouteEvents />
                 <Suspense fallback={<PageLoader />}>
                   <Routes>
