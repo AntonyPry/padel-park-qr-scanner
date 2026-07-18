@@ -76,65 +76,161 @@ function auditEventBoundaries(source, file = '<memory>') {
   );
   const findings = [];
   const functionAliases = new Set();
+  const factoryAliases = new Set();
   const objectAliases = new Map();
 
+  function unwrapExpression(node) {
+    let current = node;
+    while (
+      current && (
+        ts.isParenthesizedExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isTypeAssertionExpression(current)
+      )
+    ) {
+      current = current.expression;
+    }
+    return current;
+  }
+
+  function staticPropertyName(node) {
+    if (!node) return null;
+    if (ts.isIdentifier(node) || ts.isStringLiteral(node) ||
+      ts.isNoSubstitutionTemplateLiteral(node)) {
+      return node.text;
+    }
+    if (ts.isComputedPropertyName(node)) return staticPropertyName(node.expression);
+    return null;
+  }
+
+  function memberName(node) {
+    const expression = unwrapExpression(node);
+    if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+    if (ts.isElementAccessExpression(expression)) {
+      return staticPropertyName(expression.argumentExpression);
+    }
+    return null;
+  }
+
   function isRecordEventReference(node) {
-    return ts.isPropertyAccessExpression(node) && node.name.text === 'recordEventSafe';
+    const expression = unwrapExpression(node);
+    return (ts.isPropertyAccessExpression(expression) || ts.isElementAccessExpression(expression)) &&
+      memberName(expression) === 'recordEventSafe';
   }
 
   function expressionIsFunctionAlias(node) {
-    if (!node) return false;
-    if (isRecordEventReference(node)) return true;
-    if (ts.isIdentifier(node)) return functionAliases.has(node.text);
-    return ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-      node.expression.name.text === 'bind' &&
-      (isRecordEventReference(node.expression.expression) ||
-        (ts.isIdentifier(node.expression.expression) &&
-          functionAliases.has(node.expression.expression.text)));
+    const expression = unwrapExpression(node);
+    if (!expression) return false;
+    if (isRecordEventReference(expression)) return true;
+    if (ts.isIdentifier(expression)) return functionAliases.has(expression.text);
+    if (!ts.isCallExpression(expression)) return false;
+    const callee = unwrapExpression(expression.expression);
+    if (
+      (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+      memberName(callee) === 'bind'
+    ) {
+      return expressionIsFunctionAlias(callee.expression);
+    }
+    return expressionIsFactoryAlias(callee);
   }
 
-  function collectAliases(node) {
-    let changed = false;
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
-      if (expressionIsFunctionAlias(node.initializer) && !functionAliases.has(node.name.text)) {
-        functionAliases.add(node.name.text);
-        changed = true;
-      }
-      if (
-        ts.isObjectLiteralExpression(node.initializer) || ts.isIdentifier(node.initializer)
-      ) {
-        const value = ts.isIdentifier(node.initializer)
-          ? objectAliases.get(node.initializer.text)
-          : node.initializer;
-        if (value && objectAliases.get(node.name.text) !== value) {
-          objectAliases.set(node.name.text, value);
-          changed = true;
-        }
-      }
+  function factoryReturnsFunctionAlias(node) {
+    const expression = unwrapExpression(node);
+    if (!expression || (!ts.isArrowFunction(expression) &&
+      !ts.isFunctionExpression(expression) && !ts.isFunctionDeclaration(expression))) {
+      return false;
     }
-    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)) {
-      for (const element of node.name.elements) {
-        const property = element.propertyName?.getText(parsed) || element.name.getText(parsed);
+    if (ts.isArrowFunction(expression) && !ts.isBlock(expression.body)) {
+      return expressionIsFunctionAlias(expression.body);
+    }
+    const returns = [];
+    function visitReturn(child) {
+      if (child !== expression.body && ts.isFunctionLike(child)) return;
+      if (ts.isReturnStatement(child)) {
+        returns.push(child.expression || null);
+        return;
+      }
+      ts.forEachChild(child, visitReturn);
+    }
+    visitReturn(expression.body);
+    return returns.length > 0 && returns.every((returned) =>
+      returned && expressionIsFunctionAlias(returned));
+  }
+
+  function expressionIsFactoryAlias(node) {
+    const expression = unwrapExpression(node);
+    if (!expression) return false;
+    if (ts.isIdentifier(expression)) return factoryAliases.has(expression.text);
+    if (factoryReturnsFunctionAlias(expression)) return true;
+    if (!ts.isCallExpression(expression)) return false;
+    const callee = unwrapExpression(expression.expression);
+    return (ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee)) &&
+      memberName(callee) === 'bind' && expressionIsFactoryAlias(callee.expression);
+  }
+
+  function addRecordBinding(pattern) {
+    let changed = false;
+    if (ts.isObjectBindingPattern(pattern)) {
+      for (const element of pattern.elements) {
+        const property = staticPropertyName(element.propertyName) ||
+          (ts.isIdentifier(element.name) ? element.name.text : null);
         if (property === 'recordEventSafe' && ts.isIdentifier(element.name) &&
           !functionAliases.has(element.name.text)) {
           functionAliases.add(element.name.text);
           changed = true;
         }
       }
-    }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isIdentifier(node.left)) {
-      if (expressionIsFunctionAlias(node.right) && !functionAliases.has(node.left.text)) {
-        functionAliases.add(node.left.text);
-        changed = true;
-      }
-      if (ts.isObjectLiteralExpression(node.right) || ts.isIdentifier(node.right)) {
-        const value = ts.isIdentifier(node.right) ? objectAliases.get(node.right.text) : node.right;
-        if (value && objectAliases.get(node.left.text) !== value) {
-          objectAliases.set(node.left.text, value);
+    } else if (ts.isObjectLiteralExpression(pattern)) {
+      for (const property of pattern.properties) {
+        let target = null;
+        if (ts.isPropertyAssignment(property)) target = unwrapExpression(property.initializer);
+        else if (ts.isShorthandPropertyAssignment(property)) target = property.name;
+        if (staticPropertyName(property.name) === 'recordEventSafe' &&
+          target && ts.isIdentifier(target) && !functionAliases.has(target.text)) {
+          functionAliases.add(target.text);
           changed = true;
         }
       }
+    }
+    return changed;
+  }
+
+  function collectNamedAlias(name, initializer) {
+    if (!ts.isIdentifier(name) || !initializer) return false;
+    let changed = false;
+    if (expressionIsFunctionAlias(initializer) && !functionAliases.has(name.text)) {
+      functionAliases.add(name.text);
+      changed = true;
+    }
+    if (expressionIsFactoryAlias(initializer) && !factoryAliases.has(name.text)) {
+      factoryAliases.add(name.text);
+      changed = true;
+    }
+    if (ts.isObjectLiteralExpression(initializer) || ts.isIdentifier(initializer)) {
+      const value = ts.isIdentifier(initializer) ? objectAliases.get(initializer.text) : initializer;
+      if (value && objectAliases.get(name.text) !== value) {
+        objectAliases.set(name.text, value);
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  function collectAliases(node) {
+    let changed = false;
+    if (ts.isVariableDeclaration(node)) {
+      if (collectNamedAlias(node.name, node.initializer)) changed = true;
+      if (addRecordBinding(node.name)) changed = true;
+    }
+    if (ts.isFunctionDeclaration(node) && node.name &&
+      factoryReturnsFunctionAlias(node) && !factoryAliases.has(node.name.text)) {
+      factoryAliases.add(node.name.text);
+      changed = true;
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      if (collectNamedAlias(unwrapExpression(node.left), unwrapExpression(node.right))) changed = true;
+      if (addRecordBinding(unwrapExpression(node.left))) changed = true;
     }
     ts.forEachChild(node, (child) => {
       if (collectAliases(child)) changed = true;
@@ -179,7 +275,7 @@ function auditEventBoundaries(source, file = '<memory>') {
   function callIsEventBoundary(node) {
     if (isRecordEventReference(node.expression)) return true;
     if (ts.isIdentifier(node.expression) && functionAliases.has(node.expression.text)) return true;
-    return ts.isCallExpression(node.expression) && expressionIsFunctionAlias(node.expression);
+    return expressionIsFunctionAlias(node.expression);
   }
 
   function visit(node) {

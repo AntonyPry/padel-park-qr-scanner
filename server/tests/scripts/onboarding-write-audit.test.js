@@ -74,6 +74,73 @@ test('onboarding event audit resolves static option aliases and spreads', () => 
   assert.equal(auditEventBoundaries(unsafe).length, 1);
 });
 
+test('onboarding event audit follows factory-returned aliases and adjacent chains', () => {
+  const unsafe = `
+    const directFactory = () => onboardingService.recordEventSafe;
+    const factoryAlias = directFactory;
+    const boundFactory = factoryAlias.bind(null);
+    const record = boundFactory();
+    record(actor, 'factory', { payload: {} });
+
+    function declaredFactory() {
+      return record.bind(onboardingService);
+    }
+    declaredFactory()(actor, 'declared-factory', optionsWithoutTenant);
+  `;
+  assert.equal(auditEventBoundaries(unsafe).length, 2);
+
+  const safe = `
+    const base = { tenant };
+    const options = { ...base, payload: {} };
+    const make = () => onboardingService.recordEventSafe;
+    const record = make();
+    record(actor, 'factory-safe', options);
+  `;
+  assert.deepEqual(auditEventBoundaries(safe), []);
+});
+
+test('onboarding event audit follows static computed property references only', () => {
+  const unsafe = `
+    onboardingService['recordEventSafe'](actor, 'direct', { payload: {} });
+    const record = onboardingService['recordEventSafe'];
+    record(actor, 'alias', { payload: {} });
+  `;
+  assert.equal(auditEventBoundaries(unsafe).length, 2);
+
+  const safe = `
+    const options = { tenant, payload: {} };
+    onboardingService['recordEventSafe'](actor, 'direct-safe', options);
+    const record = onboardingService['recordEventSafe'].bind(onboardingService);
+    record(actor, 'alias-safe', { ...options });
+    onboardingService[eventMethod](actor, 'dynamic-unrelated', { payload: {} });
+  `;
+  assert.deepEqual(auditEventBoundaries(safe), []);
+});
+
+test('onboarding event audit follows destructuring assignment aliases', () => {
+  const unsafe = `
+    let assigned;
+    ({ recordEventSafe: assigned } = onboardingService);
+    const chained = assigned;
+    chained(actor, 'assigned', { payload: {} });
+
+    let shorthand;
+    ({ recordEventSafe: shorthand } = serviceAlias);
+    shorthand(actor, 'renamed', optionsWithoutTenant);
+  `;
+  assert.equal(auditEventBoundaries(unsafe).length, 2);
+
+  const safe = `
+    const base = { tenant };
+    const options = { ...base, payload: {} };
+    let assigned;
+    ({ ['recordEventSafe']: assigned } = onboardingService);
+    const rebound = assigned.bind(onboardingService);
+    rebound(actor, 'assigned-safe', options);
+  `;
+  assert.deepEqual(auditEventBoundaries(safe), []);
+});
+
 test('canonical service audit rejects writes outside exact writer methods', () => {
   const source = `
     async function rogueWriter(payload) {
