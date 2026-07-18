@@ -151,7 +151,7 @@ class CatalogController {
   // Настройки продаж Эвотора
   async getSaleSettings(req, res) {
     try {
-      res.json(await pendingSaleService.getSaleSettings());
+      res.json(await pendingSaleService.getSaleSettings(req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения настроек продаж');
     }
@@ -162,6 +162,7 @@ class CatalogController {
       const setting = await pendingSaleService.saveSaleSetting(
         req.body,
         req.account,
+        req.tenant,
       );
       res.status(201).json(setting);
     } catch (error) {
@@ -172,7 +173,7 @@ class CatalogController {
   // Очередь привязки продаж
   async getPendingSales(req, res) {
     try {
-      res.json(await pendingSaleService.listPendingSales(req.query));
+      res.json(await pendingSaleService.listPendingSales(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения очереди продаж');
     }
@@ -185,6 +186,7 @@ class CatalogController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -199,6 +201,7 @@ class CatalogController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -213,6 +216,7 @@ class CatalogController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

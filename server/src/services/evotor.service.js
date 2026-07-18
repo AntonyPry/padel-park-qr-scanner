@@ -344,7 +344,7 @@ class EvotorService {
 
       const pendingSales = await pendingSaleService.createPendingSalesForReceipt(
         newReceipt.id,
-        { transaction },
+        { connection: writeContext, transaction },
       );
 
       return {

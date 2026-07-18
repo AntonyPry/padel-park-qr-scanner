@@ -1,4 +1,9 @@
 const db = require('../../models');
+const {
+  bindClientMoneyActor,
+  clubTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 const certificatesService = require('./certificates.service');
 const corporateClientsService = require('./corporate-clients.service');
@@ -416,7 +421,7 @@ function getCertificateInclude() {
   ];
 }
 
-async function listSubscriptions() {
+async function listSubscriptions(context = null) {
   const rows = await db.ClientSubscription.findAll({
     include: getSubscriptionInclude(),
     order: [
@@ -425,11 +430,12 @@ async function listSubscriptions() {
       ['createdAt', 'DESC'],
       ['id', 'DESC'],
     ],
+    where: clubTenantWhere(context),
   });
   return rows.map((row) => subscriptionsService.serializeSubscription(row));
 }
 
-async function listCertificates() {
+async function listCertificates(context = null) {
   const rows = await db.Certificate.findAll({
     include: getCertificateInclude(),
     order: [
@@ -438,27 +444,34 @@ async function listCertificates() {
       ['createdAt', 'DESC'],
       ['id', 'DESC'],
     ],
+    where: clubTenantWhere(context),
   });
   return rows.map((row) => certificatesService.serializeCertificate(row));
 }
 
-async function getDashboard(query = {}, account = null) {
+async function getDashboard(query = {}, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscription,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
   const filters = normalizeFilters(query);
-  const permissions = getPermissions(account);
+  const permissions = getPermissions(authorityActor);
   const now = new Date();
   const expiringUntil = addDays(now, filters.expiringDays);
 
   const [pendingSalesRaw, subscriptionsRaw, certificatesRaw, corporateRaw] =
     await Promise.all([
       permissions.pendingSales
-        ? pendingSaleService.listPendingSales({ status: 'all' })
+        ? pendingSaleService.listPendingSales({ status: 'all' }, context)
         : Promise.resolve([]),
-      permissions.subscriptions ? listSubscriptions() : Promise.resolve([]),
-      permissions.certificates ? listCertificates() : Promise.resolve([]),
+      permissions.subscriptions ? listSubscriptions(context) : Promise.resolve([]),
+      permissions.certificates ? listCertificates(context) : Promise.resolve([]),
       permissions.corporateBalances
         ? corporateClientsService.listCorporateClients(
             { status: 'all' },
-            account,
+            authorityActor,
+            context,
           )
         : Promise.resolve([]),
     ]);

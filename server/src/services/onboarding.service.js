@@ -17,6 +17,7 @@ const {
   isTenantBookingsCourtsEnabled,
   isTenantMethodologySkillMapEnabled,
   isTenantTrainingNotesPlansEnabled,
+  isTenantClientMoneyInstrumentsEnabled,
 } = require('../tenant-context/capabilities');
 const {
   bookingTenantWhere,
@@ -31,6 +32,11 @@ const {
   resolveTrainingOperationsAccessContext,
   trainingOperationsTenantWhere,
 } = require('./training-operations-access-context.service');
+const {
+  clubTenantWhere,
+  organizationTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -91,6 +97,11 @@ const METHODOLOGY_TRAINING_MODELS = new Set([
   'ClientTrainingSkillHistory',
 ]);
 const TRAINING_OPERATION_MODELS = new Set(['TrainingNote', 'TrainingPlan']);
+const CLIENT_MONEY_ORGANIZATION_MODELS = new Set(['CorporateClient']);
+const CLIENT_MONEY_CLUB_MODELS = new Set([
+  'CorporateLedgerEntry',
+  'Finance',
+]);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -195,6 +206,15 @@ async function resolveTrainingOperationsContext(tenant, options = {}) {
   return resolveTrainingOperationsAccessContext(tenant, options);
 }
 
+async function resolveTrainingClientMoneyContext(tenant, options = {}) {
+  if (!isTenantClientMoneyInstrumentsEnabled()) return null;
+  return resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateLedgerEntry,
+    options,
+  );
+}
+
 function getTrainingEntityQuery(
   entity,
   role,
@@ -202,8 +222,25 @@ function getTrainingEntityQuery(
   bookingContext = null,
   methodologyContext = null,
   trainingOperationsContext = null,
+  clientMoneyContext = null,
 ) {
   const where = getTrainingEntityWhere(entity, role);
+  if (
+    clientMoneyContext &&
+    CLIENT_MONEY_ORGANIZATION_MODELS.has(entity.modelName)
+  ) {
+    return {
+      where: organizationTenantWhere(clientMoneyContext, where, { force: true }),
+    };
+  }
+  if (
+    clientMoneyContext &&
+    CLIENT_MONEY_CLUB_MODELS.has(entity.modelName)
+  ) {
+    return {
+      where: clubTenantWhere(clientMoneyContext, where, { force: true }),
+    };
+  }
   if (methodologyContext && entity.modelName === 'User') {
     return {
       where: methodologyTenantWhere(methodologyContext, where, { force: true }),
@@ -1006,6 +1043,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   const callTaskContext = await resolveTrainingCallTaskContext(authorityActor, tenant);
   const bookingContext = await resolveTrainingBookingContext(tenant);
   const trainingOperationsContext = await resolveTrainingOperationsContext(tenant);
+  const clientMoneyContext = await resolveTrainingClientMoneyContext(tenant);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
@@ -1018,6 +1056,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
             bookingContext,
             methodologyContext,
             trainingOperationsContext,
+            clientMoneyContext,
           ))
         : 0;
 
@@ -1210,6 +1249,10 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       tenant,
       { lock: true, transaction },
     );
+    const clientMoneyContext = await resolveTrainingClientMoneyContext(
+      tenant,
+      { lock: true, transaction },
+    );
     const bookingWhere = bookingContext
       ? bookingTenantWhere(
           bookingContext,
@@ -1231,6 +1274,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
           bookingContext,
           methodologyContext,
           trainingOperationsContext,
+          clientMoneyContext,
         ).where,
         transaction,
       ),
@@ -1329,6 +1373,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
         bookingContext,
         methodologyContext,
         trainingOperationsContext,
+        clientMoneyContext,
       );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],

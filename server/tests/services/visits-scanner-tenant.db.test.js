@@ -1001,6 +1001,7 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     await t.test('same-org two-Club analytics, API and XLSX share one revenue-scoped dataset', async () => {
       const from = '2088-01-01';
       const to = '2088-12-31';
+      const legacyRevenueNow = new Date();
       const revenueClient = await db.User.create(clientRow(defaultOrganization.id, 16));
       const defaultRevenueVisit = await db.Visit.create({
         clubId: defaultClub.id,
@@ -1035,15 +1036,17 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
           sum: amount,
           sumPrice: amount,
         });
-        await db.PendingSale.create({
+        await queryInterface.bulkInsert('PendingSales', [{
           clientId: revenueClient.id,
+          createdAt: legacyRevenueNow,
           itemName: item.name,
           linkedAt: new Date(dateTime),
           receiptId: receipt.id,
           receiptItemId: item.id,
           saleIntent: 'subscription',
           status: 'linked',
-        });
+          updatedAt: legacyRevenueNow,
+        }]);
         return { item, receipt };
       }
 
@@ -1060,22 +1063,31 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         '2088-08-01T09:00:00.000Z',
       );
 
-      await db.ClientSubscription.create({
+      await queryInterface.bulkInsert('ClientSubscriptions', [{
         clientId: revenueClient.id,
+        createdAt: legacyRevenueNow,
+        isUnlimited: false,
         saleAmount: 999,
+        sessionsUsed: 0,
+        source: 'manual',
         startsAt: new Date('2088-03-01T09:00:00.000Z'),
         status: 'active',
         typeName: 'Unscoped manual subscription',
-      });
-      await db.Certificate.create({
+        updatedAt: legacyRevenueNow,
+      }]);
+      await queryInterface.bulkInsert('Certificates', [{
+        amountUsed: 0,
         clientId: revenueClient.id,
         code: 'UNSCOPED-V53-CERTIFICATE',
+        createdAt: legacyRevenueNow,
         saleAmount: 888,
         source: 'manual',
         startsAt: new Date('2088-04-01T09:00:00.000Z'),
         status: 'active',
         title: 'Unscoped manual certificate',
-      });
+        unitsUsed: 0,
+        updatedAt: legacyRevenueNow,
+      }]);
       const bookingSchema = await queryInterface.describeTable('Bookings');
       const courtSchema = await queryInterface.describeTable('Courts');
       const now = new Date();
@@ -1119,19 +1131,28 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         isTraining: false,
         type: 'income',
       });
-      const corporateClient = await db.CorporateClient.create({
+      await queryInterface.bulkInsert('CorporateClients', [{
+        createdAt: legacyRevenueNow,
         isTraining: false,
         name: 'Unscoped V5.3 corporate client',
         status: 'active',
-      });
-      await db.CorporateLedgerEntry.create({
+        updatedAt: legacyRevenueNow,
+      }]);
+      const [corporateRows] = await queryInterface.sequelize.query(
+        'SELECT id FROM CorporateClients WHERE name=:name',
+        { replacements: { name: 'Unscoped V5.3 corporate client' } },
+      );
+      await queryInterface.bulkInsert('CorporateLedgerEntries', [{
         amount: 555,
-        corporateClientId: corporateClient.id,
+        corporateClientId: corporateRows[0].id,
+        createdAt: legacyRevenueNow,
         date: '2088-06-02',
+        financeCreatedByLedger: false,
         isTraining: false,
         status: 'active',
         type: 'deposit',
-      });
+        updatedAt: legacyRevenueNow,
+      }]);
 
       const [defaultDashboard, secondDashboard, defaultSources, secondSources,
         defaultCohorts, secondCohorts, defaultRevenue, secondRevenue] = await Promise.all([

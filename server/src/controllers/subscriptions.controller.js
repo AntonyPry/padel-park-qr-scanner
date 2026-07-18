@@ -8,7 +8,9 @@ function handleError(res, error, fallback) {
 class SubscriptionsController {
   async listTypes(req, res) {
     try {
-      res.json(await subscriptionsService.listSubscriptionTypes(req.query));
+      res.json(
+        await subscriptionsService.listSubscriptionTypes(req.query, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка получения типов абонементов');
     }
@@ -18,7 +20,13 @@ class SubscriptionsController {
     try {
       res
         .status(201)
-        .json(await subscriptionsService.createSubscriptionType(req.body, req.account));
+        .json(
+          await subscriptionsService.createSubscriptionType(
+            req.body,
+            req.account,
+            req.tenant,
+          ),
+        );
     } catch (error) {
       handleError(res, error, 'Ошибка создания типа абонемента');
     }
@@ -31,6 +39,7 @@ class SubscriptionsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -44,6 +53,7 @@ class SubscriptionsController {
         await subscriptionsService.archiveSubscriptionType(
           req.params.id,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -57,6 +67,7 @@ class SubscriptionsController {
         await subscriptionsService.restoreSubscriptionType(
           req.params.id,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -67,7 +78,10 @@ class SubscriptionsController {
   async removeArchivedType(req, res) {
     try {
       res.json(
-        await subscriptionsService.removeArchivedSubscriptionType(req.params.id),
+        await subscriptionsService.removeArchivedSubscriptionType(
+          req.params.id,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка удаления типа абонемента');
@@ -80,6 +94,7 @@ class SubscriptionsController {
         await subscriptionsService.listClientSubscriptions(
           req.params.clientId,
           req.query,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -89,7 +104,9 @@ class SubscriptionsController {
 
   async getClientSubscription(req, res) {
     try {
-      res.json(await subscriptionsService.getClientSubscription(req.params.id));
+      res.json(
+        await subscriptionsService.getClientSubscription(req.params.id, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка получения абонемента клиента');
     }
@@ -98,7 +115,10 @@ class SubscriptionsController {
   async listClientSubscriptionRedemptions(req, res) {
     try {
       res.json(
-        await subscriptionsService.listClientSubscriptionRedemptions(req.params.id),
+        await subscriptionsService.listClientSubscriptionRedemptions(
+          req.params.id,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения истории списаний абонемента');
@@ -112,6 +132,7 @@ class SubscriptionsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -127,6 +148,7 @@ class SubscriptionsController {
           req.params.redemptionId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

@@ -1,5 +1,13 @@
 const crypto = require('crypto');
 const db = require('../../models');
+const {
+  bindClientMoneyActor,
+  clubTenantValues,
+  clubTenantWhere,
+  findClubRecordByPk,
+  organizationTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 
 const CERTIFICATE_TYPES = ['money', 'service'];
 const CERTIFICATE_STATUSES = ['active', 'expired', 'redeemed', 'canceled'];
@@ -275,26 +283,26 @@ function buildCertificateInclude({ withRedemptions = true } = {}) {
   return include;
 }
 
-async function assertClientExists(clientId, transaction = null) {
+async function assertClientExists(clientId, transaction = null, context = null) {
   const normalizedClientId = Number(clientId);
   if (!Number.isInteger(normalizedClientId) || normalizedClientId <= 0) {
     throw appError('Некорректный клиент');
   }
 
   const client = await db.User.findOne({
-    where: {
+    where: organizationTenantWhere(context, {
       id: normalizedClientId,
       isTraining: false,
       mergedIntoUserId: null,
-    },
+    }),
     transaction,
   });
   if (!client) throw appError('Клиент не найден', 404);
   return client;
 }
 
-function buildListWhere(query = {}) {
-  const where = {};
+function buildListWhere(query = {}, context = null) {
+  const where = clubTenantWhere(context);
   const q = String(query.q || query.query || query.code || '').trim();
   const certificateType = query.certificateType
     ? normalizeCertificateType(query.certificateType)
@@ -316,10 +324,14 @@ function buildListWhere(query = {}) {
   return where;
 }
 
-async function listCertificates(query = {}) {
+async function listCertificates(query = {}, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.Certificate,
+  );
   const status = normalizeStatus(query.status || 'all', 'all');
   const rows = await db.Certificate.findAll({
-    where: buildListWhere(query),
+    where: buildListWhere(query, context),
     include: buildCertificateInclude({ withRedemptions: false }),
     order: [
       ['createdAt', 'DESC'],
@@ -333,11 +345,15 @@ async function listCertificates(query = {}) {
   return items.filter((item) => item.status === status);
 }
 
-async function listClientCertificates(clientId, query = {}) {
-  await assertClientExists(clientId);
+async function listClientCertificates(clientId, query = {}, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.Certificate,
+  );
+  await assertClientExists(clientId, null, context);
   const status = normalizeStatus(query.status || 'all', 'all');
   const rows = await db.Certificate.findAll({
-    where: buildListWhere({ ...query, clientId }),
+    where: buildListWhere({ ...query, clientId }, context),
     include: buildCertificateInclude({
       withRedemptions: query.withRedemptions === true || query.withRedemptions === 'true',
     }),
@@ -353,42 +369,51 @@ async function listClientCertificates(clientId, query = {}) {
   return items.filter((item) => item.status === status);
 }
 
-async function getCertificate(id) {
-  const row = await db.Certificate.findByPk(id, {
+async function getCertificate(id, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.Certificate,
+  );
+  const row = await findClubRecordByPk(db.Certificate, id, {
     include: buildCertificateInclude(),
-  });
+  }, context);
   if (!row) throw appError('Сертификат не найден', 404);
   return serializeCertificate(row);
 }
 
-async function findCertificateForUpdate(id, transaction) {
-  const row = await db.Certificate.findByPk(id, {
+async function findCertificateForUpdate(id, transaction, context = null) {
+  const row = await findClubRecordByPk(db.Certificate, id, {
     transaction,
     lock: transaction?.LOCK?.UPDATE,
-  });
+  }, context);
   if (!row) throw appError('Сертификат не найден', 404);
   return row;
 }
 
-async function findCertificateForResponse(id, transaction = null) {
-  const row = await db.Certificate.findByPk(id, {
+async function findCertificateForResponse(id, transaction = null, context = null) {
+  const row = await findClubRecordByPk(db.Certificate, id, {
     include: buildCertificateInclude(),
     transaction,
-  });
+  }, context);
   if (!row) throw appError('Сертификат не найден', 404);
   return serializeCertificate(row);
 }
 
-async function findRedemptionForResponse(id, transaction = null) {
-  const row = await db.CertificateRedemption.findByPk(id, {
+async function findRedemptionForResponse(id, transaction = null, context = null) {
+  const row = await findClubRecordByPk(db.CertificateRedemption, id, {
     include: buildRedemptionInclude(),
     transaction,
-  });
+  }, context);
   return serializeRedemption(row);
 }
 
-async function assertCertificateCodeAvailable(code, certificateId = null, transaction = null) {
-  const where = { code };
+async function assertCertificateCodeAvailable(
+  code,
+  certificateId = null,
+  transaction = null,
+  context = null,
+) {
+  const where = clubTenantWhere(context, { code });
   if (certificateId) where.id = { [db.Sequelize.Op.ne]: Number(certificateId) };
   const existing = await db.Certificate.findOne({ where, transaction });
   if (existing) throw appError('Сертификат с таким кодом уже существует', 409);
@@ -400,25 +425,33 @@ function generateCertificateCode(startsAt = new Date()) {
   return `CERT-${date}-${random}`;
 }
 
-async function resolveCertificateCode(preferredCode, startsAt, transaction) {
+async function resolveCertificateCode(
+  preferredCode,
+  startsAt,
+  transaction,
+  context = null,
+) {
   const manualCode = normalizeCertificateCode(preferredCode);
   if (manualCode) {
-    await assertCertificateCodeAvailable(manualCode, null, transaction);
+    await assertCertificateCodeAvailable(manualCode, null, transaction, context);
     return manualCode;
   }
 
   for (let attempt = 0; attempt < 10; attempt += 1) {
     const code = generateCertificateCode(startsAt);
-    const existing = await db.Certificate.findOne({ where: { code }, transaction });
+    const existing = await db.Certificate.findOne({
+      where: clubTenantWhere(context, { code }),
+      transaction,
+    });
     if (!existing) return code;
   }
 
   throw appError('Не удалось сгенерировать уникальный код сертификата', 500);
 }
 
-async function loadPendingSaleContext(pendingSale, transaction) {
+async function loadPendingSaleContext(pendingSale, transaction, context = null) {
   const pendingSaleId = Number(pendingSale?.id || pendingSale);
-  const row = await db.PendingSale.findByPk(pendingSaleId, {
+  const row = await findClubRecordByPk(db.PendingSale, pendingSaleId, {
     include: [
       {
         model: db.EvotorSaleSetting,
@@ -436,7 +469,7 @@ async function loadPendingSaleContext(pendingSale, transaction) {
       },
     ],
     transaction,
-  });
+  }, context);
   if (!row) throw appError('Продажа из очереди не найдена', 404);
   return row;
 }
@@ -459,7 +492,13 @@ function buildCertificateSettings(pendingSale, overrides = {}) {
   };
 }
 
-async function buildCertificateDefaults(pendingSale, overrides = {}, account = null, transaction = null) {
+async function buildCertificateDefaults(
+  pendingSale,
+  overrides = {},
+  account = null,
+  transaction = null,
+  context = null,
+) {
   const raw = pendingSale.toJSON ? pendingSale.toJSON() : pendingSale;
   const metadata = normalizeMetadata(raw.metadata) || {};
   const receipt = raw.receipt || null;
@@ -480,9 +519,15 @@ async function buildCertificateDefaults(pendingSale, overrides = {}, account = n
   );
   const saleAmount = toNumber(firstDefined(receiptItem?.sum, metadata.amount, settings.saleAmount));
   const title = normalizeOptionalText(settings.title) || raw.itemName || 'Сертификат';
-  const code = await resolveCertificateCode(settings.code, startsAt, transaction);
+  const code = await resolveCertificateCode(
+    settings.code,
+    startsAt,
+    transaction,
+    context,
+  );
 
   const defaults = {
+    ...clubTenantValues(context),
     clientId: raw.clientId,
     pendingSaleId: raw.id,
     sourceReceiptId: raw.receiptId || receipt?.id || null,
@@ -532,7 +577,11 @@ async function buildCertificateDefaults(pendingSale, overrides = {}, account = n
   return defaults;
 }
 
-async function findExistingCertificateForSale(pendingSale, transaction) {
+async function findExistingCertificateForSale(
+  pendingSale,
+  transaction,
+  context = null,
+) {
   const raw = pendingSale.toJSON ? pendingSale.toJSON() : pendingSale;
   const or = [];
   if (raw.id) or.push({ pendingSaleId: raw.id });
@@ -540,7 +589,7 @@ async function findExistingCertificateForSale(pendingSale, transaction) {
   if (or.length === 0) return null;
 
   return db.Certificate.findOne({
-    where: { [db.Sequelize.Op.or]: or },
+    where: clubTenantWhere(context, { [db.Sequelize.Op.or]: or }),
     include: buildCertificateInclude(),
     transaction,
   });
@@ -548,8 +597,13 @@ async function findExistingCertificateForSale(pendingSale, transaction) {
 
 async function createFromPendingSale(pendingSale, options = {}) {
   const transaction = options.transaction || null;
-  const account = options.account || null;
-  const row = await loadPendingSaleContext(pendingSale, transaction);
+  const context = await resolveClientMoneyAccessContextForModel(
+    options.tenant || null,
+    db.Certificate,
+    { transaction },
+  );
+  const account = bindClientMoneyActor(options.account || null, context);
+  const row = await loadPendingSaleContext(pendingSale, transaction, context);
   const raw = row.toJSON ? row.toJSON() : row;
 
   if (raw.saleIntent !== 'certificate') {
@@ -559,7 +613,11 @@ async function createFromPendingSale(pendingSale, options = {}) {
     throw appError('Сертификат можно создать только после привязки продажи к клиенту', 409);
   }
 
-  const existing = await findExistingCertificateForSale(row, transaction);
+  const existing = await findExistingCertificateForSale(
+    row,
+    transaction,
+    context,
+  );
   if (existing) {
     return {
       certificate: serializeCertificate(existing),
@@ -572,6 +630,7 @@ async function createFromPendingSale(pendingSale, options = {}) {
     options.certificate || {},
     account,
     transaction,
+    context,
   );
   let certificate;
 
@@ -579,14 +638,23 @@ async function createFromPendingSale(pendingSale, options = {}) {
     certificate = await db.Certificate.create(defaults, { transaction });
   } catch (error) {
     if (error.name !== 'SequelizeUniqueConstraintError') throw error;
-    certificate = await findExistingCertificateForSale(row, transaction);
+    certificate = await findExistingCertificateForSale(
+      row,
+      transaction,
+      context,
+    );
     if (!certificate) throw error;
   }
 
-  const withInclude = await db.Certificate.findByPk(certificate.id, {
+  const withInclude = await findClubRecordByPk(
+    db.Certificate,
+    certificate.id,
+    {
     include: buildCertificateInclude(),
     transaction,
-  });
+    },
+    context,
+  );
 
   return {
     certificate: serializeCertificate(withInclude || certificate),
@@ -594,9 +662,21 @@ async function createFromPendingSale(pendingSale, options = {}) {
   };
 }
 
-async function cancelFromPendingSale(pendingSaleId, account = null, reason = null, transaction = null) {
+async function cancelFromPendingSale(
+  pendingSaleId,
+  account = null,
+  reason = null,
+  transaction = null,
+  tenant = null,
+) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.Certificate,
+    { transaction },
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
   const certificate = await db.Certificate.findOne({
-    where: { pendingSaleId: Number(pendingSaleId) },
+    where: clubTenantWhere(context, { pendingSaleId: Number(pendingSaleId) }),
     transaction,
   });
   if (!certificate || certificate.status === 'canceled') return null;
@@ -604,7 +684,7 @@ async function cancelFromPendingSale(pendingSaleId, account = null, reason = nul
   await certificate.update(
     {
       canceledAt: new Date(),
-      canceledByAccountId: account?.id || null,
+      canceledByAccountId: authorityActor?.id || null,
       cancelReason: normalizeOptionalText(reason),
       status: 'canceled',
     },
@@ -627,10 +707,16 @@ function calculateStatusAfterUsage(certificate, usage, now = new Date()) {
   );
 }
 
-function buildRedemptionPayload(certificate, data = {}, account = null) {
+function buildRedemptionPayload(
+  certificate,
+  data = {},
+  account = null,
+  context = null,
+) {
   const raw = certificate.toJSON ? certificate.toJSON() : certificate;
   const now = new Date();
   const payload = {
+    ...clubTenantValues(context),
     certificateId: raw.id,
     clientId: raw.clientId,
     comment: normalizeOptionalText(data.comment),
@@ -673,14 +759,23 @@ function assertCanRedeemCertificate(certificate, redemptionPayload, now = new Da
   }
 }
 
-async function listCertificateRedemptions(certificateId) {
-  const certificate = await db.Certificate.findByPk(certificateId, {
+async function listCertificateRedemptions(certificateId, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CertificateRedemption,
+  );
+  const certificate = await findClubRecordByPk(
+    db.Certificate,
+    certificateId,
+    {
     attributes: ['id'],
-  });
+    },
+    context,
+  );
   if (!certificate) throw appError('Сертификат не найден', 404);
 
   const rows = await db.CertificateRedemption.findAll({
-    where: { certificateId: Number(certificateId) },
+    where: clubTenantWhere(context, { certificateId: Number(certificateId) }),
     include: buildRedemptionInclude(),
     order: [
       ['redeemedAt', 'DESC'],
@@ -691,10 +786,30 @@ async function listCertificateRedemptions(certificateId) {
   return rows.map(serializeRedemption);
 }
 
-async function redeemCertificate(certificateId, data = {}, account = null) {
+async function redeemCertificate(
+  certificateId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   return db.sequelize.transaction(async (transaction) => {
-    const certificate = await findCertificateForUpdate(certificateId, transaction);
-    const payload = buildRedemptionPayload(certificate, data, account);
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.CertificateRedemption,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
+    const certificate = await findCertificateForUpdate(
+      certificateId,
+      transaction,
+      context,
+    );
+    const payload = buildRedemptionPayload(
+      certificate,
+      data,
+      authorityActor,
+      context,
+    );
     assertCanRedeemCertificate(certificate, payload);
 
     const usage = {};
@@ -713,8 +828,16 @@ async function redeemCertificate(certificateId, data = {}, account = null) {
     await certificate.update(usage, { transaction });
 
     return {
-      certificate: await findCertificateForResponse(certificate.id, transaction),
-      redemption: await findRedemptionForResponse(redemption.id, transaction),
+      certificate: await findCertificateForResponse(
+        certificate.id,
+        transaction,
+        context,
+      ),
+      redemption: await findRedemptionForResponse(
+        redemption.id,
+        transaction,
+        context,
+      ),
     };
   });
 }
@@ -724,14 +847,25 @@ async function reverseCertificateRedemption(
   redemptionId,
   data = {},
   account = null,
+  tenant = null,
 ) {
   return db.sequelize.transaction(async (transaction) => {
-    const certificate = await findCertificateForUpdate(certificateId, transaction);
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.CertificateRedemption,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
+    const certificate = await findCertificateForUpdate(
+      certificateId,
+      transaction,
+      context,
+    );
     const redemption = await db.CertificateRedemption.findOne({
-      where: {
+      where: clubTenantWhere(context, {
         certificateId: Number(certificateId),
         id: Number(redemptionId),
-      },
+      }),
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
@@ -757,7 +891,7 @@ async function reverseCertificateRedemption(
       {
         reversalReason: normalizeOptionalText(data.reason),
         reversedAt: new Date(),
-        reversedByAccountId: account?.id || null,
+        reversedByAccountId: authorityActor?.id || null,
         status: 'reversed',
       },
       { transaction },
@@ -765,8 +899,16 @@ async function reverseCertificateRedemption(
     await certificate.update(usage, { transaction });
 
     return {
-      certificate: await findCertificateForResponse(certificate.id, transaction),
-      redemption: await findRedemptionForResponse(redemption.id, transaction),
+      certificate: await findCertificateForResponse(
+        certificate.id,
+        transaction,
+        context,
+      ),
+      redemption: await findRedemptionForResponse(
+        redemption.id,
+        transaction,
+        context,
+      ),
     };
   });
 }

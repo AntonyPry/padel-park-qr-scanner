@@ -41,6 +41,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
 
     const createReceiptItem = async ({ amount, clientId, dateTime, type }) => {
       const receipt = await db.Receipt.create({
+        organizationId,
+        clubId,
         evotorId: `revenue-${type}-${suffix}-${records.receipts.length}`,
         dateTime,
         type,
@@ -59,6 +61,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       });
       records.items.push(item);
       const pendingSale = await db.PendingSale.create({
+        organizationId,
+        clubId,
         receiptId: receipt.id,
         receiptItemId: item.id,
         itemName: item.name,
@@ -74,6 +78,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
     const sell = await createReceiptItem({ amount: 100, clientId: leaf.id, dateTime: '2088-01-02T10:00:00Z', type: 'SELL' });
     await createReceiptItem({ amount: 20, clientId: root.id, dateTime: '2088-01-03T10:00:00Z', type: 'PAYBACK' });
     const unlinkedPayback = await db.Receipt.create({
+      organizationId,
+      clubId,
       evotorId: `revenue-unlinked-payback-${suffix}`,
       dateTime: '2088-01-03T11:00:00Z',
       type: 'PAYBACK',
@@ -92,6 +98,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
     }));
 
     records.subscriptions.push(await db.ClientSubscription.create({
+      organizationId,
+      clubId,
       clientId: leaf.id,
       pendingSaleId: sell.pendingSale.id,
       sourceReceiptId: sell.receipt.id,
@@ -104,6 +112,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.certificates.push(await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: leaf.id,
       pendingSaleId: sell.pendingSale.id,
       sourceReceiptId: sell.receipt.id,
@@ -116,6 +126,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.subscriptions.push(await db.ClientSubscription.create({
+      organizationId,
+      clubId,
       clientId: leaf.id,
       source: 'manual',
       typeName: `Manual subscription ${suffix}`,
@@ -125,6 +137,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.certificates.push(await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: root.id,
       source: 'manual',
       code: `MAN-${suffix}`,
@@ -134,6 +148,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.certificates.push(await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: root.id,
       source: 'legacy_stn_google_sheet',
       code: `LEGACY-${suffix}`,
@@ -143,6 +159,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.certificates.push(await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: root.id,
       source: 'manual',
       code: `CANCELED-${suffix}`,
@@ -153,6 +171,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       canceledAt: new Date('2088-01-04T12:00:00Z'),
     }));
     records.certificates.push(await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: training.id,
       source: 'manual',
       code: `TRAINING-${suffix}`,
@@ -162,6 +182,8 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       status: 'active',
     }));
     records.certificates.push(await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: otherSourceClient.id,
       source: 'manual',
       code: `OTHER-SOURCE-${suffix}`,
@@ -265,6 +287,8 @@ test('DB-backed revenue LTV resolves a merge cycle to one canonical paying clien
     visits.push(await db.Visit.create({ organizationId, clubId, userId: users[0].id, scannedAt: '2087-01-01T10:00:00Z' }));
     visits.push(await db.Visit.create({ organizationId, clubId, userId: users[1].id, scannedAt: '2087-01-02T10:00:00Z' }));
     certificate = await db.Certificate.create({
+      organizationId,
+      clubId,
       clientId: users[1].id,
       source: 'manual',
       code: `CYCLE-${suffix}`,

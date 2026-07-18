@@ -416,17 +416,21 @@ function buildEmptyClientPrepaymentContext() {
   };
 }
 
-async function getClientPrepaymentContext(clientId, account = null) {
+async function getClientPrepaymentContext(
+  clientId,
+  account = null,
+  tenant = null,
+) {
   const canSubscriptions = canViewClientSubscriptions(account);
   const canCertificates = canViewCertificates(account);
   const [clientSubscriptions, clientCertificates] = await Promise.all([
     canSubscriptions
-      ? subscriptionsService.listClientSubscriptions(clientId)
+      ? subscriptionsService.listClientSubscriptions(clientId, {}, tenant)
       : [],
     canCertificates
       ? certificatesService.listClientCertificates(clientId, {
           withRedemptions: true,
-        })
+        }, tenant)
       : [],
   ]);
 
@@ -1416,7 +1420,7 @@ async function getClientDetails(id, account = null, tenant = null) {
       : [],
     includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
     includeOperationalHistory
-      ? getClientPrepaymentContext(client.id, account)
+      ? getClientPrepaymentContext(client.id, account, tenant)
       : buildEmptyClientPrepaymentContext(),
   ]);
   const { clientCertificates, clientSubscriptions, prepaymentSummary } =

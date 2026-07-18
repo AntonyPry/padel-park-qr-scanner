@@ -41,6 +41,7 @@
     "tenant:account-writes:audit": "node scripts/audit-account-writes.js",
     "tenant:cache-realtime:audit": "node scripts/audit-tenant-cache-realtime.js",
     "tenant:booking-court-writes:audit": "node scripts/audit-booking-court-writes.js",
+    "tenant:client-money-writes:audit": "node scripts/audit-client-money-writes.js",
     "tenant:methodology-skill-map-writes:audit": "node scripts/audit-methodology-skill-map-writes.js",
     "tenant:client-base-call-task-writes:audit": "node scripts/audit-client-base-call-task-writes.js",
     "tenant:client-reference-writes:audit": "node scripts/audit-client-reference-writes.js",

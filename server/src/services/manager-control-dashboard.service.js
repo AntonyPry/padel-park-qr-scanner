@@ -1,5 +1,10 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
+const {
+  bindClientMoneyActor,
+  clubTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 const bookingsService = require('./bookings.service');
 const callTasksService = require('./call-tasks.service');
 const certificatesService = require('./certificates.service');
@@ -329,7 +334,7 @@ function buildSummary(sections) {
   };
 }
 
-async function listExpiringSubscriptions(now, expiringUntil) {
+async function listExpiringSubscriptions(now, expiringUntil, context = null) {
   const rows = await db.ClientSubscription.findAll({
     include: [
       {
@@ -346,17 +351,17 @@ async function listExpiringSubscriptions(now, expiringUntil) {
       ['expiresAt', 'ASC'],
       ['createdAt', 'DESC'],
     ],
-    where: {
+    where: clubTenantWhere(context, {
       expiresAt: { [Op.gte]: now, [Op.lte]: expiringUntil },
       status: 'active',
-    },
+    }),
   });
   return rows
     .map((row) => subscriptionsService.serializeSubscription(row, { now }))
     .filter((item) => item.status === 'active');
 }
 
-async function listExpiringCertificates(now, expiringUntil) {
+async function listExpiringCertificates(now, expiringUntil, context = null) {
   const rows = await db.Certificate.findAll({
     include: [
       {
@@ -369,10 +374,10 @@ async function listExpiringCertificates(now, expiringUntil) {
       ['expiresAt', 'ASC'],
       ['createdAt', 'DESC'],
     ],
-    where: {
+    where: clubTenantWhere(context, {
       expiresAt: { [Op.gte]: now, [Op.lte]: expiringUntil },
       status: 'active',
-    },
+    }),
   });
   return rows
     .map((row) => certificatesService.serializeCertificate(row, { now }))
@@ -422,6 +427,11 @@ async function listMissedCallsWithoutResult() {
 }
 
 async function getDashboard(query = {}, account = null, tenant = null) {
+  const clientMoneyContext = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscription,
+  );
+  const authorityActor = bindClientMoneyActor(account, clientMoneyContext);
   const filters = normalizeFilters(query);
   const range = getDayRange(filters.date);
   const now = new Date();
@@ -436,11 +446,18 @@ async function getDashboard(query = {}, account = null, tenant = null) {
     missedCallsRaw,
     schedule,
   ] = await Promise.all([
-    pendingSaleService.listPendingSales({ status: 'pending' }),
-    listExpiringSubscriptions(now, expiringUntil),
-    listExpiringCertificates(now, expiringUntil),
-    corporateClientsService.listCorporateClients({ status: 'active' }, account),
-    callTasksService.list(account, { status: 'active' }, tenant),
+    pendingSaleService.listPendingSales(
+      { status: 'pending' },
+      clientMoneyContext,
+    ),
+    listExpiringSubscriptions(now, expiringUntil, clientMoneyContext),
+    listExpiringCertificates(now, expiringUntil, clientMoneyContext),
+    corporateClientsService.listCorporateClients(
+      { status: 'active' },
+      authorityActor,
+      clientMoneyContext,
+    ),
+    callTasksService.list(authorityActor, { status: 'active' }, tenant),
     listMissedCallsWithoutResult(),
     bookingsService.getSchedule({ date: range.date, status: 'all' }, tenant),
   ]);

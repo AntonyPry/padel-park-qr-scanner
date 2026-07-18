@@ -1,4 +1,14 @@
 const db = require('../../models');
+const {
+  bindClientMoneyActor,
+  clubTenantValues,
+  clubTenantWhere,
+  findClubRecordByPk,
+  findOrganizationRecordByPk,
+  organizationTenantValues,
+  organizationTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 
 const SUBSCRIPTION_TYPE_STATUSES = ['active', 'archived'];
 const CLIENT_SUBSCRIPTION_STATUSES = ['active', 'expired', 'used', 'canceled'];
@@ -421,8 +431,13 @@ function buildTypePayload(data = {}, account = null, existing = null) {
   return payload;
 }
 
-async function assertTypeNameAvailable(name, typeId = null, transaction = null) {
-  const where = { name };
+async function assertTypeNameAvailable(
+  name,
+  typeId = null,
+  transaction = null,
+  context = null,
+) {
+  const where = organizationTenantWhere(context, { name });
   if (typeId) {
     where.id = { [db.Sequelize.Op.ne]: Number(typeId) };
   }
@@ -433,18 +448,27 @@ async function assertTypeNameAvailable(name, typeId = null, transaction = null) 
   }
 }
 
-async function getTypeOrFail(id, options = {}) {
-  const type = await db.SubscriptionType.findByPk(id, options);
+async function getTypeOrFail(id, options = {}, context = null) {
+  const type = await findOrganizationRecordByPk(
+    db.SubscriptionType,
+    id,
+    options,
+    context,
+  );
   if (!type) throw appError('Тип абонемента не найден', 404);
   return type;
 }
 
-async function listSubscriptionTypes(query = {}) {
+async function listSubscriptionTypes(query = {}, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.SubscriptionType,
+  );
   const status = normalizeStatus(
     query.status || 'active',
     SUBSCRIPTION_TYPE_STATUSES,
   );
-  const where = {};
+  const where = organizationTenantWhere(context);
   if (status !== 'all') where.status = status;
 
   const rows = await db.SubscriptionType.findAll({
@@ -460,52 +484,81 @@ async function listSubscriptionTypes(query = {}) {
   return rows.map(serializeType);
 }
 
-async function createSubscriptionType(data, account = null) {
-  const payload = buildTypePayload(data, account);
-  await assertTypeNameAvailable(payload.name);
+async function createSubscriptionType(data, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.SubscriptionType,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const payload = {
+    ...organizationTenantValues(context),
+    ...buildTypePayload(data, authorityActor),
+  };
+  await assertTypeNameAvailable(payload.name, null, null, context);
   const type = await db.SubscriptionType.create(payload);
   return serializeType(type);
 }
 
-async function updateSubscriptionType(id, data, account = null) {
-  const type = await getTypeOrFail(id);
-  const payload = buildTypePayload(data, account, type);
-  if (payload.name) await assertTypeNameAvailable(payload.name, type.id);
+async function updateSubscriptionType(id, data, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.SubscriptionType,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const type = await getTypeOrFail(id, {}, context);
+  const payload = buildTypePayload(data, authorityActor, type);
+  if (payload.name) {
+    await assertTypeNameAvailable(payload.name, type.id, null, context);
+  }
   await type.update(payload);
   return serializeType(type);
 }
 
-async function archiveSubscriptionType(id, account = null) {
-  const type = await getTypeOrFail(id);
+async function archiveSubscriptionType(id, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.SubscriptionType,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const type = await getTypeOrFail(id, {}, context);
   await type.update({
     status: 'archived',
-    updatedByAccountId: account?.id || null,
+    updatedByAccountId: authorityActor?.id || null,
   });
   return serializeType(type);
 }
 
-async function restoreSubscriptionType(id, account = null) {
-  const type = await getTypeOrFail(id);
+async function restoreSubscriptionType(id, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.SubscriptionType,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const type = await getTypeOrFail(id, {}, context);
   await type.update({
     status: 'active',
-    updatedByAccountId: account?.id || null,
+    updatedByAccountId: authorityActor?.id || null,
   });
   return serializeType(type);
 }
 
-async function removeArchivedSubscriptionType(id) {
-  const type = await getTypeOrFail(id);
+async function removeArchivedSubscriptionType(id, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.SubscriptionType,
+  );
+  const type = await getTypeOrFail(id, {}, context);
   if (type.status !== 'archived') {
     throw appError('Удалять навсегда можно только типы из архива', 409);
   }
 
   const [usageCount, saleSettings] = await Promise.all([
     db.ClientSubscription.count({
-      where: { subscriptionTypeId: type.id },
+      where: organizationTenantWhere(context, { subscriptionTypeId: type.id }),
     }),
     db.EvotorSaleSetting.findAll({
       attributes: ['id', 'itemName', 'saleIntent', 'saleSettings'],
-      where: { saleIntent: 'subscription' },
+      where: organizationTenantWhere(context, { saleIntent: 'subscription' }),
     }),
   ]);
   if (usageCount > 0) {
@@ -531,33 +584,37 @@ async function removeArchivedSubscriptionType(id) {
   return { success: true };
 }
 
-async function assertClientExists(clientId, transaction = null) {
+async function assertClientExists(clientId, transaction = null, context = null) {
   const normalizedClientId = Number(clientId);
   if (!Number.isInteger(normalizedClientId) || normalizedClientId <= 0) {
     throw appError('Некорректный клиент');
   }
 
   const client = await db.User.findOne({
-    where: {
+    where: organizationTenantWhere(context, {
       id: normalizedClientId,
       isTraining: false,
       mergedIntoUserId: null,
-    },
+    }),
     transaction,
   });
   if (!client) throw appError('Клиент не найден', 404);
   return client;
 }
 
-async function listClientSubscriptions(clientId, query = {}) {
-  await assertClientExists(clientId);
+async function listClientSubscriptions(clientId, query = {}, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscription,
+  );
+  await assertClientExists(clientId, null, context);
   const status = normalizeStatus(
     query.status || 'all',
     CLIENT_SUBSCRIPTION_STATUSES,
     'all',
   );
   const rows = await db.ClientSubscription.findAll({
-    where: { clientId: Number(clientId) },
+    where: clubTenantWhere(context, { clientId: Number(clientId) }),
     include: buildSubscriptionInclude(),
     order: [
       ['startsAt', 'DESC'],
@@ -569,37 +626,45 @@ async function listClientSubscriptions(clientId, query = {}) {
   return items.filter((item) => item.status === status);
 }
 
-async function getClientSubscription(id) {
-  const row = await db.ClientSubscription.findByPk(id, {
+async function getClientSubscription(id, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscription,
+  );
+  const row = await findClubRecordByPk(db.ClientSubscription, id, {
     include: buildSubscriptionInclude(),
-  });
+  }, context);
   if (!row) throw appError('Абонемент клиента не найден', 404);
   return serializeSubscription(row);
 }
 
-async function findClientSubscriptionForUpdate(id, transaction) {
-  const row = await db.ClientSubscription.findByPk(id, {
+async function findClientSubscriptionForUpdate(id, transaction, context = null) {
+  const row = await findClubRecordByPk(db.ClientSubscription, id, {
     transaction,
     lock: transaction?.LOCK?.UPDATE,
-  });
+  }, context);
   if (!row) throw appError('Абонемент клиента не найден', 404);
   return row;
 }
 
-async function findClientSubscriptionForResponse(id, transaction = null) {
-  const row = await db.ClientSubscription.findByPk(id, {
+async function findClientSubscriptionForResponse(
+  id,
+  transaction = null,
+  context = null,
+) {
+  const row = await findClubRecordByPk(db.ClientSubscription, id, {
     include: buildSubscriptionInclude(),
     transaction,
-  });
+  }, context);
   if (!row) throw appError('Абонемент клиента не найден', 404);
   return serializeSubscription(row);
 }
 
-async function findRedemptionForResponse(id, transaction = null) {
-  const row = await db.ClientSubscriptionRedemption.findByPk(id, {
+async function findRedemptionForResponse(id, transaction = null, context = null) {
+  const row = await findClubRecordByPk(db.ClientSubscriptionRedemption, id, {
     include: buildRedemptionInclude(),
     transaction,
-  });
+  }, context);
   return serializeRedemption(row);
 }
 
@@ -616,7 +681,12 @@ function calculateStatusAfterUsage(subscription, sessionsUsed, now = new Date())
   );
 }
 
-function buildRedemptionPayload(subscription, data = {}, account = null) {
+function buildRedemptionPayload(
+  subscription,
+  data = {},
+  account = null,
+  context = null,
+) {
   const raw = subscription.toJSON ? subscription.toJSON() : subscription;
   const now = new Date();
   const quantity = normalizePositiveInt(data.quantity, 'Количество занятий', 1);
@@ -634,6 +704,7 @@ function buildRedemptionPayload(subscription, data = {}, account = null) {
   );
 
   return {
+    ...clubTenantValues(context),
     clientSubscriptionId: raw.id,
     clientId: raw.clientId,
     quantity,
@@ -662,14 +733,25 @@ function assertCanRedeemSubscription(subscription, quantity, now = new Date()) {
   }
 }
 
-async function listClientSubscriptionRedemptions(subscriptionId) {
-  const subscription = await db.ClientSubscription.findByPk(subscriptionId, {
+async function listClientSubscriptionRedemptions(subscriptionId, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscriptionRedemption,
+  );
+  const subscription = await findClubRecordByPk(
+    db.ClientSubscription,
+    subscriptionId,
+    {
     attributes: ['id'],
-  });
+    },
+    context,
+  );
   if (!subscription) throw appError('Абонемент клиента не найден', 404);
 
   const rows = await db.ClientSubscriptionRedemption.findAll({
-    where: { clientSubscriptionId: Number(subscriptionId) },
+    where: clubTenantWhere(context, {
+      clientSubscriptionId: Number(subscriptionId),
+    }),
     include: buildRedemptionInclude(),
     order: [
       ['redeemedAt', 'DESC'],
@@ -680,13 +762,30 @@ async function listClientSubscriptionRedemptions(subscriptionId) {
   return rows.map(serializeRedemption);
 }
 
-async function redeemClientSubscription(subscriptionId, data = {}, account = null) {
+async function redeemClientSubscription(
+  subscriptionId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.ClientSubscriptionRedemption,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
     const subscription = await findClientSubscriptionForUpdate(
       subscriptionId,
       transaction,
+      context,
     );
-    const payload = buildRedemptionPayload(subscription, data, account);
+    const payload = buildRedemptionPayload(
+      subscription,
+      data,
+      authorityActor,
+      context,
+    );
     assertCanRedeemSubscription(subscription, payload.quantity);
 
     const currentUsed = Number(subscription.sessionsUsed || 0);
@@ -705,10 +804,15 @@ async function redeemClientSubscription(subscriptionId, data = {}, account = nul
     );
 
     return {
-      redemption: await findRedemptionForResponse(redemption.id, transaction),
+      redemption: await findRedemptionForResponse(
+        redemption.id,
+        transaction,
+        context,
+      ),
       subscription: await findClientSubscriptionForResponse(
         subscription.id,
         transaction,
+        context,
       ),
     };
   });
@@ -719,17 +823,25 @@ async function reverseClientSubscriptionRedemption(
   redemptionId,
   data = {},
   account = null,
+  tenant = null,
 ) {
   return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.ClientSubscriptionRedemption,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
     const subscription = await findClientSubscriptionForUpdate(
       subscriptionId,
       transaction,
+      context,
     );
     const redemption = await db.ClientSubscriptionRedemption.findOne({
-      where: {
+      where: clubTenantWhere(context, {
         id: Number(redemptionId),
         clientSubscriptionId: Number(subscriptionId),
-      },
+      }),
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
@@ -746,7 +858,7 @@ async function reverseClientSubscriptionRedemption(
       {
         status: 'reversed',
         reversedAt: new Date(),
-        reversedByAccountId: account?.id || null,
+        reversedByAccountId: authorityActor?.id || null,
         reversalReason: normalizeOptionalText(data.reason),
       },
       { transaction },
@@ -760,10 +872,15 @@ async function reverseClientSubscriptionRedemption(
     );
 
     return {
-      redemption: await findRedemptionForResponse(redemption.id, transaction),
+      redemption: await findRedemptionForResponse(
+        redemption.id,
+        transaction,
+        context,
+      ),
       subscription: await findClientSubscriptionForResponse(
         subscription.id,
         transaction,
+        context,
       ),
     };
   });
@@ -785,7 +902,12 @@ function extractSubscriptionTypeId(...settingsList) {
   return null;
 }
 
-async function findTypeForPendingSale(pendingSale, saleSetting, transaction) {
+async function findTypeForPendingSale(
+  pendingSale,
+  saleSetting,
+  transaction,
+  context = null,
+) {
   const metadata = normalizeMetadata(pendingSale.metadata) || {};
   const saleSettings = normalizeMetadata(saleSetting?.saleSettings) || null;
   const subscriptionTypeId = extractSubscriptionTypeId(
@@ -794,9 +916,12 @@ async function findTypeForPendingSale(pendingSale, saleSetting, transaction) {
   );
 
   if (subscriptionTypeId) {
-    const type = await db.SubscriptionType.findByPk(subscriptionTypeId, {
-      transaction,
-    });
+    const type = await findOrganizationRecordByPk(
+      db.SubscriptionType,
+      subscriptionTypeId,
+      { transaction },
+      context,
+    );
     if (!type) throw appError('Тип абонемента из настройки продажи не найден', 404);
     if (type.status !== 'active') {
       throw appError('Тип абонемента из настройки продажи находится в архиве', 409);
@@ -805,10 +930,10 @@ async function findTypeForPendingSale(pendingSale, saleSetting, transaction) {
   }
 
   const byName = await db.SubscriptionType.findOne({
-    where: {
+    where: organizationTenantWhere(context, {
       name: pendingSale.itemName,
       status: 'active',
-    },
+    }),
     transaction,
   });
   if (byName) return byName;
@@ -819,9 +944,9 @@ async function findTypeForPendingSale(pendingSale, saleSetting, transaction) {
   );
 }
 
-async function loadPendingSaleContext(pendingSale, transaction) {
+async function loadPendingSaleContext(pendingSale, transaction, context = null) {
   const pendingSaleId = Number(pendingSale?.id || pendingSale);
-  const row = await db.PendingSale.findByPk(pendingSaleId, {
+  const row = await findClubRecordByPk(db.PendingSale, pendingSaleId, {
     include: [
       {
         model: db.EvotorSaleSetting,
@@ -839,12 +964,17 @@ async function loadPendingSaleContext(pendingSale, transaction) {
       },
     ],
     transaction,
-  });
+  }, context);
   if (!row) throw appError('Продажа из очереди не найдена', 404);
   return row;
 }
 
-function buildSubscriptionDefaults(pendingSale, type, account = null) {
+function buildSubscriptionDefaults(
+  pendingSale,
+  type,
+  account = null,
+  context = null,
+) {
   const raw = pendingSale.toJSON ? pendingSale.toJSON() : pendingSale;
   const typeRaw = type.toJSON ? type.toJSON() : type;
   const metadata = normalizeMetadata(raw.metadata) || {};
@@ -859,6 +989,7 @@ function buildSubscriptionDefaults(pendingSale, type, account = null) {
   const saleAmount = toNumber(receiptItem?.sum ?? metadata.amount ?? typeRaw.price);
 
   return {
+    ...clubTenantValues(context),
     clientId: raw.clientId,
     subscriptionTypeId: typeRaw.id,
     pendingSaleId: raw.id,
@@ -890,7 +1021,11 @@ function buildSubscriptionDefaults(pendingSale, type, account = null) {
   };
 }
 
-async function findExistingSubscriptionForSale(pendingSale, transaction) {
+async function findExistingSubscriptionForSale(
+  pendingSale,
+  transaction,
+  context = null,
+) {
   const raw = pendingSale.toJSON ? pendingSale.toJSON() : pendingSale;
   const or = [];
   if (raw.id) or.push({ pendingSaleId: raw.id });
@@ -898,7 +1033,7 @@ async function findExistingSubscriptionForSale(pendingSale, transaction) {
   if (or.length === 0) return null;
 
   return db.ClientSubscription.findOne({
-    where: { [db.Sequelize.Op.or]: or },
+    where: clubTenantWhere(context, { [db.Sequelize.Op.or]: or }),
     include: buildSubscriptionInclude(),
     transaction,
   });
@@ -906,8 +1041,13 @@ async function findExistingSubscriptionForSale(pendingSale, transaction) {
 
 async function createFromPendingSale(pendingSale, options = {}) {
   const transaction = options.transaction || null;
-  const account = options.account || null;
-  const row = await loadPendingSaleContext(pendingSale, transaction);
+  const context = await resolveClientMoneyAccessContextForModel(
+    options.tenant || null,
+    db.ClientSubscription,
+    { transaction },
+  );
+  const account = bindClientMoneyActor(options.account || null, context);
+  const row = await loadPendingSaleContext(pendingSale, transaction, context);
   const raw = row.toJSON ? row.toJSON() : row;
 
   if (raw.saleIntent !== 'subscription') {
@@ -917,7 +1057,11 @@ async function createFromPendingSale(pendingSale, options = {}) {
     throw appError('Абонемент можно создать только после привязки продажи к клиенту', 409);
   }
 
-  const existing = await findExistingSubscriptionForSale(row, transaction);
+  const existing = await findExistingSubscriptionForSale(
+    row,
+    transaction,
+    context,
+  );
   if (existing) {
     return {
       created: false,
@@ -925,8 +1069,13 @@ async function createFromPendingSale(pendingSale, options = {}) {
     };
   }
 
-  const type = await findTypeForPendingSale(row, raw.saleSetting, transaction);
-  const defaults = buildSubscriptionDefaults(row, type, account);
+  const type = await findTypeForPendingSale(
+    row,
+    raw.saleSetting,
+    transaction,
+    context,
+  );
+  const defaults = buildSubscriptionDefaults(row, type, account, context);
   let subscription;
 
   try {
@@ -935,13 +1084,22 @@ async function createFromPendingSale(pendingSale, options = {}) {
     });
   } catch (error) {
     if (error.name !== 'SequelizeUniqueConstraintError') throw error;
-    subscription = await findExistingSubscriptionForSale(row, transaction);
+    subscription = await findExistingSubscriptionForSale(
+      row,
+      transaction,
+      context,
+    );
   }
 
-  const withInclude = await db.ClientSubscription.findByPk(subscription.id, {
+  const withInclude = await findClubRecordByPk(
+    db.ClientSubscription,
+    subscription.id,
+    {
     include: buildSubscriptionInclude(),
     transaction,
-  });
+    },
+    context,
+  );
 
   return {
     created: true,
@@ -949,9 +1107,21 @@ async function createFromPendingSale(pendingSale, options = {}) {
   };
 }
 
-async function cancelFromPendingSale(pendingSaleId, account = null, reason = null, transaction = null) {
+async function cancelFromPendingSale(
+  pendingSaleId,
+  account = null,
+  reason = null,
+  transaction = null,
+  tenant = null,
+) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscription,
+    { transaction },
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
   const subscription = await db.ClientSubscription.findOne({
-    where: { pendingSaleId: Number(pendingSaleId) },
+    where: clubTenantWhere(context, { pendingSaleId: Number(pendingSaleId) }),
     transaction,
   });
   if (!subscription || subscription.status === 'canceled') return null;
@@ -959,7 +1129,7 @@ async function cancelFromPendingSale(pendingSaleId, account = null, reason = nul
   await subscription.update(
     {
       canceledAt: new Date(),
-      canceledByAccountId: account?.id || null,
+      canceledByAccountId: authorityActor?.id || null,
       cancelReason: normalizeOptionalText(reason),
       status: 'canceled',
     },

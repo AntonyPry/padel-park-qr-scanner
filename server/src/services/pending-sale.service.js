@@ -1,6 +1,14 @@
 const db = require('../../models');
 const certificatesService = require('./certificates.service');
 const subscriptionsService = require('./subscriptions.service');
+const {
+  bindClientMoneyActor,
+  clubTenantValues,
+  clubTenantWhere,
+  findClubRecordByPk,
+  organizationTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 
 const SALE_INTENTS = ['normal', 'subscription', 'certificate'];
 const PENDING_SALE_STATUSES = ['pending', 'linked', 'ignored', 'canceled'];
@@ -202,11 +210,11 @@ function buildInclude({ withHistory = false } = {}) {
   return include;
 }
 
-async function findPendingSaleForResponse(id, transaction = null) {
-  const pendingSale = await db.PendingSale.findByPk(id, {
+async function findPendingSaleForResponse(id, transaction = null, context = null) {
+  const pendingSale = await findClubRecordByPk(db.PendingSale, id, {
     include: buildInclude({ withHistory: true }),
     transaction,
-  });
+  }, context);
   return serializePendingSale(pendingSale);
 }
 
@@ -219,11 +227,13 @@ async function recordHistory({
   reason,
   beforeData,
   afterData,
+  context,
   transaction,
 }) {
   try {
     await db.PendingSaleHistory.create(
       {
+        ...clubTenantValues(context),
         pendingSaleId,
         action,
         fromStatus: fromStatus || null,
@@ -241,41 +251,57 @@ async function recordHistory({
   }
 }
 
-async function getSaleSettings() {
+async function getSaleSettings(tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.EvotorSaleSetting,
+  );
   const rows = await db.EvotorSaleSetting.findAll({
     order: [['itemName', 'ASC']],
+    where: clubTenantWhere(context),
   });
   return rows.map(serializeSaleSetting);
 }
 
-async function saveSaleSetting(data, account = null) {
+async function saveSaleSetting(data, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.EvotorSaleSetting,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
   const itemName = normalizeItemName(data.itemName);
   const saleIntent = normalizeSaleIntent(data.saleIntent);
   const saleSettings =
     saleIntent === 'normal' ? null : normalizeSaleSettings(data.saleSettings);
-  const existing = await db.EvotorSaleSetting.findOne({ where: { itemName } });
+  const existing = await db.EvotorSaleSetting.findOne({
+    where: clubTenantWhere(context, { itemName }),
+  });
 
   if (existing) {
     await existing.update({
       saleIntent,
       saleSettings,
-      updatedByAccountId: account?.id || null,
+      updatedByAccountId: authorityActor?.id || null,
     });
     return serializeSaleSetting(existing);
   }
 
   const setting = await db.EvotorSaleSetting.create({
+    ...clubTenantValues(context),
     itemName,
     saleIntent,
     saleSettings,
-    createdByAccountId: account?.id || null,
-    updatedByAccountId: account?.id || null,
+    createdByAccountId: authorityActor?.id || null,
+    updatedByAccountId: authorityActor?.id || null,
   });
   return serializeSaleSetting(setting);
 }
 
-async function buildSettingMap() {
-  const rows = await db.EvotorSaleSetting.findAll();
+async function buildSettingMap(context, transaction = null) {
+  const rows = await db.EvotorSaleSetting.findAll({
+    transaction,
+    where: clubTenantWhere(context),
+  });
   return new Map(rows.map((row) => [normalizeKey(row.itemName), row]));
 }
 
@@ -294,8 +320,9 @@ function shouldCreatePendingSale(receipt, item, setting) {
   return true;
 }
 
-function buildPendingSaleDefaults(receipt, item, setting, catalogRule) {
+function buildPendingSaleDefaults(receipt, item, setting, catalogRule, context = null) {
   return {
+    ...clubTenantValues(context),
     receiptId: receipt.id,
     receiptItemId: item.id,
     saleSettingId: setting.id,
@@ -320,14 +347,19 @@ function buildPendingSaleDefaults(receipt, item, setting, catalogRule) {
 
 async function createPendingSalesForReceipt(receiptId, options = {}) {
   const transaction = options.transaction || null;
-  const receipt = await db.Receipt.findByPk(receiptId, {
+  const context = await resolveClientMoneyAccessContextForModel(
+    options.tenant || options.connection || null,
+    db.PendingSale,
+    { transaction },
+  );
+  const receipt = await findClubRecordByPk(db.Receipt, receiptId, {
     include: [{ model: db.ReceiptItem, as: 'items' }],
     transaction,
-  });
+  }, context);
   if (!receipt) throw appError('Чек не найден', 404);
 
   const [settingMap, catalogRuleMap] = await Promise.all([
-    buildSettingMap(),
+    buildSettingMap(context, transaction),
     buildCatalogRuleMap(),
   ]);
 
@@ -338,7 +370,13 @@ async function createPendingSalesForReceipt(receiptId, options = {}) {
     if (!shouldCreatePendingSale(receipt, item, setting)) continue;
 
     const catalogRule = catalogRuleMap.get(normalizeKey(item.name)) || null;
-    const defaults = buildPendingSaleDefaults(receipt, item, setting, catalogRule);
+    const defaults = buildPendingSaleDefaults(
+      receipt,
+      item,
+      setting,
+      catalogRule,
+      context,
+    );
 
     let row;
     let created = false;
@@ -351,7 +389,7 @@ async function createPendingSalesForReceipt(receiptId, options = {}) {
     } catch (error) {
       if (error.name !== 'SequelizeUniqueConstraintError') throw error;
       row = await db.PendingSale.findOne({
-        where: { receiptItemId: item.id },
+        where: clubTenantWhere(context, { receiptItemId: item.id }),
         transaction,
       });
     }
@@ -364,6 +402,7 @@ async function createPendingSalesForReceipt(receiptId, options = {}) {
         toStatus: 'pending',
         account: null,
         afterData: defaults,
+        context,
         transaction,
       });
     }
@@ -377,12 +416,16 @@ async function createPendingSalesForReceipt(receiptId, options = {}) {
   };
 }
 
-async function listPendingSales(query = {}) {
+async function listPendingSales(query = {}, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.PendingSale,
+  );
   const status = normalizeStatus(query.status || 'pending');
   const saleIntent = query.saleIntent
     ? normalizeSaleIntent(query.saleIntent)
     : null;
-  const where = {};
+  const where = clubTenantWhere(context);
 
   if (status !== 'all') where.status = status;
   if (saleIntent && saleIntent !== 'normal') where.saleIntent = saleIntent;
@@ -396,28 +439,28 @@ async function listPendingSales(query = {}) {
   return rows.map(serializePendingSale);
 }
 
-async function getPendingSaleForUpdate(id, transaction) {
-  const pendingSale = await db.PendingSale.findByPk(id, {
+async function getPendingSaleForUpdate(id, transaction, context) {
+  const pendingSale = await findClubRecordByPk(db.PendingSale, id, {
     lock: transaction.LOCK.UPDATE,
     transaction,
-  });
+  }, context);
   if (!pendingSale) throw appError('Продажа из очереди не найдена', 404);
   return pendingSale;
 }
 
-async function assertClientExists(clientId, transaction) {
+async function assertClientExists(clientId, transaction, context) {
   const normalizedClientId = Number(clientId);
   if (!Number.isInteger(normalizedClientId) || normalizedClientId <= 0) {
     throw appError('Выберите клиента');
   }
 
   const client = await db.User.findOne({
-    where: {
+    where: organizationTenantWhere(context, {
       id: normalizedClientId,
       isTraining: false,
       mergedIntoUserId: null,
       status: 'active',
-    },
+    }),
     transaction,
   });
 
@@ -425,14 +468,20 @@ async function assertClientExists(clientId, transaction) {
   return client;
 }
 
-async function linkPendingSale(id, data, account = null) {
+async function linkPendingSale(id, data, account = null, tenant = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const pendingSale = await getPendingSaleForUpdate(id, transaction);
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.PendingSale,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
+    const pendingSale = await getPendingSaleForUpdate(id, transaction, context);
     if (pendingSale.status !== 'pending') {
       throw appError('Привязать можно только продажу в ожидании', 409);
     }
 
-    const client = await assertClientExists(data.clientId, transaction);
+    const client = await assertClientExists(data.clientId, transaction, context);
     const beforeData = pendingSale.toJSON();
     const linkedAt = new Date();
     const reason = normalizeOptionalText(data.comment);
@@ -441,7 +490,7 @@ async function linkPendingSale(id, data, account = null) {
       {
         clientId: client.id,
         linkedAt,
-        linkedByAccountId: account?.id || null,
+        linkedByAccountId: authorityActor?.id || null,
         status: 'linked',
         statusReason: reason,
       },
@@ -453,7 +502,8 @@ async function linkPendingSale(id, data, account = null) {
       action: 'pending_sale.linked',
       fromStatus: beforeData.status,
       toStatus: 'linked',
-      account,
+      account: authorityActor,
+      context,
       reason,
       beforeData,
       afterData: pendingSale.toJSON(),
@@ -466,7 +516,8 @@ async function linkPendingSale(id, data, account = null) {
       const result = await subscriptionsService.createFromPendingSale(
         pendingSale,
         {
-          account,
+          account: authorityActor,
+          tenant: context,
           transaction,
         },
       );
@@ -478,7 +529,8 @@ async function linkPendingSale(id, data, account = null) {
           action: 'client_subscription.created',
           fromStatus: 'linked',
           toStatus: 'linked',
-          account,
+          account: authorityActor,
+          context,
           reason,
           afterData: clientSubscription,
           transaction,
@@ -488,7 +540,8 @@ async function linkPendingSale(id, data, account = null) {
       const result = await certificatesService.createFromPendingSale(
         pendingSale,
         {
-          account,
+          account: authorityActor,
+          tenant: context,
           certificate: data.certificate || null,
           transaction,
         },
@@ -501,7 +554,8 @@ async function linkPendingSale(id, data, account = null) {
           action: 'certificate.created',
           fromStatus: 'linked',
           toStatus: 'linked',
-          account,
+          account: authorityActor,
+          context,
           reason,
           afterData: certificate,
           transaction,
@@ -509,16 +563,26 @@ async function linkPendingSale(id, data, account = null) {
       }
     }
 
-    const response = await findPendingSaleForResponse(pendingSale.id, transaction);
+    const response = await findPendingSaleForResponse(
+      pendingSale.id,
+      transaction,
+      context,
+    );
     if (clientSubscription) response.clientSubscription = clientSubscription;
     if (certificate) response.certificate = certificate;
     return response;
   });
 }
 
-async function ignorePendingSale(id, data, account = null) {
+async function ignorePendingSale(id, data, account = null, tenant = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const pendingSale = await getPendingSaleForUpdate(id, transaction);
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.PendingSale,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
+    const pendingSale = await getPendingSaleForUpdate(id, transaction, context);
     if (pendingSale.status !== 'pending') {
       throw appError('Игнорировать можно только продажу в ожидании', 409);
     }
@@ -530,7 +594,7 @@ async function ignorePendingSale(id, data, account = null) {
     await pendingSale.update(
       {
         ignoredAt,
-        ignoredByAccountId: account?.id || null,
+        ignoredByAccountId: authorityActor?.id || null,
         status: 'ignored',
         statusReason: reason,
       },
@@ -542,20 +606,27 @@ async function ignorePendingSale(id, data, account = null) {
       action: 'pending_sale.ignored',
       fromStatus: beforeData.status,
       toStatus: 'ignored',
-      account,
+      account: authorityActor,
+      context,
       reason,
       beforeData,
       afterData: pendingSale.toJSON(),
       transaction,
     });
 
-    return findPendingSaleForResponse(pendingSale.id, transaction);
+    return findPendingSaleForResponse(pendingSale.id, transaction, context);
   });
 }
 
-async function cancelPendingSale(id, data, account = null) {
+async function cancelPendingSale(id, data, account = null, tenant = null) {
   return db.sequelize.transaction(async (transaction) => {
-    const pendingSale = await getPendingSaleForUpdate(id, transaction);
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.PendingSale,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
+    const pendingSale = await getPendingSaleForUpdate(id, transaction, context);
     if (!['pending', 'linked'].includes(pendingSale.status)) {
       throw appError('Эту продажу уже нельзя отменить', 409);
     }
@@ -567,7 +638,7 @@ async function cancelPendingSale(id, data, account = null) {
     await pendingSale.update(
       {
         canceledAt,
-        canceledByAccountId: account?.id || null,
+        canceledByAccountId: authorityActor?.id || null,
         status: 'canceled',
         statusReason: reason,
       },
@@ -579,7 +650,8 @@ async function cancelPendingSale(id, data, account = null) {
       action: 'pending_sale.canceled',
       fromStatus: beforeData.status,
       toStatus: 'canceled',
-      account,
+      account: authorityActor,
+      context,
       reason,
       beforeData,
       afterData: pendingSale.toJSON(),
@@ -589,20 +661,22 @@ async function cancelPendingSale(id, data, account = null) {
     if (pendingSale.saleIntent === 'subscription') {
       await subscriptionsService.cancelFromPendingSale(
         pendingSale.id,
-        account,
+        authorityActor,
         reason,
         transaction,
+        context,
       );
     } else if (pendingSale.saleIntent === 'certificate') {
       await certificatesService.cancelFromPendingSale(
         pendingSale.id,
-        account,
+        authorityActor,
         reason,
         transaction,
+        context,
       );
     }
 
-    return findPendingSaleForResponse(pendingSale.id, transaction);
+    return findPendingSaleForResponse(pendingSale.id, transaction, context);
   });
 }
 
