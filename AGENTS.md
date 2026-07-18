@@ -79,6 +79,8 @@ Feature-чатам заранее разрешены обычные Git-опер
 
 Это разрешение не распространяется на `main`, `codex/saas-multitenancy-integration`, другие integration/release/deploy branches, чужие feature-ветки, merge/rebase/cherry-pick в общие ветки, force-push, удаление remote branches, создание PR, promotion и deploy. Эти действия требуют отдельного release/integration gate и явного разрешения соответствующей стадии.
 
+Исключение для текущей согласованной SaaS/multitenancy release-chain: после green QA закреплённый `Диспетчер задач — SaaS` вместе с постоянным `QA — SaaS / Multi-tenant` имеют standing permission на обычный non-force promotion exact SHA в `codex/saas-multitenancy-integration`, включая affected semantic reconciliation с fresh `main`, если оба принятых контракта сохраняются и подтверждены affected tests. Это не распространяется на `main`, production, deploy, provisioning, billing и production flags.
+
 Перед дизайном и реализацией новой фичи сначала сделай existing-functionality discovery:
 
 - прочитай project map/domain inventory/domain file из vault;
@@ -163,18 +165,35 @@ Onboarding impact:
 
 ## Coordination workflow
 
-Этот чат может быть "штабом" проекта:
+Штаб проекта по-прежнему:
 
 - держит `AGENTS.md` и `docs/CODEX_WORKFLOW.md` актуальными;
 - готовит короткие промпты для feature/instructions/QA чатов;
 - проверяет, что handoff между чатами содержит нужные данные;
 - помогает решить, нужен ли отдельный чат, отдельный worktree или сначала ТЗ;
 - не смешивает реализацию фичи и onboarding-обновление без явного запроса.
-- при явном запросе пользователя может читать другие Codex threads и отправлять им сообщения через thread tools, выступая диспетчером между feature, instructions and QA chats.
+- при явном запросе пользователя может читать другие Codex threads и отправлять им сообщения через thread tools.
 
-Чаты не должны предполагать, что другие чаты автоматически узнают об их результате. Каждый feature/instructions/QA chat должен возвращать handoff в финале, а штабной чат может переслать этот handoff дальше, если пользователь попросит.
+Для текущего SaaS/multitenancy execution chain операционным координатором является отдельный постоянный `Диспетчер задач — SaaS`, threadId `019f7246-8db3-7041-9a74-880788a4f915`. Он, а не штаб, владеет цепочкой `Feature -> QA -> fix/re-QA -> publication/parity -> promotion -> affected semantic reconciliation -> next agreed slice`.
 
-Исключение для явной Codex delegation: если штаб передал feature handoff, fix handoff или запрос на финальный QA/promotion через `codex_delegation` с `source_thread_id`, QA/integration chat после фактического завершения работы обязан один раз отправить структурированный итог обратно в исходный штабной thread через `send_message_to_thread`. Итог должен включать findings P0–P3, accepted/final SHA, release/integration status, результаты gates, риски, `Onboarding impact` и следующий разрешенный шаг. При `blocked`/`needs fixes` туда же отправляется полный fix prompt для нужного feature-chat. Не проси пользователя вручную копировать такой handoff между чатами.
+Правила handoff для этого SaaS-координатора:
+
+- callback target постоянного `QA — SaaS / Multi-tenant` всегда диспетчерский thread `019f7246-8db3-7041-9a74-880788a4f915`;
+- не отправляй в штаб routine callbacks уровня `started`, `ready for QA`, `needs fixes` с точным fix prompt, `fix published`, `re-QA green`, `published`, `promoted` или `technical reconciliation complete`;
+- P0-P3 findings с однозначным техническим fix prompt остаются в контуре диспетчера и исходного Feature-чата;
+- технический merge conflict не эскалируется в штаб, если оба уже принятых контракта можно одновременно сохранить и подтвердить affected tests;
+- пользователь не должен вручную переносить feature/QA handoff между этими SaaS-чатами.
+
+Штаб нужен только для решений, которые меняют продуктовый контракт или release authority:
+
+- продуктовый или архитектурный выбор с 2-3 опциями;
+- scope или data-ownership decision;
+- роли, permissions, visible UX и `User Preview`;
+- contradictory contracts, irreversible rollback/data policy;
+- final release candidate decision;
+- разрешение на `main`, production, deploy, provisioning, billing или production flags.
+
+Для остальных не-SaaS delegation chains сохраняется обычное правило: если штаб передал feature handoff, fix handoff или запрос на финальный QA/promotion через `codex_delegation` с `source_thread_id`, исполнительный QA/integration chat после фактического завершения работы отправляет структурированный итог обратно в исходный штабной thread через `send_message_to_thread`. Но для текущей SaaS-цепочки routine feature-level callbacks остаются внутри диспетчерского thread.
 
 Подробная инструкция по использованию Codex в проекте: `docs/CODEX_WORKFLOW.md`.
 
