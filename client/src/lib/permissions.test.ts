@@ -83,7 +83,7 @@ describe('permissions', () => {
       false,
     );
     expect(canAccessPathForAuthority(trainerManager, '/admin/shift-reports')).toBe(
-      false,
+      true,
     );
     expect(canAccessPathForAuthority(trainerManager, '/admin/finances')).toBe(
       false,

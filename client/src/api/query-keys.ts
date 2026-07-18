@@ -242,9 +242,9 @@ export const queryKeys = {
     list: (params: Record<string, unknown>) =>
       key('club', 'shiftReports', 'list', params),
     templates: (status: string) =>
-      key('organization', 'shiftReports', 'templates', status),
+      key('club', 'shiftReports', 'templates', status),
     get templatesAll() {
-      return key('organization', 'shiftReports');
+      return key('club', 'shiftReports');
     },
   },
   shifts: domainKeys('club', 'shifts'),

@@ -6,6 +6,7 @@ const path = require('path');
 const db = require('../../models');
 const {
   isTenantFilesWorkersEnabled,
+  isTenantShiftsReportsEnabled,
 } = require('../tenant-context/capabilities');
 const {
   requireDefaultTenantContext,
@@ -18,6 +19,12 @@ const {
   deleteStorageObject,
   resolveExistingStoragePath,
 } = require('../storage/tenant-storage');
+const {
+  bindShiftOperationsActor,
+  resolveShiftOperationsAccessContext,
+  shiftOperationsTenantValues,
+  shiftOperationsTenantWhere,
+} = require('./shift-operations-access-context.service');
 
 const { Op } = db.Sequelize;
 
@@ -79,9 +86,49 @@ const ITEM_TYPES = new Set([
   'number',
 ]);
 const REPORT_STATUSES = new Set(['pending', 'draft', 'submitted', 'overdue']);
+const REPORT_VIEW_ROLES = new Set(['owner', 'manager', 'admin']);
+const REPORT_SUBMIT_ROLES = new Set(['owner', 'manager', 'admin']);
+const TEMPLATE_MANAGE_ROLES = new Set(['owner', 'manager']);
 
 function toPlain(model) {
   return model?.toJSON ? model.toJSON() : model;
+}
+
+function withoutTenantFields(value) {
+  const plain = { ...(toPlain(value) || {}) };
+  delete plain.clubId;
+  delete plain.organizationId;
+  return plain;
+}
+
+async function resolveBoundary(account, tenant, options = {}) {
+  if (!isTenantShiftsReportsEnabled()) return { account, context: null };
+  const context = await resolveShiftOperationsAccessContext(tenant, options);
+  return {
+    account: account ? bindShiftOperationsActor(account, context) : null,
+    context,
+  };
+}
+
+function tenantWhere(context, values = {}) {
+  return context ? shiftOperationsTenantWhere(context, values) : values;
+}
+
+function tenantValues(context) {
+  return context ? shiftOperationsTenantValues(context) : {};
+}
+
+function assertBoundaryRole(boundary, roles) {
+  if (!boundary.context || roles.has(boundary.account?.role)) return;
+  throw makeError('Недостаточно прав', 403);
+}
+
+function findScopedByPk(model, id, options = {}, context = null) {
+  if (!context) return model.findByPk(id, options);
+  return model.findOne({
+    ...options,
+    where: tenantWhere(context, { id: Number(id) }),
+  });
 }
 
 function makeError(message, statusCode = 400) {
@@ -302,7 +349,8 @@ function serializeAnswer(answer, reportId) {
 }
 
 function serializeReport(report, now = new Date()) {
-  const plain = toPlain(report);
+  const plain = withoutTenantFields(report);
+  if (plain.shift) plain.shift = withoutTenantFields(plain.shift);
   const answers = (plain.answers || [])
     .map((answer) => serializeAnswer(answer, plain.id))
     .sort((left, right) => {
@@ -322,7 +370,7 @@ function serializeReport(report, now = new Date()) {
 }
 
 function serializeTemplate(template) {
-  const plain = toPlain(template);
+  const plain = withoutTenantFields(template);
   return {
     archivedAt: plain.archivedAt ?? null,
     createdAt: plain.createdAt,
@@ -395,8 +443,13 @@ function buildSlotsForTemplate(template, shift) {
   }));
 }
 
-async function bumpTemplateVersion(templateId, transaction) {
-  const template = await db.ShiftReportTemplate.findByPk(templateId, { transaction });
+async function bumpTemplateVersion(templateId, transaction, context) {
+  const template = await findScopedByPk(
+    db.ShiftReportTemplate,
+    templateId,
+    { transaction },
+    context,
+  );
   if (!template) return null;
   await template.update(
     { version: Number(template.version || 1) + 1 },
@@ -405,9 +458,14 @@ async function bumpTemplateVersion(templateId, transaction) {
   return template;
 }
 
-async function listTemplates(query = {}) {
+async function listTemplates(query = {}, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, REPORT_VIEW_ROLES);
   const status = query.status || 'active';
-  const where = status === 'all' ? {} : { status };
+  const where = tenantWhere(
+    boundary.context,
+    status === 'all' ? {} : { status },
+  );
   const templates = await db.ShiftReportTemplate.findAll({
     include: ACTIVE_TEMPLATE_INCLUDE,
     order: [
@@ -421,28 +479,44 @@ async function listTemplates(query = {}) {
   return templates.map(serializeTemplate);
 }
 
-async function createTemplate(payload, account) {
+async function createTemplate(payload, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, TEMPLATE_MANAGE_ROLES);
   const normalized = normalizeTemplatePayload(payload);
   const template = await db.ShiftReportTemplate.create({
     ...normalized,
+    ...tenantValues(boundary.context),
     archivedAt: normalized.status === 'archived' ? new Date() : null,
-    createdByAccountId: account?.id || null,
-    updatedByAccountId: account?.id || null,
+    createdByAccountId: boundary.account?.id || null,
+    updatedByAccountId: boundary.account?.id || null,
   });
-  return getTemplate(template.id);
+  return getTemplateForContext(template.id, boundary.context);
 }
 
-async function getTemplate(id) {
-  const template = await db.ShiftReportTemplate.findByPk(id, {
+async function getTemplateForContext(id, context) {
+  const template = await findScopedByPk(db.ShiftReportTemplate, id, {
     include: ACTIVE_TEMPLATE_INCLUDE,
     order: [[{ as: 'items', model: db.ShiftReportTemplateItem }, 'sortOrder', 'ASC']],
-  });
+  }, context);
   if (!template) throw makeError('Шаблон отчета не найден', 404);
   return serializeTemplate(template);
 }
 
-async function updateTemplate(id, payload, account) {
-  const template = await db.ShiftReportTemplate.findByPk(id);
+async function getTemplate(id, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, REPORT_VIEW_ROLES);
+  return getTemplateForContext(id, boundary.context);
+}
+
+async function updateTemplate(id, payload, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, TEMPLATE_MANAGE_ROLES);
+  const template = await findScopedByPk(
+    db.ShiftReportTemplate,
+    id,
+    {},
+    boundary.context,
+  );
   if (!template) throw makeError('Шаблон отчета не найден', 404);
   const normalized = normalizeTemplatePayload(payload, template);
   await template.update({
@@ -451,18 +525,25 @@ async function updateTemplate(id, payload, account) {
       normalized.status === 'archived'
         ? template.archivedAt || new Date()
         : null,
-    updatedByAccountId: account?.id || null,
+    updatedByAccountId: boundary.account?.id || null,
     version: Number(template.version || 1) + 1,
   });
-  return getTemplate(template.id);
+  return getTemplateForContext(template.id, boundary.context);
 }
 
-async function setTemplateStatus(id, status, account) {
-  return updateTemplate(id, { status }, account);
+async function setTemplateStatus(id, status, account, tenant) {
+  return updateTemplate(id, { status }, account, tenant);
 }
 
-async function createTemplateItem(templateId, payload, account) {
-  const template = await db.ShiftReportTemplate.findByPk(templateId);
+async function createTemplateItem(templateId, payload, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, TEMPLATE_MANAGE_ROLES);
+  const template = await findScopedByPk(
+    db.ShiftReportTemplate,
+    templateId,
+    {},
+    boundary.context,
+  );
   if (!template) throw makeError('Шаблон отчета не найден', 404);
   const normalized = normalizeItemPayload(payload);
   await db.sequelize.transaction(async (transaction) => {
@@ -476,17 +557,30 @@ async function createTemplateItem(templateId, payload, account) {
     );
     await template.update(
       {
-        updatedByAccountId: account?.id || null,
+        updatedByAccountId: boundary.account?.id || null,
         version: Number(template.version || 1) + 1,
       },
       { transaction },
     );
   });
-  return getTemplate(template.id);
+  return getTemplateForContext(template.id, boundary.context);
 }
 
-async function updateTemplateItem(id, payload, account) {
-  const item = await db.ShiftReportTemplateItem.findByPk(id);
+async function updateTemplateItem(id, payload, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, TEMPLATE_MANAGE_ROLES);
+  const item = boundary.context
+    ? await db.ShiftReportTemplateItem.findOne({
+      include: [{
+        as: 'template',
+        attributes: ['id', 'clubId'],
+        model: db.ShiftReportTemplate,
+        required: true,
+        where: { clubId: boundary.context.clubId },
+      }],
+      where: { id: Number(id) },
+    })
+    : await db.ShiftReportTemplateItem.findByPk(id);
   if (!item) throw makeError('Пункт отчета не найден', 404);
   const normalized = normalizeItemPayload(payload, item);
   await db.sequelize.transaction(async (transaction) => {
@@ -500,21 +594,35 @@ async function updateTemplateItem(id, payload, account) {
       },
       { transaction },
     );
-    const template = await bumpTemplateVersion(item.templateId, transaction);
+    const template = await bumpTemplateVersion(
+      item.templateId,
+      transaction,
+      boundary.context,
+    );
     if (template) {
-      await template.update({ updatedByAccountId: account?.id || null }, { transaction });
+      await template.update(
+        { updatedByAccountId: boundary.account?.id || null },
+        { transaction },
+      );
     }
   });
-  return getTemplate(item.templateId);
+  return getTemplateForContext(item.templateId, boundary.context);
 }
 
-async function setTemplateItemStatus(id, status, account) {
-  return updateTemplateItem(id, { status }, account);
+async function setTemplateItemStatus(id, status, account, tenant) {
+  return updateTemplateItem(id, { status }, account, tenant);
 }
 
-async function ensureReportsForShift(shiftInput) {
+async function ensureReportsForShift(shiftInput, tenant) {
   if (!shiftInput) return [];
   const shift = toPlain(shiftInput);
+  const boundary = await resolveBoundary(null, tenant);
+  if (
+    boundary.context &&
+    Number(shift.clubId) !== Number(boundary.context.clubId)
+  ) {
+    throw makeError('Смена не найдена', 404);
+  }
   const templates = await db.ShiftReportTemplate.findAll({
     include: ACTIVE_TEMPLATE_INCLUDE,
     order: [
@@ -523,7 +631,7 @@ async function ensureReportsForShift(shiftInput) {
       [{ as: 'items', model: db.ShiftReportTemplateItem }, 'sortOrder', 'ASC'],
       [{ as: 'items', model: db.ShiftReportTemplateItem }, 'id', 'ASC'],
     ],
-    where: { status: 'active' },
+    where: tenantWhere(boundary.context, { status: 'active' }),
   });
 
   const createdReports = [];
@@ -533,50 +641,50 @@ async function ensureReportsForShift(shiftInput) {
 
     const slots = buildSlotsForTemplate(template, shift);
     for (const slot of slots) {
-      const existing = await db.ShiftReport.findOne({
-        where: {
-          scheduledSlotKey: slot.key,
-          shiftId: shift.id,
-          templateId: template.id,
-        },
-      });
-      if (existing) {
-        createdReports.push(existing);
-        continue;
-      }
-
       const templateSnapshot = buildTemplateSnapshot(template);
       const itemsSnapshot = activeItems.map(buildItemSnapshot);
-      const report = await db.sequelize.transaction(async (transaction) => {
-        const created = await db.ShiftReport.create(
-          {
-            itemsSnapshot,
-            scheduledAt: slot.scheduledAt,
-            scheduledSlotKey: slot.key,
-            shiftId: shift.id,
-            status: 'pending',
-            templateId: template.id,
-            templateSnapshot,
-            templateVersion: templateSnapshot.version,
-          },
-          { transaction },
-        );
+      const reportWhere = {
+        ...tenantWhere(boundary.context),
+        scheduledSlotKey: slot.key,
+        shiftId: shift.id,
+        templateId: template.id,
+      };
+      let report;
+      try {
+        report = await db.sequelize.transaction(async (transaction) => {
+          const [record, created] = await db.ShiftReport.findOrCreate({
+            defaults: {
+              ...tenantValues(boundary.context),
+              itemsSnapshot,
+              scheduledAt: slot.scheduledAt,
+              status: 'pending',
+              templateSnapshot,
+              templateVersion: templateSnapshot.version,
+            },
+            transaction,
+            where: reportWhere,
+          });
 
-        await db.ShiftReportAnswer.bulkCreate(
-          itemsSnapshot.map((item) => ({
-            attachments: [],
-            itemLabel: item.label,
-            itemSnapshot: item,
-            itemType: item.itemType,
-            photoRequired: item.photoRequired,
-            reportId: created.id,
-            templateItemId: item.id,
-          })),
-          { transaction },
-        );
+          if (created) await db.ShiftReportAnswer.bulkCreate(
+            itemsSnapshot.map((item) => ({
+              attachments: [],
+              itemLabel: item.label,
+              itemSnapshot: item,
+              itemType: item.itemType,
+              photoRequired: item.photoRequired,
+              reportId: record.id,
+              templateItemId: item.id,
+            })),
+            { transaction },
+          );
 
-        return created;
-      });
+          return record;
+        });
+      } catch (error) {
+        if (error?.name !== 'SequelizeUniqueConstraintError') throw error;
+        report = await db.ShiftReport.findOne({ where: reportWhere });
+        if (!report) throw error;
+      }
       createdReports.push(report);
     }
   }
@@ -584,25 +692,27 @@ async function ensureReportsForShift(shiftInput) {
   return createdReports;
 }
 
-async function getActiveShiftReports(account) {
+async function getActiveShiftReports(account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, REPORT_SUBMIT_ROLES);
   const shift = await db.Shift.findOne({
     include: [{ model: db.Staff, attributes: ['id', 'name', 'role'] }],
     order: [['startedAt', 'DESC']],
-    where: { archivedAt: null, status: 'active' },
+    where: tenantWhere(boundary.context, { archivedAt: null, status: 'active' }),
   });
   if (!shift) return { reports: [], shift: null };
 
-  await ensureReportsForShift(shift);
+  await ensureReportsForShift(shift, tenant);
   const reports = await db.ShiftReport.findAll({
     include: REPORT_INCLUDE,
     order: [['scheduledAt', 'ASC'], ['id', 'ASC']],
-    where: { shiftId: shift.id },
+    where: tenantWhere(boundary.context, { shiftId: shift.id }),
   });
   return {
     reports: reports
-      .filter((report) => canOperateReport(report, account))
+      .filter((report) => canOperateReport(report, boundary.account))
       .map((report) => serializeReport(report)),
-    shift: toPlain(shift),
+    shift: withoutTenantFields(shift),
   };
 }
 
@@ -641,8 +751,10 @@ function buildDateRange(query) {
   return hasRange ? range : null;
 }
 
-async function listReports(query = {}, account) {
-  const where = {};
+async function listReports(query = {}, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, REPORT_VIEW_ROLES);
+  const where = tenantWhere(boundary.context);
   if (query.shiftId) where.shiftId = Number(query.shiftId);
   if (query.templateId) where.templateId = Number(query.templateId);
   const scheduledAt = buildDateRange(query);
@@ -651,9 +763,9 @@ async function listReports(query = {}, account) {
     where.status = query.status;
   }
 
-  if (!canViewAllReports(account)) {
+  if (!canViewAllReports(boundary.account)) {
     const activeShift = await db.Shift.findOne({
-      where: { archivedAt: null, status: 'active' },
+      where: tenantWhere(boundary.context, { archivedAt: null, status: 'active' }),
     });
     if (!activeShift) return [];
     where.shiftId = activeShift.id;
@@ -665,7 +777,7 @@ async function listReports(query = {}, account) {
     where,
   });
   const serialized = reports
-    .filter((report) => canOperateReport(report, account))
+    .filter((report) => canOperateReport(report, boundary.account))
     .map((report) => serializeReport(report));
 
   if (query.status && query.status !== 'all') {
@@ -675,9 +787,13 @@ async function listReports(query = {}, account) {
   return serialized;
 }
 
-async function getReport(id, account) {
-  const report = await db.ShiftReport.findByPk(id, { include: REPORT_INCLUDE });
-  await assertReportAccess(report, account);
+async function getReport(id, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, REPORT_VIEW_ROLES);
+  const report = await findScopedByPk(db.ShiftReport, id, {
+    include: REPORT_INCLUDE,
+  }, boundary.context);
+  await assertReportAccess(report, boundary.account);
   return serializeReport(report);
 }
 
@@ -737,9 +853,18 @@ function validateRequiredAnswers(answers) {
   }
 }
 
-async function saveReport(id, payload, account, { submit = false } = {}) {
-  const report = await db.ShiftReport.findByPk(id, { include: REPORT_INCLUDE });
-  await assertReportAccess(report, account);
+async function saveReport(
+  id,
+  payload,
+  account,
+  { submit = false, tenant = null } = {},
+) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, REPORT_SUBMIT_ROLES);
+  const report = await findScopedByPk(db.ShiftReport, id, {
+    include: REPORT_INCLUDE,
+  }, boundary.context);
+  await assertReportAccess(report, boundary.account);
   if (report.status === 'submitted') {
     throw makeError('Сданный отчет нельзя редактировать', 409);
   }
@@ -756,17 +881,19 @@ async function saveReport(id, payload, account, { submit = false } = {}) {
     }
   });
 
-  const freshReport = await db.ShiftReport.findByPk(id, { include: REPORT_INCLUDE });
+  const freshReport = await findScopedByPk(db.ShiftReport, id, {
+    include: REPORT_INCLUDE,
+  }, boundary.context);
   if (submit) validateRequiredAnswers(freshReport.answers || []);
 
   await freshReport.update({
     comment: reportComment,
     status: submit ? 'submitted' : 'draft',
     submittedAt: submit ? new Date() : null,
-    submittedByAccountId: submit ? account?.id || null : null,
+    submittedByAccountId: submit ? boundary.account?.id || null : null,
   });
 
-  return getReport(id, account);
+  return getReport(id, account, tenant);
 }
 
 function parseDataUrl(data, mimeType) {
@@ -850,8 +977,8 @@ function assertLegacyAttachmentMetadata(attachment, reportId) {
   return expectedPath;
 }
 
-async function resolveLegacyAttachmentPath(attachment, reportId, tenant) {
-  await requireDefaultTenantContext(tenant);
+async function resolveLegacyAttachmentPath(attachment, reportId, requestTenant) {
+  await requireDefaultTenantContext(requestTenant);
   const relativePath = assertLegacyAttachmentMetadata(attachment, reportId);
   const candidate = path.resolve(LEGACY_UPLOAD_ROOT, relativePath);
   const relative = path.relative(LEGACY_UPLOAD_ROOT, candidate);
@@ -880,8 +1007,12 @@ async function resolveLegacyAttachmentPath(attachment, reportId, tenant) {
 }
 
 async function uploadAttachment(reportId, answerId, payload, account, requestTenant = null) {
-  const report = await db.ShiftReport.findByPk(reportId, { include: REPORT_INCLUDE });
-  await assertReportAccess(report, account);
+  const boundary = await resolveBoundary(account, requestTenant);
+  assertBoundaryRole(boundary, REPORT_SUBMIT_ROLES);
+  const report = await findScopedByPk(db.ShiftReport, reportId, {
+    include: REPORT_INCLUDE,
+  }, boundary.context);
+  await assertReportAccess(report, boundary.account);
   if (report.status === 'submitted') {
     throw makeError('К сданному отчету нельзя добавлять фото', 409);
   }
@@ -907,24 +1038,29 @@ async function uploadAttachment(reportId, answerId, payload, account, requestTen
   const attachmentId = crypto.randomUUID();
   const extension = IMAGE_MIME_EXTENSIONS.get(parsed.mimeType);
   let attachment;
+  const attachmentTenant = boundary.context
+    ? {
+      clubId: boundary.context.clubId,
+      organizationId: boundary.context.organizationId,
+    }
+    : await resolveTrustedTenantAttribution(requestTenant);
 
   if (isTenantFilesWorkersEnabled()) {
-    const tenant = await requireDefaultTenantContext(requestTenant);
     const storageKey = buildTenantStorageKey({
-      clubId: tenant.clubId,
+      clubId: attachmentTenant.clubId,
       domain: ATTACHMENT_STORAGE_DOMAIN,
       fileId: attachmentId,
-      organizationId: tenant.organizationId,
+      organizationId: attachmentTenant.organizationId,
       recordId: `report:${report.id}:answer:${answer.id}`,
     });
     const stored = await atomicWriteStorageObject({ storageKey, buffer: parsed.buffer });
     attachment = {
       checksumSha256: stored.checksumSha256,
-      clubId: tenant.clubId,
+      clubId: attachmentTenant.clubId,
       domain: ATTACHMENT_STORAGE_DOMAIN,
       id: attachmentId,
       mimeType: parsed.mimeType,
-      organizationId: tenant.organizationId,
+      organizationId: attachmentTenant.organizationId,
       originalName: normalizeString(payload.fileName) || `photo.${extension}`,
       record: {
         answerId: Number(answer.id),
@@ -935,7 +1071,7 @@ async function uploadAttachment(reportId, answerId, payload, account, requestTen
       storageKey: stored.storageKey,
       storageSchemaVersion: ATTACHMENT_STORAGE_SCHEMA_VERSION,
       uploadedAt: new Date().toISOString(),
-      uploadedByAccountId: account?.id || null,
+      uploadedByAccountId: boundary.account?.id || null,
     };
     try {
       await answer.update({ attachments: [...attachments, attachment] });
@@ -955,7 +1091,7 @@ async function uploadAttachment(reportId, answerId, payload, account, requestTen
       relativePath,
       size: parsed.buffer.length,
       uploadedAt: new Date().toISOString(),
-      uploadedByAccountId: account?.id || null,
+      uploadedByAccountId: boundary.account?.id || null,
     };
     await answer.update({ attachments: [...attachments, attachment] });
   }
@@ -964,8 +1100,12 @@ async function uploadAttachment(reportId, answerId, payload, account, requestTen
 }
 
 async function removeAttachment(reportId, answerId, attachmentId, account, requestTenant = null) {
-  const report = await db.ShiftReport.findByPk(reportId, { include: REPORT_INCLUDE });
-  await assertReportAccess(report, account);
+  const boundary = await resolveBoundary(account, requestTenant);
+  assertBoundaryRole(boundary, REPORT_SUBMIT_ROLES);
+  const report = await findScopedByPk(db.ShiftReport, reportId, {
+    include: REPORT_INCLUDE,
+  }, boundary.context);
+  await assertReportAccess(report, boundary.account);
   if (report.status === 'submitted') {
     throw makeError('У сданного отчета нельзя удалять фото', 409);
   }
@@ -977,7 +1117,12 @@ async function removeAttachment(reportId, answerId, attachmentId, account, reque
   const attachment = attachments.find((item) => item.id === attachmentId);
   if (!attachment) throw makeError('Фото не найдено', 404);
 
-  const tenant = await resolveTrustedTenantAttribution(requestTenant);
+  const tenant = boundary.context
+    ? {
+      clubId: boundary.context.clubId,
+      organizationId: boundary.context.organizationId,
+    }
+    : await resolveTrustedTenantAttribution(requestTenant);
   let removePhysicalFile;
   if (hasTenantAttachmentMetadata(attachment)) {
     assertTenantAttachmentMetadata(attachment, reportId, answerId, tenant);
@@ -996,8 +1141,12 @@ async function removeAttachment(reportId, answerId, attachmentId, account, reque
 }
 
 async function getAttachment(reportId, answerId, attachmentId, account, requestTenant = null) {
-  const report = await db.ShiftReport.findByPk(reportId, { include: REPORT_INCLUDE });
-  await assertReportAccess(report, account);
+  const boundary = await resolveBoundary(account, requestTenant);
+  assertBoundaryRole(boundary, REPORT_VIEW_ROLES);
+  const report = await findScopedByPk(db.ShiftReport, reportId, {
+    include: REPORT_INCLUDE,
+  }, boundary.context);
+  await assertReportAccess(report, boundary.account);
   const answer = (report.answers || []).find(
     (item) => Number(item.id) === Number(answerId),
   );
@@ -1006,7 +1155,12 @@ async function getAttachment(reportId, answerId, attachmentId, account, requestT
     (item) => item.id === attachmentId,
   );
   if (!attachment) throw makeError('Фото не найдено', 404);
-  const tenant = await resolveTrustedTenantAttribution(requestTenant);
+  const tenant = boundary.context
+    ? {
+      clubId: boundary.context.clubId,
+      organizationId: boundary.context.organizationId,
+    }
+    : await resolveTrustedTenantAttribution(requestTenant);
   let absolutePath;
   if (hasTenantAttachmentMetadata(attachment)) {
     assertTenantAttachmentMetadata(attachment, reportId, answerId, tenant);

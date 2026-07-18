@@ -282,44 +282,6 @@ const BASE_MIXED_PAGE_AUTHORIZATION = {
       },
     ],
   },
-  '/admin/shift-reports': {
-    sourceFile: 'ShiftReportsPage.tsx',
-    strategy: 'composite',
-    dependencies: [
-      {
-        scope: 'club',
-        section: 'shift reports and answers',
-        phases: ['initial', 'realtime', 'section', 'mutation'],
-        gate: 'route',
-        endpoints: [
-          'shiftReports.list',
-          'shiftReports.get',
-          'shiftReports.saveDraft',
-          'shiftReports.submit',
-          'shiftReports.uploadAttachment',
-          'shiftReports.removeAttachment',
-          'shiftReports.attachment',
-        ],
-      },
-      {
-        scope: 'organization',
-        section: 'shift report templates and template items',
-        phases: ['initial', 'realtime', 'section', 'mutation'],
-        gate: 'route',
-        endpoints: [
-          'shiftReportTemplates.list',
-          'shiftReportTemplates.create',
-          'shiftReportTemplates.update',
-          'shiftReportTemplates.archive',
-          'shiftReportTemplates.restore',
-          'shiftReportTemplateItems.create',
-          'shiftReportTemplateItems.update',
-          'shiftReportTemplateItems.archive',
-          'shiftReportTemplateItems.restore',
-        ],
-      },
-    ],
-  },
   '/admin/finances': {
     sourceFile: 'FinancePage.tsx',
     strategy: 'composite',
@@ -575,8 +537,6 @@ export const MIXED_PAGE_AUTHORIZATION = {
   ...BASE_MIXED_PAGE_AUTHORIZATION,
   '/admin/shift/motivation':
     BASE_MIXED_PAGE_AUTHORIZATION['/admin/motivation'],
-  '/admin/shift/reports':
-    BASE_MIXED_PAGE_AUTHORIZATION['/admin/shift-reports'],
 } as const satisfies Partial<
   Record<ClientRoute, MixedPageAuthorizationInventory>
 >;

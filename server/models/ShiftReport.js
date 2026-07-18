@@ -1,7 +1,18 @@
 'use strict';
 
+const {
+  createCapabilityTenantAttributionHooks,
+} = require('../src/tenant-context/model-attribution');
+const {
+  isTenantShiftsReportsEnabled,
+} = require('../src/tenant-context/capabilities');
+
 module.exports = (sequelize, DataTypes) => {
   const ShiftReport = sequelize.define('ShiftReport', {
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     shiftId: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -48,9 +59,16 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: 'pending',
     },
+  }, {
+    hooks: createCapabilityTenantAttributionHooks(
+      ['clubId'],
+      'ShiftReport',
+      isTenantShiftsReportsEnabled,
+    ),
   });
 
   ShiftReport.associate = (models) => {
+    ShiftReport.belongsTo(models.Club, { foreignKey: 'clubId' });
     ShiftReport.belongsTo(models.Shift, {
       as: 'shift',
       foreignKey: 'shiftId',

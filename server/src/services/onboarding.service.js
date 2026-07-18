@@ -18,6 +18,7 @@ const {
   isTenantMethodologySkillMapEnabled,
   isTenantTrainingNotesPlansEnabled,
   isTenantClientMoneyInstrumentsEnabled,
+  isTenantShiftsReportsEnabled,
 } = require('../tenant-context/capabilities');
 const {
   bookingTenantWhere,
@@ -37,6 +38,10 @@ const {
   organizationTenantWhere,
   resolveClientMoneyAccessContextForModel,
 } = require('./client-money-access-context.service');
+const {
+  bindShiftOperationsActor,
+  resolveShiftOperationsAccessContext,
+} = require('./shift-operations-access-context.service');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -101,6 +106,10 @@ const CLIENT_MONEY_ORGANIZATION_MODELS = new Set(['CorporateClient']);
 const CLIENT_MONEY_CLUB_MODELS = new Set([
   'CorporateLedgerEntry',
   'Finance',
+]);
+const SHIFT_OPERATION_CHILD_MODELS = new Set([
+  'ShiftCashExpense',
+  'ShiftCashSession',
 ]);
 
 function appError(message, statusCode = 400) {
@@ -215,6 +224,11 @@ async function resolveTrainingClientMoneyContext(tenant, options = {}) {
   );
 }
 
+async function resolveTrainingShiftContext(tenant, options = {}) {
+  if (!isTenantShiftsReportsEnabled()) return null;
+  return resolveShiftOperationsAccessContext(tenant, options);
+}
+
 function getTrainingEntityQuery(
   entity,
   role,
@@ -223,8 +237,24 @@ function getTrainingEntityQuery(
   methodologyContext = null,
   trainingOperationsContext = null,
   clientMoneyContext = null,
+  shiftOperationsContext = null,
 ) {
   const where = getTrainingEntityWhere(entity, role);
+  if (
+    shiftOperationsContext &&
+    SHIFT_OPERATION_CHILD_MODELS.has(entity.modelName)
+  ) {
+    return {
+      include: [{
+        as: 'shift',
+        attributes: [],
+        model: db.Shift,
+        required: true,
+        where: { clubId: shiftOperationsContext.clubId },
+      }],
+      where,
+    };
+  }
   if (
     clientMoneyContext &&
     CLIENT_MONEY_ORGANIZATION_MODELS.has(entity.modelName)
@@ -1044,6 +1074,11 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   const bookingContext = await resolveTrainingBookingContext(tenant);
   const trainingOperationsContext = await resolveTrainingOperationsContext(tenant);
   const clientMoneyContext = await resolveTrainingClientMoneyContext(tenant);
+  const shiftOperationsContext = await resolveTrainingShiftContext(tenant);
+  const shiftAuthorityActor = shiftOperationsContext
+    ? bindShiftOperationsActor(authorityActor, shiftOperationsContext)
+    : authorityActor;
+  assertOwner(shiftAuthorityActor);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
@@ -1057,6 +1092,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
             methodologyContext,
             trainingOperationsContext,
             clientMoneyContext,
+            shiftOperationsContext,
           ))
         : 0;
 
@@ -1253,6 +1289,14 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       tenant,
       { lock: true, transaction },
     );
+    const shiftOperationsContext = await resolveTrainingShiftContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const shiftAuthorityActor = shiftOperationsContext
+      ? bindShiftOperationsActor(authorityActor, shiftOperationsContext)
+      : authorityActor;
+    assertOwner(shiftAuthorityActor);
     const bookingWhere = bookingContext
       ? bookingTenantWhere(
           bookingContext,
@@ -1289,6 +1333,13 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
           { modelName: 'ShiftCashExpense' },
           role,
         ),
+        include: shiftOperationsContext ? [{
+          as: 'shift',
+          attributes: [],
+          model: db.Shift,
+          required: true,
+          where: { clubId: shiftOperationsContext.clubId },
+        }] : undefined,
       });
       cashExpenses.forEach((expense) => {
         const attachments = Array.isArray(expense.attachments)
@@ -1374,6 +1425,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
         methodologyContext,
         trainingOperationsContext,
         clientMoneyContext,
+        shiftOperationsContext,
       );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],
@@ -1384,7 +1436,10 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
     }
   });
 
-  await shiftCashAttachmentStorage.deleteAttachmentFiles(shiftCashAttachments);
+  await shiftCashAttachmentStorage.deleteAttachmentFiles(
+    shiftCashAttachments,
+    tenant,
+  );
 
   return {
     deleted,

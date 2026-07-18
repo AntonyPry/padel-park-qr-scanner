@@ -4,8 +4,8 @@ const { sendError } = require('../utils/api-error');
 class ShiftsController {
   async getActive(req, res) {
     try {
-      const shift = await shiftsService.getActive();
-      res.json({ shift });
+      const shift = await shiftsService.getActive(req.account, req.tenant);
+      res.json({ shift: shiftsService.serializeShift(shift) });
     } catch (error) {
       sendError(res, error, 'Ошибка получения активной смены');
     }
@@ -13,8 +13,8 @@ class ShiftsController {
 
   async startActive(req, res) {
     try {
-      const shift = await shiftsService.startActive(req.account);
-      res.json({ shift });
+      const shift = await shiftsService.startActive(req.account, req.tenant);
+      res.json({ shift: shiftsService.serializeShift(shift) });
     } catch (error) {
       sendError(res, error, 'Ошибка старта смены');
     }
@@ -22,7 +22,8 @@ class ShiftsController {
 
   async endActive(req, res) {
     try {
-      res.json(await shiftsService.endActive(req.account, req.body));
+      const result = await shiftsService.endActive(req.account, req.body, req.tenant);
+      res.json({ ...result, shift: shiftsService.serializeShift(result.shift) });
     } catch (error) {
       sendError(res, error, 'Ошибка завершения смены');
     }
@@ -30,8 +31,8 @@ class ShiftsController {
 
   async create(req, res) {
     try {
-      const shift = await shiftsService.create(req.body, req.account);
-      res.json(shift);
+      const shift = await shiftsService.create(req.body, req.account, req.tenant);
+      res.json(shiftsService.serializeShift(shift));
     } catch (error) {
       sendError(res, error, 'Ошибка добавления смены');
     }
@@ -42,10 +43,10 @@ class ShiftsController {
       const { id } = req.body;
       if (!id) return sendError(res, { statusCode: 400 }, 'Не указан ID смены');
 
-      const shift = await shiftsService.update(req.body, req.account);
+      const shift = await shiftsService.update(req.body, req.account, req.tenant);
       if (!shift) return sendError(res, { statusCode: 404 }, 'Смена не найдена');
 
-      res.json(shift);
+      res.json(shiftsService.serializeShift(shift));
     } catch (error) {
       sendError(res, error, 'Ошибка обновления смены');
     }
@@ -56,10 +57,15 @@ class ShiftsController {
       const { id } = req.body;
       if (!id) return sendError(res, { statusCode: 400 }, 'Не указан ID смены');
 
-      const shift = await shiftsService.remove(id, req.account, req.body?.reason);
+      const shift = await shiftsService.remove(
+        id,
+        req.account,
+        req.body?.reason,
+        req.tenant,
+      );
       if (!shift) return sendError(res, { statusCode: 404 }, 'Смена не найдена');
 
-      res.json({ status: 'ok', shift });
+      res.json({ status: 'ok', shift: shiftsService.serializeShift(shift) });
     } catch (error) {
       sendError(res, error, 'Ошибка удаления смены');
     }

@@ -144,10 +144,10 @@ export const ROUTE_AUTHORIZATION: Record<
     { roles: ROUTE_ACCESS['/admin/shift/motivation'], scope: 'club' },
     { roles: ROUTE_ACCESS['/admin/shift/motivation'], scope: 'organization' },
   ]),
-  '/admin/shift/reports': composite([
-    { roles: ROUTE_ACCESS['/admin/shift/reports'], scope: 'club' },
-    { roles: ROUTE_ACCESS['/admin/shift/reports'], scope: 'organization' },
-  ]),
+  '/admin/shift/reports': single(
+    'club',
+    ROUTE_ACCESS['/admin/shift/reports'],
+  ),
   '/admin/shift/cash': single('club', ROUTE_ACCESS['/admin/shift/cash']),
   '/admin/shift-settings': single(
     'organization',
@@ -157,10 +157,10 @@ export const ROUTE_AUTHORIZATION: Record<
     { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'club' },
     { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'organization' },
   ]),
-  '/admin/shift-reports': composite([
-    { roles: ROUTE_ACCESS['/admin/shift-reports'], scope: 'club' },
-    { roles: ROUTE_ACCESS['/admin/shift-reports'], scope: 'organization' },
-  ]),
+  '/admin/shift-reports': single(
+    'club',
+    ROUTE_ACCESS['/admin/shift-reports'],
+  ),
   '/admin/shift-cash': single('club', ROUTE_ACCESS['/admin/shift-cash']),
   '/admin/utilization': single('club', ROUTE_ACCESS['/admin/utilization']),
   '/admin/catalog': composite([

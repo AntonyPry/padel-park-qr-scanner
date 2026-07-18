@@ -77,13 +77,11 @@ test('ensureReportsForShift creates scheduled reports with item snapshots', asyn
     },
   };
   db.ShiftReport = {
-    async create(payload) {
+    async findOrCreate({ defaults, where }) {
+      const payload = { ...where, ...defaults };
       const report = makeModel({ id: createdReports.length + 1, ...payload });
       createdReports.push(payload);
-      return report;
-    },
-    async findOne() {
-      return null;
+      return [report, true];
     },
   };
   db.ShiftReportAnswer = {
@@ -289,12 +287,10 @@ test('ensureReportsForShift applies every active template without legacy role or
     },
   };
   db.ShiftReport = {
-    async create(payload) {
+    async findOrCreate({ defaults, where }) {
+      const payload = { ...where, ...defaults };
       createdReports.push(payload);
-      return makeModel({ id: createdReports.length, ...payload });
-    },
-    async findOne() {
-      return null;
+      return [makeModel({ id: createdReports.length, ...payload }), true];
     },
   };
   db.ShiftReportAnswer = { async bulkCreate() {} };

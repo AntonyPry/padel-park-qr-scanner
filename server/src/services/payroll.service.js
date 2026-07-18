@@ -3,9 +3,15 @@ const xlsx = require('xlsx');
 const db = require('../../models');
 const motivationService = require('./motivation.service');
 const onboardingService = require('./onboarding.service');
+const { isTenantShiftsReportsEnabled } = require('../tenant-context/capabilities');
+const {
+  bindClientMoneyActor,
+  resolveClientMoneyAccessContext,
+} = require('./client-money-access-context.service');
 
 const LOCKED_PAYROLL_STATUSES = ['reviewed', 'approved', 'paid'];
 const PAYROLL_STATUSES = ['draft', 'reviewed', 'approved', 'paid'];
+const PAYROLL_VIEW_ROLES = new Set(['owner', 'manager', 'accountant']);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -226,15 +232,28 @@ async function getCategoryName(itemName, rulesMap) {
   return rulesMap[name] || 'Неразобранное';
 }
 
-async function buildSalesContext(fromDate, toDate) {
+async function resolvePayrollBoundary(account, tenant) {
+  if (!isTenantShiftsReportsEnabled()) return { account, context: null };
+  const context = await resolveClientMoneyAccessContext(tenant);
+  const authorityAccount = bindClientMoneyActor(account, context);
+  if (!PAYROLL_VIEW_ROLES.has(authorityAccount?.role)) {
+    throw appError('Недостаточно прав для просмотра payroll', 403);
+  }
+  return { account: authorityAccount, context };
+}
+
+async function buildSalesContext(fromDate, toDate, context = null) {
   const [rulesList, receipts] = await Promise.all([
-    db.CatalogRule.findAll({ where: { status: 'active' } }),
+    db.CatalogRule.findAll({
+      where: { status: 'active' },
+    }),
     db.Receipt.findAll({
       where: {
         dateTime: {
           [Op.gte]: startOfDate(fromDate),
           [Op.lte]: endOfDate(toDate),
         },
+        ...(context ? { organizationId: context.organizationId } : {}),
       },
       include: [{ model: db.ReceiptItem, as: 'items' }],
       order: [['dateTime', 'ASC']],
@@ -243,7 +262,8 @@ async function buildSalesContext(fromDate, toDate) {
 
   const rulesMap = {};
   rulesList.forEach((rule) => {
-    rulesMap[String(rule.itemName).toLowerCase().trim()] = rule.category;
+    const name = String(rule.itemName).toLowerCase().trim();
+    rulesMap[name] = rule.category;
   });
 
   const salesByDate = {};
@@ -254,10 +274,19 @@ async function buildSalesContext(fromDate, toDate) {
   for (const receipt of receipts) {
     const multiplier = receipt.type === 'PAYBACK' ? -1 : 1;
     const date = new Date(receipt.dateTime).toISOString().split('T')[0];
-    if (!salesByDate[date]) salesByDate[date] = { revenue: 0, items: [] };
+    const salesDateKey = context ? `${Number(receipt.clubId)}:${date}` : date;
+    if (!salesByDate[salesDateKey]) {
+      salesByDate[salesDateKey] = {
+        clubId: receipt.clubId || null,
+        date,
+        revenue: 0,
+        items: [],
+      };
+    }
 
     const receiptEntry = {
       id: receipt.id,
+      clubId: receipt.clubId || null,
       date,
       dateTime: new Date(receipt.dateTime),
       total: Math.abs(Number(receipt.totalAmount) || 0) * multiplier,
@@ -286,8 +315,8 @@ async function buildSalesContext(fromDate, toDate) {
 
       receiptItemsTotal += sum;
       receiptEntry.items.push(saleItem);
-      salesByDate[date].revenue += sum;
-      salesByDate[date].items.push(saleItem);
+      salesByDate[salesDateKey].revenue += sum;
+      salesByDate[salesDateKey].items.push(saleItem);
     }
 
     receiptSales.push(receiptEntry);
@@ -314,7 +343,11 @@ function getShiftSales(shift, salesContext) {
     let revenue = 0;
 
     salesContext.receiptSales.forEach((receipt) => {
-      if (receipt.dateTime >= startedAt && receipt.dateTime <= endedAt) {
+      if (
+        receipt.dateTime >= startedAt &&
+        receipt.dateTime <= endedAt &&
+        (!shift.clubId || Number(receipt.clubId) === Number(shift.clubId))
+      ) {
         receipt.items.forEach((item) => {
           revenue += Number(item.sum) || 0;
           items.push(item);
@@ -325,11 +358,13 @@ function getShiftSales(shift, salesContext) {
     return { revenue, items };
   }
 
-  return salesContext.salesByDate[shift.date] || { revenue: 0, items: [] };
+  const key = shift.clubId ? `${Number(shift.clubId)}:${shift.date}` : shift.date;
+  return salesContext.salesByDate[key] || { revenue: 0, items: [] };
 }
 
-async function buildPayrollSnapshot(from, to) {
+async function buildPayrollSnapshot(from, to, account = null, tenant = null) {
   const { fromDate, toDate } = normalizeRange(from, to);
+  const boundary = await resolvePayrollBoundary(account, tenant);
 
   const [shiftsDb, motivationRules, motivationBonusRules, salesContext] =
     await Promise.all([
@@ -341,12 +376,20 @@ async function buildPayrollSnapshot(from, to) {
           },
           archivedAt: null,
         },
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        include: [
+          { model: db.Staff, attributes: ['id', 'name'] },
+          ...(boundary.context ? [{
+            attributes: [],
+            model: db.Club,
+            required: true,
+            where: { organizationId: boundary.context.organizationId },
+          }] : []),
+        ],
         order: [['date', 'ASC']],
       }),
       motivationService.getRulesMap(),
       motivationService.getBonusRules(),
-      buildSalesContext(fromDate, toDate),
+      buildSalesContext(fromDate, toDate, boundary.context),
     ]);
 
   const payrollByAdmin = {};
@@ -355,19 +398,23 @@ async function buildPayrollSnapshot(from, to) {
   const warnings = [];
 
   const shiftsByDate = shiftsDb.reduce((acc, shift) => {
-    acc[shift.date] = (acc[shift.date] || 0) + 1;
+    const key = boundary.context ? `${Number(shift.clubId)}:${shift.date}` : shift.date;
+    acc[key] = (acc[key] || 0) + 1;
     return acc;
   }, {});
 
   shiftsDb.forEach((shift) => {
-    processedDates.add(shift.date);
+    const shiftDateKey = boundary.context
+      ? `${Number(shift.clubId)}:${shift.date}`
+      : shift.date;
+    processedDates.add(shiftDateKey);
     const admin = shift.Staff?.name || shift.adminName;
     const staffId = shift.staffId || shift.Staff?.id || null;
     const rawHours = Number(shift.actualHours ?? shift.hours);
     const hrs = Number.isFinite(rawHours) && rawHours > 0 ? rawHours : 0;
     const shiftSales = getShiftSales(shift, salesContext);
 
-    if (shiftsByDate[shift.date] > 1 && (!shift.startedAt || !shift.endedAt)) {
+    if (shiftsByDate[shiftDateKey] > 1 && (!shift.startedAt || !shift.endedAt)) {
       warnings.push(
         `На ${shift.date} есть несколько смен без точного времени: бонусы считаются по дневной выручке.`,
       );
@@ -432,16 +479,18 @@ async function buildPayrollSnapshot(from, to) {
     });
   });
 
-  Object.keys(salesContext.salesByDate).forEach((date) => {
-    if (!processedDates.has(date)) {
-      const todaySales = salesContext.salesByDate[date];
+  Object.entries(salesContext.salesByDate).forEach(([dateKey, todaySales]) => {
+    if (!processedDates.has(dateKey)) {
+      const date = todaySales.date || dateKey;
       const detailedItems = motivationService.calculateShiftBonus(
         todaySales.items,
         motivationBonusRules,
       ).detailedItems;
 
       shiftsHistory.push({
-        id: `draft-${date}`,
+        id: boundary.context
+          ? `draft-${Number(todaySales.clubId)}-${date}`
+          : `draft-${date}`,
         isDraft: true,
         date,
         startedAt: null,
@@ -533,7 +582,7 @@ async function assertRangeEditable(from, to, label = 'период') {
   }
 }
 
-async function calculatePayroll(from, to) {
+async function calculatePayroll(from, to, account = null, tenant = null) {
   const { fromDate, toDate } = normalizeRange(from, to);
   const period = await findExactPeriod(fromDate, toDate);
   const periodSnapshot = period ? parseSnapshot(period.snapshot) : null;
@@ -547,7 +596,7 @@ async function calculatePayroll(from, to) {
     };
   }
 
-  const snapshot = await buildPayrollSnapshot(fromDate, toDate);
+  const snapshot = await buildPayrollSnapshot(fromDate, toDate, account, tenant);
 
   return {
     ...snapshot,
@@ -557,7 +606,8 @@ async function calculatePayroll(from, to) {
   };
 }
 
-async function createPeriod(data, account) {
+async function createPeriod(data, account, tenant = null) {
+  const boundary = await resolvePayrollBoundary(account, tenant);
   const { fromDate, toDate } = normalizeRange(data.from, data.to);
   const lockedOverlap = await findLockedPeriodForRange(fromDate, toDate);
 
@@ -573,7 +623,12 @@ async function createPeriod(data, account) {
     throw appError('Payroll-период с такими датами уже создан', 409);
   }
 
-  const snapshot = await buildPayrollSnapshot(fromDate, toDate);
+  const snapshot = await buildPayrollSnapshot(
+    fromDate,
+    toDate,
+    boundary.account,
+    tenant,
+  );
   const period = await db.PayrollPeriod.create({
     fromDate,
     toDate,
@@ -586,7 +641,7 @@ async function createPeriod(data, account) {
     action: 'payroll_period.create',
     entityType: 'payroll_period',
     entityId: period.id,
-    account,
+    account: boundary.account,
     reason: data.note,
     fromDate,
     toDate,
@@ -609,7 +664,8 @@ async function createPeriod(data, account) {
   return db.PayrollPeriod.findByPk(period.id, { include: getPeriodInclude() });
 }
 
-async function recalculatePeriod(id, account, reason) {
+async function recalculatePeriod(id, account, reason, tenant = null) {
+  const boundary = await resolvePayrollBoundary(account, tenant);
   const period = await db.PayrollPeriod.findByPk(id);
   if (!period) throw appError('Payroll-период не найден', 404);
   if (period.status !== 'draft') {
@@ -617,14 +673,19 @@ async function recalculatePeriod(id, account, reason) {
   }
 
   const before = parseSnapshot(period.snapshot);
-  const snapshot = await buildPayrollSnapshot(period.fromDate, period.toDate);
+  const snapshot = await buildPayrollSnapshot(
+    period.fromDate,
+    period.toDate,
+    boundary.account,
+    tenant,
+  );
   await period.update({ snapshot });
 
   await recordChange({
     action: 'payroll_period.recalculate',
     entityType: 'payroll_period',
     entityId: period.id,
-    account,
+    account: boundary.account,
     reason,
     fromDate: period.fromDate,
     toDate: period.toDate,
@@ -635,7 +696,9 @@ async function recalculatePeriod(id, account, reason) {
   return db.PayrollPeriod.findByPk(period.id, { include: getPeriodInclude() });
 }
 
-async function transitionPeriod(id, data, account) {
+async function transitionPeriod(id, data, account, tenant = null) {
+  const boundary = await resolvePayrollBoundary(account, tenant);
+  account = boundary.account;
   const nextStatus = String(data.status || '').trim();
   if (!PAYROLL_STATUSES.includes(nextStatus)) {
     throw appError('Некорректный статус payroll-периода');
@@ -654,7 +717,12 @@ async function transitionPeriod(id, data, account) {
   };
 
   if (nextStatus === 'reviewed') {
-    payload.snapshot = await buildPayrollSnapshot(period.fromDate, period.toDate);
+    payload.snapshot = await buildPayrollSnapshot(
+      period.fromDate,
+      period.toDate,
+      account,
+      tenant,
+    );
     payload.reviewedAt = new Date();
     payload.reviewedByAccountId = account?.id || null;
   }
@@ -697,7 +765,8 @@ async function transitionPeriod(id, data, account) {
   return db.PayrollPeriod.findByPk(period.id, { include: getPeriodInclude() });
 }
 
-async function listPeriods(query = {}) {
+async function listPeriods(query = {}, account = null, tenant = null) {
+  await resolvePayrollBoundary(account, tenant);
   const where = {};
 
   if (query.status && query.status !== 'all') where.status = query.status;
@@ -724,7 +793,8 @@ async function listPeriods(query = {}) {
   });
 }
 
-async function getHistory(query = {}) {
+async function getHistory(query = {}, account = null, tenant = null) {
+  await resolvePayrollBoundary(account, tenant);
   const where = {};
 
   if (query.from || query.to) {
@@ -811,7 +881,9 @@ function buildPayrollExport(snapshot) {
   ]);
 }
 
-async function exportPayroll(query, account) {
+async function exportPayroll(query, account, tenant = null) {
+  const boundary = await resolvePayrollBoundary(account, tenant);
+  account = boundary.account;
   let snapshot;
   let period = null;
 
@@ -820,7 +892,7 @@ async function exportPayroll(query, account) {
     if (!period) throw appError('Payroll-период не найден', 404);
     snapshot = parseSnapshot(period.snapshot);
   } else {
-    snapshot = await buildPayrollSnapshot(query.from, query.to);
+    snapshot = await buildPayrollSnapshot(query.from, query.to, account, tenant);
   }
 
   if (!snapshot) {

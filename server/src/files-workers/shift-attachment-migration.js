@@ -271,14 +271,23 @@ async function migrateShiftReportAttachments(options = {}) {
   const rollback = Boolean(options.rollback);
   const storageRoot = normalizeStorageRoot(options.storageRoot);
   const legacyRoot = await canonicalLegacyRoot(options.legacyRoot || LEGACY_UPLOAD_ROOT);
-  const tenant = options.tenant || await getExactDefaultTenant();
+  const defaultTenant = options.tenant || await getExactDefaultTenant();
+  const fallbackTenant = defaultTenant;
   const answers = await models.ShiftReportAnswer.findAll({
     attributes: ['id', 'reportId', 'attachments'],
+    include: models.ShiftReport && models.Club ? [{
+      as: 'report',
+      attributes: ['id', 'clubId'],
+      include: [{ attributes: ['id', 'organizationId'], model: models.Club }],
+      model: models.ShiftReport,
+      required: true,
+    }] : undefined,
     order: [['id', 'ASC']],
   });
   const referencedLegacyPaths = new Set();
   const referencedStoragePaths = new Set();
   const entries = [];
+  const tenantEntries = new Map();
   const counts = {
     alreadyMigrated: 0,
     checksumMismatch: 0,
@@ -294,6 +303,19 @@ async function migrateShiftReportAttachments(options = {}) {
   };
 
   for (const answer of answers) {
+    const report = answer.report || answer.ShiftReport;
+    const club = report?.Club;
+    const tenant = report && club
+      ? {
+        clubId: Number(report.clubId),
+        organizationId: Number(club.organizationId),
+      }
+      : fallbackTenant;
+    if (!tenant?.clubId || !tenant?.organizationId) {
+      throw new TenantStorageError('Shift report tenant provenance is missing');
+    }
+    const tenantKey = `${tenant.organizationId}:${tenant.clubId}`;
+    if (!tenantEntries.has(tenantKey)) tenantEntries.set(tenantKey, []);
     const attachments = readAttachments(answer.attachments);
     let changed = false;
     const next = [];
@@ -354,6 +376,7 @@ async function migrateShiftReportAttachments(options = {}) {
             size: attachment.size,
             storageKey: attachment.storageKey,
           });
+          tenantEntries.get(tenantKey).push(entries[entries.length - 1]);
           next.push(attachment);
         } catch (error) {
           if (error.code === 'ENOENT') counts.missingStorage += 1;
@@ -372,6 +395,14 @@ async function migrateShiftReportAttachments(options = {}) {
         continue;
       }
       counts.eligibleLegacy += 1;
+      if (
+        Number(tenant.organizationId) !== Number(defaultTenant.organizationId) ||
+        Number(tenant.clubId) !== Number(defaultTenant.clubId)
+      ) {
+        counts.invalidMetadata += 1;
+        next.push(attachment);
+        continue;
+      }
       let legacy;
       try {
         legacy = await readSafeLegacyFileChecksum(legacyRoot, relativePath);
@@ -402,6 +433,7 @@ async function migrateShiftReportAttachments(options = {}) {
         size: legacy.size,
         storageKey,
       });
+      tenantEntries.get(tenantKey).push(entries[entries.length - 1]);
       if (!apply || rollback) {
         next.push(attachment);
         continue;
@@ -441,21 +473,22 @@ async function migrateShiftReportAttachments(options = {}) {
     mode: rollback ? 'rollback' : apply ? 'apply' : 'dry-run',
     storageRoot,
     legacyRoot: legacyRoot.realPath || legacyRoot.configuredPath,
-    tenants: [
-      {
-        organizationId: tenant.organizationId,
-        clubId: tenant.clubId,
+    tenants: Array.from(tenantEntries.entries()).map(([key, tenantFiles]) => {
+      const [organizationId, clubId] = key.split(':').map(Number);
+      return {
+        organizationId,
+        clubId,
         domains: {
           [ATTACHMENT_STORAGE_DOMAIN]: {
-            fileCount: entries.length,
-            totalBytes: entries.reduce((sum, entry) => sum + Number(entry.size || 0), 0),
+            fileCount: tenantFiles.length,
+            totalBytes: tenantFiles.reduce((sum, entry) => sum + Number(entry.size || 0), 0),
             checksumSha256: checksumBuffer(
-              Buffer.from(entries.map((entry) => entry.checksumSha256).sort().join('\n')),
+              Buffer.from(tenantFiles.map((entry) => entry.checksumSha256).sort().join('\n')),
             ),
           },
         },
-      },
-    ],
+      };
+    }),
     counts: {
       ...counts,
       legacyFiles: legacyFiles.length,

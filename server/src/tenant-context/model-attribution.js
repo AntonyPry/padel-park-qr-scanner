@@ -80,6 +80,39 @@ function createTenantAttributionHooks(fields, label) {
   };
 }
 
+function createCapabilityTenantAttributionHooks(fields, label, isEnabled) {
+  const immutableFields = Object.freeze([...fields]);
+  async function ensure(instance, options = {}) {
+    const missing = immutableFields.filter(
+      (field) => !Number.isSafeInteger(Number(instance[field])),
+    );
+    if (missing.length === 0) return;
+    if (isEnabled()) throw missingTenantError(label);
+    const tenant = await loadDefaultTenant(instance, options);
+    for (const field of missing) instance.set(field, tenant[field]);
+  }
+  return {
+    async beforeBulkCreate(instances, options) {
+      await Promise.all(instances.map((instance) => ensure(instance, options)));
+    },
+    beforeBulkUpdate(options) {
+      assertBulkFieldsAreMutable(
+        options,
+        immutableFields,
+        `${label} tenant attribution is immutable`,
+      );
+    },
+    beforeUpdate(instance) {
+      if (immutableFields.some((field) => instance.changed(field))) {
+        throw immutableAttributionError(`${label} tenant attribution is immutable`);
+      }
+    },
+    async beforeValidate(instance, options) {
+      await ensure(instance, options);
+    },
+  };
+}
+
 function createNullableTenantAttributionHooks(fields, label) {
   const immutableFields = Object.freeze([...fields]);
   return {
@@ -99,6 +132,7 @@ function createNullableTenantAttributionHooks(fields, label) {
 }
 
 module.exports = {
+  createCapabilityTenantAttributionHooks,
   createNullableTenantAttributionHooks,
   createTenantAttributionHooks,
   ensureTenantAttribution,

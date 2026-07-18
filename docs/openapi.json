@@ -56864,12 +56864,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -57046,12 +57056,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -57364,12 +57384,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -57696,12 +57726,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -57885,12 +57925,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -58074,12 +58124,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -58345,12 +58405,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -58612,12 +58682,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,
@@ -58801,12 +58881,22 @@
         "tags": [
           "Shift Reports"
         ],
-        "x-tenant-scope": "organization",
+        "x-tenant-scope": "club",
         "parameters": [
           {
             "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
             "in": "header",
             "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Verified club context within X-Organization-Id.",
+            "in": "header",
+            "name": "X-Club-Id",
             "required": true,
             "schema": {
               "minimum": 1,

@@ -405,8 +405,8 @@ class FinanceService {
     return report;
   }
 
-  async calculatePayroll(from, to) {
-    return payrollService.calculatePayroll(from, to);
+  async calculatePayroll(from, to, account, tenant) {
+    return payrollService.calculatePayroll(from, to, account, tenant);
   }
 
   async createManualRecord(data, account) {

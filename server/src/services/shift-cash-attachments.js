@@ -3,7 +3,10 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { isTenantFilesWorkersEnabled } = require('../tenant-context/capabilities');
+const {
+  isTenantFilesWorkersEnabled,
+  isTenantShiftsReportsEnabled,
+} = require('../tenant-context/capabilities');
 const {
   requireDefaultTenantContext,
   resolveTrustedTenantAttribution,
@@ -15,6 +18,9 @@ const {
   deleteStorageObject,
   resolveExistingStoragePath,
 } = require('../storage/tenant-storage');
+const {
+  resolveShiftOperationsAccessContext,
+} = require('./shift-operations-access-context.service');
 
 const LEGACY_UPLOAD_ROOT = path.resolve(__dirname, '../../var/shift-cash-attachments');
 const UPLOAD_ROOT = LEGACY_UPLOAD_ROOT;
@@ -39,6 +45,17 @@ function makeError(message, statusCode = 400) {
 
 function normalizeString(value) {
   return String(value ?? '').trim();
+}
+
+async function resolveAttachmentTenant(requestTenant) {
+  if (!isTenantShiftsReportsEnabled()) {
+    return resolveTrustedTenantAttribution(requestTenant);
+  }
+  const context = await resolveShiftOperationsAccessContext(requestTenant);
+  return {
+    clubId: context.clubId,
+    organizationId: context.organizationId,
+  };
 }
 
 function parseDataUrl(data, mimeType) {
@@ -112,8 +129,8 @@ function assertLegacyAttachmentMetadata(attachment, expenseId) {
   return expectedPath;
 }
 
-async function resolveLegacyAttachmentPath(attachment, expenseId, tenant) {
-  await requireDefaultTenantContext(tenant);
+async function resolveLegacyAttachmentPath(attachment, expenseId, requestTenant) {
+  await requireDefaultTenantContext(requestTenant);
   const relativePath = assertLegacyAttachmentMetadata(attachment, expenseId);
   const candidate = path.resolve(LEGACY_UPLOAD_ROOT, relativePath);
   const lexicalRelative = path.relative(LEGACY_UPLOAD_ROOT, candidate);
@@ -165,7 +182,7 @@ async function storeAttachment(expenseId, payload, account, requestTenant = null
   };
 
   if (isTenantFilesWorkersEnabled()) {
-    const tenant = await requireDefaultTenantContext(requestTenant);
+    const tenant = await resolveAttachmentTenant(requestTenant);
     const storageKey = buildTenantStorageKey({
       clubId: tenant.clubId,
       domain: ATTACHMENT_STORAGE_DOMAIN,
@@ -195,7 +212,7 @@ async function storeAttachment(expenseId, payload, account, requestTenant = null
 }
 
 async function resolveAttachmentPath(attachment, expenseId, requestTenant = null) {
-  const tenant = await resolveTrustedTenantAttribution(requestTenant);
+  const tenant = await resolveAttachmentTenant(requestTenant);
   if (hasTenantAttachmentMetadata(attachment)) {
     assertTenantAttachmentMetadata(attachment, expenseId, tenant);
     try {
@@ -210,7 +227,7 @@ async function resolveAttachmentPath(attachment, expenseId, requestTenant = null
 
 async function deleteAttachmentFile(attachment, expenseId = null, requestTenant = null) {
   if (!attachment) return false;
-  const tenant = await resolveTrustedTenantAttribution(requestTenant);
+  const tenant = await resolveAttachmentTenant(requestTenant);
   if (hasTenantAttachmentMetadata(attachment)) {
     assertTenantAttachmentMetadata(attachment, expenseId, tenant);
     return deleteStorageObject({ storageKey: attachment.storageKey });

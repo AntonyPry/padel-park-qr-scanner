@@ -90,14 +90,21 @@ describe('mixed-page API authorization inventory', () => {
       '/admin/motivation',
       '/admin/shift/motivation',
       '/admin/catalog',
-      '/admin/shift-reports',
-      '/admin/shift/reports',
       '/admin/finances',
     ] as const) {
       expect(MIXED_PAGE_AUTHORIZATION[path].strategy).toBe('composite');
       expect(
         ROUTE_AUTHORIZATION[path].requirements.map(({ scope }) => scope).sort(),
       ).toEqual(['club', 'organization']);
+    }
+  });
+
+  it('mounts shift reports and templates through one Club authority', () => {
+    for (const path of ['/admin/shift-reports', '/admin/shift/reports'] as const) {
+      expect(ROUTE_AUTHORIZATION[path].strategy).toBe('single');
+      expect(
+        ROUTE_AUTHORIZATION[path].requirements.map(({ scope }) => scope),
+      ).toEqual(['club']);
     }
   });
 });

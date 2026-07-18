@@ -58,6 +58,21 @@ async function resolveVisitTenantSeederScope(queryInterface, foundation) {
     : {};
 }
 
+async function resolveShiftTenantSeederScope(queryInterface, foundation) {
+  const [columns] = await queryInterface.sequelize.query(
+    `SELECT COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME = 'Shifts'
+        AND COLUMN_NAME = 'clubId'`,
+  );
+  const tenantAware = columns.length === 1;
+  return {
+    insert: tenantAware ? { clubId: foundation.club.id } : {},
+    where: tenantAware ? { clubId: foundation.club.id } : {},
+  };
+}
+
 async function resolveUtilizationTenantSeederScope(queryInterface, foundation) {
   const [columns] = await queryInterface.sequelize.query(
     `SELECT COLUMN_NAME AS columnName
@@ -149,6 +164,10 @@ module.exports = {
           queryInterface,
           foundation,
         );
+        const shiftTenantScope = await resolveShiftTenantSeederScope(
+          queryInterface,
+          foundation,
+        );
 
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
@@ -162,6 +181,7 @@ module.exports = {
       phone: { [Sequelize.Op.like]: '+7909%' },
     });
     await queryInterface.bulkDelete('Shifts', {
+      ...shiftTenantScope.where,
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
         await accountBatch.deleteAccountsByEmailLike('%@padelpark.demo');
@@ -555,6 +575,7 @@ module.exports = {
           ? staffByPhone['+79000000102']
           : staffByPhone['+79000000103'];
       shifts.push({
+        ...shiftTenantScope.insert,
         date: `2026-05-${String(day).padStart(2, '0')}`,
         adminName: day % 2 === 0 ? 'Илья Смирнов' : 'Софья Ким',
         staffId,
@@ -641,6 +662,10 @@ module.exports = {
           queryInterface,
           foundation,
         );
+        const shiftTenantScope = await resolveShiftTenantSeederScope(
+          queryInterface,
+          foundation,
+        );
     await queryInterface.sequelize.query(
       'DELETE FROM ReceiptItems WHERE receiptId BETWEEN 20000 AND 29999',
     );
@@ -653,6 +678,7 @@ module.exports = {
       phone: { [Sequelize.Op.like]: '+7909%' },
     });
     await queryInterface.bulkDelete('Shifts', {
+      ...shiftTenantScope.where,
       comment: { [Sequelize.Op.like]: '[demo]%' },
     });
         await accountBatch.deleteAccountsByEmailLike('%@padelpark.demo');

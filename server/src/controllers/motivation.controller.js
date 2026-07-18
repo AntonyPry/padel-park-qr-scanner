@@ -12,7 +12,7 @@ class MotivationController {
       res.json(
         await motivationService.getCurrentShiftSales({
           includePaymentSummary,
-        }),
+        }, req.account, req.tenant),
       );
     } catch (error) {
       console.error('Ошибка получения продаж смены:', error);

@@ -2,6 +2,12 @@ const db = require('../../models');
 const { DEFAULT_MOTIVATION_RULES } = require('../constants/motivation-rules');
 const { resolveStoredReceiptPayments } = require('../utils/payments');
 const catalogService = require('./catalog.service');
+const { isTenantShiftsReportsEnabled } = require('../tenant-context/capabilities');
+const {
+  bindShiftOperationsActor,
+  resolveShiftOperationsAccessContext,
+  shiftOperationsTenantWhere,
+} = require('./shift-operations-access-context.service');
 
 const DEFAULT_BASE_RULES = DEFAULT_MOTIVATION_RULES.filter(
   (rule) => rule.group === 'base',
@@ -348,10 +354,21 @@ async function deleteBonusRule(id) {
   return { success: true };
 }
 
-async function getCurrentShiftSales(options = {}) {
+async function getCurrentShiftSales(options = {}, account = null, tenant = null) {
   const includePaymentSummary = Boolean(options.includePaymentSummary);
+  const context = isTenantShiftsReportsEnabled()
+    ? await resolveShiftOperationsAccessContext(tenant)
+    : null;
+  const authorityActor = context ? bindShiftOperationsActor(account, context) : account;
+  if (context && !['owner', 'manager', 'admin'].includes(authorityActor?.role)) {
+    const error = new Error('Недостаточно прав');
+    error.statusCode = 403;
+    throw error;
+  }
   const activeShift = await db.Shift.findOne({
-    where: { status: 'active' },
+    where: context
+      ? shiftOperationsTenantWhere(context, { status: 'active' })
+      : { status: 'active' },
     order: [['startedAt', 'DESC']],
   });
 
@@ -365,12 +382,12 @@ async function getCurrentShiftSales(options = {}) {
     };
   }
 
-  const rules = await catalogService.getRules({ status: 'active' });
+  const rules = await catalogService.getRules({ status: 'active' }, tenant);
   const rulesMap = {};
   rules.forEach((rule) => {
     rulesMap[String(rule.itemName).toLowerCase().trim()] = rule.category;
   });
-  const categories = await catalogService.getCategories({ status: 'active' });
+  const categories = await catalogService.getCategories({ status: 'active' }, tenant);
   const categoryByName = new Map(
     categories.map((category) => [
       String(category.name).toLowerCase(),
@@ -383,6 +400,7 @@ async function getCurrentShiftSales(options = {}) {
       dateTime: {
         [db.Sequelize.Op.gte]: activeShift.startedAt,
       },
+      ...(context ? { clubId: context.clubId } : {}),
     },
     include: [{ model: db.ReceiptItem, as: 'items' }],
     order: [['dateTime', 'DESC']],

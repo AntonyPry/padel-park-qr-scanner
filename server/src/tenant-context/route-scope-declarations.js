@@ -96,8 +96,6 @@ const ORGANIZATION_ENDPOINT_PREFIXES = Object.freeze([
   'references.',
   'staff.',
   'methodology.',
-  'shiftReportTemplates.',
-  'shiftReportTemplateItems.',
 ]);
 
 const CLUB_ENDPOINT_PREFIXES = Object.freeze([
@@ -109,6 +107,8 @@ const CLUB_ENDPOINT_PREFIXES = Object.freeze([
   'managerControl.',
   'prepayments.',
   'shiftCash.',
+  'shiftReportTemplates.',
+  'shiftReportTemplateItems.',
   'shiftReports.',
   'shifts.',
   'telephony.',
@@ -172,7 +172,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '104b1b025b87302c07358525a3e5cca480a4d4ef2068bcc09c8cb1cd66395936';
+  'bcd860009ec791af401f3d8b0904103ba52c357e729a8078aef87e651427ade3';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;
