@@ -48,6 +48,13 @@ test('onboarding realtime is available for every active role', () => {
   ]);
 });
 
+test('audit realtime follows the existing audit visibility matrix', () => {
+  assert.deepEqual(getRolesForDomain('audit'), ['owner', 'manager']);
+  assert.equal(canReceiveDomain('owner', 'audit'), true);
+  assert.equal(canReceiveDomain('manager', 'audit'), true);
+  assert.equal(canReceiveDomain('admin', 'audit'), false);
+});
+
 test('tenant rooms include validated org, club, membership and role-specific domains', () => {
   const tenant = Object.freeze({
     clubId: 12,

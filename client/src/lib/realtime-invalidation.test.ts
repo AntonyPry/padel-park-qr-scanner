@@ -172,4 +172,26 @@ describe('realtime invalidation mapping', () => {
     const reordered = { ...first, id: 'earlier', occurredAt: '2026-07-15T12:00:00.000Z' };
     expect(getRealtimeQueryKeys(first)).toEqual(getRealtimeQueryKeys(reordered));
   });
+
+  it('invalidates only the active Organization audit list after committed audit writes', () => {
+    enableTenantContext();
+    const currentAuditEvent = event({
+      clubId: null,
+      domain: 'audit',
+      entity: 'audit_log',
+      hints: { queryGroups: ['audit'] },
+      membershipId: 21,
+      organizationId: 11,
+      tenantScope: 'organization',
+    });
+    const foreignAuditEvent = {
+      ...currentAuditEvent,
+      organizationId: 12,
+    };
+
+    expect(getRealtimeQueryKeys(currentAuditEvent)).toEqual([
+      ['tenant', 11, 'org', 'audit'],
+    ]);
+    expect(getRealtimeQueryKeys(foreignAuditEvent)).toEqual([]);
+  });
 });

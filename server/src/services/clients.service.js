@@ -24,6 +24,7 @@ const {
 const {
   isTenantBookingsCourtsEnabled,
   isTenantClientBasesCallTasksEnabled,
+  isTenantAuditLogEnabled,
 } = require('../tenant-context/capabilities');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
@@ -1940,8 +1941,15 @@ async function listClientActiveCallTasks(clientId, account, clientContext = null
   });
 }
 
-async function listClientAuditTimeline(clientId, account) {
+async function listClientAuditTimeline(clientId, account, clientContext = null) {
   if (!canViewClientAuditTimeline(account)) return [];
+
+  const organizationId = isTenantAuditLogEnabled()
+    ? Number(clientContext?.organizationId)
+    : null;
+  if (isTenantAuditLogEnabled() && !Number.isSafeInteger(organizationId)) {
+    throw appError('Контекст организации недоступен', 404);
+  }
 
   const logs = await db.AuditLog.findAll({
     include: [
@@ -1949,7 +1957,12 @@ async function listClientAuditTimeline(clientId, account) {
         model: db.Account,
         as: 'account',
         attributes: ['id', 'email', 'role', 'staffId'],
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        include: [{
+          model: db.Staff,
+          attributes: ['id', 'name'],
+          required: false,
+          where: organizationId ? { organizationId } : undefined,
+        }],
       },
     ],
     limit: 25,
@@ -1957,13 +1970,16 @@ async function listClientAuditTimeline(clientId, account) {
     where: {
       entityId: String(clientId),
       entityType: 'client',
+      ...(organizationId ? { organizationId } : {}),
     },
   });
 
   return logs.map((log) => {
     const raw = log.toJSON();
     return createTimelineItem({
-      actor: mapAccount(raw.account),
+      actor: mapAccount(raw.account
+        ? { ...raw.account, role: raw.role || raw.account.role }
+        : null),
       description: summarizeClientAudit(raw),
       id: `audit-${raw.id}`,
       meta: {
@@ -2167,7 +2183,7 @@ async function listClientTimeline(
 ) {
   const [callItems, auditItems] = await Promise.all([
     listClientCallTimeline(clientId, account, clientContext),
-    listClientAuditTimeline(clientId, account),
+    listClientAuditTimeline(clientId, account, clientContext),
   ]);
   const visitItems = (visits || []).map((visit) =>
     createTimelineItem({
@@ -3546,6 +3562,7 @@ module.exports = {
     buildClientPrepaymentSummary,
     buildTrainerClientDetailsResponse,
     clientWhere,
+    listClientAuditTimeline,
     listClientPrepaymentTimeline,
     sanitizeClientForAccount,
   },

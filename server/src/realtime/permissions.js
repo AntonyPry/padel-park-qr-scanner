@@ -11,6 +11,7 @@ const TENANT_ROOM_PREFIXES = Object.freeze({
 const DOMAIN_ACCESS_KEYS = {
   access: ['accessOperate'],
   accounts: ['systemUsersManage'],
+  audit: ['auditView'],
   bookings: ['bookingsView'],
   booking_resources: ['bookingsView'],
   call_tasks: ['callTasksView'],

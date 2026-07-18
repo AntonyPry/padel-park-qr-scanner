@@ -343,7 +343,7 @@ DB metadata содержит organization/club; download сначала пров
 
 ### Audit/onboarding/demo
 
-- `AuditLog`, `FinanceChangeLog`, `BookingChangeLog`, raw events и scanner events сохраняют immutable tenant snapshot;
+- `AuditLog` сохраняет immutable `organizationId` и nullable exact `clubId` provenance для club-scoped request; actor snapshot — существующие `accountId` + effective `role`, без dormant `membershipId`. `FinanceChangeLog`, `BookingChangeLog`, raw events и scanner events сохраняют собственный immutable tenant snapshot по своим domain-контрактам;
 - onboarding catalog global, progress membership-scoped, action events/training data club-scoped;
 - training cleanup требует organization + club + membership/account, иначе возможна массовая cross-tenant deletion;
 - до Feature 9 demo/performance/smoke fixtures создаются только в exact default organization/club; multi-tenant fixtures разрешены лишь в isolated ephemeral DB Feature 9;

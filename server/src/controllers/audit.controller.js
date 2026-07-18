@@ -4,8 +4,7 @@ const { sendError } = require('../utils/api-error');
 class AuditController {
   async getAll(req, res) {
     try {
-      auditService.assertCanView(req.account);
-      res.json(await auditService.list(req.query));
+      res.json(await auditService.list(req.query, req.account, req.tenant));
     } catch (error) {
       sendError(res, error, 'Ошибка получения журнала действий');
     }
