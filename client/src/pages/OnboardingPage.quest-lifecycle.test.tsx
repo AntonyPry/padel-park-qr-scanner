@@ -1,6 +1,13 @@
 import { StrictMode, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import {
   BrowserRouter,
   Route,
@@ -16,6 +23,7 @@ import {
   activateOnboardingQuest,
   clearStoredActiveOnboardingQuest,
   getStoredActiveOnboardingQuest,
+  ONBOARDING_QUEST_EVENT,
 } from '@/lib/onboarding-quest';
 import OnboardingPage from './OnboardingPage';
 
@@ -264,5 +272,42 @@ describe('global onboarding quest route lifecycle', () => {
       taskKey: 'admin.client.create',
     });
     expect(observedPathnames).toContain('/admin/clients');
+  });
+
+  it('clears synchronously when popstate restores a task entry before a router effect can commit', async () => {
+    activateOnboardingQuest(taskDetail.task, 'admin');
+    renderLifecycle('/admin/clients', true);
+
+    expect(await screen.findByText('CRM clients')).toBeInTheDocument();
+    expect(getStoredActiveOnboardingQuest()).toMatchObject({
+      taskKey: 'admin.client.create',
+    });
+
+    let questChangeCount = 0;
+    window.addEventListener(
+      ONBOARDING_QUEST_EVENT,
+      () => {
+        questChangeCount += 1;
+      },
+      { once: true },
+    );
+    let questAtEndOfNativeEvent = getStoredActiveOnboardingQuest();
+    window.addEventListener(
+      'popstate',
+      () => {
+        questAtEndOfNativeEvent = getStoredActiveOnboardingQuest();
+      },
+      { once: true },
+    );
+    window.history.replaceState({ idx: 0 }, '', taskDetailPath);
+
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', { state: { idx: 0 } }));
+    });
+
+    expect(questAtEndOfNativeEvent).toBeNull();
+    expect(getStoredActiveOnboardingQuest()).toBeNull();
+    expect(questChangeCount).toBe(1);
+    expect(await screen.findByText(taskDetail.task.title)).toBeInTheDocument();
   });
 });
