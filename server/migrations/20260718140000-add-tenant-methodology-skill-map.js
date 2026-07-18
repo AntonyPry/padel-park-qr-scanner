@@ -292,11 +292,44 @@ const TRIGGERS = Object.freeze({
 });
 
 function normalizeSql(value) {
-  return String(value || '')
+  const literals = [];
+  let protectedSql = '';
+  const source = String(value || '');
+  for (let index = 0; index < source.length; index += 1) {
+    const quote = source[index];
+    if (quote !== "'" && quote !== '"') {
+      protectedSql += quote;
+      continue;
+    }
+    let literal = quote;
+    for (index += 1; index < source.length; index += 1) {
+      const character = source[index];
+      literal += character;
+      if (character === '\\' && index + 1 < source.length) {
+        index += 1;
+        literal += source[index];
+        continue;
+      }
+      if (character !== quote) continue;
+      if (source[index + 1] === quote) {
+        index += 1;
+        literal += source[index];
+        continue;
+      }
+      break;
+    }
+    const marker = `__tenant_sql_literal_${literals.length}__`;
+    literals.push(literal);
+    protectedSql += marker;
+  }
+  return protectedSql
     .replace(/`/g, '')
     .replace(/\s+/g, ' ')
+    .replace(/\s*([(),;])\s*/g, '$1')
+    .replace(/\s*(<=>|<>|!=|<=|>=|=|<|>)\s*/g, '$1')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/__tenant_sql_literal_(\d+)__/g, (_marker, index) => literals[Number(index)]);
 }
 
 function migrationError(message, code = 'TENANT_METHODOLOGY_MIGRATION_INVALID') {
@@ -310,9 +343,17 @@ async function selectRows(queryInterface, sql, replacements = {}) {
   return rows;
 }
 
+function value(row, key) {
+  return row[key] ?? row[key.toLowerCase()] ?? null;
+}
+
 async function getColumn(queryInterface, table, column) {
   const rows = await selectRows(queryInterface, `
-    SELECT COLUMN_NAME, COLUMN_TYPE, DATA_TYPE, IS_NULLABLE, COLUMN_DEFAULT, EXTRA
+    SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE,
+           CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH,
+           NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION,
+           COLUMN_DEFAULT, EXTRA, CHARACTER_SET_NAME, COLLATION_NAME,
+           COLUMN_COMMENT, GENERATION_EXPRESSION
     FROM INFORMATION_SCHEMA.COLUMNS
     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND COLUMN_NAME = :column
   `, { column, table });
@@ -332,7 +373,8 @@ async function getIndex(queryInterface, name) {
 
 async function getForeignKey(queryInterface, name) {
   const rows = await selectRows(queryInterface, `
-    SELECT k.TABLE_NAME, k.COLUMN_NAME, k.REFERENCED_TABLE_NAME,
+    SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME, k.ORDINAL_POSITION,
+           k.REFERENCED_TABLE_NAME,
            k.REFERENCED_COLUMN_NAME, r.UPDATE_RULE, r.DELETE_RULE
     FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
     JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r
@@ -345,11 +387,174 @@ async function getForeignKey(queryInterface, name) {
 
 async function getTrigger(queryInterface, name) {
   const rows = await selectRows(queryInterface, `
-    SELECT EVENT_OBJECT_TABLE, EVENT_MANIPULATION, ACTION_TIMING, ACTION_STATEMENT
+    SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, EVENT_MANIPULATION,
+           ACTION_TIMING, ACTION_STATEMENT
     FROM INFORMATION_SCHEMA.TRIGGERS
     WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = :name
   `, { name });
   return rows[0] || null;
+}
+
+function normalizeDefault(valueToNormalize) {
+  if (
+    valueToNormalize === null ||
+    valueToNormalize === undefined ||
+    String(valueToNormalize).trim().toUpperCase() === 'NULL'
+  ) {
+    return null;
+  }
+  return String(valueToNormalize);
+}
+
+function normalizeColumnRow(row) {
+  return {
+    characterMaximumLength: value(row, 'CHARACTER_MAXIMUM_LENGTH') === null
+      ? null
+      : Number(value(row, 'CHARACTER_MAXIMUM_LENGTH')),
+    characterOctetLength: value(row, 'CHARACTER_OCTET_LENGTH') === null
+      ? null
+      : Number(value(row, 'CHARACTER_OCTET_LENGTH')),
+    characterSetName: value(row, 'CHARACTER_SET_NAME'),
+    collationName: value(row, 'COLLATION_NAME'),
+    columnComment: String(value(row, 'COLUMN_COMMENT') || ''),
+    columnDefault: normalizeDefault(value(row, 'COLUMN_DEFAULT')),
+    columnName: value(row, 'COLUMN_NAME'),
+    columnType: String(value(row, 'COLUMN_TYPE') || '').toLowerCase(),
+    dataType: String(value(row, 'DATA_TYPE') || '').toLowerCase(),
+    datetimePrecision: value(row, 'DATETIME_PRECISION') === null
+      ? null
+      : Number(value(row, 'DATETIME_PRECISION')),
+    extra: String(value(row, 'EXTRA') || '').trim().toLowerCase(),
+    generationExpression: String(value(row, 'GENERATION_EXPRESSION') || ''),
+    isNullable: String(value(row, 'IS_NULLABLE') || '').toUpperCase(),
+    numericPrecision: value(row, 'NUMERIC_PRECISION') === null
+      ? null
+      : Number(value(row, 'NUMERIC_PRECISION')),
+    numericScale: value(row, 'NUMERIC_SCALE') === null
+      ? null
+      : Number(value(row, 'NUMERIC_SCALE')),
+    tableName: value(row, 'TABLE_NAME'),
+  };
+}
+
+function normalizeIndexRows(rows) {
+  return rows.map((row) => ({
+    collation: value(row, 'COLLATION'),
+    columnName: value(row, 'COLUMN_NAME'),
+    indexName: value(row, 'INDEX_NAME'),
+    indexType: String(value(row, 'INDEX_TYPE') || '').toUpperCase(),
+    nonUnique: Number(value(row, 'NON_UNIQUE')),
+    sequence: Number(value(row, 'SEQ_IN_INDEX')),
+    subPart: value(row, 'SUB_PART') === null ? null : Number(value(row, 'SUB_PART')),
+    tableName: value(row, 'TABLE_NAME'),
+  })).sort((left, right) =>
+    left.tableName.localeCompare(right.tableName) ||
+    left.indexName.localeCompare(right.indexName) ||
+    left.sequence - right.sequence);
+}
+
+function normalizeForeignKeyRows(rows) {
+  return rows.map((row) => ({
+    columnName: value(row, 'COLUMN_NAME'),
+    constraintName: value(row, 'CONSTRAINT_NAME'),
+    deleteRule: String(value(row, 'DELETE_RULE') || '').toUpperCase(),
+    ordinalPosition: Number(value(row, 'ORDINAL_POSITION')),
+    referencedColumnName: value(row, 'REFERENCED_COLUMN_NAME'),
+    referencedTableName: value(row, 'REFERENCED_TABLE_NAME'),
+    tableName: value(row, 'TABLE_NAME'),
+    updateRule: String(value(row, 'UPDATE_RULE') || '').toUpperCase(),
+  })).sort((left, right) =>
+    left.tableName.localeCompare(right.tableName) ||
+    left.constraintName.localeCompare(right.constraintName) ||
+    left.ordinalPosition - right.ordinalPosition);
+}
+
+function normalizeTriggerRows(rows) {
+  return rows.map((row) => ({
+    body: normalizeSql(value(row, 'ACTION_STATEMENT')),
+    event: String(value(row, 'EVENT_MANIPULATION') || '').toUpperCase(),
+    name: value(row, 'TRIGGER_NAME'),
+    tableName: value(row, 'EVENT_OBJECT_TABLE'),
+    timing: String(value(row, 'ACTION_TIMING') || '').toUpperCase(),
+  })).sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function artifactSignature(kind, rows) {
+  if (kind === 'column') {
+    return JSON.stringify(rows.map(normalizeColumnRow).sort((left, right) =>
+      left.tableName.localeCompare(right.tableName) ||
+      left.columnName.localeCompare(right.columnName)));
+  }
+  if (kind === 'index') return JSON.stringify(normalizeIndexRows(rows));
+  if (kind === 'constraint') return JSON.stringify(normalizeForeignKeyRows(rows));
+  if (kind === 'trigger') return JSON.stringify(normalizeTriggerRows(rows));
+  throw migrationError(`Unknown methodology artifact kind: ${kind}`);
+}
+
+async function readArtifactRows(queryInterface, kind, item) {
+  if (kind === 'column') {
+    const row = await getColumn(queryInterface, item.table, item.name);
+    return row ? [row] : [];
+  }
+  if (kind === 'index') {
+    const rows = await getIndex(queryInterface, item.name);
+    return rows.filter((row) => value(row, 'TABLE_NAME') === item.table);
+  }
+  if (kind === 'constraint') {
+    return selectRows(queryInterface, `
+      SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME, k.ORDINAL_POSITION,
+             k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
+             r.UPDATE_RULE, r.DELETE_RULE
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
+      JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r
+        ON r.CONSTRAINT_SCHEMA = k.CONSTRAINT_SCHEMA
+       AND r.CONSTRAINT_NAME = k.CONSTRAINT_NAME
+      WHERE k.CONSTRAINT_SCHEMA = DATABASE()
+        AND k.TABLE_NAME = :table AND k.CONSTRAINT_NAME = :name
+      ORDER BY k.ORDINAL_POSITION
+    `, item);
+  }
+  if (kind === 'trigger') {
+    const row = await getTrigger(queryInterface, item.name);
+    return row && value(row, 'EVENT_OBJECT_TABLE') === item.table ? [row] : [];
+  }
+  throw migrationError(`Unknown methodology artifact kind: ${kind}`);
+}
+
+async function readSameNameConflicts(queryInterface, kind, item) {
+  if (kind === 'index') {
+    return selectRows(queryInterface, `
+      SELECT TABLE_NAME, INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND INDEX_NAME = :name AND TABLE_NAME <> :table
+    `, item);
+  }
+  if (kind === 'constraint') {
+    return selectRows(queryInterface, `
+      SELECT TABLE_NAME, CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+      WHERE CONSTRAINT_SCHEMA = DATABASE()
+        AND CONSTRAINT_NAME = :name AND TABLE_NAME <> :table
+    `, item);
+  }
+  return [];
+}
+
+async function trackCreatedArtifact(queryInterface, target, kind, item) {
+  const rows = await readArtifactRows(queryInterface, kind, item);
+  if (rows.length === 0) {
+    throw migrationError(`Failed to inventory created ${kind} ${item.table}.${item.name}`);
+  }
+  target.push({ ...item, signature: artifactSignature(kind, rows) });
+}
+
+async function refreshTrackedArtifact(queryInterface, target, kind, item) {
+  const tracked = target.find((candidate) =>
+    candidate.table === item.table && candidate.name === item.name);
+  if (!tracked) throw migrationError(`Lost tracked ${kind} ${item.table}.${item.name}`);
+  const rows = await readArtifactRows(queryInterface, kind, item);
+  if (rows.length === 0) {
+    throw migrationError(`Cannot refresh tracked ${kind} ${item.table}.${item.name}`);
+  }
+  tracked.signature = artifactSignature(kind, rows);
 }
 
 function columnIsCanonical(column) {
@@ -358,18 +563,6 @@ function columnIsCanonical(column) {
       column.DATA_TYPE === 'int' &&
       /^int(?:\(\d+\))?$/.test(column.COLUMN_TYPE) &&
       column.IS_NULLABLE === 'NO' &&
-      (column.COLUMN_DEFAULT === null ||
-        String(column.COLUMN_DEFAULT).toUpperCase() === 'NULL') &&
-      String(column.EXTRA || '') === '',
-  );
-}
-
-function columnIsInvocationOwned(column) {
-  return Boolean(
-    column &&
-      column.DATA_TYPE === 'int' &&
-      /^int(?:\(\d+\))?$/.test(column.COLUMN_TYPE) &&
-      ['YES', 'NO'].includes(column.IS_NULLABLE) &&
       (column.COLUMN_DEFAULT === null ||
         String(column.COLUMN_DEFAULT).toUpperCase() === 'NULL') &&
       String(column.EXTRA || '') === '',
@@ -522,35 +715,102 @@ async function createTrigger(queryInterface, name, expected) {
   );
 }
 
+function cleanupOwnershipError(kind, item, detail = '') {
+  return migrationError(
+    `Methodology cleanup ownership lost for ${kind} ${item.table || ''}.${item.name}${detail}; operator repair required`,
+    'TENANT_METHODOLOGY_CLEANUP_OWNERSHIP_LOST',
+  );
+}
+
+async function assertLegacyUniqueCanBeRestored(queryInterface, item) {
+  const rows = await readArtifactRows(queryInterface, 'index', item);
+  const sameNameConflicts = await readSameNameConflicts(
+    queryInterface,
+    'index',
+    item,
+  );
+  const duplicateNames = await selectRows(queryInterface, `
+    SELECT name FROM TrainingSkills GROUP BY name HAVING COUNT(*) > 1 LIMIT 1
+  `);
+  const replacementUniques = await selectRows(queryInterface, `
+    SELECT INDEX_NAME
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table
+    GROUP BY INDEX_NAME
+    HAVING MIN(NON_UNIQUE) = 0
+       AND COUNT(*) = 1
+       AND MAX(CASE WHEN COLUMN_NAME = 'name' THEN 1 ELSE 0 END) = 1
+  `, item);
+  if (
+    rows.length > 0 ||
+    sameNameConflicts.length > 0 ||
+    duplicateNames.length > 0 ||
+    replacementUniques.length > 0
+  ) {
+    throw cleanupOwnershipError('removed-index', item, ' (legacy unique restoration collision)');
+  }
+}
+
 async function cleanupInvocation(queryInterface, created) {
-  for (const name of [...created.triggers].reverse()) {
-    await queryInterface.sequelize.query(`DROP TRIGGER IF EXISTS \`${name}\``);
-  }
-  for (const name of [...created.foreignKeys].reverse()) {
-    const expected = FOREIGN_KEYS[name];
-    const row = await getForeignKey(queryInterface, name);
-    if (foreignKeyIsCanonical(row, expected)) {
-      await queryInterface.removeConstraint(expected.table, name);
+  const ownershipChecks = [
+    ...created.columns.map((item) => ['column', item]),
+    ...created.indexes.map((item) => ['index', item]),
+    ...created.foreignKeys.map((item) => ['constraint', item]),
+    ...created.triggers.map((item) => ['trigger', item]),
+  ];
+  for (const [kind, item] of ownershipChecks) {
+    const rows = await readArtifactRows(queryInterface, kind, item);
+    const sameNameConflicts = await readSameNameConflicts(
+      queryInterface,
+      kind,
+      item,
+    );
+    if (
+      rows.length === 0 ||
+      sameNameConflicts.length > 0 ||
+      artifactSignature(kind, rows) !== item.signature
+    ) {
+      throw cleanupOwnershipError(kind, item);
     }
   }
-  for (const name of [...created.indexes].reverse()) {
-    const expected = INDEXES[name];
-    const rows = await getIndex(queryInterface, name);
-    if (indexIsCanonical(rows, expected)) {
-      await queryInterface.removeIndex(expected.table, name);
-    }
+  if (created.removedLegacyUnique) {
+    await assertLegacyUniqueCanBeRestored(
+      queryInterface,
+      created.removedLegacyUnique,
+    );
   }
-  for (const [table, column] of [...created.columns].reverse()) {
-    const row = await getColumn(queryInterface, table, column);
-    if (columnIsInvocationOwned(row)) {
-      await queryInterface.removeColumn(table, column);
-    }
+
+  for (const item of [...created.triggers].reverse()) {
+    await queryInterface.sequelize.query(`DROP TRIGGER IF EXISTS \`${item.name}\``);
   }
-  if (created.droppedLegacyUnique && !(await legacyUniqueIsCanonical(queryInterface))) {
+  for (const item of [...created.foreignKeys].reverse()) {
+    await queryInterface.removeConstraint(item.table, item.name);
+  }
+  for (const item of [...created.indexes].reverse()) {
+    await queryInterface.removeIndex(item.table, item.name);
+  }
+  if (created.removedLegacyUnique) {
     await queryInterface.addIndex('TrainingSkills', ['name'], {
-      name: 'training_skills_name_unique',
+      name: created.removedLegacyUnique.name,
       unique: true,
     });
+    const restored = await readArtifactRows(
+      queryInterface,
+      'index',
+      created.removedLegacyUnique,
+    );
+    if (
+      artifactSignature('index', restored) !==
+      created.removedLegacyUnique.signature
+    ) {
+      throw cleanupOwnershipError(
+        'restored-index',
+        created.removedLegacyUnique,
+      );
+    }
+  }
+  for (const item of [...created.columns].reverse()) {
+    await queryInterface.removeColumn(item.table, item.name);
   }
 }
 
@@ -566,9 +826,9 @@ module.exports = {
     await assertLegacyDataCompatible(queryInterface, organizationId);
     const created = {
       columns: [],
-      droppedLegacyUnique: false,
       foreignKeys: [],
       indexes: [],
+      removedLegacyUnique: null,
       triggers: [],
     };
 
@@ -578,7 +838,12 @@ module.exports = {
           allowNull: true,
           type: Sequelize.INTEGER,
         });
-        created.columns.push([table, column]);
+        await trackCreatedArtifact(
+          queryInterface,
+          created.columns,
+          'column',
+          { name: column, table },
+        );
       }
       maybeFail('after_columns');
 
@@ -595,6 +860,12 @@ module.exports = {
           allowNull: false,
           type: Sequelize.INTEGER,
         });
+        await refreshTrackedArtifact(
+          queryInterface,
+          created.columns,
+          'column',
+          { name: column, table },
+        );
       }
       maybeFail('after_backfill');
 
@@ -607,25 +878,52 @@ module.exports = {
           references: { field: expected.referencedColumn, table: expected.referencedTable },
           type: 'foreign key',
         });
-        created.foreignKeys.push(name);
+        await trackCreatedArtifact(
+          queryInterface,
+          created.foreignKeys,
+          'constraint',
+          { name, table: expected.table },
+        );
       }
       for (const [name, expected] of Object.entries(INDEXES)) {
         await queryInterface.addIndex(expected.table, expected.columns, {
           name,
           unique: expected.unique,
         });
-        created.indexes.push(name);
+        await trackCreatedArtifact(
+          queryInterface,
+          created.indexes,
+          'index',
+          { name, table: expected.table },
+        );
       }
       maybeFail('after_constraints');
 
       for (const [name, expected] of Object.entries(TRIGGERS)) {
         await createTrigger(queryInterface, name, expected);
-        created.triggers.push(name);
+        await trackCreatedArtifact(
+          queryInterface,
+          created.triggers,
+          'trigger',
+          { name, table: expected.table },
+        );
       }
       maybeFail('after_triggers');
 
-      await queryInterface.removeIndex('TrainingSkills', 'training_skills_name_unique');
-      created.droppedLegacyUnique = true;
+      const legacyUnique = {
+        name: 'training_skills_name_unique',
+        table: 'TrainingSkills',
+      };
+      const legacyUniqueRows = await readArtifactRows(
+        queryInterface,
+        'index',
+        legacyUnique,
+      );
+      await queryInterface.removeIndex(legacyUnique.table, legacyUnique.name);
+      created.removedLegacyUnique = {
+        ...legacyUnique,
+        signature: artifactSignature('index', legacyUniqueRows),
+      };
       maybeFail('after_legacy_unique_drop');
 
       const ready = await classifyState(queryInterface);
@@ -636,7 +934,8 @@ module.exports = {
       try {
         await cleanupInvocation(queryInterface, created);
       } catch (cleanupError) {
-        error.cleanupError = cleanupError;
+        cleanupError.migrationError = error;
+        throw cleanupError;
       }
       throw error;
     }
@@ -682,7 +981,11 @@ module.exports = {
     FOREIGN_KEYS,
     INDEXES,
     TRIGGERS,
+    artifactSignature,
     classifyState,
+    cleanupInvocation,
     normalizeSql,
+    readArtifactRows,
+    readSameNameConflicts,
   },
 };

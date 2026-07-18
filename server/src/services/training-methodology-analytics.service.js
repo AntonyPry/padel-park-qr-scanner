@@ -4,6 +4,7 @@ const {
   TRAINING_EXERCISE_E_LEVEL_VALUES,
 } = require('../constants/training-methodology');
 const {
+  bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
@@ -1140,8 +1141,9 @@ async function loadTrainerOptions(context) {
 }
 
 async function getAnalytics(query = {}, actor = null, tenant = null) {
-  assertCanView(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanView(authorityActor);
   const filters = normalizeAnalyticsQuery(query);
   const [
     trainingNotes,

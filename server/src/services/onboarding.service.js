@@ -22,6 +22,7 @@ const {
   resolveBookingAccessContext,
 } = require('./booking-access-context.service');
 const {
+  bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
@@ -972,11 +973,14 @@ async function getTrainingDataMarker(actor) {
 }
 
 async function getTrainingDataSummary(actor, query = {}, tenant = null) {
-  assertOwner(actor);
   const role = resolveOptionalTrainingRole(query.role);
-  const callTaskContext = await resolveTrainingCallTaskContext(actor, tenant);
-  const bookingContext = await resolveTrainingBookingContext(tenant);
   const methodologyContext = await resolveTrainingMethodologyContext(tenant);
+  const authorityActor = methodologyContext
+    ? bindMethodologyActor(actor, methodologyContext)
+    : actor;
+  assertOwner(authorityActor);
+  const callTaskContext = await resolveTrainingCallTaskContext(authorityActor, tenant);
+  const bookingContext = await resolveTrainingBookingContext(tenant);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
@@ -1154,22 +1158,25 @@ async function getOnboardingMetrics(actor) {
 }
 
 async function cleanupTrainingData(actor, query = {}, tenant = null) {
-  assertOwner(actor);
   const role = resolveOptionalTrainingRole(query.role);
   const deleted = {};
   const shiftCashAttachments = [];
 
   await db.sequelize.transaction(async (transaction) => {
+    const methodologyContext = await resolveTrainingMethodologyContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const authorityActor = methodologyContext
+      ? bindMethodologyActor(actor, methodologyContext)
+      : actor;
+    assertOwner(authorityActor);
     const callTaskContext = await resolveTrainingCallTaskContext(
-      actor,
+      authorityActor,
       tenant,
       { lock: true, transaction },
     );
     const bookingContext = await resolveTrainingBookingContext(tenant, {
-      lock: true,
-      transaction,
-    });
-    const methodologyContext = await resolveTrainingMethodologyContext(tenant, {
       lock: true,
       transaction,
     });

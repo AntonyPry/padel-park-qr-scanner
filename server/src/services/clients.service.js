@@ -1281,8 +1281,9 @@ async function getStatsByClientIds(ids) {
   );
 }
 
-async function listTrainingNotes(clientId, tenant = null) {
+async function listTrainingNotes(clientId, actor, tenant = null) {
   return trainingNotesService.listByClient(clientId, {
+    actor,
     limit: 50,
     skipClientCheck: true,
     tenant,
@@ -1397,7 +1398,7 @@ async function getClientDetails(id, account = null, tenant = null) {
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
     isTrainer(account) ? [] : getDuplicateCandidates(client, context),
-    canViewTrainingNotes(account) ? listTrainingNotes(client.id, tenant) : [],
+    canViewTrainingNotes(account) ? listTrainingNotes(client.id, account, tenant) : [],
     canViewTrainingNotes(account)
       ? clientSkillMapService.listForClient(client.id, account, { tenant })
       : [],

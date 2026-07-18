@@ -9,6 +9,7 @@ class TrainingNotesController {
   async getByClient(req, res) {
     try {
       res.json(await trainingNotesService.listByClient(req.params.clientId, {
+        actor: req.account,
         tenant: req.tenant,
       }));
     } catch (error) {

@@ -3,6 +3,7 @@ const {
   TRAINING_EXERCISE_E_LEVEL_VALUES,
 } = require('../constants/training-methodology');
 const {
+  bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
@@ -415,8 +416,9 @@ async function syncActiveSkillsForClientId(clientId, options = {}) {
 }
 
 async function listForClient(clientId, actor, options = {}) {
-  assertCanView(actor);
   const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanView(authorityActor);
   const client = await loadClientOrFail(clientId, context, { includeMerged: true });
 
   if (!client.mergedIntoUserId && options.sync !== false) {
@@ -631,6 +633,7 @@ async function recordManualHistory(entry, previousEntry, payload, actor, options
 
 async function recalculateFromStructuredTraining(clientId, actor, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = bindMethodologyActor(actor, context);
   const client = options.client || await loadClientOrFail(clientId, context, {
     includeMerged: Boolean(options.includeMerged),
   });
@@ -693,23 +696,30 @@ async function recalculateFromStructuredTraining(clientId, actor, options = {}) 
         level: nextState.level,
         nextEStep: nextState.nextEStep,
         repeatFlag: nextState.repeatFlag,
-        updatedByAccountId: actor?.id || entry.updatedByAccountId || null,
+        updatedByAccountId: authorityActor?.id || entry.updatedByAccountId || null,
       },
       { transaction: options.transaction },
     );
 
-    await replaceAutoHistory(entry, nextState.history, actor, clientMarker, options);
+    await replaceAutoHistory(
+      entry,
+      nextState.history,
+      authorityActor,
+      clientMarker,
+      options,
+    );
   }
 }
 
 async function updateEntry(clientId, skillId, data, actor, tenant = null) {
-  assertCanManage(actor);
-  const payload = normalizeUpdatePayload(data, actor);
   await db.sequelize.transaction(async (transaction) => {
     const context = await resolveMethodologyAccessContext(tenant, {
       lock: true,
       transaction,
     });
+    const authorityActor = bindMethodologyActor(actor, context);
+    assertCanManage(authorityActor);
+    const payload = normalizeUpdatePayload(data, authorityActor);
     const client = await loadClientOrFail(clientId, context, {
       lock: transaction.LOCK.UPDATE,
       transaction,
@@ -746,7 +756,13 @@ async function updateEntry(clientId, skillId, data, actor, tenant = null) {
       ...payload,
       ...('level' in payload ? { autoBaselineLevel: payload.level } : {}),
     }, { transaction });
-    await recordManualHistory(entry, previousEntry, payload, actor, { transaction });
+    await recordManualHistory(
+      entry,
+      previousEntry,
+      payload,
+      authorityActor,
+      { transaction },
+    );
   });
   return listForClient(clientId, actor, { sync: false, tenant });
 }

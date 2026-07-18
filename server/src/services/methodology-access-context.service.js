@@ -57,7 +57,9 @@ async function resolveLegacyContext({ lock = false, transaction } = {}) {
     accountId: null,
     authority: 'legacy-default',
     clubId: null,
+    effectiveRole: null,
     membershipId: null,
+    membershipRole: null,
     organizationId: Number(organization.id),
     readScoped: false,
     scope: TENANT_SCOPES.ORGANIZATION,
@@ -123,6 +125,7 @@ async function resolveRequestContext(tenant, { lock = false, transaction } = {})
   }
 
   let clubId = null;
+  let effectiveRole = membership.role;
   if (tenant.scope === TENANT_SCOPES.CLUB) {
     clubId = positiveId(tenant.clubId);
     if (!clubId) throw safeTenantDenial();
@@ -135,7 +138,7 @@ async function resolveRequestContext(tenant, { lock = false, transaction } = {})
     if (!club) throw safeTenantDenial();
     if (membership.role !== 'owner') {
       const access = await db.MembershipClubAccess.findOne({
-        attributes: ['membershipId'],
+        attributes: ['membershipId', 'roleOverride'],
         lock: queryLock(transaction, lock),
         transaction,
         where: {
@@ -145,7 +148,8 @@ async function resolveRequestContext(tenant, { lock = false, transaction } = {})
           status: 'active',
         },
       });
-      if (!access) throw safeTenantDenial();
+      if (!access || access.roleOverride === 'owner') throw safeTenantDenial();
+      effectiveRole = access.roleOverride || membership.role;
     }
   }
 
@@ -153,10 +157,12 @@ async function resolveRequestContext(tenant, { lock = false, transaction } = {})
     accountId: Number(account.id),
     authority: 'request',
     clubId,
+    effectiveRole,
     membershipId: Number(membership.id),
+    membershipRole: membership.role,
     organizationId: Number(organization.id),
     readScoped: true,
-    scope: TENANT_SCOPES.ORGANIZATION,
+    scope: tenant.scope,
   });
 }
 
@@ -172,6 +178,21 @@ function methodologyTenantWhere(context, values = {}, { force = false } = {}) {
   return { ...values, organizationId: context.organizationId };
 }
 
+function bindMethodologyActor(actor, context) {
+  if (!context?.readScoped) return actor;
+  if (
+    !actor ||
+    positiveId(actor.id) !== positiveId(context.accountId)
+  ) {
+    throw safeTenantDenial();
+  }
+  const role = context.scope === TENANT_SCOPES.CLUB
+    ? context.effectiveRole
+    : context.membershipRole;
+  if (!role) throw safeTenantDenial();
+  return Object.freeze({ ...actor, id: context.accountId, role });
+}
+
 module.exports = {
   _private: {
     positiveId,
@@ -179,6 +200,7 @@ module.exports = {
     resolveRequestContext,
     staffIdentityIsAuthoritative,
   },
+  bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 };

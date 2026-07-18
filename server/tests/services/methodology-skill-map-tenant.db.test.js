@@ -115,6 +115,20 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     schema = await createSchemaBeforeFeature(database);
     const queryInterface = schema.getQueryInterface();
     const migration = require(`../../migrations/${FEATURE_MIGRATION_FILE}`);
+    const trackedArtifact = async (kind, item) => ({
+      ...item,
+      signature: migration.__testing.artifactSignature(
+        kind,
+        await migration.__testing.readArtifactRows(queryInterface, kind, item),
+      ),
+    });
+    const cleanupTracker = () => ({
+      columns: [],
+      foreignKeys: [],
+      indexes: [],
+      removedLegacyUnique: null,
+      triggers: [],
+    });
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await migration.up(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
@@ -176,24 +190,186 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await queryInterface.removeIndex('TrainingSkills', 'lookalike_methodology_tenant_index');
 
-    process.env.TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP = 'after_columns';
-    await assert.rejects(
-      migration.up(queryInterface, SequelizePackage),
-      /Forced methodology migration failure/,
-    );
-    delete process.env.TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP;
-    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    for (const forcedStage of [
+      'after_columns',
+      'after_backfill',
+      'after_constraints',
+      'after_triggers',
+      'after_legacy_unique_drop',
+    ]) {
+      process.env.TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP = forcedStage;
+      await assert.rejects(
+        migration.up(queryInterface, SequelizePackage),
+        /Forced methodology migration failure/,
+      );
+      delete process.env.TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP;
+      assert.equal(
+        (await migration.__testing.classifyState(queryInterface)).state,
+        'legacy',
+      );
+    }
 
-    process.env.TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP =
-      'after_legacy_unique_drop';
+    const columnTracker = cleanupTracker();
+    await queryInterface.addColumn('TrainingSkills', 'organizationId', {
+      allowNull: true,
+      type: SequelizePackage.INTEGER,
+    });
+    columnTracker.columns.push(await trackedArtifact('column', {
+      name: 'organizationId',
+      table: 'TrainingSkills',
+    }));
+    await queryInterface.changeColumn('TrainingSkills', 'organizationId', {
+      allowNull: true,
+      type: SequelizePackage.BIGINT,
+    });
     await assert.rejects(
-      migration.up(queryInterface, SequelizePackage),
-      /Forced methodology migration failure/,
+      migration.__testing.cleanupInvocation(queryInterface, columnTracker),
+      (error) => error.code === 'TENANT_METHODOLOGY_CLEANUP_OWNERSHIP_LOST',
     );
-    delete process.env.TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP;
-    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    assert.equal(
+      (await queryInterface.describeTable('TrainingSkills')).organizationId.type
+        .toUpperCase().includes('BIGINT'),
+      true,
+    );
+    await queryInterface.removeColumn('TrainingSkills', 'organizationId');
+
+    const indexTracker = cleanupTracker();
+    const probeIndex = {
+      name: 'training_skills_org_status_direction_idx',
+      table: 'TrainingSkills',
+    };
+    await queryInterface.addIndex(probeIndex.table, ['status'], {
+      name: probeIndex.name,
+    });
+    indexTracker.indexes.push(await trackedArtifact('index', probeIndex));
+    await queryInterface.removeIndex(probeIndex.table, probeIndex.name);
+    await queryInterface.addIndex(probeIndex.table, ['direction'], {
+      name: probeIndex.name,
+    });
+    await assert.rejects(
+      migration.__testing.cleanupInvocation(queryInterface, indexTracker),
+      (error) => error.code === 'TENANT_METHODOLOGY_CLEANUP_OWNERSHIP_LOST',
+    );
+    assert.equal(
+      (await queryInterface.showIndex(probeIndex.table))
+        .some((index) => index.name === probeIndex.name),
+      true,
+    );
+    await queryInterface.removeIndex(probeIndex.table, probeIndex.name);
+
+    await queryInterface.createTable('MethodologyCleanupParents', {
+      id: { primaryKey: true, type: SequelizePackage.INTEGER },
+    });
+    await queryInterface.createTable('MethodologyCleanupChildren', {
+      id: { primaryKey: true, type: SequelizePackage.INTEGER },
+      parentId: { allowNull: true, type: SequelizePackage.INTEGER },
+    });
+    const foreignKeyTracker = cleanupTracker();
+    const probeForeignKey = {
+      name: 'training_skills_organization_fk',
+      table: 'MethodologyCleanupChildren',
+    };
+    await queryInterface.addConstraint(probeForeignKey.table, {
+      fields: ['parentId'],
+      name: probeForeignKey.name,
+      onDelete: 'RESTRICT',
+      onUpdate: 'RESTRICT',
+      references: { field: 'id', table: 'MethodologyCleanupParents' },
+      type: 'foreign key',
+    });
+    foreignKeyTracker.foreignKeys.push(
+      await trackedArtifact('constraint', probeForeignKey),
+    );
+    await queryInterface.removeConstraint(probeForeignKey.table, probeForeignKey.name);
+    await queryInterface.addConstraint(probeForeignKey.table, {
+      fields: ['parentId'],
+      name: probeForeignKey.name,
+      onDelete: 'CASCADE',
+      onUpdate: 'RESTRICT',
+      references: { field: 'id', table: 'MethodologyCleanupParents' },
+      type: 'foreign key',
+    });
+    await assert.rejects(
+      migration.__testing.cleanupInvocation(queryInterface, foreignKeyTracker),
+      (error) => error.code === 'TENANT_METHODOLOGY_CLEANUP_OWNERSHIP_LOST',
+    );
+    await queryInterface.removeConstraint(probeForeignKey.table, probeForeignKey.name);
+    await queryInterface.dropTable('MethodologyCleanupChildren');
+    await queryInterface.dropTable('MethodologyCleanupParents');
+
+    const triggerTracker = cleanupTracker();
+    const probeTrigger = {
+      name: 'training_skills_tenant_bi',
+      table: 'TrainingSkills',
+    };
+    await schema.query(
+      `CREATE TRIGGER \`${probeTrigger.name}\` BEFORE INSERT ON \`${probeTrigger.table}\`
+       FOR EACH ROW BEGIN IF NEW.status = 'active' THEN SET NEW.status = 'active'; END IF; END`,
+    );
+    triggerTracker.triggers.push(await trackedArtifact('trigger', probeTrigger));
+    await schema.query(`DROP TRIGGER \`${probeTrigger.name}\``);
+    await schema.query(
+      `CREATE TRIGGER \`${probeTrigger.name}\` BEFORE INSERT ON \`${probeTrigger.table}\`
+       FOR EACH ROW BEGIN IF NEW.status = 'ACTIVE' THEN SET NEW.status = 'active'; END IF; END`,
+    );
+    await assert.rejects(
+      migration.__testing.cleanupInvocation(queryInterface, triggerTracker),
+      (error) => error.code === 'TENANT_METHODOLOGY_CLEANUP_OWNERSHIP_LOST',
+    );
+    assert.equal(await selectOne(schema, `
+      SELECT COUNT(*) AS count FROM INFORMATION_SCHEMA.TRIGGERS
+      WHERE TRIGGER_SCHEMA = DATABASE() AND TRIGGER_NAME = :name
+    `, { name: probeTrigger.name }).then((row) => Number(row.count)), 1);
+    await schema.query(`DROP TRIGGER \`${probeTrigger.name}\``);
+
+    const removedUniqueTracker = cleanupTracker();
+    const removedLegacyUnique = {
+      name: 'training_skills_name_unique',
+      table: 'TrainingSkills',
+    };
+    removedUniqueTracker.removedLegacyUnique =
+      await trackedArtifact('index', removedLegacyUnique);
+    await queryInterface.removeIndex(
+      removedLegacyUnique.table,
+      removedLegacyUnique.name,
+    );
+    await queryInterface.bulkInsert('TrainingSkills', [{
+      createdAt: legacyNow,
+      description: 'cleanup restoration collision',
+      direction: 'technique',
+      name: 'Legacy methodology skill',
+      status: 'active',
+      updatedAt: legacyNow,
+    }]);
+    await assert.rejects(
+      migration.__testing.cleanupInvocation(queryInterface, removedUniqueTracker),
+      (error) => error.code === 'TENANT_METHODOLOGY_CLEANUP_OWNERSHIP_LOST',
+    );
+    await schema.query(
+      `DELETE FROM TrainingSkills
+       WHERE description = 'cleanup restoration collision'`,
+    );
+    await queryInterface.addIndex('TrainingSkills', ['name'], {
+      name: removedLegacyUnique.name,
+      unique: true,
+    });
 
     await migration.up(queryInterface, SequelizePackage);
+    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
+    const historyTriggerName = 'client_training_skill_history_tenant_bi';
+    const historyTrigger = migration.__testing.TRIGGERS[historyTriggerName];
+    await schema.query(`DROP TRIGGER \`${historyTriggerName}\``);
+    await schema.query(
+      `CREATE TRIGGER \`${historyTriggerName}\` BEFORE ${historyTrigger.event}
+       ON \`${historyTrigger.table}\` FOR EACH ROW
+       ${historyTrigger.body.replace("'structured_training'", "'STRUCTURED_TRAINING'")}`,
+    );
+    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'partial');
+    await schema.query(`DROP TRIGGER \`${historyTriggerName}\``);
+    await schema.query(
+      `CREATE TRIGGER \`${historyTriggerName}\` BEFORE ${historyTrigger.event}
+       ON \`${historyTrigger.table}\` FOR EACH ROW ${historyTrigger.body}`,
+    );
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
     const defaultOrganization = await selectOne(
       schema,
@@ -270,6 +446,60 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     });
     const actorA = { id: accountA.id, role: 'owner' };
     const actorB = { id: accountB.id, role: 'owner' };
+    const staleManagerAccount = await db.Account.create({
+      email: `feature-6-1-stale-manager-${Date.now()}@example.test`,
+      passwordHash: 'test-only',
+      role: 'manager',
+      status: 'active',
+    });
+    const staleManagerMembership = await db.Membership.create({
+      accountId: staleManagerAccount.id,
+      organizationId: defaultOrganization.id,
+      role: 'manager',
+      status: 'active',
+    });
+    const staleManagerAccess = await db.MembershipClubAccess.create({
+      clubId: defaultClub.id,
+      membershipId: staleManagerMembership.id,
+      organizationId: defaultOrganization.id,
+      roleOverride: null,
+      status: 'active',
+    });
+    const staleManagerActor = { id: staleManagerAccount.id, role: 'manager' };
+    const staleManagerOrganizationTenant =
+      await tenantContextService.resolveTenantContext({
+        accountId: staleManagerAccount.id,
+        organizationId: defaultOrganization.id,
+        scope: 'organization',
+      });
+    await staleManagerMembership.update({ role: 'viewer' });
+    await assert.rejects(
+      methodologyService.createSkill({
+        direction: 'technique',
+        name: `Stale membership role ${Date.now()}`,
+      }, staleManagerActor, staleManagerOrganizationTenant),
+      (error) => error.statusCode === 403,
+    );
+    await staleManagerMembership.update({ role: 'manager' });
+    const staleManagerClubTenant = await tenantContextService.resolveTenantContext({
+      accountId: staleManagerAccount.id,
+      clubId: defaultClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
+    await staleManagerAccess.update({ roleOverride: 'viewer' });
+    await assert.rejects(
+      methodologyService.createSkill({
+        direction: 'technique',
+        name: `Stale club override ${Date.now()}`,
+      }, staleManagerActor, staleManagerClubTenant),
+      (error) => error.statusCode === 403,
+    );
+    await staleManagerAccess.update({ roleOverride: null });
+    await assert.rejects(
+      methodologyService.listSkills({}, actorB, tenantA),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
     const userA = await db.User.create({
       name: 'Feature 6.1 Client A',
       organizationId: defaultOrganization.id,

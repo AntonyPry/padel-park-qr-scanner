@@ -3,6 +3,7 @@ const db = require('../../models');
 const onboardingService = require('./onboarding.service');
 const trainingNotesService = require('./training-notes.service');
 const {
+  bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
@@ -506,12 +507,15 @@ async function getPlanOrFail(planId, context, options = {}) {
 }
 
 async function list(query = {}, actor = null, tenant = null) {
-  assertCanView(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanView(authorityActor);
   const status = normalizeStatus(query.status);
   const where = {};
   if (status !== 'all') where.status = status;
-  if (actor?.role === 'trainer') where.trainerAccountId = actor.id;
+  if (authorityActor?.role === 'trainer') {
+    where.trainerAccountId = authorityActor.id;
+  }
 
   if (query.clientId) {
     const clientId = normalizePositiveId(query.clientId, 'ID клиента');
@@ -550,10 +554,14 @@ async function list(query = {}, actor = null, tenant = null) {
 }
 
 async function getById(planId, actor = null, tenant = null) {
-  assertCanView(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanView(authorityActor);
   const plan = await getPlanOrFail(planId, context);
-  if (actor?.role === 'trainer' && Number(plan.trainerAccountId) !== Number(actor.id)) {
+  if (
+    authorityActor?.role === 'trainer' &&
+    Number(plan.trainerAccountId) !== Number(authorityActor.id)
+  ) {
     throw appError('План тренировки не найден', 404);
   }
   return mapPlan(plan);
@@ -658,14 +666,18 @@ async function getBookingForPlanOrFail(bookingId, context) {
 
 async function getByBookingId(bookingId, actor = null, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
   const plan = await db.TrainingPlan.findOne({
     include: planInclude(context),
     where: { bookingId: normalizePositiveId(bookingId, 'ID бронирования') },
   });
   if (!plan || !planBelongsToOrganization(plan, context)) return null;
   if (!options.allowBookingViewer) {
-    assertCanView(actor);
-    if (actor?.role === 'trainer' && Number(plan.trainerAccountId) !== Number(actor.id)) {
+    assertCanView(authorityActor);
+    if (
+      authorityActor?.role === 'trainer' &&
+      Number(plan.trainerAccountId) !== Number(authorityActor.id)
+    ) {
       throw appError('План тренировки не найден', 404);
     }
   }
@@ -685,8 +697,9 @@ function buildBookingPlanSourceSnapshot({ booking, recommendation }) {
 }
 
 async function createFromBooking(bookingId, actor = null, tenant = null) {
-  assertCanCreateFromBooking(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanCreateFromBooking(authorityActor);
   const booking = await getBookingForPlanOrFail(bookingId, context);
   if (booking.trainingPlan) {
     return mapPlan(await getPlanOrFail(booking.trainingPlan.id, context));
@@ -704,7 +717,7 @@ async function createFromBooking(bookingId, actor = null, tenant = null) {
     booking.comment || (kind === 'personal' ? 'Персональная тренировка' : 'Групповая тренировка'),
     'Цель плана',
   );
-  const recommendationActor = getRecommendationActor(actor);
+  const recommendationActor = getRecommendationActor(authorityActor);
   const recommendation = kind === 'personal'
     ? await trainingRecommendationsService.recommendForClient(
         clientIds[0],
@@ -735,7 +748,7 @@ async function createFromBooking(bookingId, actor = null, tenant = null) {
       sourceSnapshot: buildBookingPlanSourceSnapshot({ booking, recommendation }),
       sourceType: kind === 'personal' ? 'personal_recommendation' : 'group_recommendation',
     },
-    actor,
+    authorityActor,
     {
       bookingId: booking.id,
       tenant,
@@ -748,6 +761,7 @@ async function createFromBooking(bookingId, actor = null, tenant = null) {
 
 async function createPlanRecord(data = {}, actor = null, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = bindMethodologyActor(actor, context);
   const kind = normalizeKind(data.kind);
   const clientIds = normalizeClientIds({ ...data, kind });
   const plannedExercises = normalizePlannedExercises(data.plannedExercises || data.exercises);
@@ -758,7 +772,7 @@ async function createPlanRecord(data = {}, actor = null, options = {}) {
       context,
       options,
     ),
-    onboardingService.getTrainingDataMarker(actor),
+    onboardingService.getTrainingDataMarker(authorityActor),
   ]);
 
   const created = await db.sequelize.transaction(async (transaction) => {
@@ -773,7 +787,7 @@ async function createPlanRecord(data = {}, actor = null, options = {}) {
         status: 'planned',
         trainerAccountId:
           options.trainerAccountId === undefined
-            ? actor?.id || null
+            ? authorityActor?.id || null
             : options.trainerAccountId,
         bookingId: options.bookingId || null,
         ...trainingMarker,
@@ -800,16 +814,19 @@ async function createPlanRecord(data = {}, actor = null, options = {}) {
 }
 
 async function create(data = {}, actor = null, tenant = null) {
-  assertCanManage(actor);
-  const created = await createPlanRecord(data, actor, { tenant });
-  return getById(created.id, actor, tenant);
+  const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanManage(authorityActor);
+  const created = await createPlanRecord(data, authorityActor, { tenant });
+  return getById(created.id, authorityActor, tenant);
 }
 
 async function updateExercises(planId, data = {}, actor = null, tenant = null) {
-  assertCanManage(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanManage(authorityActor);
   const plan = await getPlanOrFail(planId, context);
-  assertCanChangePlan(plan, actor);
+  assertCanChangePlan(plan, authorityActor);
   if (plan.status !== 'planned') {
     throw appError('Завершенный план нельзя менять: обновите факт тренировки', 409);
   }
@@ -831,14 +848,15 @@ async function updateExercises(planId, data = {}, actor = null, tenant = null) {
     );
   });
 
-  return getById(plan.id, actor, tenant);
+  return getById(plan.id, authorityActor, tenant);
 }
 
 async function complete(planId, data = {}, actor = null, tenant = null) {
-  assertCanManage(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanManage(authorityActor);
   const plan = await getPlanOrFail(planId, context);
-  assertCanChangePlan(plan, actor);
+  assertCanChangePlan(plan, authorityActor);
   if (plan.status === 'completed') {
     throw appError('План уже завершен', 409);
   }
@@ -869,7 +887,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
         const note = await trainingNotesService.updateRecord(
           participant.trainingNoteId,
           payload,
-          actor,
+          authorityActor,
           { tenant, transaction },
         );
         completedNoteEvents.push({
@@ -883,7 +901,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
         const note = await trainingNotesService.createRecord(
           clientId,
           payload,
-          actor,
+          authorityActor,
           {
             client: participant.client,
             tenant,
@@ -914,7 +932,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
   });
 
   for (const event of completedNoteEvents) {
-    await onboardingService.recordEventSafe(actor, event.eventKey, {
+    await onboardingService.recordEventSafe(authorityActor, event.eventKey, {
       entityId: event.noteId,
       entityType: 'training_note',
       payload: {
@@ -926,7 +944,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
       },
     });
     if (event.eventKey === 'training_note.created') {
-      await onboardingService.recordEventSafe(actor, 'training_level.updated', {
+      await onboardingService.recordEventSafe(authorityActor, 'training_level.updated', {
         entityId: event.clientId,
         entityType: 'client',
         payload: {
@@ -939,7 +957,7 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
     }
   }
 
-  return getById(plan.id, actor, tenant);
+  return getById(plan.id, authorityActor, tenant);
 }
 
 async function getLatestLevelByClientId(clientIds) {
@@ -966,10 +984,11 @@ async function getLatestLevelByClientId(clientIds) {
 }
 
 async function quickComplete(planId, data = {}, actor = null, tenant = null) {
-  assertCanManage(actor);
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanManage(authorityActor);
   const plan = await getPlanOrFail(planId, context);
-  assertCanChangePlan(plan, actor);
+  assertCanChangePlan(plan, authorityActor);
   if (plan.status === 'completed') {
     throw appError('План уже завершен', 409);
   }
@@ -987,7 +1006,7 @@ async function quickComplete(planId, data = {}, actor = null, tenant = null) {
         trainedAt,
       })),
     },
-    actor,
+    authorityActor,
     tenant,
   );
 }

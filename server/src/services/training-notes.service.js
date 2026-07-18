@@ -3,17 +3,25 @@ const clientSkillMapService = require('./client-skill-map.service');
 const onboardingService = require('./onboarding.service');
 const { Op } = require('sequelize');
 const {
+  bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
 
 const LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
+const NOTE_ROLES = new Set(['owner', 'manager', 'trainer']);
 const EXERCISE_RESULT_COMMENT_MAX_LENGTH = 240;
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
   error.statusCode = statusCode;
   return error;
+}
+
+function assertCanUseNotes(actor) {
+  if (!NOTE_ROLES.has(actor?.role)) {
+    throw appError('Недостаточно прав для работы с дневником тренировок', 403);
+  }
 }
 
 function normalizeDateOnly(value) {
@@ -270,6 +278,9 @@ async function assertClientExists(clientId, context, options = {}) {
 
 async function listByClient(clientId, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
+  if (context.readScoped) {
+    assertCanUseNotes(bindMethodologyActor(options.actor, context));
+  }
   if (!options.skipClientCheck) {
     await assertClientExists(clientId, context, options);
   }
@@ -350,6 +361,8 @@ function assertClientIsEditable(note) {
 
 async function createRecord(clientId, data, actor, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = bindMethodologyActor(actor, context);
+  if (context.readScoped) assertCanUseNotes(authorityActor);
   const client = options.client || await assertClientExists(clientId, context, options);
   if (Number(client.organizationId) !== Number(context.organizationId)) {
     throw appError('Клиент не найден', 404);
@@ -371,13 +384,13 @@ async function createRecord(clientId, data, actor, options = {}) {
     throw appError('Заполните упражнения или заметку');
   }
   const trainingMarker =
-    options.trainingMarker || await onboardingService.getTrainingDataMarker(actor);
+    options.trainingMarker || await onboardingService.getTrainingDataMarker(authorityActor);
 
   return withTransaction(options, async (transaction) => {
     const created = await db.TrainingNote.create(
       {
         userId: Number(clientId),
-        trainerAccountId: actor?.id || null,
+        trainerAccountId: authorityActor?.id || null,
         trainedAt: normalizeDateOnly(data.trainedAt),
         level: normalizeLevel(data.level),
         exercises,
@@ -394,7 +407,7 @@ async function createRecord(clientId, data, actor, options = {}) {
       );
       await clientSkillMapService.recalculateFromStructuredTraining(
         clientId,
-        actor,
+        authorityActor,
         { client, tenant: options.tenant, transaction },
       );
     }
@@ -427,16 +440,18 @@ async function create(clientId, data, actor, tenant = null) {
     },
   });
 
-  return listByClient(clientId, { tenant });
+  return listByClient(clientId, { actor, tenant });
 }
 
 async function updateRecord(noteId, data, actor, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = bindMethodologyActor(actor, context);
+  if (context.readScoped) assertCanUseNotes(authorityActor);
   const note = options.note || await getNoteOrFail(noteId, context, options);
   if (Number(note.User?.organizationId) !== Number(context.organizationId)) {
     throw appError('Запись тренировки не найдена', 404);
   }
-  assertCanChangeNote(note, actor);
+  assertCanChangeNote(note, authorityActor);
   assertClientIsEditable(note);
 
   const exerciseResults = normalizeExerciseResults(data.exerciseResults);
@@ -496,7 +511,7 @@ async function updateRecord(noteId, data, actor, options = {}) {
     if (shouldRecalculateSkillMap) {
       await clientSkillMapService.recalculateFromStructuredTraining(
         note.userId,
-        actor,
+        authorityActor,
         { client: note.User, tenant: options.tenant, transaction },
       );
     }
@@ -518,16 +533,18 @@ async function update(noteId, data, actor, tenant = null) {
     },
   });
 
-  return listByClient(note.userId, { tenant });
+  return listByClient(note.userId, { actor, tenant });
 }
 
 async function remove(noteId, actor, tenant = null) {
   const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  if (context.readScoped) assertCanUseNotes(authorityActor);
   const note = await getNoteOrFail(noteId, context);
   if (Number(note.User?.organizationId) !== Number(context.organizationId)) {
     throw appError('Запись тренировки не найдена', 404);
   }
-  assertCanChangeNote(note, actor);
+  assertCanChangeNote(note, authorityActor);
   assertClientIsEditable(note);
   const clientId = note.userId;
 
@@ -535,11 +552,11 @@ async function remove(noteId, actor, tenant = null) {
     await note.destroy({ transaction });
     await clientSkillMapService.recalculateFromStructuredTraining(
       clientId,
-      actor,
+      authorityActor,
       { client: note.User, tenant, transaction },
     );
   });
-  return listByClient(clientId, { tenant });
+  return listByClient(clientId, { actor: authorityActor, tenant });
 }
 
 module.exports = {
