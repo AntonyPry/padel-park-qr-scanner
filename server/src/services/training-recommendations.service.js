@@ -8,6 +8,7 @@ const trainingNotesService = require('./training-notes.service');
 const {
   bindMethodologyActor,
   methodologyTenantWhere,
+  resolveMethodologyAccessContext,
   validateBookingPlanRecommendationDelegation,
 } = require('./methodology-access-context.service');
 const {
@@ -1556,19 +1557,20 @@ async function recommendForClient(
   tenant = null,
   options = {},
 ) {
-  const context = await resolveTrainingOperationsAccessContext(tenant);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  await resolveTrainingOperationsAccessContext(tenant);
   const authorityActor = options.bookingPlanRecommendationDelegation
     ? validateBookingPlanRecommendationDelegation(
         options.bookingPlanRecommendationDelegation,
         actor,
-        context,
+        methodologyContext,
       )
-    : bindMethodologyActor(actor, context);
+    : bindMethodologyActor(actor, methodologyContext);
   if (!options.bookingPlanRecommendationDelegation) assertCanView(authorityActor);
   const id = normalizeClientId(clientId);
   const asOfDate = normalizeDateOnly(query.date);
   const goal = normalizeGoal(query.goal);
-  const client = await loadClientOrFail(id, context);
+  const client = await loadClientOrFail(id, methodologyContext);
   const [skillMap, trainingNotes, exercises] = await Promise.all([
     clientSkillMapService.listForClient(id, authorityActor, {
       bookingPlanRecommendationDelegation:
@@ -1577,13 +1579,14 @@ async function recommendForClient(
     }),
     trainingNotesService.listByClient(id, {
       actor: authorityActor,
-      bookingPlanRecommendationDelegation:
-        options.bookingPlanRecommendationDelegation,
+      bookingPlanRecommendationDelegation: options.bookingPlanRecommendationDelegation,
+      bookingPlanTrainingOperationsDelegation:
+        options.bookingPlanTrainingOperationsDelegation,
       limit: 50,
       skipClientCheck: true,
       tenant,
     }),
-    loadApprovedExercises(context),
+    loadApprovedExercises(methodologyContext),
   ]);
 
   return {
@@ -1605,20 +1608,21 @@ async function recommendForGroup(
   tenant = null,
   options = {},
 ) {
-  const context = await resolveTrainingOperationsAccessContext(tenant);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  await resolveTrainingOperationsAccessContext(tenant);
   const authorityActor = options.bookingPlanRecommendationDelegation
     ? validateBookingPlanRecommendationDelegation(
         options.bookingPlanRecommendationDelegation,
         actor,
-        context,
+        methodologyContext,
       )
-    : bindMethodologyActor(actor, context);
+    : bindMethodologyActor(actor, methodologyContext);
   if (!options.bookingPlanRecommendationDelegation) assertCanView(authorityActor);
   const clientIds = normalizeClientIds(data.clientIds);
   const asOfDate = normalizeDateOnly(data.date);
   const goal = normalizeGoal(data.goal);
-  const clients = await loadGroupClientsOrFail(clientIds, context);
-  const exercises = await loadApprovedExercises(context);
+  const clients = await loadGroupClientsOrFail(clientIds, methodologyContext);
+  const exercises = await loadApprovedExercises(methodologyContext);
   const participantRows = await Promise.all(
     clients.map(async (client) => {
       const clientId = Number(client.id);
@@ -1630,8 +1634,9 @@ async function recommendForGroup(
         }),
         trainingNotesService.listByClient(clientId, {
           actor: authorityActor,
-          bookingPlanRecommendationDelegation:
-            options.bookingPlanRecommendationDelegation,
+          bookingPlanRecommendationDelegation: options.bookingPlanRecommendationDelegation,
+          bookingPlanTrainingOperationsDelegation:
+            options.bookingPlanTrainingOperationsDelegation,
           limit: 50,
           skipClientCheck: true,
           tenant,

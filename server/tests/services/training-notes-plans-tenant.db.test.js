@@ -198,6 +198,25 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
     await migration.up(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
     await migration.up(queryInterface, SequelizePackage);
+    const rootTriggers = await schema.query(`
+      SELECT TRIGGER_NAME, ACTION_STATEMENT
+      FROM INFORMATION_SCHEMA.TRIGGERS
+      WHERE TRIGGER_SCHEMA=DATABASE()
+        AND TRIGGER_NAME IN (
+          'training_notes_club_bi',
+          'training_notes_club_bu',
+          'training_plans_club_bi',
+          'training_plans_club_bu'
+        )
+      ORDER BY TRIGGER_NAME
+    `, { type: SequelizePackage.QueryTypes.SELECT });
+    assert.equal(rootTriggers.length, 4);
+    assert.equal(
+      rootTriggers.every((trigger) =>
+        String(trigger.ACTION_STATEMENT).includes('Staffs') &&
+        !/\bStaff\b/.test(String(trigger.ACTION_STATEMENT))),
+      true,
+    );
 
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');
@@ -305,6 +324,15 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
       status: 'active',
       webId: `feature-6-2-client-b-${Date.now()}`,
     });
+    const userA2 = await db.User.create({
+      name: 'Feature 6.2 Client A2',
+      organizationId: defaultOrganization.id,
+      phone: '+79996200003',
+      phoneNormalized: '9996200003',
+      source: 'Feature 6.2',
+      status: 'active',
+      webId: `feature-6-2-client-a2-${Date.now()}`,
+    });
     const skillA = await methodologyService.createSkill({
       direction: 'technique',
       name: `Feature 6.2 shared skill ${Date.now()}`,
@@ -331,6 +359,15 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
       skillLevelMin: 0,
       status: 'approved',
     }, actorB, organizationTenantB);
+    const exerciseA2 = await methodologyService.createExercise({
+      eLevel: 'E2',
+      formats: ['personal', 'group'],
+      mainSkillId: skillA.id,
+      name: 'Feature 6.2 Organization A drill 2',
+      skillLevelMax: 2,
+      skillLevelMin: 0,
+      status: 'approved',
+    }, actorA, organizationTenantA);
 
     await notesService.create(userA.id, {
       exerciseResults: [{ rating: 4, trainingExerciseId: exerciseA.id }],
@@ -391,21 +428,40 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
     );
 
     const planA = await plansService.create({
-      clientIds: [userA.id],
-      kind: 'personal',
+      clientIds: [userA.id, userA2.id],
+      kind: 'group',
       plannedAt: '2099-03-05',
-      plannedExercises: [{ trainingExerciseId: exerciseA.id }],
+      plannedExercises: [
+        { trainingExerciseId: exerciseA.id },
+        { trainingExerciseId: exerciseA2.id },
+      ],
+    }, actorA, tenantA);
+    const planA2 = await plansService.create({
+      clientIds: [userA.id, userA2.id],
+      kind: 'group',
+      plannedAt: '2099-03-06',
+      plannedExercises: [
+        { trainingExerciseId: exerciseA.id },
+        { trainingExerciseId: exerciseA2.id },
+      ],
     }, actorA, tenantA);
     const planSibling = await plansService.create({
-      clientIds: [userA.id],
-      kind: 'personal',
-      plannedAt: '2099-03-06',
-      plannedExercises: [{ trainingExerciseId: exerciseA.id }],
+      clientIds: [userA.id, userA2.id],
+      kind: 'group',
+      plannedAt: '2099-03-07',
+      plannedExercises: [
+        { trainingExerciseId: exerciseA.id },
+        { trainingExerciseId: exerciseA2.id },
+      ],
     }, actorA, tenantSibling);
-    assert.deepEqual(
-      (await plansService.list({}, actorA, tenantA)).map((plan) => Number(plan.id)),
-      [Number(planA.id)],
-    );
+    const defaultClubPlans = await plansService.list({}, actorA, tenantA);
+    assert.deepEqual(defaultClubPlans.map((plan) => Number(plan.id)), [
+      Number(planA.id),
+      Number(planA2.id),
+    ]);
+    assert.equal(new Set(defaultClubPlans.map((plan) => plan.id)).size, 2);
+    assert.equal(defaultClubPlans.every((plan) => plan.participants.length === 2), true);
+    assert.equal(defaultClubPlans.every((plan) => plan.plannedExercises.length === 2), true);
     assert.deepEqual(
       (await plansService.list({}, actorA, tenantSibling)).map((plan) => Number(plan.id)),
       [Number(planSibling.id)],
@@ -488,12 +544,24 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
       organizationId: defaultOrganization.id,
       scope: 'club',
     });
+    const staffProvenanceNote = await db.TrainingNote.create({
+      clubId: defaultClub.id,
+      exercises: 'canonical Staffs trigger acceptance',
+      level: 'D',
+      trainedAt: '2099-03-07',
+      trainerAccountId: trainerAccount.id,
+      userId: userA.id,
+    });
     await trainerAccess.update({ status: 'inactive' });
+    await expectDatabaseReject(
+      staffProvenanceNote.update({ note: 'stale Staff provenance' }),
+      /TrainingNote trainer club authority mismatch/,
+    );
     await assert.rejects(
       notesService.create(userA.id, {
         exercises: 'stale authority',
         level: 'D',
-        trainedAt: '2099-03-07',
+        trainedAt: '2099-03-08',
       }, { id: trainerAccount.id, role: 'trainer' }, staleTrainerTenant),
       (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
     );

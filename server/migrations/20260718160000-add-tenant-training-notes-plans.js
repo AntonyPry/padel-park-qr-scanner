@@ -67,7 +67,7 @@ function accountClubAuthority(field, label) {
         ON m.accountId = a.id
        AND m.organizationId = v_org
        AND m.status = 'active'
-      LEFT JOIN Staff s
+      LEFT JOIN Staffs s
         ON s.id = m.staffId
        AND s.organizationId = v_org
        AND s.status = 'active'
@@ -482,7 +482,7 @@ async function assertLegacyDataCompatible(queryInterface, tenant) {
         ON m.accountId=a.id
        AND m.organizationId=:organizationId
        AND m.status='active'
-      LEFT JOIN Staff s
+      LEFT JOIN Staffs s
         ON s.id=m.staffId
        AND s.organizationId=:organizationId
        AND s.status='active'

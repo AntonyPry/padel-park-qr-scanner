@@ -4,6 +4,7 @@ const onboardingService = require('./onboarding.service');
 const { Op } = require('sequelize');
 const {
   methodologyTenantWhere,
+  resolveMethodologyAccessContext,
   validateBookingPlanRecommendationDelegation,
 } = require('./methodology-access-context.service');
 const {
@@ -282,9 +283,12 @@ async function assertClientExists(clientId, context, options = {}) {
 
 async function listByClient(clientId, options = {}) {
   const context = await resolveTrainingOperationsAccessContext(options.tenant, options);
-  if (options.bookingPlanRecommendationDelegation) {
+  const methodologyContext = await resolveMethodologyAccessContext(options.tenant, options);
+  const operationsDelegation = options.bookingPlanTrainingOperationsDelegation ||
+    options.bookingPlanRecommendationDelegation;
+  if (operationsDelegation) {
     validateBookingPlanRecommendationDelegation(
-      options.bookingPlanRecommendationDelegation,
+      operationsDelegation,
       options.actor,
       context,
     );
@@ -292,7 +296,7 @@ async function listByClient(clientId, options = {}) {
     assertCanUseNotes(bindTrainingOperationsActor(options.actor, context));
   }
   if (!options.skipClientCheck) {
-    await assertClientExists(clientId, context, options);
+    await assertClientExists(clientId, methodologyContext, options);
   }
 
   const notes = await db.TrainingNote.findAll({
@@ -306,7 +310,7 @@ async function listByClient(clientId, options = {}) {
             where: { organizationId: context.organizationId },
           }]
         : []),
-      ...trainingNoteInclude(context),
+      ...trainingNoteInclude(methodologyContext),
     ],
     order: [
       ['trainedAt', 'DESC'],
@@ -321,6 +325,7 @@ async function listByClient(clientId, options = {}) {
 }
 
 async function getNoteOrFail(noteId, context, options = {}) {
+  const methodologyContext = options.methodologyContext || context;
   const note = await db.TrainingNote.findOne({
     include: [
       {
@@ -334,12 +339,12 @@ async function getNoteOrFail(noteId, context, options = {}) {
           'trainingAccountId',
           'organizationId',
         ],
-        required: Boolean(context?.readScoped),
-        where: context?.readScoped
-          ? { organizationId: context.organizationId }
+        required: Boolean(methodologyContext?.readScoped),
+        where: methodologyContext?.readScoped
+          ? { organizationId: methodologyContext.organizationId }
           : undefined,
       },
-      ...trainingNoteInclude(context),
+      ...trainingNoteInclude(methodologyContext),
     ],
     lock: options.lock,
     transaction: options.transaction,
@@ -354,7 +359,12 @@ async function getNoteOrFail(noteId, context, options = {}) {
   return note;
 }
 
-async function getNoteForMutationOrFail(noteId, context, transaction) {
+async function getNoteForMutationOrFail(
+  noteId,
+  context,
+  methodologyContext,
+  transaction,
+) {
   const root = await db.TrainingNote.findOne({
     attributes: ['id'],
     lock: transaction.LOCK.UPDATE,
@@ -368,6 +378,7 @@ async function getNoteForMutationOrFail(noteId, context, transaction) {
   if (!root) throw appError('Запись тренировки не найдена', 404);
   return getNoteOrFail(noteId, context, {
     forceTenant: true,
+    methodologyContext,
     transaction,
   });
 }
@@ -403,11 +414,15 @@ async function createRecord(clientId, data, actor, options = {}) {
       options.tenant,
       writeOptions,
     );
+    const methodologyContext = await resolveMethodologyAccessContext(
+      options.tenant,
+      writeOptions,
+    );
     const authorityActor = bindTrainingOperationsActor(actor, context);
     if (context.readScoped) assertCanUseNotes(authorityActor);
     const client = await assertClientExists(
       clientId,
-      context,
+      methodologyContext,
       writeOptions,
     );
     if (Number(client.organizationId) !== Number(context.organizationId)) {
@@ -420,7 +435,7 @@ async function createRecord(clientId, data, actor, options = {}) {
     const exerciseResults = normalizeExerciseResults(data.exerciseResults) || [];
     const exerciseById = await loadApprovedExercisesByIds(
       exerciseResults.map((result) => result.trainingExerciseId),
-      context,
+      methodologyContext,
       writeOptions,
     );
     const structuredExerciseNames = getExerciseNames(exerciseResults, exerciseById);
@@ -500,12 +515,21 @@ async function updateRecord(noteId, data, actor, options = {}) {
       options.tenant,
       writeOptions,
     );
+    const methodologyContext = await resolveMethodologyAccessContext(
+      options.tenant,
+      writeOptions,
+    );
     const authorityActor = bindTrainingOperationsActor(actor, context);
     if (context.readScoped) assertCanUseNotes(authorityActor);
-    const note = await getNoteForMutationOrFail(noteId, context, transaction);
+    const note = await getNoteForMutationOrFail(
+      noteId,
+      context,
+      methodologyContext,
+      transaction,
+    );
     if (
       Number(note.clubId) !== Number(context.clubId) ||
-      Number(note.User?.organizationId) !== Number(context.organizationId)
+      Number(note.User?.organizationId) !== Number(methodologyContext.organizationId)
     ) {
       throw appError('Запись тренировки не найдена', 404);
     }
@@ -515,7 +539,7 @@ async function updateRecord(noteId, data, actor, options = {}) {
     const exerciseResults = normalizeExerciseResults(data.exerciseResults);
     const exerciseById = await loadApprovedExercisesByIds(
       (exerciseResults || []).map((result) => result.trainingExerciseId),
-      context,
+      methodologyContext,
       writeOptions,
     );
     const structuredExerciseNames = exerciseResults
@@ -596,12 +620,21 @@ async function remove(noteId, actor, tenant = null) {
       lock: true,
       transaction,
     });
+    const methodologyContext = await resolveMethodologyAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
     const authorityActor = bindTrainingOperationsActor(actor, context);
     if (context.readScoped) assertCanUseNotes(authorityActor);
-    const note = await getNoteForMutationOrFail(noteId, context, transaction);
+    const note = await getNoteForMutationOrFail(
+      noteId,
+      context,
+      methodologyContext,
+      transaction,
+    );
     if (
       Number(note.clubId) !== Number(context.clubId) ||
-      Number(note.User?.organizationId) !== Number(context.organizationId)
+      Number(note.User?.organizationId) !== Number(methodologyContext.organizationId)
     ) {
       throw appError('Запись тренировки не найдена', 404);
     }

@@ -3,8 +3,10 @@ const db = require('../../models');
 const onboardingService = require('./onboarding.service');
 const trainingNotesService = require('./training-notes.service');
 const {
+  bindMethodologyActor,
   createBookingPlanRecommendationDelegation,
   methodologyTenantWhere,
+  resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
 const {
   resolveEligibleBookingStaff,
@@ -486,32 +488,37 @@ function buildPlanExerciseRows(trainingPlanId, plannedExercises, exerciseById) {
   }));
 }
 
-function planBelongsToTenant(planValue, context) {
-  if (!context?.readScoped) return true;
+function planBelongsToTenant(planValue, context, methodologyContext = context) {
   const plan = planValue?.toJSON ? planValue.toJSON() : planValue;
   if (!plan) return false;
-  if (Number(plan.clubId) !== Number(context.clubId)) return false;
+  if (context?.readScoped && Number(plan.clubId) !== Number(context.clubId)) return false;
   if (
     plan.booking &&
     (
-      Number(plan.booking.organizationId) !== Number(context.organizationId) ||
-      Number(plan.booking.clubId) !== Number(context.clubId)
+      Number(plan.booking.organizationId) !== Number(methodologyContext.organizationId) ||
+      (
+        context?.readScoped &&
+        Number(plan.booking.clubId) !== Number(context.clubId)
+      )
     )
   ) {
     return false;
   }
   const participants = plan.participants || [];
   return participants.length > 0 && participants.every((participant) =>
-    Number(participant.client?.organizationId) === Number(context.organizationId) &&
+    Number(participant.client?.organizationId) ===
+      Number(methodologyContext.organizationId) &&
     (
       !participant.trainingNote ||
+      !context?.readScoped ||
       Number(participant.trainingNote.clubId) === Number(context.clubId)
     ));
 }
 
 async function getPlanOrFail(planId, context, options = {}) {
+  const methodologyContext = options.methodologyContext || context;
   const plan = await db.TrainingPlan.findOne({
-    include: planInclude(context),
+    include: planInclude(methodologyContext),
     lock: options.lock,
     transaction: options.transaction,
     where: trainingOperationsTenantWhere(
@@ -520,13 +527,18 @@ async function getPlanOrFail(planId, context, options = {}) {
       { force: Boolean(options.forceTenant) },
     ),
   });
-  if (!plan || !planBelongsToTenant(plan, context)) {
+  if (!plan || !planBelongsToTenant(plan, context, methodologyContext)) {
     throw appError('План тренировки не найден', 404);
   }
   return plan;
 }
 
-async function getPlanForMutationOrFail(planId, context, transaction) {
+async function getPlanForMutationOrFail(
+  planId,
+  context,
+  methodologyContext,
+  transaction,
+) {
   const root = await db.TrainingPlan.findOne({
     attributes: ['id'],
     lock: transaction.LOCK.UPDATE,
@@ -540,13 +552,16 @@ async function getPlanForMutationOrFail(planId, context, transaction) {
   if (!root) throw appError('План тренировки не найден', 404);
   return getPlanOrFail(planId, context, {
     forceTenant: true,
+    methodologyContext,
     transaction,
   });
 }
 
 async function list(query = {}, actor = null, tenant = null) {
   const context = await resolveTrainingOperationsAccessContext(tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   assertCanView(authorityActor);
   const status = normalizeStatus(query.status);
   const where = trainingOperationsTenantWhere(context, {});
@@ -577,25 +592,41 @@ async function list(query = {}, actor = null, tenant = null) {
     };
   }
 
-  const plans = await db.TrainingPlan.findAll({
-    include: planInclude(context),
+  const order = [
+    ['status', 'ASC'],
+    ['plannedAt', status === 'completed' ? 'DESC' : 'ASC'],
+    ['createdAt', 'DESC'],
+  ];
+  const roots = await db.TrainingPlan.findAll({
+    attributes: ['id'],
     limit: 100,
-    order: [
-      ['status', 'ASC'],
-      ['plannedAt', status === 'completed' ? 'DESC' : 'ASC'],
-      ['createdAt', 'DESC'],
-    ],
+    order,
+    raw: true,
     where,
   });
+  const rootIds = roots.map((root) => Number(root.id));
+  if (rootIds.length === 0) return [];
+  const plans = await db.TrainingPlan.findAll({
+    include: planInclude(methodologyContext),
+    where: trainingOperationsTenantWhere(context, {
+      id: { [Op.in]: rootIds },
+    }),
+  });
+  const plansById = new Map(plans.map((plan) => [Number(plan.id), plan]));
 
-  return plans.filter((plan) => planBelongsToTenant(plan, context)).map(mapPlan);
+  return rootIds
+    .map((id) => plansById.get(id))
+    .filter((plan) => plan && planBelongsToTenant(plan, context, methodologyContext))
+    .map(mapPlan);
 }
 
 async function getById(planId, actor = null, tenant = null) {
   const context = await resolveTrainingOperationsAccessContext(tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   assertCanView(authorityActor);
-  const plan = await getPlanOrFail(planId, context);
+  const plan = await getPlanOrFail(planId, context, { methodologyContext });
   if (
     authorityActor?.role === 'trainer' &&
     Number(plan.trainerAccountId) !== Number(authorityActor.id)
@@ -607,9 +638,11 @@ async function getById(planId, actor = null, tenant = null) {
 
 async function getBookingPlanAfterCreate(planId, actor, tenant) {
   const context = await resolveTrainingOperationsAccessContext(tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   assertCanCreateFromBooking(authorityActor);
-  return mapPlan(await getPlanOrFail(planId, context));
+  return mapPlan(await getPlanOrFail(planId, context, { methodologyContext }));
 }
 
 function getDateOnly(value) {
@@ -726,14 +759,16 @@ async function getBookingForPlanOrFail(bookingId, context) {
 
 async function getByBookingId(bookingId, actor = null, options = {}) {
   const context = await resolveTrainingOperationsAccessContext(options.tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(options.tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   const plan = await db.TrainingPlan.findOne({
-    include: planInclude(context),
+    include: planInclude(methodologyContext),
     where: trainingOperationsTenantWhere(context, {
       bookingId: normalizePositiveId(bookingId, 'ID бронирования'),
     }),
   });
-  if (!plan || !planBelongsToTenant(plan, context)) return null;
+  if (!plan || !planBelongsToTenant(plan, context, methodologyContext)) return null;
   if (!options.allowBookingViewer) {
     assertCanView(authorityActor);
     if (
@@ -760,7 +795,9 @@ function buildBookingPlanSourceSnapshot({ booking, recommendation }) {
 
 async function createFromBooking(bookingId, actor = null, tenant = null) {
   const context = await resolveTrainingOperationsAccessContext(tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   assertCanCreateFromBooking(authorityActor);
   const booking = await getBookingForPlanOrFail(bookingId, context);
   if (booking.trainingPlan) {
@@ -783,6 +820,8 @@ async function createFromBooking(bookingId, actor = null, tenant = null) {
     'Цель плана',
   );
   const bookingPlanRecommendationDelegation =
+    createBookingPlanRecommendationDelegation(authorityActor, methodologyContext);
+  const bookingPlanTrainingOperationsDelegation =
     createBookingPlanRecommendationDelegation(authorityActor, context);
   const recommendation = kind === 'personal'
     ? await trainingRecommendationsService.recommendForClient(
@@ -790,13 +829,19 @@ async function createFromBooking(bookingId, actor = null, tenant = null) {
         { date: plannedAt, goal },
         authorityActor,
         tenant,
-        { bookingPlanRecommendationDelegation },
+        {
+          bookingPlanRecommendationDelegation,
+          bookingPlanTrainingOperationsDelegation,
+        },
       )
     : await trainingRecommendationsService.recommendForGroup(
         { clientIds, date: plannedAt, goal },
         authorityActor,
         tenant,
-        { bookingPlanRecommendationDelegation },
+        {
+          bookingPlanRecommendationDelegation,
+          bookingPlanTrainingOperationsDelegation,
+        },
       );
   const plannedExercises = extractInsertablePlanExercises(recommendation.blocks);
   if (plannedExercises.length === 0) {
@@ -840,13 +885,22 @@ async function createPlanRecord(data = {}, actor = null, options = {}) {
       options.tenant,
       writeOptions,
     );
-    const authorityActor = bindTrainingOperationsActor(actor, context);
+    const methodologyContext = await resolveMethodologyAccessContext(
+      options.tenant,
+      writeOptions,
+    );
+    bindTrainingOperationsActor(actor, context);
+    const authorityActor = bindMethodologyActor(actor, methodologyContext);
     if (options.bookingId) assertCanCreateFromBooking(authorityActor);
     else assertCanManage(authorityActor);
-    const clients = await loadClientsOrFail(clientIds, context, writeOptions);
+    const clients = await loadClientsOrFail(
+      clientIds,
+      methodologyContext,
+      writeOptions,
+    );
     const exerciseById = await loadApprovedExercisesByIds(
       plannedExercises.map((item) => item.trainingExerciseId),
-      context,
+      methodologyContext,
       writeOptions,
     );
     const trainingMarker = await onboardingService.getTrainingDataMarker(
@@ -922,7 +976,9 @@ async function createPlanRecord(data = {}, actor = null, options = {}) {
 
 async function create(data = {}, actor = null, tenant = null) {
   const context = await resolveTrainingOperationsAccessContext(tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   assertCanManage(authorityActor);
   const created = await createPlanRecord(data, authorityActor, { tenant });
   return getById(created.id, authorityActor, tenant);
@@ -937,16 +993,23 @@ async function updateExercises(planId, data = {}, actor = null, tenant = null) {
       transaction,
     };
     const context = await resolveTrainingOperationsAccessContext(tenant, writeOptions);
-    const authorityActor = bindTrainingOperationsActor(actor, context);
+    const methodologyContext = await resolveMethodologyAccessContext(tenant, writeOptions);
+    bindTrainingOperationsActor(actor, context);
+    const authorityActor = bindMethodologyActor(actor, methodologyContext);
     assertCanManage(authorityActor);
-    const plan = await getPlanForMutationOrFail(planId, context, transaction);
+    const plan = await getPlanForMutationOrFail(
+      planId,
+      context,
+      methodologyContext,
+      transaction,
+    );
     assertCanChangePlan(plan, authorityActor);
     if (plan.status !== 'planned') {
       throw appError('Завершенный план нельзя менять: обновите факт тренировки', 409);
     }
     const exerciseById = await loadApprovedExercisesByIds(
       plannedExercises.map((item) => item.trainingExerciseId),
-      context,
+      methodologyContext,
       writeOptions,
     );
     await db.TrainingPlanExercise.destroy({
@@ -971,9 +1034,16 @@ async function complete(planId, data = {}, actor = null, tenant = null) {
       transaction,
     };
     const context = await resolveTrainingOperationsAccessContext(tenant, writeOptions);
-    const authorityActor = bindTrainingOperationsActor(actor, context);
+    const methodologyContext = await resolveMethodologyAccessContext(tenant, writeOptions);
+    bindTrainingOperationsActor(actor, context);
+    const authorityActor = bindMethodologyActor(actor, methodologyContext);
     assertCanManage(authorityActor);
-    const plan = await getPlanForMutationOrFail(planId, context, transaction);
+    const plan = await getPlanForMutationOrFail(
+      planId,
+      context,
+      methodologyContext,
+      transaction,
+    );
     assertCanChangePlan(plan, authorityActor);
     if (plan.status === 'completed') {
       throw appError('План уже завершен', 409);
@@ -1108,9 +1178,11 @@ async function getLatestLevelByClientId(clientIds, context) {
 
 async function quickComplete(planId, data = {}, actor = null, tenant = null) {
   const context = await resolveTrainingOperationsAccessContext(tenant);
-  const authorityActor = bindTrainingOperationsActor(actor, context);
+  const methodologyContext = await resolveMethodologyAccessContext(tenant);
+  bindTrainingOperationsActor(actor, context);
+  const authorityActor = bindMethodologyActor(actor, methodologyContext);
   assertCanManage(authorityActor);
-  const plan = await getPlanOrFail(planId, context);
+  const plan = await getPlanOrFail(planId, context, { methodologyContext });
   assertCanChangePlan(plan, authorityActor);
   if (plan.status === 'completed') {
     throw appError('План уже завершен', 409);
