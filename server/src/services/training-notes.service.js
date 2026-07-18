@@ -6,6 +6,7 @@ const {
   bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
+  validateBookingPlanRecommendationDelegation,
 } = require('./methodology-access-context.service');
 
 const LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
@@ -278,7 +279,13 @@ async function assertClientExists(clientId, context, options = {}) {
 
 async function listByClient(clientId, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
-  if (context.readScoped) {
+  if (options.bookingPlanRecommendationDelegation) {
+    validateBookingPlanRecommendationDelegation(
+      options.bookingPlanRecommendationDelegation,
+      options.actor,
+      context,
+    );
+  } else if (context.readScoped) {
     assertCanUseNotes(bindMethodologyActor(options.actor, context));
   }
   if (!options.skipClientCheck) {

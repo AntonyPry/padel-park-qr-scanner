@@ -99,6 +99,7 @@ test('certificate redemption is available to admins without trainer or accountan
 test('admins can manage phone bookings without finance or catalog access', () => {
   assert.equal(ACCESS_MATRIX.bookingsView.includes('admin'), true);
   assert.equal(ACCESS_MATRIX.bookingsManage.includes('admin'), true);
+  assert.equal(ACCESS_MATRIX.trainingNotesView.includes('admin'), false);
   assert.equal(ACCESS_MATRIX.financeView.includes('admin'), false);
   assert.equal(ACCESS_MATRIX.catalogManage.includes('admin'), false);
 });

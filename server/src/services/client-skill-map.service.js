@@ -6,6 +6,7 @@ const {
   bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
+  validateBookingPlanRecommendationDelegation,
 } = require('./methodology-access-context.service');
 
 const VIEW_ROLES = new Set(['owner', 'manager', 'trainer']);
@@ -417,8 +418,14 @@ async function syncActiveSkillsForClientId(clientId, options = {}) {
 
 async function listForClient(clientId, actor, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
-  const authorityActor = bindMethodologyActor(actor, context);
-  assertCanView(authorityActor);
+  const authorityActor = options.bookingPlanRecommendationDelegation
+    ? validateBookingPlanRecommendationDelegation(
+        options.bookingPlanRecommendationDelegation,
+        actor,
+        context,
+      )
+    : bindMethodologyActor(actor, context);
+  if (!options.bookingPlanRecommendationDelegation) assertCanView(authorityActor);
   const client = await loadClientOrFail(clientId, context, { includeMerged: true });
 
   if (!client.mergedIntoUserId && options.sync !== false) {

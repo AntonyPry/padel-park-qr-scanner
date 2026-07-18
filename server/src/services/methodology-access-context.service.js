@@ -12,6 +12,8 @@ const {
 } = require('./tenant-context.service');
 
 const resolvedContexts = new WeakSet();
+const bookingPlanRecommendationDelegations = new WeakSet();
+const BOOKING_PLAN_RECOMMENDATION_ROLES = new Set(['owner', 'manager', 'admin']);
 
 function positiveId(value) {
   const normalized = Number(value);
@@ -193,6 +195,64 @@ function bindMethodologyActor(actor, context) {
   return Object.freeze({ ...actor, id: context.accountId, role });
 }
 
+function delegationContextSnapshot(context) {
+  return {
+    accountId: positiveId(context?.accountId),
+    authority: context?.authority || null,
+    clubId: positiveId(context?.clubId),
+    effectiveRole: context?.effectiveRole || null,
+    membershipId: positiveId(context?.membershipId),
+    membershipRole: context?.membershipRole || null,
+    organizationId: positiveId(context?.organizationId),
+    readScoped: Boolean(context?.readScoped),
+    scope: context?.scope || null,
+  };
+}
+
+function createBookingPlanRecommendationDelegation(actor, context) {
+  if (!resolvedContexts.has(context) || !Object.isFrozen(context)) {
+    throw safeTenantDenial();
+  }
+  const authorityActor = bindMethodologyActor(actor, context);
+  if (!BOOKING_PLAN_RECOMMENDATION_ROLES.has(authorityActor?.role)) {
+    throw safeTenantDenial();
+  }
+  const delegation = Object.freeze({
+    actorId: positiveId(authorityActor.id),
+    actorRole: authorityActor.role,
+    context: Object.freeze(delegationContextSnapshot(context)),
+  });
+  bookingPlanRecommendationDelegations.add(delegation);
+  return delegation;
+}
+
+function validateBookingPlanRecommendationDelegation(
+  delegation,
+  actor,
+  context,
+) {
+  if (
+    !delegation ||
+    !bookingPlanRecommendationDelegations.has(delegation) ||
+    !Object.isFrozen(delegation)
+  ) {
+    throw safeTenantDenial();
+  }
+  const authorityActor = bindMethodologyActor(actor, context);
+  const expectedContext = delegation.context;
+  const actualContext = delegationContextSnapshot(context);
+  if (
+    positiveId(authorityActor?.id) !== delegation.actorId ||
+    authorityActor?.role !== delegation.actorRole ||
+    Object.keys(expectedContext).some(
+      (key) => expectedContext[key] !== actualContext[key],
+    )
+  ) {
+    throw safeTenantDenial();
+  }
+  return authorityActor;
+}
+
 module.exports = {
   _private: {
     positiveId,
@@ -201,6 +261,8 @@ module.exports = {
     staffIdentityIsAuthoritative,
   },
   bindMethodologyActor,
+  createBookingPlanRecommendationDelegation,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
+  validateBookingPlanRecommendationDelegation,
 };

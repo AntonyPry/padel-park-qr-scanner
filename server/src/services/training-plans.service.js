@@ -4,6 +4,7 @@ const onboardingService = require('./onboarding.service');
 const trainingNotesService = require('./training-notes.service');
 const {
   bindMethodologyActor,
+  createBookingPlanRecommendationDelegation,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
@@ -594,13 +595,6 @@ function extractInsertablePlanExercises(blocks = []) {
   }, []);
 }
 
-function getRecommendationActor(actor) {
-  if (actor?.role === 'admin') {
-    return { ...actor, role: 'manager' };
-  }
-  return actor;
-}
-
 async function findTrainerAccountForStaff(staffId) {
   const id = staffId ? Number(staffId) : null;
   if (!id) {
@@ -717,18 +711,21 @@ async function createFromBooking(bookingId, actor = null, tenant = null) {
     booking.comment || (kind === 'personal' ? 'Персональная тренировка' : 'Групповая тренировка'),
     'Цель плана',
   );
-  const recommendationActor = getRecommendationActor(authorityActor);
+  const bookingPlanRecommendationDelegation =
+    createBookingPlanRecommendationDelegation(authorityActor, context);
   const recommendation = kind === 'personal'
     ? await trainingRecommendationsService.recommendForClient(
         clientIds[0],
         { date: plannedAt, goal },
-        recommendationActor,
+        authorityActor,
         tenant,
+        { bookingPlanRecommendationDelegation },
       )
     : await trainingRecommendationsService.recommendForGroup(
         { clientIds, date: plannedAt, goal },
-        recommendationActor,
+        authorityActor,
         tenant,
+        { bookingPlanRecommendationDelegation },
       );
   const plannedExercises = extractInsertablePlanExercises(recommendation.blocks);
   if (plannedExercises.length === 0) {

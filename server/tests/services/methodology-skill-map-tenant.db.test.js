@@ -397,6 +397,10 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     const analyticsService = require('../../src/services/training-methodology-analytics.service');
     const clientsService = require('../../src/services/clients.service');
     const onboardingService = require('../../src/services/onboarding.service');
+    const trainingPlansService = require('../../src/services/training-plans.service');
+    const methodologyAccessService = require(
+      '../../src/services/methodology-access-context.service',
+    );
 
     const organizationB = await db.Organization.create({
       name: 'Feature 6.1 Organization B',
@@ -860,6 +864,153 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       organizationId: organizationB.id,
       scope: 'club',
     });
+    const adminAccount = await db.Account.create({
+      email: `feature-6-1-admin-${Date.now()}@example.test`,
+      passwordHash: 'test-only',
+      role: 'admin',
+      status: 'active',
+    });
+    const adminMembership = await db.Membership.create({
+      accountId: adminAccount.id,
+      organizationId: defaultOrganization.id,
+      role: 'admin',
+      status: 'active',
+    });
+    const adminAccess = await db.MembershipClubAccess.create({
+      clubId: defaultClub.id,
+      membershipId: adminMembership.id,
+      organizationId: defaultOrganization.id,
+      roleOverride: null,
+      status: 'active',
+    });
+    const adminTenant = await tenantContextService.resolveTenantContext({
+      accountId: adminAccount.id,
+      clubId: defaultClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
+    const adminActor = { id: adminAccount.id, role: 'admin' };
+    const internalRecommendationContext =
+      await methodologyAccessService.resolveMethodologyAccessContext(adminTenant);
+    const internalRecommendationDelegation =
+      methodologyAccessService.createBookingPlanRecommendationDelegation(
+        adminActor,
+        internalRecommendationContext,
+      );
+    await assert.rejects(
+      recommendationService.recommendForClient(
+        userA.id,
+        { date: '2099-02-01' },
+        actorA,
+        adminTenant,
+        {
+          bookingPlanRecommendationDelegation:
+            internalRecommendationDelegation,
+        },
+      ),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await adminAccess.update({ roleOverride: 'viewer' });
+    await assert.rejects(
+      recommendationService.recommendForClient(
+        userA.id,
+        { date: '2099-02-01' },
+        adminActor,
+        adminTenant,
+        {
+          bookingPlanRecommendationDelegation:
+            internalRecommendationDelegation,
+        },
+      ),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await adminAccess.update({ roleOverride: null });
+    await assert.rejects(
+      recommendationService.recommendForClient(
+        userA.id,
+        { date: '2099-02-01' },
+        adminActor,
+        adminTenant,
+      ),
+      (error) => error.statusCode === 403,
+    );
+    const managerRecommendation = await recommendationService.recommendForClient(
+      userA.id,
+      { date: '2099-02-01' },
+      staleManagerActor,
+      staleManagerClubTenant,
+    );
+    assert.equal(managerRecommendation.clientId, Number(userA.id));
+
+    const trainerStaff = await db.Staff.create({
+      name: 'Feature 6.1 booking-plan trainer',
+      organizationId: defaultOrganization.id,
+      role: 'Тренер',
+      status: 'active',
+    });
+    const trainerAccount = await db.Account.create({
+      email: `feature-6-1-plan-trainer-${Date.now()}@example.test`,
+      passwordHash: 'test-only',
+      role: 'trainer',
+      staffId: trainerStaff.id,
+      status: 'active',
+    });
+    const trainerMembership = await db.Membership.create({
+      accountId: trainerAccount.id,
+      organizationId: defaultOrganization.id,
+      role: 'trainer',
+      staffId: trainerStaff.id,
+      status: 'active',
+    });
+    await db.MembershipClubAccess.create({
+      clubId: defaultClub.id,
+      membershipId: trainerMembership.id,
+      organizationId: defaultOrganization.id,
+      roleOverride: null,
+      status: 'active',
+    });
+    const trainerTenant = await tenantContextService.resolveTenantContext({
+      accountId: trainerAccount.id,
+      clubId: defaultClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
+    const trainerRecommendation = await recommendationService.recommendForClient(
+      userA.id,
+      { date: '2099-02-01' },
+      { id: trainerAccount.id, role: 'trainer' },
+      trainerTenant,
+    );
+    assert.equal(trainerRecommendation.clientId, Number(userA.id));
+    const adminCourt = await db.Court.create({
+      clubId: defaultClub.id,
+      isActive: true,
+      name: `Feature 6.1 admin plan court ${Date.now()}`,
+      organizationId: defaultOrganization.id,
+      sortOrder: 0,
+      type: 'padel_double',
+    });
+    const adminBooking = await db.Booking.create({
+      bookingType: 'personal_training',
+      clientName: userA.name,
+      clientPhone: userA.phone,
+      clubId: defaultClub.id,
+      courtId: adminCourt.id,
+      durationMinutes: 60,
+      endsAt: new Date('2099-02-01T11:00:00.000Z'),
+      organizationId: defaultOrganization.id,
+      responsibleStaffId: trainerStaff.id,
+      startsAt: new Date('2099-02-01T10:00:00.000Z'),
+      userId: userA.id,
+    });
+    const adminPlan = await trainingPlansService.createFromBooking(
+      adminBooking.id,
+      adminActor,
+      adminTenant,
+    );
+    assert.equal(Number(adminPlan.bookingId), Number(adminBooking.id));
+    assert.equal(adminPlan.plannedExercises.length > 0, true);
+
     const trainingUserA = await db.User.create({
       isTraining: true,
       name: 'Feature 6.1 training client A',
