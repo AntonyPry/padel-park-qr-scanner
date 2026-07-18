@@ -3,14 +3,19 @@ const { test } = require('node:test');
 const db = require('../../models');
 const XLSX = require('xlsx');
 const { createSourceQualityExportBuffer, createVisitsExportBuffer, explainPeriodIndex, getCohortsLifecycle, getSourceQuality, getVisitsAnalytics, sourceKeyFromRow } = require('../../src/services/visits-analytics.service');
-const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
+const {
+  createActiveTrainingFixture,
+  getDefaultTenantIds,
+} = require('../helpers/tenant-fixtures');
 
 test('DB-backed visit analytics handles history, 30-day boundary, training, duplicates, merge and scannedAt', async () => {
   await db.sequelize.authenticate();
   const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
+  let trainingFixture;
   try {
+    trainingFixture = await createActiveTrainingFixture(db, { clubId, organizationId });
     const makeUser = async (name, extra = {}) => {
       const user = await db.User.create({ organizationId, name: `${name}-${suffix}`, phone: `${suffix}${users.length}`.slice(-15), source: 'DB QA', ...extra });
       users.push(user);
@@ -22,7 +27,7 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
     const fresh = await makeUser('fresh');
     const primary = await makeUser('primary');
     const merged = await makeUser('merged', { status: 'archived', mergedIntoUserId: primary.id, mergedAt: new Date() });
-    const training = await makeUser('training');
+    const training = await makeUser('training', trainingFixture.ownership);
     const create = (userId, scannedAt, extra = {}) => db.Visit.create({ organizationId, clubId, userId, scannedAt, ...extra });
     await create(returning.id, '2097-12-20T10:00:00Z');
     await create(returning.id, '2098-01-05T10:00:00Z');
@@ -32,7 +37,7 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
     await create(late.id, '2098-02-01T11:00:01Z');
     await create(fresh.id, '2098-01-25T10:00:00Z');
     await create(merged.id, '2098-01-10T10:00:00Z');
-    await create(training.id, '2098-01-12T10:00:00Z', { isTraining: true });
+    await create(training.id, '2098-01-12T10:00:00Z', trainingFixture.ownership);
     await create(returning.id, '2098-01-05T10:01:00Z', { duplicateOfVisitId: firstExact.id });
 
     const result = await getVisitsAnalytics('2098-01-01', '2098-01-31', { now: '2098-02-10T12:00:00Z' });
@@ -52,6 +57,11 @@ test('DB-backed visit analytics handles history, 30-day boundary, training, dupl
         { where: { id: users.map((user) => user.id) } },
       );
       await db.User.destroy({ force: true, where: { id: users.map((user) => user.id) } });
+    }
+    if (trainingFixture) {
+      await trainingFixture.mode.destroy();
+      await trainingFixture.membership.destroy();
+      await trainingFixture.account.destroy({ force: true });
     }
   }
 });

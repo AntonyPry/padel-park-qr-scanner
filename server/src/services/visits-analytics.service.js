@@ -121,8 +121,12 @@ async function resolveAnalyticsVisitContext(options = {}) {
   return resolveVisitAccessContext(options.tenant || null);
 }
 
+function isReadScopedContext(context) {
+  return context?.readScoped === true;
+}
+
 function canonicalClientsCte(context) {
-  if (!context) return CANONICAL_CLIENTS_CTE;
+  if (!isReadScopedContext(context)) return CANONICAL_CLIENTS_CTE;
   return `
   WITH RECURSIVE client_chain AS (
     SELECT id AS originUserId, id AS currentUserId, mergedIntoUserId,
@@ -148,19 +152,19 @@ function canonicalClientsCte(context) {
 }
 
 function visitScopeSql(context, alias = 'v') {
-  return context
+  return isReadScopedContext(context)
     ? ` AND ${alias}.organizationId = :visitOrganizationId AND ${alias}.clubId = :visitClubId`
     : '';
 }
 
 function receiptScopeSql(context, alias = 'receipts') {
-  return context
+  return isReadScopedContext(context)
     ? ` AND ${alias}.organizationId = :visitOrganizationId AND ${alias}.clubId = :visitClubId`
     : '';
 }
 
 function visitScopeReplacements(context) {
-  return context
+  return isReadScopedContext(context)
     ? {
         visitClubId: context.clubId,
         visitOrganizationId: context.organizationId,
@@ -169,7 +173,7 @@ function visitScopeReplacements(context) {
 }
 
 function visitIndex(context, legacyName, tenantName) {
-  return context ? tenantName : legacyName;
+  return isReadScopedContext(context) ? tenantName : legacyName;
 }
 
 const VALID_VISIT_SQL = `COALESCE(v.isTraining, 0) = 0
@@ -460,7 +464,7 @@ function ltvMetric(revenue, eligibleCount) {
 }
 
 function revenueAttributionCte(sourceFilterSql = '', context = null) {
-  const receiptItemCandidatesSql = context
+  const receiptItemCandidatesSql = isReadScopedContext(context)
     ? `SELECT ps.receiptItemId,ps.clientId
       FROM PendingSales ps
       JOIN ReceiptItems pending_items ON pending_items.id=ps.receiptItemId
@@ -483,14 +487,14 @@ function revenueAttributionCte(sourceFilterSql = '', context = null) {
       WHERE certificates.sourceReceiptItemId IS NOT NULL
         AND certificates.status<>'canceled'
         AND certificates.source<>'legacy_stn_google_sheet'`;
-  const supplementalAttributedEventsSql = context
+  const supplementalAttributedEventsSql = isReadScopedContext(context)
     ? ''
     : `
       UNION ALL
       SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_subscription_events
       UNION ALL
       SELECT eventKey,eventDate,amount,canonicalUserId,eventSource FROM manual_certificate_events`;
-  const unscopedRevenueGuard = context ? '\n        AND 1=0' : '';
+  const unscopedRevenueGuard = isReadScopedContext(context) ? '\n        AND 1=0' : '';
   return `${canonicalClientsCte(context)},
     valid_visits AS (
       SELECT cc.canonicalUserId,v.visitedAt
@@ -698,7 +702,7 @@ function buildRevenueCohorts(rows, asOfDate) {
 }
 
 function unscopedRevenueCoverageSelect(sourceFilterSql, context) {
-  if (context) {
+  if (isReadScopedContext(context)) {
     return `0 subscriptionReceiptDuplicateRisk,
       0 certificateReceiptDuplicateRisk,
       0 legacySalesCount,

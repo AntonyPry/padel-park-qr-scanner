@@ -96,6 +96,7 @@ after(async () => {
 
 async function createRecordedCall(suffix, startedAt = new Date()) {
   return db.TelephonyCall.create({
+    ...testTenant,
     externalCallId: `auto-enqueue-db-${suffix}-${Date.now()}`,
     recordingStatus: 'available',
     startedAt,
@@ -211,6 +212,7 @@ test('DB-backed paginated call list skips large transcript payloads while detail
     for (let index = 0; index < 3; index += 1) {
       calls.push(
         await db.TelephonyCall.create({
+          ...testTenant,
           clientPhone: `+7 (900) ${phoneSuffix.slice(0, 3)}-${phoneSuffix.slice(3, 5)}-${index}${index}`,
           clientPhoneNormalized: `900${phoneSuffix}${index}${index}`,
           externalCallId: `call-list-db-${phoneSuffix}-${index}`,

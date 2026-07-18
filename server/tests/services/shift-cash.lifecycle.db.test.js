@@ -4,6 +4,7 @@ const db = require('../../models');
 const shiftCashService = require('../../src/services/shift-cash.service');
 const attachmentStorage = require('../../src/services/shift-cash-attachments');
 const shiftsService = require('../../src/services/shifts.service');
+const onboardingService = require('../../src/services/onboarding.service');
 
 test('DB-backed shift cash lifecycle closes cash and shift atomically after rollback-safe variance validation', async () => {
   await db.sequelize.authenticate();
@@ -13,16 +14,28 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
   let account;
   let expenseId;
   let financeId;
+  let membership;
+  let membershipAccess;
   let shift;
   let staff;
   const originalDeleteAttachmentFile = attachmentStorage.deleteAttachmentFile;
   const originalStoreAttachment = attachmentStorage.storeAttachment;
+  const originalRecordEventSafe = onboardingService.recordEventSafe;
+  const onboardingEvents = [];
 
   try {
+    onboardingService.recordEventSafe = async (actor, eventKey, options) => {
+      onboardingEvents.push({ actor, eventKey, options });
+      return { completedTaskKeys: [], event: null, progressedTaskKeys: [], role: null };
+    };
     const organization = await db.Organization.findOne({
       where: { slug: 'padel-park' },
     });
     assert.ok(organization, 'default Organization is required');
+    const club = await db.Club.findOne({
+      where: { organizationId: organization.id, slug: 'padel-park' },
+    });
+    assert.ok(club, 'default Club is required');
     staff = await db.Staff.create({
       name: `Shift cash lifecycle ${suffix}`,
       organizationId: organization.id,
@@ -34,6 +47,19 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       passwordHash: 'not-used-in-test',
       role: 'admin',
       staffId: staff.id,
+      status: 'active',
+    });
+    membership = await db.Membership.create({
+      accountId: account.id,
+      organizationId: organization.id,
+      role: 'admin',
+      staffId: staff.id,
+      status: 'active',
+    });
+    membershipAccess = await db.MembershipClubAccess.create({
+      clubId: club.id,
+      membershipId: membership.id,
+      organizationId: organization.id,
       status: 'active',
     });
     const startedAt = new Date(Date.now() - 1000);
@@ -104,12 +130,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(expenseSummary.expectedClosingCash, 3300);
     assert.ok(financeId);
     assert.equal(
-      await db.OnboardingEvent.count({
-        where: {
-          accountId: account.id,
-          eventKey: 'shift_cash.attachment_uploaded',
-        },
-      }),
+      onboardingEvents.filter((event) => event.eventKey === 'shift_cash.attachment_uploaded').length,
       0,
     );
     attachmentStorage.storeAttachment = async () => ({
@@ -132,16 +153,11 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       account,
     );
     assert.equal(expenseWithAttachment.attachments.length, 1);
-    const attachmentEvents = await db.OnboardingEvent.findAll({
-      where: {
-        accountId: account.id,
-        eventKey: 'shift_cash.attachment_uploaded',
-      },
-    });
+    const attachmentEvents = onboardingEvents.filter(
+      (event) => event.eventKey === 'shift_cash.attachment_uploaded',
+    );
     assert.equal(attachmentEvents.length, 1);
-    const attachmentEventPayload = typeof attachmentEvents[0].payload === 'string'
-      ? JSON.parse(attachmentEvents[0].payload)
-      : attachmentEvents[0].payload;
+    const attachmentEventPayload = attachmentEvents[0].options.payload;
     assert.deepEqual(attachmentEventPayload, {
       attachmentId: `lifecycle-attachment-${suffix}`,
       expenseId,
@@ -219,6 +235,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(Number(persistedSession.expectedClosingCash), 4200);
     assert.equal(Number(persistedSession.variance), 0);
   } finally {
+    onboardingService.recordEventSafe = originalRecordEventSafe;
     attachmentStorage.deleteAttachmentFile = originalDeleteAttachmentFile;
     attachmentStorage.storeAttachment = originalStoreAttachment;
     if (shift?.id) {
@@ -236,7 +253,6 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     }
     if (account?.id) {
       await db.OnboardingProgress.destroy({ where: { accountId: account.id } });
-      await db.OnboardingEvent.destroy({ where: { accountId: account.id } });
       await db.FinanceChangeLog.destroy({ where: { accountId: account.id } });
       await db.Finance.destroy({ where: { createdByAccountId: account.id } });
     }
@@ -244,6 +260,8 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       await db.Receipt.destroy({ where: { id: receiptIds } });
     }
     if (shift?.id) await db.Shift.destroy({ where: { id: shift.id } });
+    if (membershipAccess) await membershipAccess.destroy();
+    if (membership) await membership.destroy();
     if (account?.id) await db.Account.destroy({ force: true, where: { id: account.id } });
     if (staff?.id) await db.Staff.destroy({ where: { id: staff.id } });
   }

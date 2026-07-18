@@ -24,6 +24,7 @@ const envNames = [
 ];
 const previousEnv = Object.fromEntries(envNames.map((name) => [name, process.env[name]]));
 const calls = [];
+let testTenant;
 
 const platformWorker = Object.freeze({
   authenticated: true,
@@ -55,6 +56,7 @@ async function ensureInitializedTenant() {
 
 async function recordedCall(suffix) {
   const call = await db.TelephonyCall.create({
+    ...testTenant,
     clientPhone: '+7 999 123-45-67',
     externalCallId: `feature-4-2-${suffix}-${Date.now()}`,
     recordingExpiresAt: new Date(Date.now() + 60 * 60 * 1000),
@@ -74,7 +76,7 @@ before(async () => {
   process.env.TENANT_FOUNDATION_GATE_CACHE_MS = '0';
   process.env.TRANSCRIPTION_WORKER_LEASE_SECONDS = '60';
   await db.sequelize.authenticate();
-  await ensureInitializedTenant();
+  testTenant = await ensureInitializedTenant();
 });
 
 after(async () => {
@@ -121,7 +123,7 @@ test('claim is tenant-attributed, minimal and unique under concurrent workers', 
   const persisted = await db.TelephonyTranscriptionJob.findByPk(first.job.id);
   await assert.rejects(
     persisted.update({ clubId: tenant.clubId + 999 }),
-    (error) => error.code === 'TENANT_ATTRIBUTION_IMMUTABLE',
+    (error) => error.code === 'TENANT_AUTHORITY_IMMUTABLE',
   );
 });
 

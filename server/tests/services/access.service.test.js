@@ -4,11 +4,14 @@ const test = require('node:test');
 const db = require('../../models');
 const accessService = require('../../src/services/access.service');
 const scannerEventsService = require('../../src/services/scanner-events.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 async function withAccessMocks(visit, run) {
   const originalTransaction = db.sequelize.transaction;
   const originalFindByPk = db.Visit.findByPk;
+  const originalFindOne = db.Visit.findOne;
   const originalRecordEvent = scannerEventsService.recordEvent;
+  const restoreSingleton = mockExactSingletonDefault(db);
   const transaction = { LOCK: { UPDATE: Symbol('UPDATE') } };
   const calls = {
     events: [],
@@ -24,6 +27,10 @@ async function withAccessMocks(visit, run) {
     calls.findOptions.push(options);
     return visit;
   };
+  db.Visit.findOne = async (options) => {
+    calls.findOptions.push(options);
+    return visit;
+  };
   scannerEventsService.recordEvent = async (event) => {
     calls.events.push(event);
     return { id: calls.events.length };
@@ -34,7 +41,9 @@ async function withAccessMocks(visit, run) {
   } finally {
     db.sequelize.transaction = originalTransaction;
     db.Visit.findByPk = originalFindByPk;
+    db.Visit.findOne = originalFindOne;
     scannerEventsService.recordEvent = originalRecordEvent;
+    restoreSingleton();
   }
 }
 

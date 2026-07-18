@@ -1,12 +1,18 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const db = require('../../models');
 const service = require('../../src/services/visits-analytics.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalQuery = db.sequelize.query;
-afterEach(() => { db.sequelize.query = originalQuery; });
+let restoreSingleton;
+beforeEach(() => { restoreSingleton = mockExactSingletonDefault(db); });
+afterEach(() => {
+  db.sequelize.query = originalQuery;
+  restoreSingleton();
+});
 
 test('club period and previous period are invariant across process timezone', () => {
   const utc = service.resolvePeriod('2026-01-11', '2026-01-20', new Date('2026-01-20T12:00:00Z'));

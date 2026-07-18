@@ -5,6 +5,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const {
+  connect,
+  createDisposableDatabase,
+  dropDisposableDatabase,
+  migrateAll,
+} = require('../tests/helpers/final-tenant-rc-fixture');
 
 const SERVER_ROOT = path.resolve(__dirname, '..');
 const PROJECT_ROOT = path.resolve(SERVER_ROOT, '..');
@@ -30,6 +36,16 @@ function assertSafeEnvironment(options) {
   if (options.output && !/setly-f9-rc-/.test(path.resolve(options.output))) {
     throw new Error('Feature 9 RC artifact directory must contain setly-f9-rc-');
   }
+  if (
+    options.output &&
+    /(?:^|[/_-])(prod|production|live)(?:$|[/_-])/i.test(path.resolve(options.output))
+  ) {
+    throw new Error('Feature 9 RC gate refuses a production-like artifact target');
+  }
+}
+
+function disposableFullDatabaseName() {
+  return `setly_f9_rc_full_${process.pid}_${Date.now()}`;
 }
 
 function command(label, executable, args, cwd) {
@@ -69,6 +85,7 @@ function commandsFor(options) {
           '--test-concurrency=1',
           'tests/tenant-context/capabilities.test.js',
           'tests/services/tenant-foundation.service.test.js',
+          'tests/scripts/final-tenant-rc.test.js',
           'tests/scripts/tenant-backup-manifest.test.js',
         ],
         SERVER_ROOT,
@@ -108,7 +125,24 @@ function writeReport(artifactRoot, report) {
   return reportPath;
 }
 
-function main() {
+async function prepareFullDatabase() {
+  const database = disposableFullDatabaseName();
+  await createDisposableDatabase(database);
+  try {
+    const schema = connect(database);
+    try {
+      await migrateAll(schema);
+    } finally {
+      await schema.close();
+    }
+    return database;
+  } catch (error) {
+    await dropDisposableDatabase(database);
+    throw error;
+  }
+}
+
+async function main() {
   const options = parseArgs(process.argv.slice(2));
   assertSafeEnvironment(options);
   const artifactRoot = options.output
@@ -125,8 +159,20 @@ function main() {
     schemaVersion: 1,
     startedAt: new Date().toISOString(),
   };
+  let database = null;
+  let failedStatus = 0;
+  if (options.full) {
+    process.stdout.write('\n[Feature 9 RC] prepare disposable full-suite database\n');
+    database = await prepareFullDatabase();
+    report.database = {
+      cleanup: 'pending',
+      name: database,
+      scope: 'disposable-full-suite',
+    };
+  }
   const env = {
     ...process.env,
+    ...(database ? { DB_NAME: database } : {}),
     NODE_ENV: 'test',
     NODE_PATH: [
       process.env.NODE_PATH,
@@ -136,50 +182,59 @@ function main() {
     TENANT_RC_ARTIFACT_DIR: artifactRoot,
   };
 
-  for (const step of commandsFor(options)) {
-    const startedAt = Date.now();
-    process.stdout.write(`\n[Feature 9 RC] ${step.label}\n`);
-    const result = spawnSync(step.executable, step.args, {
-      cwd: step.cwd,
-      env,
-      stdio: 'inherit',
-    });
-    const evidence = {
-      args: step.args,
-      cwd: step.cwd,
-      durationMs: Date.now() - startedAt,
-      executable: step.executable,
-      label: step.label,
-      status: result.status,
-    };
-    report.commands.push(evidence);
-    if (result.status !== 0) {
-      report.completedAt = new Date().toISOString();
-      report.failedStep = step.label;
-      const reportPath = writeReport(artifactRoot, report);
-      process.stderr.write(`Feature 9 RC failed; report: ${reportPath}\n`);
-      process.exitCode = result.status || 1;
-      return;
+  try {
+    for (const step of commandsFor(options)) {
+      const startedAt = Date.now();
+      process.stdout.write(`\n[Feature 9 RC] ${step.label}\n`);
+      const result = spawnSync(step.executable, step.args, {
+        cwd: step.cwd,
+        env,
+        stdio: 'inherit',
+      });
+      const evidence = {
+        args: step.args,
+        cwd: step.cwd,
+        durationMs: Date.now() - startedAt,
+        executable: step.executable,
+        label: step.label,
+        status: result.status,
+      };
+      report.commands.push(evidence);
+      if (result.status !== 0) {
+        report.failedStep = step.label;
+        failedStatus = result.status || 1;
+        break;
+      }
+    }
+  } finally {
+    if (database) {
+      await dropDisposableDatabase(database);
+      report.database.cleanup = 'dropped';
     }
   }
   report.completedAt = new Date().toISOString();
-  report.ok = true;
+  report.ok = failedStatus === 0;
   const reportPath = writeReport(artifactRoot, report);
+  if (failedStatus) {
+    process.stderr.write(`Feature 9 RC failed; report: ${reportPath}\n`);
+    process.exitCode = failedStatus;
+    return;
+  }
   process.stdout.write(`\nFeature 9 RC passed; artifacts: ${artifactRoot}\n`);
   process.stdout.write(`Feature 9 RC command report: ${reportPath}\n`);
 }
 
 if (require.main === module) {
-  try {
-    main();
-  } catch (error) {
+  main().catch((error) => {
     process.stderr.write(`${error.stack || error.message}\n`);
     process.exitCode = 1;
-  }
+  });
 }
 
 module.exports = {
   assertSafeEnvironment,
   commandsFor,
+  disposableFullDatabaseName,
   parseArgs,
+  prepareFullDatabase,
 };

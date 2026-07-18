@@ -3,7 +3,10 @@ const { test } = require('node:test');
 const XLSX = require('xlsx');
 const db = require('../../models');
 const { createVisitsExportBuffer, getRevenueLtv } = require('../../src/services/visits-analytics.service');
-const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
+const {
+  createActiveTrainingFixture,
+  getDefaultTenantIds,
+} = require('../helpers/tenant-fixtures');
 
 test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and excludes unsafe sources', async () => {
   await db.sequelize.authenticate();
@@ -14,6 +17,7 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
   };
   let secondarySource;
   let source;
+  let trainingFixture;
   try {
     source = await db.ClientSource.create({ organizationId, name: `Revenue QA ${suffix}`, status: 'active' });
     secondarySource = await db.ClientSource.create({ organizationId, name: `Revenue QA other ${suffix}`, status: 'active' });
@@ -29,14 +33,21 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
       records.users.push(user);
       return user;
     };
+    trainingFixture = await createActiveTrainingFixture(db, { clubId, organizationId });
     const root = await makeUser('revenue-root');
     const leaf = await makeUser('revenue-leaf', { status: 'archived', mergedIntoUserId: root.id, mergedAt: new Date() });
-    const training = await makeUser('revenue-training', { isTraining: true });
+    const training = await makeUser('revenue-training', trainingFixture.ownership);
     const otherSourceClient = await makeUser('revenue-other-source', { sourceId: secondarySource.id });
     const firstVisit = await db.Visit.create({ organizationId, clubId, userId: leaf.id, scannedAt: '2088-01-01T10:00:00Z' });
     records.visits.push(firstVisit);
     records.visits.push(await db.Visit.create({ organizationId, clubId, userId: root.id, scannedAt: '2088-01-02T10:00:00Z', duplicateOfVisitId: firstVisit.id }));
-    records.visits.push(await db.Visit.create({ organizationId, clubId, userId: training.id, scannedAt: '2088-01-01T11:00:00Z', isTraining: true }));
+    records.visits.push(await db.Visit.create({
+      organizationId,
+      clubId,
+      userId: training.id,
+      scannedAt: '2088-01-01T11:00:00Z',
+      ...trainingFixture.ownership,
+    }));
     records.visits.push(await db.Visit.create({ organizationId, clubId, userId: otherSourceClient.id, scannedAt: '2088-01-01T12:00:00Z' }));
 
     const createReceiptItem = async ({ amount, clientId, dateTime, type }) => {
@@ -256,6 +267,11 @@ test('DB-backed revenue LTV deduplicates receipt links, signs PAYBACK and exclud
     if (records.users.length) {
       await db.User.update({ mergedIntoUserId: null }, { where: { id: records.users.map((row) => row.id) } });
       await db.User.destroy({ force: true, where: { id: records.users.map((row) => row.id) } });
+    }
+    if (trainingFixture) {
+      await trainingFixture.mode.destroy();
+      await trainingFixture.membership.destroy();
+      await trainingFixture.account.destroy({ force: true });
     }
     if (source) await source.destroy();
     if (secondarySource) await secondarySource.destroy();
