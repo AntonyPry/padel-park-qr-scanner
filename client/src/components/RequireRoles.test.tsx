@@ -123,15 +123,24 @@ describe('RequireRoles scope authority', () => {
     expect(screen.getByText('protected:/admin/bookings')).toBeInTheDocument();
   });
 
+  it('allows club manager to mount Shift reports despite membership trainer role', () => {
+    renderProtected('/admin/shift-reports', {
+      accountRole: 'trainer',
+      effectiveRole: 'manager',
+      membershipRole: 'trainer',
+    });
+
+    expect(screen.getByText('protected:/admin/shift-reports')).toBeInTheDocument();
+  });
+
   it.each([
     ['/admin/motivation', 'trainer', 'manager'],
     ['/admin/catalog', 'manager', 'trainer'],
-    ['/admin/shift-reports', 'trainer', 'manager'],
     ['/admin/shift-reports', 'manager', 'trainer'],
     ['/admin/finances', 'trainer', 'manager'],
     ['/admin/finances', 'manager', 'trainer'],
   ] as const)(
-    'does not mount composite page %s for membership %s and club %s',
+    'does not mount page %s for membership %s and club %s',
     async (path, membershipRole, effectiveRole) => {
       renderProtected(path, {
         accountRole: membershipRole,
