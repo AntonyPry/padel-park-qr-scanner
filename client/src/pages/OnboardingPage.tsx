@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Circle,
   Database,
+  ExternalLink,
   GraduationCap,
   ImageOff,
   ListChecks,
@@ -21,7 +22,12 @@ import {
   X,
   ZoomIn,
 } from 'lucide-react';
-import { Link, useParams, useSearchParams } from 'react-router-dom';
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from 'react-router-dom';
 import {
   cleanupOnboardingTrainingData,
   completeOnboardingTask,
@@ -62,7 +68,10 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/components/ui/toast';
 import { getApiErrorMessage } from '@/lib/api';
-import { clearStoredActiveOnboardingQuest } from '@/lib/onboarding-quest';
+import {
+  activateOnboardingQuest,
+  clearStoredActiveOnboardingQuest,
+} from '@/lib/onboarding-quest';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
 import { useTheme } from '@/lib/theme-context';
 import { cn } from '@/lib/utils';
@@ -1161,13 +1170,27 @@ function TaskDetailView({
   const StatusIcon = status.icon;
   const lessonUpdatedAt = formatCompletedAt(task.progress.lesson.updatedAt);
   const isUpdatedAfterCompletion = task.progress.lesson.isUpdatedAfterCompletion;
+  const navigate = useNavigate();
+  const canOpenInCrm = Boolean(task.route?.startsWith('/admin'));
+
+  const handleOpenInCrm = () => {
+    if (!canOpenInCrm) return;
+
+    const quest = activateOnboardingQuest(task, detail.selectedRole);
+    if (!quest) return;
+
+    navigate(quest.route);
+  };
 
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 sm:py-6 lg:px-8">
       <div className="flex flex-col gap-3 rounded-md border bg-background/80 p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
         <div className="min-w-0">
           <Button asChild variant="ghost" size="sm" className="-ml-2">
-            <Link to={`/admin/onboarding${roleQuery(detail.selectedRole)}`}>
+            <Link
+              to={`/admin/onboarding${roleQuery(detail.selectedRole)}`}
+              onClick={() => clearStoredActiveOnboardingQuest()}
+            >
               <ArrowLeft className="h-4 w-4" />
               К заданиям
             </Link>
@@ -1186,6 +1209,22 @@ function TaskDetailView({
           <h1 className="mt-1 truncate text-sm font-semibold text-foreground sm:text-base">
             {task.title}
           </h1>
+          <div className="mt-3 flex justify-start sm:justify-end">
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleOpenInCrm}
+              disabled={!canOpenInCrm}
+              title={
+                canOpenInCrm
+                  ? `Открыть ${task.route}`
+                  : 'Для этого задания нет CRM-маршрута'
+              }
+            >
+              <ExternalLink className="h-4 w-4" />
+              Открыть в CRM
+            </Button>
+          </div>
         </div>
       </div>
 

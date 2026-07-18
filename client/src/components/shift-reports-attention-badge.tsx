@@ -34,9 +34,7 @@ export function ShiftReportsAttentionBadge({
   const attention = useShiftReportsAttention();
   if (!attention) return null;
 
-  const statusClassName = attention.hasOverdue
-    ? 'bg-destructive text-destructive-foreground'
-    : 'bg-primary text-primary-foreground';
+  const statusClassName = 'bg-destructive text-destructive-foreground';
 
   if (placement === 'sidebar') {
     return (

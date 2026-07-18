@@ -179,6 +179,53 @@ test('completed onboarding task shows when instruction was updated afterwards', 
   );
 });
 
+test('knowledge motivation freshness is published for manager and owner', () => {
+  for (const [role, taskKey] of [
+    ['manager', 'manager.knowledge.motivation'],
+    ['owner', 'owner.knowledge.motivation'],
+  ]) {
+    const outdated = buildOnboardingResponse(
+      { id: 1, role },
+      role,
+      [
+        {
+          completedAt: new Date('2026-07-15T10:00:00.000Z'),
+          metadata: {},
+          status: 'completed',
+          taskKey,
+        },
+      ],
+    );
+    const outdatedTask = findResponseTask(outdated, taskKey);
+
+    assert.equal(Boolean(outdatedTask.progress.lesson.updatedAt), true);
+    assert.equal(outdatedTask.progress.lesson.isUpdatedAfterCompletion, true);
+
+    const acknowledged = buildOnboardingResponse(
+      { id: 1, role },
+      role,
+      [
+        {
+          completedAt: new Date('2026-07-15T10:00:00.000Z'),
+          metadata: {
+            lesson: {
+              contentReviewedAt: '2026-07-17T12:30:00.000+03:00',
+            },
+          },
+          status: 'completed',
+          taskKey,
+        },
+      ],
+    );
+    const acknowledgedTask = findResponseTask(acknowledged, taskKey);
+
+    assert.equal(
+      acknowledgedTask.progress.lesson.isUpdatedAfterCompletion,
+      false,
+    );
+  }
+});
+
 test('training mode persists account role and can be disabled', async () => {
   const rows = new Map();
   db.OnboardingTrainingMode = {
@@ -891,6 +938,32 @@ test('manager control route checkpoint requires active task context', () => {
   );
 });
 
+test('shift report templates route checkpoint requires active task context', () => {
+  assert.deepEqual(
+    listMatchingTasks('manager', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+    }).map((task) => task.key),
+    [],
+  );
+  assert.deepEqual(
+    listMatchingTasks('manager', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+      taskKey: 'manager.shift-report-templates.manage',
+    }).map((task) => task.key),
+    ['manager.shift-report-templates.manage'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('owner', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+      taskKey: 'owner.shift-report-templates.manage',
+    }).map((task) => task.key),
+    ['owner.shift-report-templates.manage'],
+  );
+});
+
 test('pilot client create card task does not match ordinary client creation', () => {
   assert.deepEqual(
     listMatchingTasks('admin', 'client.created', {
@@ -906,6 +979,68 @@ test('pilot client create card task does not match ordinary client creation', ()
     }).map((task) => task.key),
     ['admin.client.create'],
   );
+});
+
+test('recordEvent binds product action to exact request quest context only', async () => {
+  const progressRows = new Map();
+  const events = [];
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return null;
+    },
+  };
+  db.OnboardingProgress = {
+    async create(payload) {
+      progressRows.set(payload.taskKey, payload);
+      return payload;
+    },
+    async findOne({ where }) {
+      return progressRows.get(where.taskKey) || null;
+    },
+  };
+  db.OnboardingEvent = {
+    async create(payload) {
+      events.push(payload);
+      return payload;
+    },
+  };
+
+  const ordinary = await recordEvent(
+    { id: 10, role: 'admin' },
+    'client.created',
+    { payload: { id: 100, name: 'Обычный клиент' } },
+  );
+  const sibling = await recordEvent(
+    { id: 10, role: 'admin' },
+    'client.created',
+    {
+      onboardingContext: {
+        role: 'admin',
+        taskKey: 'admin.booking.review-schedule',
+      },
+      payload: { id: 101, name: 'Клиент с соседним заданием' },
+    },
+  );
+  const exact = await recordEvent(
+    { id: 10, role: 'owner' },
+    'client.created',
+    {
+      onboardingContext: {
+        role: 'admin',
+        taskKey: 'admin.client.create',
+      },
+      payload: { id: 102, name: 'Клиент из задания' },
+    },
+  );
+
+  assert.deepEqual(ordinary.progressedTaskKeys, []);
+  assert.deepEqual(sibling.progressedTaskKeys, []);
+  assert.deepEqual(exact.progressedTaskKeys, ['admin.client.create']);
+  assert.equal(exact.role, 'admin');
+  assert.equal(progressRows.size, 1);
+  assert.equal(events[0].payload.taskKey, undefined);
+  assert.equal(events[1].payload.taskKey, 'admin.booking.review-schedule');
+  assert.equal(events[2].payload.taskKey, 'admin.client.create');
 });
 
 test('recordEvent stores event and progresses matching tasks for training role', async () => {

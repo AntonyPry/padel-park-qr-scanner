@@ -36,8 +36,6 @@ export interface ShiftReportTemplateItem {
 
 export interface ShiftReportTemplate {
   archivedAt?: string | null;
-  appliesToRole?: string | null;
-  appliesToShiftType?: string | null;
   description?: string | null;
   gracePeriodMinutes: number;
   id: number;
@@ -109,8 +107,6 @@ export interface ShiftReportSaveAnswer {
 }
 
 export interface ShiftReportTemplatePayload {
-  appliesToRole?: string | null;
-  appliesToShiftType?: string | null;
   description?: string | null;
   gracePeriodMinutes?: number | string | null;
   name: string;

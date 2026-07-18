@@ -2324,6 +2324,42 @@ Repeat QA 16.07.2026:
 - учебные кассовые сессии, расходы, фото и linked Finance очищаются без production-данных;
 - screenshots являются реальными CRM screenshots, без generated/mock assets.
 
+## Sprint 51 - Shift Report Templates onboarding sync
+
+Цель: синхронизировать owner/manager onboarding по шаблонам отчетов смены после удаления устаревших полей области действия шаблона.
+
+Общий статус: `done` - onboarding-diff готов к final merged QA отдельным isolated commit; product branch `origin/codex/remove-shift-report-scope-fields` не менялся.
+
+Product source:
+
+- branch `origin/codex/remove-shift-report-scope-fields`;
+- commit `2472eb2147b68a50726d1147382fdbb18cd9f5eb`;
+- accepted product QA: server `301/301`, client `160/160`, migration `up/down/up`, OpenAPI/generated, owner/manager browser QA desktop/mobile.
+
+Сделано:
+
+- добавлены owner/manager onboarding tasks для управления шаблонами отчетов смены на `/admin/shift-settings`;
+- инструкции покрывают: открыть «Настройки смены» -> «Шаблоны отчетов», создать шаблон, открыть карточку, сохранить активный шаблон, архивировать, открыть archived read-only modal, восстановить и проверить список;
+- тексты объясняют, что отчет создается для конкретной смены, сотрудник определяется самой сменой, активные шаблоны применяются по расписанию;
+- из owner/manager lessons и screenshots исключены устаревшие поля области действия шаблона;
+- добавлены реальные CRM screenshots dark/light:
+  - `/onboarding/shift-report-templates/templates-list.png`;
+  - `/onboarding/shift-report-templates/create-modal.png`;
+  - `/onboarding/shift-report-templates/active-edit-modal.png`;
+  - `/onboarding/shift-report-templates/archived-readonly-modal.png`;
+  - `/onboarding-light/shift-report-templates/templates-list.png`;
+  - `/onboarding-light/shift-report-templates/create-modal.png`;
+  - `/onboarding-light/shift-report-templates/active-edit-modal.png`;
+  - `/onboarding-light/shift-report-templates/archived-readonly-modal.png`.
+
+Критерии приемки:
+
+- owner/manager lessons совпадают с create/edit/archive/read-only/restore UI product HEAD;
+- screenshots являются реальными CRM screenshots, без generated/mock assets, стрелок, номеров и рамок;
+- route остается `/admin/shift-settings`;
+- route-view checkpoint использует существующий безопасный `report.viewed` только при активном onboarding task;
+- product code, API/contracts, permissions, migrations и training data не менялись.
+
 ## Backlog - SaaS billing
 
 Статус: `postponed`.

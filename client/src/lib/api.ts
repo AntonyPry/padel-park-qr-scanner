@@ -4,6 +4,15 @@ import {
   clearActiveTenantContext,
   setTenantContextCapability,
 } from '@/lib/tenant-context';
+import {
+  clearStoredActiveOnboardingQuestAfterProgress,
+  clearStoredActiveOnboardingQuest,
+  getStoredActiveOnboardingQuestForPath,
+  ONBOARDING_COMPLETED_TASKS_HEADER,
+  ONBOARDING_PROGRESSED_TASKS_HEADER,
+  ONBOARDING_QUEST_ROLE_HEADER,
+  ONBOARDING_QUEST_TASK_HEADER,
+} from '@/lib/onboarding-quest';
 
 const AUTH_TOKEN_KEY = 'padel_park_auth_token';
 const TRAINING_MODE_KEY = 'padel_park_training_mode';
@@ -26,6 +35,7 @@ export function clearAuthToken() {
   clearStoredTrainingMode();
   clearActiveTenantContext();
   setTenantContextCapability(false);
+  clearStoredActiveOnboardingQuest();
 }
 
 export function getStoredTrainingMode() {
@@ -45,11 +55,37 @@ export function clearStoredTrainingMode() {
   localStorage.removeItem(TRAINING_MODE_KEY);
 }
 
+function readTaskKeysHeader(response: Response, headerName: string) {
+  return (response.headers.get(headerName) || '')
+    .split(',')
+    .map((taskKey) => taskKey.trim())
+    .filter(Boolean);
+}
+
+export function applyOnboardingProgressResponse(response: Response) {
+  if (!response.ok) return null;
+
+  return clearStoredActiveOnboardingQuestAfterProgress({
+    completedTaskKeys: readTaskKeysHeader(
+      response,
+      ONBOARDING_COMPLETED_TASKS_HEADER,
+    ),
+    progressedTaskKeys: readTaskKeysHeader(
+      response,
+      ONBOARDING_PROGRESSED_TASKS_HEADER,
+    ),
+  });
+}
+
 export async function apiFetch(input: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   const token = getAuthToken();
   const isFormData = init.body instanceof FormData;
   const trainingMode = getStoredTrainingMode();
+  const activeQuest =
+    typeof window === 'undefined'
+      ? null
+      : getStoredActiveOnboardingQuestForPath(window.location.pathname);
 
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
@@ -64,12 +100,21 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
     }
   }
 
+  if (activeQuest) {
+    headers.set(ONBOARDING_QUEST_TASK_HEADER, activeQuest.taskKey);
+    if (activeQuest.role) {
+      headers.set(ONBOARDING_QUEST_ROLE_HEADER, activeQuest.role);
+    }
+  }
+
   if (init.body && !isFormData && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
 
   const url = input.startsWith('http') ? input : `${API_URL}${input}`;
   const response = await fetch(url, { ...init, headers });
+
+  applyOnboardingProgressResponse(response);
 
   if (response.status === 401) {
     clearAuthToken();

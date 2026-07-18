@@ -2502,7 +2502,11 @@ async function resolveClientSourceForMutation(
   return source;
 }
 
-async function createClient(data, actor = null, tenant = null) {
+async function createClientWithEventResult(
+  data,
+  actor = null,
+  { onboardingContext, tenant = null } = {},
+) {
   const context = await resolveClientAccessContext(tenant);
   const name = normalizeClientName(data.name);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
@@ -2579,12 +2583,22 @@ async function createClient(data, actor = null, tenant = null) {
 
   await clientSkillMapService.syncActiveSkillsForClient(client, { tenant });
   const result = await getClientDetails(client.id, actor, tenant);
-  await onboardingService.recordEventSafe(actor, 'client.created', {
-    entityId: result.client?.id || client.id,
-    entityType: 'client',
-    payload: result.client || result,
-  });
-  return result;
+  const onboardingEventResult = await onboardingService.recordEventSafe(
+    actor,
+    'client.created',
+    {
+      entityId: result.client?.id || client.id,
+      entityType: 'client',
+      onboardingContext,
+      payload: result.client || result,
+    },
+  );
+  return { onboardingEventResult, result };
+}
+
+async function createClient(data, actor = null, tenant = null) {
+  const outcome = await createClientWithEventResult(data, actor, { tenant });
+  return outcome.result;
 }
 
 async function registerClientFromMessenger({
@@ -3509,6 +3523,7 @@ async function removeArchivedClient(id, tenant = null) {
 module.exports = {
   countClients,
   createClient,
+  createClientWithEventResult,
   createSavedView,
   deleteSavedView,
   findActiveByPhone,

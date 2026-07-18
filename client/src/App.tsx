@@ -7,6 +7,7 @@ import { PrepaymentsPageShell } from '@/components/prepayments-page-shell';
 import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
 import { LegacyShiftRedirect } from './components/legacy-shift-redirect';
+import { OnboardingQuestRouteObserver } from './components/onboarding-quest-route-observer';
 import { OnboardingRouteEvents } from './components/onboarding-route-events';
 import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { AuthProvider } from './lib/auth';
@@ -65,6 +66,7 @@ function App() {
               <AuthGate>
                 <RealtimeProvider>
                 <TrainingModeProvider>
+                <OnboardingQuestRouteObserver />
                 <OnboardingRouteEvents />
                 <Suspense fallback={<PageLoader />}>
                   <Routes>

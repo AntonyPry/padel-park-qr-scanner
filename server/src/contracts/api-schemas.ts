@@ -832,8 +832,6 @@ const shiftReportScheduleConfig = z
   .passthrough();
 const shiftReportTemplateBody = z
   .object({
-    appliesToRole: z.union([accountRoleValue, z.literal(''), z.null()]).optional(),
-    appliesToShiftType: optionalString,
     description: optionalString,
     gracePeriodMinutes: optionalNonNegativeNumberValue,
     name: nameString,
@@ -841,8 +839,7 @@ const shiftReportTemplateBody = z
     scheduleType: shiftReportScheduleType,
     sortOrder: optionalNumberValue,
     status: shiftReportTemplateStatus.optional(),
-  })
-  .passthrough();
+  });
 const shiftReportTemplateItemBody = z
   .object({
     itemType: shiftReportItemType,
@@ -1781,7 +1778,7 @@ const apiSchemas = {
         status: z.enum(['active', 'archived', 'all']).optional(),
       })
       .passthrough(),
-    templateUpdateBody: shiftReportTemplateBody.partial().passthrough(),
+    templateUpdateBody: shiftReportTemplateBody.partial(),
     withId: { params: idParams },
   },
   shiftCash: {

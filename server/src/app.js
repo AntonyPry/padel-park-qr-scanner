@@ -22,13 +22,22 @@ const {
 const {
   assertTenantCapabilityDependencies,
 } = require('./tenant-context/capabilities');
+const {
+  ONBOARDING_COMPLETED_TASKS_HEADER,
+  ONBOARDING_PROGRESSED_TASKS_HEADER,
+} = require('./middleware/onboarding-quest');
 
 function createApp({ onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
   const app = express();
 
   app.set('onTenantInitialized', onTenantInitialized);
-  app.use(cors());
+  app.use(cors({
+    exposedHeaders: [
+      ONBOARDING_COMPLETED_TASKS_HEADER,
+      ONBOARDING_PROGRESSED_TASKS_HEADER,
+    ],
+  }));
   app.use(requestTiming);
   app.use('/api', tenantFoundationGate);
   const providerIngress = [
