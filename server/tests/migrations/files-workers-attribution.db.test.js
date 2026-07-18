@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
 const migration = require('../../migrations/20260715120000-add-tenant-transcription-job-attribution');
+const finalEnforcementMigration = require('../../migrations/20260720100000-add-final-tenant-enforcement');
 
 test('transcription tenant attribution migration fails closed, backfills, rolls back and reapplies without data loss', async () => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for DB-backed migration tests');
@@ -11,10 +12,13 @@ test('transcription tenant attribution migration fails closed, backfills, rolls 
   const queryInterface = db.sequelize.getQueryInterface();
   const sequelizeTypes = db.Sequelize;
   let callId = null;
+  let finalEnforcementRemoved = false;
 
   try {
     await db.TelephonyTranscriptSegment.destroy({ where: {} });
     await db.TelephonyTranscriptionJob.destroy({ where: {} });
+    await finalEnforcementMigration.down(queryInterface, sequelizeTypes);
+    finalEnforcementRemoved = true;
     await migration.down(queryInterface, sequelizeTypes);
 
     const [organization] = await db.sequelize.query(
@@ -90,12 +94,40 @@ test('transcription tenant attribution migration fails closed, backfills, rolls 
     assert.ok(Number(reapplied.clubId) > 0);
     assert.equal(reapplied.transcriptText, 'preserve-me');
     assert.equal(Number(reapplied.attemptCount), 4);
+
+    await db.sequelize.query(
+      'DELETE FROM TelephonyTranscriptionJobs WHERE telephonyCallId = :callId',
+      { replacements: { callId } },
+    );
+    await db.sequelize.query(
+      'DELETE FROM TelephonyCalls WHERE id = :callId',
+      { replacements: { callId } },
+    );
+    callId = null;
+    await finalEnforcementMigration.up(queryInterface, sequelizeTypes);
+    finalEnforcementRemoved = false;
   } finally {
     if (callId) {
+      await db.sequelize.query(
+        'DELETE FROM TelephonyTranscriptionJobs WHERE telephonyCallId = :callId',
+        { replacements: { callId } },
+      ).catch(() => {});
       await db.sequelize.query(
         'DELETE FROM TelephonyCalls WHERE id = :callId',
         { replacements: { callId } },
       ).catch(() => {});
+    }
+    await db.sequelize.query(
+      `DELETE c FROM Clubs c
+        JOIN Organizations o ON o.id = c.organizationId
+       WHERE o.slug = 'migration-ambiguous'`,
+    ).catch(() => {});
+    await db.sequelize.query(
+      "DELETE FROM Organizations WHERE slug = 'migration-ambiguous'",
+    ).catch(() => {});
+    if (finalEnforcementRemoved) {
+      await migration.up(queryInterface, sequelizeTypes);
+      await finalEnforcementMigration.up(queryInterface, sequelizeTypes);
     }
   }
 });
