@@ -122,6 +122,78 @@ async function expectDatabaseReject(promise, pattern) {
   );
 }
 
+async function ownershipInventory(schema) {
+  const queries = [
+    `SELECT * FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()
+      AND (TABLE_NAME LIKE 'Onboarding%' OR TABLE_NAME='TenantOnboardingMigrationPlans'
+        OR COLUMN_NAME='trainingSessionId')
+      ORDER BY TABLE_NAME,ORDINAL_POSITION`,
+    `SELECT * FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE()
+      AND (TABLE_NAME LIKE 'Onboarding%' OR TABLE_NAME='TenantOnboardingMigrationPlans'
+        OR INDEX_NAME='training_session_idx')
+      ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX`,
+    `SELECT * FROM information_schema.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA=DATABASE()
+      AND (TABLE_NAME LIKE 'Onboarding%' OR CONSTRAINT_NAME LIKE 'f83_%')
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME,ORDINAL_POSITION`,
+    `SELECT * FROM information_schema.REFERENTIAL_CONSTRAINTS WHERE CONSTRAINT_SCHEMA=DATABASE()
+      AND (TABLE_NAME LIKE 'Onboarding%' OR CONSTRAINT_NAME LIKE 'f83_%')
+      ORDER BY TABLE_NAME,CONSTRAINT_NAME`,
+    `SELECT TRIGGER_NAME,EVENT_MANIPULATION,EVENT_OBJECT_TABLE,ACTION_ORDER,ACTION_STATEMENT,
+            ACTION_ORIENTATION,ACTION_TIMING,SQL_MODE,CHARACTER_SET_CLIENT,
+            COLLATION_CONNECTION,DATABASE_COLLATION
+       FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()
+        AND (TRIGGER_NAME LIKE 'trg_onboarding_%' OR TRIGGER_NAME LIKE 'trg_f83_%')
+      ORDER BY TRIGGER_NAME`,
+    'SELECT * FROM OnboardingProgresses ORDER BY id',
+    'SELECT * FROM OnboardingTrainingModes ORDER BY id',
+    'SELECT * FROM OnboardingEvents ORDER BY id',
+    'SELECT * FROM TenantOnboardingMigrationPlans ORDER BY featureKey',
+  ];
+  const output = [];
+  for (let index = 0; index < queries.length; index += 1) {
+    const rows = await schema.query(queries[index], { type: SequelizePackage.QueryTypes.SELECT });
+    output.push(index === 1
+      ? rows.map(({ CARDINALITY: _volatileCardinality, ...row }) => row)
+      : rows);
+  }
+  return JSON.parse(JSON.stringify(output));
+}
+
+async function expectMutationFreeOwnershipRefusal(schema, operation) {
+  const before = await ownershipInventory(schema);
+  await assert.rejects(
+    operation(),
+    (error) => error.code === 'TENANT_ONBOARDING_CLEANUP_OWNERSHIP_LOST' &&
+      error.operatorRepair === true,
+  );
+  assert.deepEqual(await ownershipInventory(schema), before);
+}
+
+async function fixtureInventory(schema) {
+  const tables = [
+    'Accounts', 'Memberships', 'MembershipClubAccesses', 'Staffs', 'Users',
+    'Visits', 'ScannerEvents', 'Receipts', 'ReceiptItems', 'Shifts', 'Finances',
+    'Utilizations', 'Bookings', 'BookingChangeLogs', 'ClientBases', 'CallTasks',
+    'CallTaskClients', 'CallTaskAttempts', 'TrainingNotes',
+  ];
+  const output = {};
+  for (const table of tables) {
+    output[table] = await schema.query(`SELECT * FROM \`${table}\` ORDER BY 1`, {
+      type: SequelizePackage.QueryTypes.SELECT,
+    });
+  }
+  return JSON.parse(JSON.stringify(output));
+}
+
+async function expectMutationFreeFixtureRefusal(schema, operation) {
+  const before = await fixtureInventory(schema);
+  await assert.rejects(
+    operation(),
+    (error) => error.code === 'TENANT_SEEDER_ARTIFACT_OWNERSHIP_LOST',
+  );
+  assert.deepEqual(await fixtureInventory(schema), before);
+}
+
 test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture matrix', async () => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for DB-backed tenant tests');
   const database = databaseName();
@@ -247,7 +319,7 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
       'onboarding_progress_account_idx',
     );
 
-    for (const stage of ['after_columns', 'after_constraints']) {
+    for (const stage of ['after_columns', 'after_backfill', 'after_constraints']) {
       process.env.TENANT_ONBOARDING_MIGRATION_FAIL_STEP = stage;
       await assert.rejects(
         migration.up(queryInterface, SequelizePackage),
@@ -276,6 +348,141 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
     assert.ok(migrated.sessionId);
     assert.equal(migrated.trainingSessionId, migrated.sessionId);
     assert.equal(migrated.artifactSession, migrated.sessionId);
+
+    const artifactPlan = require('../../src/onboarding/migration-artifact-plan');
+    const capturedPlan = await artifactPlan.loadPlan(queryInterface);
+    const progressIndex = capturedPlan.artifacts.find((artifact) =>
+      artifact.kind === 'index' && artifact.name === 'onboarding_training_modes_account_idx');
+    assert.ok(progressIndex);
+    await schema.query('DROP INDEX onboarding_training_modes_account_idx ON OnboardingTrainingModes');
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(
+      'CREATE INDEX onboarding_training_modes_account_idx ON OnboardingTrainingModes (accountId)',
+    );
+    await schema.query('DROP INDEX onboarding_training_modes_account_idx ON OnboardingTrainingModes');
+    await schema.query(
+      'CREATE UNIQUE INDEX onboarding_training_modes_account_idx ON OnboardingTrainingModes (accountId)',
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query('DROP INDEX onboarding_training_modes_account_idx ON OnboardingTrainingModes');
+    await schema.query(
+      'CREATE INDEX onboarding_training_modes_account_idx ON OnboardingTrainingModes (accountId)',
+    );
+
+    await schema.query(
+      'ALTER TABLE OnboardingProgresses DROP FOREIGN KEY onboardingprogresses_club_fk',
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(
+      `ALTER TABLE OnboardingProgresses ADD CONSTRAINT onboardingprogresses_club_fk
+        FOREIGN KEY (clubId) REFERENCES Clubs(id) ON UPDATE CASCADE ON DELETE RESTRICT`,
+    );
+    await schema.query(
+      'ALTER TABLE OnboardingProgresses DROP FOREIGN KEY onboardingprogresses_club_fk',
+    );
+    await schema.query(
+      `ALTER TABLE OnboardingProgresses ADD CONSTRAINT onboardingprogresses_club_fk
+        FOREIGN KEY (clubId) REFERENCES Clubs(id) ON UPDATE CASCADE ON DELETE CASCADE`,
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(
+      'ALTER TABLE OnboardingProgresses DROP FOREIGN KEY onboardingprogresses_club_fk',
+    );
+    await schema.query(
+      `ALTER TABLE OnboardingProgresses ADD CONSTRAINT onboardingprogresses_club_fk
+        FOREIGN KEY (clubId) REFERENCES Clubs(id) ON UPDATE CASCADE ON DELETE RESTRICT`,
+    );
+
+    const deleteTrigger = 'trg_onboarding_event_delete_training_only';
+    const deleteBody = migration._private.TRIGGERS[deleteTrigger];
+    await schema.query(`DROP TRIGGER ${deleteTrigger}`);
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(`CREATE TRIGGER ${deleteTrigger} BEFORE DELETE ON OnboardingEvents FOR EACH ROW ${deleteBody}`);
+    await schema.query(`DROP TRIGGER ${deleteTrigger}`);
+    await schema.query(`CREATE TRIGGER ${deleteTrigger} AFTER DELETE ON OnboardingEvents FOR EACH ROW ${deleteBody}`);
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(`DROP TRIGGER ${deleteTrigger}`);
+    await schema.query(`CREATE TRIGGER ${deleteTrigger} BEFORE DELETE ON OnboardingEvents FOR EACH ROW ${deleteBody}`);
+    await schema.query(`DROP TRIGGER ${deleteTrigger}`);
+    await schema.query(
+      `CREATE TRIGGER ${deleteTrigger} BEFORE DELETE ON OnboardingEvents FOR EACH ROW
+       ${deleteBody.replace('Production OnboardingEvent rows are immutable', 'production OnboardingEvent rows are immutable')}`,
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(`DROP TRIGGER ${deleteTrigger}`);
+    await schema.query(`CREATE TRIGGER ${deleteTrigger} BEFORE DELETE ON OnboardingEvents FOR EACH ROW ${deleteBody}`);
+
+    const legacyProgress = capturedPlan.legacy.find((item) => item.table === 'OnboardingProgresses');
+    await schema.query(
+      `CREATE INDEX \`${legacyProgress.name}\` ON OnboardingProgresses (status)`,
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(`DROP INDEX \`${legacyProgress.name}\` ON OnboardingProgresses`);
+
+    const legacyAccountColumn = legacyProgress.columns.accountId;
+    const legacyAccountNullSql = legacyAccountColumn.IS_NULLABLE === 'YES' ? 'NULL' : 'NOT NULL';
+    await schema.query(
+      `ALTER TABLE OnboardingProgresses MODIFY accountId ${legacyAccountColumn.COLUMN_TYPE}
+        ${legacyAccountNullSql} COMMENT 'tamper'`,
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(
+      `ALTER TABLE OnboardingProgresses MODIFY accountId ${legacyAccountColumn.COLUMN_TYPE}
+        ${legacyAccountNullSql} COMMENT ${schema.escape(legacyAccountColumn.COLUMN_COMMENT || '')}`,
+    );
+
+    const [[savedPlanRow]] = await schema.query(
+      'SELECT planJson FROM TenantOnboardingMigrationPlans WHERE featureKey=:featureKey',
+      { replacements: { featureKey: artifactPlan.PLAN_KEY } },
+    );
+    await schema.query(
+      "ALTER TABLE TenantOnboardingMigrationPlans MODIFY planJson LONGTEXT NOT NULL COMMENT 'tamper'",
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(
+      "ALTER TABLE TenantOnboardingMigrationPlans MODIFY planJson LONGTEXT NOT NULL COMMENT ''",
+    );
+    await schema.query('ALTER TABLE TenantOnboardingMigrationPlans DROP COLUMN planJson');
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => migration.down(queryInterface, SequelizePackage),
+    );
+    await schema.query('ALTER TABLE TenantOnboardingMigrationPlans ADD COLUMN planJson LONGTEXT NULL');
+    await schema.query(
+      'UPDATE TenantOnboardingMigrationPlans SET planJson=:planJson WHERE featureKey=:featureKey',
+      { replacements: { featureKey: artifactPlan.PLAN_KEY, planJson: savedPlanRow.planJson } },
+    );
+    await schema.query('ALTER TABLE TenantOnboardingMigrationPlans MODIFY planJson LONGTEXT NOT NULL');
 
     await migration.down(queryInterface, SequelizePackage);
     assert.equal(await migration._private.classify(queryInterface), 'legacy');
@@ -308,6 +515,37 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
         organizationId: Number(defaultTenant.organizationId),
       },
     );
+    await queryInterface.bulkInsert('Receipts', [{
+      cash: 777,
+      cashless: 0,
+      clubId: Number(defaultTenant.clubId),
+      createdAt: now,
+      dateTime: now,
+      employeeId: 'production',
+      evotorId: 'production-receipt-id-collision',
+      id: 10000,
+      organizationId: Number(defaultTenant.organizationId),
+      paymentSource: 'CASH',
+      shiftId: 'production-shift',
+      totalAmount: 777,
+      totalDiscount: 0,
+      totalTax: 0,
+      type: 'SELL',
+      updatedAt: now,
+    }]);
+    const bulkCollisionBefore = await schema.query(
+      'SELECT * FROM Receipts WHERE id BETWEEN 10000 AND 10099 ORDER BY id',
+      { type: SequelizePackage.QueryTypes.SELECT },
+    );
+    await assert.rejects(
+      bulkReceiptSeeder.up(queryInterface, SequelizePackage),
+      (error) => error.code === 'TENANT_SEEDER_ARTIFACT_OWNERSHIP_LOST',
+    );
+    assert.deepEqual(await schema.query(
+      'SELECT * FROM Receipts WHERE id BETWEEN 10000 AND 10099 ORDER BY id',
+      { type: SequelizePackage.QueryTypes.SELECT },
+    ), bulkCollisionBefore);
+    await queryInterface.bulkDelete('Receipts', { id: 10000 });
     await bulkReceiptSeeder.up(queryInterface, SequelizePackage);
     assert.equal(Number((await selectOne(schema, `
       SELECT COUNT(*) count FROM Receipts
@@ -344,6 +582,140 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
       beforeCollision,
     );
     await queryInterface.bulkDelete('CatalogRules', { id: 910000 });
+
+    await queryInterface.bulkInsert('Users', [{
+      createdAt: now,
+      name: 'Production prefix collision',
+      organizationId: Number(defaultTenant.organizationId),
+      phone: '+79099999999',
+      source: 'production',
+      status: 'active',
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.up(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('Users', { phone: '+79099999999' });
+
+    await queryInterface.bulkInsert('Staffs', [{
+      createdAt: now,
+      name: 'Production staff collision',
+      organizationId: Number(defaultTenant.organizationId),
+      phone: '+79000000199',
+      role: 'Администратор',
+      status: 'active',
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.down(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('Staffs', { phone: '+79000000199' });
+
+    const productionDemoAccount = await insertAccountAndMembership(schema, {
+      email: 'production@padelpark.demo',
+      organizationId: Number(defaultTenant.organizationId),
+      role: 'viewer',
+    });
+    await queryInterface.bulkInsert('MembershipClubAccesses', [{
+      clubId: Number(defaultTenant.clubId),
+      createdAt: now,
+      membershipId: productionDemoAccount.membershipId,
+      organizationId: Number(defaultTenant.organizationId),
+      roleOverride: null,
+      status: 'active',
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.up(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('MembershipClubAccesses', {
+      membershipId: productionDemoAccount.membershipId,
+    });
+    await queryInterface.bulkDelete('Memberships', { id: productionDemoAccount.membershipId });
+    await queryInterface.bulkDelete('Accounts', { id: productionDemoAccount.accountId });
+
+    await queryInterface.bulkInsert('Receipts', [{
+      cash: 888,
+      cashless: 0,
+      clubId: Number(defaultTenant.clubId),
+      createdAt: now,
+      dateTime: now,
+      employeeId: 'production',
+      evotorId: 'production-demo-range-collision',
+      id: 20099,
+      organizationId: Number(defaultTenant.organizationId),
+      paymentSource: 'CASH',
+      shiftId: 'production',
+      totalAmount: 888,
+      totalDiscount: 0,
+      totalTax: 0,
+      type: 'SELL',
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.down(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('Receipts', { id: 20099 });
+
+    await queryInterface.bulkInsert('Shifts', [{
+      actualHours: 1,
+      adminName: 'Production',
+      clubId: Number(defaultTenant.clubId),
+      comment: '[demo] production collision',
+      createdAt: now,
+      date: '2026-05-14',
+      hours: 1,
+      status: 'closed',
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.up(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('Shifts', { comment: '[demo] production collision' });
+
+    await queryInterface.bulkInsert('Finances', [{
+      amount: 999,
+      category: 'Production',
+      clubId: Number(defaultTenant.clubId),
+      comment: '[demo] production finance collision',
+      createdAt: now,
+      date: '2026-05-14',
+      organizationId: Number(defaultTenant.organizationId),
+      type: 'income',
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.down(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('Finances', { comment: '[demo] production finance collision' });
+
+    await queryInterface.bulkInsert('Utilizations', [{
+      booked1: 1,
+      booked2: 1,
+      clubId: Number(defaultTenant.clubId),
+      createdAt: now,
+      date: '2026-05-14',
+      organizationId: Number(defaultTenant.organizationId),
+      sessions1: 1,
+      sessions2: 1,
+      updatedAt: now,
+    }]);
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoCrmSeeder.up(queryInterface, SequelizePackage),
+    );
+    await queryInterface.bulkDelete('Utilizations', {
+      clubId: Number(defaultTenant.clubId),
+      date: '2026-05-14',
+      organizationId: Number(defaultTenant.organizationId),
+    });
+
     await demoCrmSeeder.up(queryInterface, SequelizePackage);
     assert.equal(Number((await selectOne(schema, `
       SELECT COUNT(*) count FROM Accounts account
@@ -362,6 +734,27 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
       SELECT COUNT(*) count FROM Receipts WHERE id BETWEEN 20000 AND 29999
         AND organizationId=:organizationId AND clubId=:clubId
     `, defaultTenant)).count), 44);
+    await demoBookingSeeder.up(queryInterface, SequelizePackage);
+    const demoBooking = await selectOne(
+      schema,
+      `SELECT id,comment FROM Bookings WHERE organizationId=:organizationId AND clubId=:clubId
+        AND comment='Демо: бронь по телефону, оплатили безналом.'`,
+      defaultTenant,
+    );
+    assert.ok(demoBooking, 'exact demo booking fixture must be created');
+    await schema.query(
+      "UPDATE Bookings SET comment='Демо: production collision' WHERE id=:id",
+      { replacements: { id: demoBooking.id } },
+    );
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => demoBookingSeeder.down(queryInterface, SequelizePackage),
+    );
+    await schema.query(
+      'UPDATE Bookings SET comment=:comment WHERE id=:id',
+      { replacements: { comment: demoBooking.comment, id: demoBooking.id } },
+    );
+    await demoBookingSeeder.down(queryInterface, SequelizePackage);
     await schema.query(
       "UPDATE Memberships SET status='inactive' WHERE id=:membershipId",
       { replacements: { membershipId: tenantA.membershipId } },
@@ -392,6 +785,24 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
       "SELECT COUNT(*) count FROM Accounts WHERE email LIKE '%@padelpark.demo'",
     )).count), 0);
 
+    performanceFixture._private.setFixtureContext({
+      accountId: tenantA.accountId,
+      clubId: Number(defaultTenant.clubId),
+      organizationId: Number(defaultTenant.organizationId),
+    });
+    await db.User.create({
+      name: 'Production performance-prefix collision',
+      organizationId: Number(defaultTenant.organizationId),
+      phone: '+7988999999',
+      source: 'production',
+      status: 'active',
+    });
+    await expectMutationFreeFixtureRefusal(
+      schema,
+      () => performanceFixture._private.cleanup(),
+    );
+    await db.User.destroy({ where: { phone: '+7988999999' } });
+
     await queryInterface.bulkInsert('Organizations', [{
       createdAt: now,
       name: 'Tenant B',
@@ -417,6 +828,45 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
       email: 'owner-b-onboarding@test.local',
       organizationId: Number(organizationB.id),
     });
+
+    await schema.query(
+      `INSERT INTO Memberships
+        (organizationId,accountId,role,status,createdAt,updatedAt)
+       VALUES (:organizationId,:accountId,'owner','active',:now,:now)`,
+      { replacements: {
+        accountId: tenantA.accountId,
+        now,
+        organizationId: Number(organizationB.id),
+      } },
+    );
+    const duplicateMembership = await selectOne(
+      schema,
+      `SELECT id FROM Memberships WHERE organizationId=:organizationId AND accountId=:accountId`,
+      { accountId: tenantA.accountId, organizationId: Number(organizationB.id) },
+    );
+    await schema.query(
+      `INSERT INTO OnboardingProgresses
+        (accountId,organizationId,membershipId,clubId,role,taskKey,status,
+         completedAt,metadata,createdAt,updatedAt)
+       SELECT accountId,:organizationId,:membershipId,NULL,role,taskKey,status,
+              completedAt,metadata,:now,:now
+         FROM OnboardingProgresses WHERE accountId=:accountId LIMIT 1`,
+      { replacements: {
+        accountId: tenantA.accountId,
+        membershipId: duplicateMembership.id,
+        now,
+        organizationId: Number(organizationB.id),
+      } },
+    );
+    await expectMutationFreeOwnershipRefusal(
+      schema,
+      () => schema.transaction((transaction) =>
+        migration._private.assertCleanupOwnership(queryInterface, transaction)),
+    );
+    await queryInterface.bulkDelete('OnboardingProgresses', {
+      membershipId: duplicateMembership.id,
+    });
+    await queryInterface.bulkDelete('Memberships', { id: duplicateMembership.id });
 
     await assert.rejects(migration.down(queryInterface, SequelizePackage), /exact active default/);
     assert.equal(await migration._private.classify(queryInterface), 'ready');
@@ -491,6 +941,91 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
       organizationId: Number(organizationB.id),
       scope: 'club',
     });
+    const overrideTenant = await insertAccountAndMembership(schema, {
+      email: 'role-override-onboarding@test.local',
+      organizationId: Number(defaultTenant.organizationId),
+      role: 'admin',
+    });
+    await queryInterface.bulkInsert('MembershipClubAccesses', [{
+      clubId: Number(defaultTenant.clubId),
+      createdAt: now,
+      membershipId: overrideTenant.membershipId,
+      organizationId: Number(defaultTenant.organizationId),
+      roleOverride: 'trainer',
+      status: 'active',
+      updatedAt: now,
+    }]);
+    const overrideActor = { id: overrideTenant.accountId, role: 'admin' };
+    const trainerContext = await tenantContextService.resolveTenantContext({
+      accountId: overrideTenant.accountId,
+      clubId: Number(defaultTenant.clubId),
+      organizationId: Number(defaultTenant.organizationId),
+      scope: 'club',
+    });
+    assert.equal(trainerContext.membershipRole, 'admin');
+    assert.equal(trainerContext.effectiveRole, 'trainer');
+    await onboardingService.setTrainingMode(
+      overrideActor,
+      { isEnabled: true, role: 'trainer' },
+      trainerContext,
+    );
+    const overrideEvent = await onboardingService.recordClientEvent(overrideActor, {
+      entityId: 'trainer.client.skill-map-review',
+      eventKey: 'trainer.viewed',
+      role: 'trainer',
+    }, trainerContext);
+    assert.equal(overrideEvent.event.role, 'trainer');
+    await schema.query(
+      `UPDATE MembershipClubAccesses SET roleOverride='viewer'
+        WHERE membershipId=:membershipId AND clubId=:clubId`,
+      { replacements: {
+        clubId: Number(defaultTenant.clubId),
+        membershipId: overrideTenant.membershipId,
+      } },
+    );
+    await expectTenantDenial(onboardingService.getOverview(
+      overrideActor,
+      { role: 'trainer' },
+      trainerContext,
+    ));
+    await expectDatabaseReject(
+      schema.query(
+        `INSERT INTO OnboardingEvents
+          (accountId,organizationId,membershipId,clubId,trainingSessionId,idempotencyKey,
+           role,eventKey,entityType,entityId,isTraining,payload,completedTaskKeys,createdAt,updatedAt)
+         VALUES (:accountId,:organizationId,:membershipId,:clubId,NULL,'stale-override-event',
+           'trainer','trainer.viewed','task','stale-override',0,'{}','[]',NOW(),NOW())`,
+        { replacements: {
+          accountId: overrideTenant.accountId,
+          clubId: Number(defaultTenant.clubId),
+          membershipId: overrideTenant.membershipId,
+          organizationId: Number(defaultTenant.organizationId),
+        } },
+      ),
+      /tenant authority mismatch/,
+    );
+    const viewerContext = await tenantContextService.resolveTenantContext({
+      accountId: overrideTenant.accountId,
+      clubId: Number(defaultTenant.clubId),
+      organizationId: Number(defaultTenant.organizationId),
+      scope: 'club',
+    });
+    assert.equal(viewerContext.effectiveRole, 'viewer');
+    await onboardingService.cleanupTrainingData(
+      overrideActor,
+      { role: 'trainer' },
+      viewerContext,
+    );
+    await onboardingService.setTrainingMode(
+      overrideActor,
+      { isEnabled: true, role: 'viewer' },
+      viewerContext,
+    );
+    await expectTenantDenial(onboardingService.getOverview(
+      actorA,
+      { role: 'viewer' },
+      viewerContext,
+    ));
     await onboardingService.setTrainingMode(actorA, { isEnabled: true, role: 'admin' }, clubContextA);
     await onboardingService.setTrainingMode(actorB, { isEnabled: true, role: 'admin' }, clubContextB);
     const markerA = await onboardingService.getTrainingDataMarker(actorA, clubContextA);
@@ -524,6 +1059,37 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
         webId: 'tenant-a-production',
       },
     ]);
+    const trainingUserA = await db.User.findOne({ where: { webId: 'tenant-a-training' } });
+    await assert.rejects(
+      trainingUserA.update({ trainingSessionId: markerB.trainingSessionId }),
+      (error) => /ownership is immutable/.test(String(error?.parent?.sqlMessage || error)),
+    );
+    await expectDatabaseReject(
+      schema.query(
+        `UPDATE Users SET trainingRole='viewer' WHERE id=:id`,
+        { replacements: { id: trainingUserA.id } },
+      ),
+      /ownership is immutable/,
+    );
+    await expectDatabaseReject(
+      queryInterface.bulkUpdate(
+        'Users',
+        { trainingAccountId: tenantB.accountId },
+        { id: trainingUserA.id },
+      ),
+      /ownership is immutable/,
+    );
+    await expectDatabaseReject(
+      db.User.create({
+        ...markerA,
+        name: 'Cross tenant forged training',
+        organizationId: Number(organizationB.id),
+        phone: '+70000000005',
+        source: 'test',
+        webId: 'cross-tenant-forged-training',
+      }),
+      /session mismatch/,
+    );
 
     const eventA1 = await onboardingService.recordClientEvent(actorA, {
       entityId: 'audit-page',
@@ -589,6 +1155,29 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
     assert.equal(await db.OnboardingTrainingMode.count({
       where: { membershipId: tenantA.membershipId, sessionId: null },
     }), 1);
+
+    await onboardingService.setTrainingMode(actorA, { isEnabled: true, role: 'admin' }, clubContextA);
+    const raceMarker = await onboardingService.getTrainingDataMarker(actorA, clubContextA);
+    const writer = await db.sequelize.transaction();
+    await db.User.create({
+      ...raceMarker,
+      name: 'Cleanup race artifact',
+      organizationId: Number(defaultTenant.organizationId),
+      phone: '+70000000006',
+      source: 'test',
+      webId: 'cleanup-race-artifact',
+    }, { transaction: writer });
+    let cleanupSettled = false;
+    const racedCleanup = onboardingService.cleanupTrainingData(
+      actorA,
+      { role: 'admin' },
+      clubContextA,
+    ).finally(() => { cleanupSettled = true; });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(cleanupSettled, false, 'cleanup must wait for the writer session lease');
+    await writer.commit();
+    await racedCleanup;
+    assert.equal(await db.User.count({ where: { webId: 'cleanup-race-artifact' } }), 0);
 
     await assert.rejects(
       accountSeederAdapter.runInitializedSeederBatch(

@@ -20,6 +20,8 @@ mysqldump --single-transaction --routines --triggers --default-character-set=utf
 
 The uploads manifest must contain schema/version, `generatedAt`, storage root, and relative opaque storage object keys with file counts/bytes/checksums grouped by tenant and domain. It must not copy user-supplied original filename metadata, credentials, phones, recording URLs or transcript/audio content.
 
+The installation manifest has five mandatory, unique artifact labels: `database`, `tenant-storage`, `legacy-shift-reports`, `legacy-shift-cash` and `attachment-orphan-detector`. Empty inventories, unknown or duplicate labels, missing roots, symlinks and special files are refused. Restore overrides must map one-to-one to these labels; they cannot substitute a different artifact class.
+
 Create and verify the installation-wide manifest after the dump and storage snapshot are complete:
 
 ```bash
@@ -47,7 +49,7 @@ npm run tenant:backup:manifest -- \
   --attachment-manifest=/restore/attachments.json
 ```
 
-The verifier fails on missing files, checksum/size mismatches and files that were added after manifest creation. The retained attachment audit is the DB-to-file orphan detector for shift reports; Shift Cash remains a separately inventoried legacy root until its DB-to-file detector is implemented.
+The verifier fails on missing files, checksum/size mismatches and files that were added after manifest creation. It parses the retained attachment detector rather than trusting only that file's checksum: `checksumMismatch`, `invalidMetadata`, `missingLegacy`, `missingStorage`, orphan counts and orphan lists must all be empty/zero at both capture and restore verification. The retained attachment audit is the DB-to-file orphan detector for shift reports; Shift Cash remains a separately inventoried legacy root until its DB-to-file detector is implemented.
 
 ## Restore verification
 

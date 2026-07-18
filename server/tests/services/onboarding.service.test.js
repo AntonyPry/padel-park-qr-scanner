@@ -532,10 +532,18 @@ test('owner can inspect training data summary by role', async () => {
   );
 });
 
-test('non-owner cannot inspect training data summary', async () => {
+test('non-owner can inspect only the effective-role training session', async () => {
+  const summary = await getTrainingDataSummary(
+    { id: 2, role: 'manager' },
+    { role: 'manager' },
+  );
+  assert.equal(summary.role, 'manager');
   await assert.rejects(
-    () => getTrainingDataSummary({ id: 2, role: 'manager' }),
-    /Учебными данными может управлять только владелец/,
+    () => getTrainingDataSummary(
+      { id: 2, role: 'manager' },
+      { role: 'viewer' },
+    ),
+    /Учебная сессия принадлежит другой роли/,
   );
 });
 

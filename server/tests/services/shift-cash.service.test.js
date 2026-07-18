@@ -175,8 +175,9 @@ test('training cash contexts are isolated per account and role', () => {
       isTraining: true,
       trainingAccountId: 17,
       trainingRole: 'admin',
+      trainingSessionId: 'session-17-admin',
     }),
-    'training:17:admin',
+    'training:session-17-admin',
   );
 });
 
@@ -353,6 +354,7 @@ test('successful attachment upload emits exactly one backend onboarding checkpoi
       options: {
         entityId: 'attachment-1',
         entityType: 'shift_cash_attachment',
+        tenant: null,
         payload: {
           attachmentId: 'attachment-1',
           expenseId: 91,

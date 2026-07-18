@@ -11,6 +11,56 @@ function atTime(date, hour, minute = 0) {
   return value;
 }
 
+const DEMO_BOOKING_IDENTITIES = [
+  ['Демо: бронь по телефону, оплатили безналом.', 'confirmed', 90, 4500, 4500],
+  ['Демо: клиент попросил перезвонить за час.', 'new', 60, 3000, 0],
+];
+
+function ownershipLost(identity) {
+  const error = new Error(`Demo booking fixture ownership lost for ${identity}`);
+  error.code = 'TENANT_SEEDER_ARTIFACT_OWNERSHIP_LOST';
+  return error;
+}
+
+async function inventoryDemoBookings(queryInterface, tenant) {
+  const [rows] = await queryInterface.sequelize.query(
+    `SELECT booking.id,booking.comment,booking.status,booking.durationMinutes,
+            booking.price,booking.paidAmount,booking.organizationId,booking.clubId,
+            booking.courtId,booking.userId,court.organizationId courtOrganizationId,
+            court.clubId courtClubId,user.organizationId userOrganizationId
+       FROM Bookings booking
+       LEFT JOIN Courts court ON court.id=booking.courtId
+       LEFT JOIN Users user ON user.id=booking.userId
+      WHERE ${tenant.insert.organizationId ? 'booking.organizationId=:organizationId AND booking.clubId=:clubId AND ' : ''}
+            booking.comment LIKE 'Демо:%'`,
+    { replacements: tenant.replacements },
+  );
+  const expectedByComment = new Map(DEMO_BOOKING_IDENTITIES.map((row) => [row[0], row]));
+  for (const row of rows) {
+    const expected = expectedByComment.get(row.comment);
+    if (!expected || row.status !== expected[1] || Number(row.durationMinutes) !== expected[2] ||
+      Number(row.price) !== expected[3] || Number(row.paidAmount) !== expected[4] ||
+      Number(row.organizationId) !== Number(tenant.insert.organizationId) ||
+      Number(row.clubId) !== Number(tenant.insert.clubId) ||
+      Number(row.courtOrganizationId) !== Number(tenant.insert.organizationId) ||
+      Number(row.courtClubId) !== Number(tenant.insert.clubId) ||
+      Number(row.userOrganizationId) !== Number(tenant.insert.organizationId)) {
+      throw ownershipLost(row.id);
+    }
+  }
+  if (rows.length > 0) {
+    const ids = rows.map((row) => row.id);
+    const [logs] = await queryInterface.sequelize.query(
+      `SELECT id,bookingId,action,reason FROM BookingChangeLogs WHERE bookingId IN (:ids)`,
+      { replacements: { ids } },
+    );
+    for (const log of logs) {
+      if (log.action !== 'created' || log.reason !== 'Demo seed') throw ownershipLost(`log-${log.id}`);
+    }
+  }
+  return rows.map((row) => row.id);
+}
+
 async function resolveTenantScope(queryInterface) {
   const [columns] = await queryInterface.sequelize.query(
     `SELECT COLUMN_NAME AS columnName
@@ -59,6 +109,7 @@ async function resolveTenantScope(queryInterface) {
 module.exports = {
   async up(queryInterface) {
     const tenant = await resolveTenantScope(queryInterface);
+    await inventoryDemoBookings(queryInterface, tenant);
     const [existing] = await queryInterface.sequelize.query(
       `SELECT COUNT(*) AS count FROM Bookings WHERE ${tenant.predicate}1=1`,
       { replacements: tenant.replacements },
@@ -133,8 +184,11 @@ module.exports = {
 
     await queryInterface.bulkInsert('Bookings', rows);
     const [bookings] = await queryInterface.sequelize.query(
-      `SELECT id, status FROM Bookings WHERE ${tenant.predicate}comment LIKE 'Демо:%' ORDER BY id DESC LIMIT 2`,
-      { replacements: tenant.replacements },
+      `SELECT id,status FROM Bookings WHERE ${tenant.predicate}comment IN (:comments) ORDER BY id DESC`,
+      { replacements: {
+        ...tenant.replacements,
+        comments: DEMO_BOOKING_IDENTITIES.map((row) => row[0]),
+      } },
     );
     await queryInterface.bulkInsert(
       'BookingChangeLogs',
@@ -154,15 +208,13 @@ module.exports = {
 
   async down(queryInterface) {
     const tenant = await resolveTenantScope(queryInterface);
+    const bookingIds = await inventoryDemoBookings(queryInterface, tenant);
+    if (bookingIds.length === 0) return;
     await queryInterface.sequelize.query(
-      `DELETE h FROM BookingChangeLogs AS h
-        JOIN Bookings AS b ON b.id = h.bookingId
-       WHERE ${tenant.insert.organizationId ? 'b.organizationId = :organizationId AND b.clubId = :clubId AND ' : ''}h.reason = 'Demo seed'`,
-      { replacements: tenant.replacements },
+      'DELETE FROM BookingChangeLogs WHERE bookingId IN (:bookingIds)',
+      { replacements: { bookingIds } },
     );
-    await queryInterface.sequelize.query(
-      `DELETE FROM Bookings WHERE ${tenant.predicate}comment LIKE 'Демо:%'`,
-      { replacements: tenant.replacements },
-    );
+    await queryInterface.bulkDelete('Bookings', { id: bookingIds });
   },
+  _private: { inventoryDemoBookings },
 };

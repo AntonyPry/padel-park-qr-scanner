@@ -83,17 +83,22 @@ function createTransactionQueryInterface(queryInterface, transaction) {
   };
 }
 
-async function deleteAccountsByEmailLike(
+async function deleteAccountsByEmails(
   queryInterface,
   transaction,
-  emailPattern,
+  emails,
   organizationId,
 ) {
+  if (!Array.isArray(emails) || emails.length === 0) return [];
+  const normalizedEmails = [...new Set(emails.map((email) => String(email).trim().toLowerCase()))];
+  if (normalizedEmails.length !== emails.length || normalizedEmails.some((email) => !email)) {
+    throw seederError('Seeder Account delete requires unique exact emails');
+  }
   const [accounts] = await queryInterface.sequelize.query(
     `SELECT a.id FROM Accounts a JOIN Memberships m ON m.accountId=a.id
-      WHERE a.email LIKE :emailPattern AND m.organizationId=:organizationId
+      WHERE a.email IN (:emails) AND m.organizationId=:organizationId
       ORDER BY a.id FOR UPDATE`,
-    { replacements: { emailPattern, organizationId }, transaction },
+    { replacements: { emails: normalizedEmails, organizationId }, transaction },
   );
   if (accounts.length === 0) return [];
   const accountIds = accounts.map((row) => row.id);
@@ -262,11 +267,11 @@ async function runInitializedSeederBatch(
       transaction,
     );
     const accountBatch = {
-      deleteAccountsByEmailLike: (emailPattern) =>
-        deleteAccountsByEmailLike(
+      deleteAccountsByEmails: (emails) =>
+        deleteAccountsByEmails(
           queryInterface,
           transaction,
-          emailPattern,
+          emails,
           foundation.organization.id,
         ),
       insertAccounts: (rows) =>
@@ -426,7 +431,7 @@ async function seedDemoAccounts(accounts, options = {}) {
 module.exports = {
   _private: {
     createTransactionQueryInterface,
-    deleteAccountsByEmailLike,
+    deleteAccountsByEmails,
     insertAccountsWithParity,
     validateAccountRows,
   },

@@ -168,6 +168,14 @@ function resolveOptionalTrainingRole(role) {
   return normalizeRole(role);
 }
 
+function assertTrainingDataRole(actor, role, options = {}) {
+  assertActor(actor);
+  if (role && actor.role !== 'owner' && role !== actor.role &&
+    role !== options.retainedRole && !options.allowEmptyRole) {
+    throw appError('Учебная сессия принадлежит другой роли', 403);
+  }
+}
+
 function getTrainingEntityWhere(entity, role, ownership = {}) {
   const where = { isTraining: true };
   if (role) {
@@ -1188,7 +1196,7 @@ async function getTrainingDataMarker(actor, tenant = null) {
   };
 }
 
-async function getTrainingDataSummary(actor, query = {}, tenant = null) {
+async function getTrainingDataSummary(actor, query = {}, tenant = null, options = {}) {
   const role = resolveOptionalTrainingRole(query.role);
   const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.CLUB);
   const mode = await loadTrainingMode(boundary);
@@ -1200,7 +1208,10 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   const authorityActor = methodologyContext
     ? bindMethodologyActor(boundary.actor, methodologyContext)
     : boundary.actor;
-  assertOwner(authorityActor);
+  assertTrainingDataRole(authorityActor, role, {
+    allowEmptyRole: Boolean(options.allowEmptyRole && !mode?.sessionId),
+    retainedRole: mode?.sessionId ? mode.role : null,
+  });
   const callTaskContext = await resolveTrainingCallTaskContext(authorityActor, tenant);
   const bookingContext = await resolveTrainingBookingContext(tenant);
   const trainingOperationsContext = await resolveTrainingOperationsContext(tenant);
@@ -1209,7 +1220,10 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   const shiftAuthorityActor = shiftOperationsContext
     ? bindShiftOperationsActor(authorityActor, shiftOperationsContext)
     : authorityActor;
-  assertOwner(shiftAuthorityActor);
+  assertTrainingDataRole(shiftAuthorityActor, role, {
+    allowEmptyRole: Boolean(options.allowEmptyRole && !mode?.sessionId),
+    retainedRole: mode?.sessionId ? mode.role : null,
+  });
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
@@ -1427,7 +1441,9 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
     const authorityActor = methodologyContext
       ? bindMethodologyActor(boundary.actor, methodologyContext)
       : boundary.actor;
-    assertOwner(authorityActor);
+    assertTrainingDataRole(authorityActor, role, {
+      retainedRole: mode?.sessionId ? mode.role : null,
+    });
     const callTaskContext = await resolveTrainingCallTaskContext(
       authorityActor,
       tenant,
@@ -1452,7 +1468,9 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
     const shiftAuthorityActor = shiftOperationsContext
       ? bindShiftOperationsActor(authorityActor, shiftOperationsContext)
       : authorityActor;
-    assertOwner(shiftAuthorityActor);
+    assertTrainingDataRole(shiftAuthorityActor, role, {
+      retainedRole: mode?.sessionId ? mode.role : null,
+    });
     const bookingWhere = bookingContext
       ? bookingTenantWhere(
           bookingContext,
@@ -1606,6 +1624,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       await mode.update({
         disabledAt: mode.disabledAt || new Date(),
         isEnabled: false,
+        role: boundary.actor.role,
         sessionId: null,
         expiresAt: null,
       }, { transaction });
@@ -1619,7 +1638,12 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
 
   return {
     deleted,
-    remaining: await getTrainingDataSummary(actor, { role }, tenant),
+    remaining: await getTrainingDataSummary(
+      actor,
+      { role },
+      tenant,
+      { allowEmptyRole: true },
+    ),
     role,
   };
 }

@@ -4,6 +4,7 @@ const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../src/tenant-foundation/constants');
+const artifactPlan = require('../src/onboarding/migration-artifact-plan');
 
 const ROOT_COLUMNS = {
   OnboardingProgresses: ['organizationId', 'membershipId', 'clubId'],
@@ -56,6 +57,80 @@ const INDEXES = [
 ];
 const TRAINING_SESSION_INDEX = 'training_session_idx';
 const ROOT_TABLES = Object.keys(ROOT_COLUMNS);
+const TRAINING_SESSION_FKS = Object.fromEntries(TRAINING_TABLES.map(
+  (table, index) => [table, `f83_training_session_${index + 1}_fk`],
+));
+
+function trainingTriggerName(table, operation) {
+  const index = TRAINING_TABLES.indexOf(table) + 1;
+  return `trg_f83_training_${index}_${operation}`;
+}
+
+const TRAINING_TENANT_PREDICATES = {
+  Users: 'NEW.organizationId=mode.organizationId',
+  Visits: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  Bookings: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  BookingSeries: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  Finances: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  ClientBases: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  CallTasks: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  CallTaskClients: `EXISTS (SELECT 1 FROM CallTasks parent
+    WHERE parent.id=NEW.callTaskId AND parent.organizationId=mode.organizationId
+      AND parent.clubId=mode.clubId AND parent.trainingSessionId=NEW.trainingSessionId)`,
+  CallTaskAttempts: `EXISTS (SELECT 1 FROM CallTaskClients client
+    JOIN CallTasks task ON task.id=client.callTaskId
+    WHERE client.id=NEW.callTaskClientId AND task.organizationId=mode.organizationId
+      AND task.clubId=mode.clubId AND client.trainingSessionId=NEW.trainingSessionId)`,
+  CorporateClients: 'NEW.organizationId=mode.organizationId',
+  CorporateLedgerEntries: 'NEW.organizationId=mode.organizationId AND NEW.clubId=mode.clubId',
+  TrainingPlans: 'NEW.clubId=mode.clubId',
+  TrainingNotes: 'NEW.clubId=mode.clubId',
+  ClientTrainingSkills: `EXISTS (SELECT 1 FROM Users parent
+    WHERE parent.id=NEW.userId AND parent.organizationId=mode.organizationId
+      AND parent.trainingSessionId=NEW.trainingSessionId)`,
+  ClientTrainingSkillHistories: `EXISTS (SELECT 1 FROM ClientTrainingSkills parent
+    WHERE parent.id=NEW.clientTrainingSkillId
+      AND parent.trainingSessionId=NEW.trainingSessionId)`,
+  ShiftCashSessions: `EXISTS (SELECT 1 FROM Shifts parent
+    WHERE parent.id=NEW.shiftId AND parent.clubId=mode.clubId)`,
+  ShiftCashExpenses: `EXISTS (SELECT 1 FROM ShiftCashSessions parent
+    WHERE parent.id=NEW.cashSessionId AND parent.trainingSessionId=NEW.trainingSessionId)`,
+};
+
+function trainingTriggerBody(table, operation) {
+  const ownershipChanged = operation === 'update'
+    ? `IF OLD.isTraining<>NEW.isTraining
+      OR NOT (OLD.trainingAccountId <=> NEW.trainingAccountId)
+      OR NOT (OLD.trainingRole <=> NEW.trainingRole)
+      OR NOT (OLD.trainingSessionId <=> NEW.trainingSessionId)
+    THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Training artifact ownership is immutable'; END IF;`
+    : '';
+  return `BEGIN
+    ${ownershipChanged}
+    IF NEW.isTraining=1 AND (
+      NEW.trainingAccountId IS NULL OR NEW.trainingRole IS NULL OR NEW.trainingSessionId IS NULL
+      OR NOT EXISTS (
+        SELECT 1 FROM OnboardingTrainingModes mode
+        WHERE mode.accountId=NEW.trainingAccountId AND mode.role=NEW.trainingRole
+          AND mode.sessionId=NEW.trainingSessionId AND mode.isEnabled=1
+          AND mode.expiresAt>NOW() AND (${TRAINING_TENANT_PREDICATES[table]})
+      )
+    ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Training artifact session mismatch'; END IF;
+    IF NEW.isTraining<>1 AND (
+      NEW.trainingAccountId IS NOT NULL OR NEW.trainingRole IS NOT NULL
+      OR NEW.trainingSessionId IS NOT NULL
+    ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Production artifact has training ownership'; END IF;
+  END`;
+}
+
+const TRAINING_TRIGGERS = Object.fromEntries(TRAINING_TABLES.flatMap((table) => [
+  [trainingTriggerName(table, 'insert'), {
+    body: trainingTriggerBody(table, 'insert'), event: 'INSERT', table,
+  }],
+  [trainingTriggerName(table, 'update'), {
+    body: trainingTriggerBody(table, 'update'), event: 'UPDATE', table,
+  }],
+]));
 
 const TRIGGERS = {
   trg_onboarding_progress_insert_tenant: `BEGIN
@@ -64,7 +139,15 @@ const TRIGGERS = {
       JOIN Organizations o ON o.id=m.organizationId
       WHERE m.id=NEW.membershipId AND m.organizationId=NEW.organizationId
         AND m.accountId=NEW.accountId AND m.status='active' AND a.status='active'
-        AND o.status='active' AND (m.role='owner' OR m.role=NEW.role)
+        AND o.status='active' AND (
+          (NEW.clubId IS NULL AND (m.role='owner' OR m.role=NEW.role))
+          OR (NEW.clubId IS NOT NULL AND (m.role='owner' OR EXISTS (
+            SELECT 1 FROM MembershipClubAccesses access
+            WHERE access.organizationId=NEW.organizationId
+              AND access.membershipId=NEW.membershipId AND access.clubId=NEW.clubId
+              AND access.status='active' AND COALESCE(access.roleOverride,m.role)=NEW.role
+          )))
+        )
     ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='OnboardingProgress tenant authority mismatch'; END IF;
     IF NEW.clubId IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM Clubs c JOIN Memberships m ON m.id=NEW.membershipId
@@ -86,7 +169,15 @@ const TRIGGERS = {
       JOIN Organizations o ON o.id=m.organizationId
       WHERE m.id=NEW.membershipId AND m.organizationId=NEW.organizationId
         AND m.accountId=NEW.accountId AND m.status='active' AND a.status='active'
-        AND o.status='active' AND (m.role='owner' OR m.role=NEW.role)
+        AND o.status='active' AND (
+          (NEW.clubId IS NULL AND (m.role='owner' OR m.role=NEW.role))
+          OR (NEW.clubId IS NOT NULL AND (m.role='owner' OR EXISTS (
+            SELECT 1 FROM MembershipClubAccesses access
+            WHERE access.organizationId=NEW.organizationId
+              AND access.membershipId=NEW.membershipId AND access.clubId=NEW.clubId
+              AND access.status='active' AND COALESCE(access.roleOverride,m.role)=NEW.role
+          )))
+        )
     ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='OnboardingProgress tenant authority mismatch'; END IF;
     IF NEW.clubId IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM Clubs c JOIN Memberships m ON m.id=NEW.membershipId
@@ -119,8 +210,9 @@ const TRIGGERS = {
     IF OLD.organizationId<>NEW.organizationId OR OLD.membershipId<>NEW.membershipId OR OLD.accountId<>NEW.accountId
     THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='OnboardingTrainingMode ownership is immutable'; END IF;
     IF OLD.sessionId IS NOT NULL AND (
-      OLD.clubId<>NEW.clubId OR NOT (OLD.role <=> NEW.role)
-      OR (NEW.sessionId IS NOT NULL AND OLD.sessionId<>NEW.sessionId)
+      OLD.clubId<>NEW.clubId OR (NEW.sessionId IS NOT NULL AND (
+        NOT (OLD.role <=> NEW.role) OR OLD.sessionId<>NEW.sessionId
+      ))
     ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='Retained onboarding session ownership is immutable'; END IF;
     IF NOT EXISTS (
       SELECT 1 FROM Memberships m JOIN Accounts a ON a.id=m.accountId
@@ -143,7 +235,15 @@ const TRIGGERS = {
       JOIN Organizations o ON o.id=m.organizationId
       WHERE m.id=NEW.membershipId AND m.organizationId=NEW.organizationId
         AND m.accountId=NEW.accountId AND m.status='active' AND a.status='active'
-        AND o.status='active' AND (m.role='owner' OR m.role=NEW.role)
+        AND o.status='active' AND (
+          (NEW.clubId IS NULL AND (m.role='owner' OR m.role=NEW.role))
+          OR (NEW.clubId IS NOT NULL AND (m.role='owner' OR EXISTS (
+            SELECT 1 FROM MembershipClubAccesses access
+            WHERE access.organizationId=NEW.organizationId
+              AND access.membershipId=NEW.membershipId AND access.clubId=NEW.clubId
+              AND access.status='active' AND COALESCE(access.roleOverride,m.role)=NEW.role
+          )))
+        )
     ) THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='OnboardingEvent tenant authority mismatch'; END IF;
     IF NEW.clubId IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM Clubs c JOIN Memberships m ON m.id=NEW.membershipId
@@ -215,59 +315,15 @@ async function indexDefinitions(queryInterface, table, transaction) {
 }
 
 async function featureArtifactsReady(queryInterface, transaction) {
-  for (const [table, fields, name, unique] of INDEXES) {
-    const definition = (await indexDefinitions(queryInterface, table, transaction)).get(name);
-    if (!definition || definition.unique !== unique || definition.fields.join('|') !== fields.join('|')) {
-      return false;
-    }
+  try {
+    const plan = await artifactPlan.loadPlan(queryInterface, transaction);
+    if (!plan || plan.status !== 'ready' || plan.legacy.some((item) => !item.removed)) return false;
+    await artifactPlan.assertPlanOwnership(queryInterface, plan, transaction);
+    await artifactPlan.assertLegacyRestorable(queryInterface, plan, transaction);
+    return true;
+  } catch {
+    return false;
   }
-  for (const table of TRAINING_TABLES) {
-    const definition = (await indexDefinitions(queryInterface, table, transaction)).get(TRAINING_SESSION_INDEX);
-    if (!definition || definition.unique || definition.fields.join('|') !== 'trainingSessionId') return false;
-  }
-  const progressIndexes = await indexDefinitions(queryInterface, 'OnboardingProgresses', transaction);
-  const modeIndexes = await indexDefinitions(queryInterface, 'OnboardingTrainingModes', transaction);
-  if (progressIndexes.has('onboarding_progress_account_role_task_unique')) return false;
-  if ([...modeIndexes.values()].some((definition) => definition.unique
-    && definition.fields.join('|') === 'accountId')) return false;
-  const [constraints] = await queryInterface.sequelize.query(
-    `SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_NAME,
-            r.UPDATE_RULE,r.DELETE_RULE
-       FROM information_schema.KEY_COLUMN_USAGE k
-       JOIN information_schema.REFERENTIAL_CONSTRAINTS r
-         ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
-      WHERE k.CONSTRAINT_SCHEMA=DATABASE() AND k.REFERENCED_TABLE_NAME IS NOT NULL
-        AND k.TABLE_NAME IN ('OnboardingProgresses','OnboardingTrainingModes','OnboardingEvents')`,
-    { transaction },
-  );
-  for (const table of ROOT_TABLES) {
-    for (const [suffix, column, referenced] of [
-      ['organization', 'organizationId', 'Organizations'],
-      ['membership', 'membershipId', 'Memberships'],
-      ['club', 'clubId', 'Clubs'],
-    ]) {
-      const name = `${table.toLowerCase()}_${suffix}_fk`;
-      if (!constraints.some((row) => row.TABLE_NAME === table && row.CONSTRAINT_NAME === name
-        && row.COLUMN_NAME === column && row.REFERENCED_TABLE_NAME === referenced
-        && row.UPDATE_RULE === 'CASCADE'
-        && row.DELETE_RULE === (suffix === 'membership' ? 'CASCADE' : 'RESTRICT'))) return false;
-    }
-  }
-  const [triggers] = await queryInterface.sequelize.query(
-    `SELECT TRIGGER_NAME,EVENT_MANIPULATION,EVENT_OBJECT_TABLE,ACTION_STATEMENT
-       FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()`,
-    { transaction },
-  );
-  for (const name of Object.keys(TRIGGERS)) {
-    const event = triggerEvent(name);
-    const table = name.includes('_progress_') ? 'OnboardingProgresses'
-      : name.includes('_mode_') ? 'OnboardingTrainingModes' : 'OnboardingEvents';
-    const normalize = (value) => String(value || '').replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
-    if (!triggers.some((row) => row.TRIGGER_NAME === name
-      && row.EVENT_MANIPULATION === event && row.EVENT_OBJECT_TABLE === table
-      && normalize(row.ACTION_STATEMENT) === normalize(TRIGGERS[name]))) return false;
-  }
-  return true;
 }
 
 function expectedColumnDefinitions() {
@@ -310,6 +366,7 @@ async function columnDefinitionsReady(queryInterface, transaction) {
 }
 
 async function hasFeatureArtifacts(queryInterface, transaction) {
+  if (await artifactPlan.tableExists(queryInterface, artifactPlan.PLAN_TABLE, transaction)) return true;
   for (const [table, , name] of INDEXES) {
     if ((await indexDefinitions(queryInterface, table, transaction)).has(name)) return true;
   }
@@ -326,7 +383,7 @@ async function hasFeatureArtifacts(queryInterface, transaction) {
       replacements: {
         constraints: ROOT_TABLES.flatMap((table) => ['organization', 'membership', 'club']
           .map((suffix) => `${table.toLowerCase()}_${suffix}_fk`)),
-        triggers: Object.keys(TRIGGERS),
+        triggers: [...Object.keys(TRIGGERS), ...Object.keys(TRAINING_TRIGGERS)],
       },
       transaction,
     },
@@ -335,6 +392,9 @@ async function hasFeatureArtifacts(queryInterface, transaction) {
 }
 
 async function classify(queryInterface, transaction) {
+  if (await artifactPlan.tableExists(queryInterface, artifactPlan.PLAN_TABLE, transaction)) {
+    return (await featureArtifactsReady(queryInterface, transaction)) ? 'ready' : 'partial';
+  }
   let present = 0;
   let total = 0;
   for (const [table, names] of Object.entries(ROOT_COLUMNS)) {
@@ -352,10 +412,7 @@ async function classify(queryInterface, transaction) {
   if (present === 0) {
     return (await hasFeatureArtifacts(queryInterface, transaction)) ? 'partial' : 'legacy';
   }
-  if (present === total) {
-    return (await columnDefinitionsReady(queryInterface, transaction)) &&
-      (await featureArtifactsReady(queryInterface, transaction)) ? 'ready' : 'partial';
-  }
+  if (present === total) return 'partial';
   return 'partial';
 }
 
@@ -411,23 +468,85 @@ async function assertLegacyData(queryInterface, transaction) {
   }
 }
 
-async function addRootColumns(queryInterface, Sequelize, transaction) {
+async function addColumnCaptured(queryInterface, table, name, definition, transaction, plan) {
+  await queryInterface.addColumn(table, name, definition, { transaction });
+  await artifactPlan.recordArtifact(queryInterface, plan, { kind: 'column', name, table });
+}
+
+async function changeColumnCaptured(queryInterface, table, name, definition, transaction, plan) {
+  await queryInterface.changeColumn(table, name, definition, { transaction });
+  await artifactPlan.recordArtifact(queryInterface, plan, { kind: 'column', name, table });
+}
+
+async function addIndexCaptured(
+  queryInterface,
+  table,
+  fields,
+  options,
+  transaction,
+  plan,
+) {
+  await queryInterface.addIndex(table, fields, { ...options, transaction });
+  await artifactPlan.recordArtifact(queryInterface, plan, {
+    kind: 'index', name: options.name, table,
+  });
+}
+
+async function indexNames(queryInterface, table, transaction) {
+  const [rows] = await queryInterface.sequelize.query(
+    `SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
+      WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table`,
+    { replacements: { table }, transaction },
+  );
+  return new Set(rows.map((row) => row.INDEX_NAME));
+}
+
+async function addConstraintCaptured(queryInterface, table, options, transaction, plan) {
+  const before = await indexNames(queryInterface, table, transaction);
+  await queryInterface.addConstraint(table, { ...options, transaction });
+  const after = await indexNames(queryInterface, table, transaction);
+  for (const name of after) {
+    if (!before.has(name)) {
+      await artifactPlan.recordArtifact(queryInterface, plan, { kind: 'index', name, table });
+    }
+  }
+  await artifactPlan.recordArtifact(queryInterface, plan, {
+    kind: 'foreignKey', name: options.name, table,
+  });
+}
+
+async function createTriggerCaptured(
+  queryInterface,
+  { body, event, name, table },
+  transaction,
+  plan,
+) {
+  await queryInterface.sequelize.query(
+    `CREATE TRIGGER \`${name}\` BEFORE ${event} ON \`${table}\` FOR EACH ROW ${body}`,
+    { transaction },
+  );
+  await artifactPlan.recordArtifact(queryInterface, plan, { kind: 'trigger', name, table });
+}
+
+async function addRootColumns(queryInterface, Sequelize, transaction, plan) {
   const integer = { allowNull: true, type: Sequelize.INTEGER };
-  await queryInterface.addColumn('OnboardingProgresses', 'organizationId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingProgresses', 'membershipId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingProgresses', 'clubId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingTrainingModes', 'organizationId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingTrainingModes', 'membershipId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingTrainingModes', 'clubId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingTrainingModes', 'sessionId', { allowNull: true, type: Sequelize.UUID }, { transaction });
-  await queryInterface.addColumn('OnboardingTrainingModes', 'expiresAt', { allowNull: true, type: Sequelize.DATE }, { transaction });
-  await queryInterface.addColumn('OnboardingEvents', 'organizationId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingEvents', 'membershipId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingEvents', 'clubId', integer, { transaction });
-  await queryInterface.addColumn('OnboardingEvents', 'trainingSessionId', { allowNull: true, type: Sequelize.UUID }, { transaction });
-  await queryInterface.addColumn('OnboardingEvents', 'idempotencyKey', { allowNull: true, type: Sequelize.STRING(64) }, { transaction });
+  await addColumnCaptured(queryInterface, 'OnboardingProgresses', 'organizationId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingProgresses', 'membershipId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingProgresses', 'clubId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingTrainingModes', 'organizationId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingTrainingModes', 'membershipId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingTrainingModes', 'clubId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingTrainingModes', 'sessionId', { allowNull: true, type: Sequelize.UUID }, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingTrainingModes', 'expiresAt', { allowNull: true, type: Sequelize.DATE }, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingEvents', 'organizationId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingEvents', 'membershipId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingEvents', 'clubId', integer, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingEvents', 'trainingSessionId', { allowNull: true, type: Sequelize.UUID }, transaction, plan);
+  await addColumnCaptured(queryInterface, 'OnboardingEvents', 'idempotencyKey', { allowNull: true, type: Sequelize.STRING(64) }, transaction, plan);
   for (const table of TRAINING_TABLES) {
-    await queryInterface.addColumn(table, 'trainingSessionId', { allowNull: true, type: Sequelize.UUID }, { transaction });
+    await addColumnCaptured(queryInterface, table, 'trainingSessionId', {
+      allowNull: true, type: Sequelize.UUID,
+    }, transaction, plan);
   }
 }
 
@@ -461,66 +580,88 @@ async function backfill(queryInterface, tenant, transaction) {
   }
 }
 
-async function addConstraints(queryInterface, Sequelize, transaction) {
+async function addConstraints(queryInterface, Sequelize, transaction, plan) {
   for (const table of ['OnboardingProgresses', 'OnboardingTrainingModes', 'OnboardingEvents']) {
-    await queryInterface.changeColumn(table, 'organizationId', { allowNull: false, type: Sequelize.INTEGER }, { transaction });
-    await queryInterface.changeColumn(table, 'membershipId', { allowNull: false, type: Sequelize.INTEGER }, { transaction });
+    await changeColumnCaptured(queryInterface, table, 'organizationId', {
+      allowNull: false, type: Sequelize.INTEGER,
+    }, transaction, plan);
+    await changeColumnCaptured(queryInterface, table, 'membershipId', {
+      allowNull: false, type: Sequelize.INTEGER,
+    }, transaction, plan);
   }
-  await queryInterface.changeColumn('OnboardingTrainingModes', 'clubId', { allowNull: false, type: Sequelize.INTEGER }, { transaction });
-  await queryInterface.changeColumn('OnboardingEvents', 'idempotencyKey', { allowNull: false, type: Sequelize.STRING(64) }, { transaction });
+  await changeColumnCaptured(queryInterface, 'OnboardingTrainingModes', 'clubId', {
+    allowNull: false, type: Sequelize.INTEGER,
+  }, transaction, plan);
+  await changeColumnCaptured(queryInterface, 'OnboardingEvents', 'idempotencyKey', {
+    allowNull: false, type: Sequelize.STRING(64),
+  }, transaction, plan);
   for (const [table, fields, name, unique] of INDEXES) {
-    await queryInterface.addIndex(table, fields, { name, transaction, unique });
+    await addIndexCaptured(queryInterface, table, fields, { name, unique }, transaction, plan);
   }
   for (const table of TRAINING_TABLES) {
-    await queryInterface.addIndex(table, ['trainingSessionId'], {
-      name: TRAINING_SESSION_INDEX,
+    await addIndexCaptured(
+      queryInterface,
+      table,
+      ['trainingSessionId'],
+      { name: TRAINING_SESSION_INDEX },
       transaction,
-    });
+      plan,
+    );
   }
-  await queryInterface.removeIndex('OnboardingProgresses', 'onboarding_progress_account_role_task_unique', { transaction });
-  const [modeIndexes] = await queryInterface.sequelize.query('SHOW INDEX FROM OnboardingTrainingModes', { transaction });
-  const uniqueAccountIndex = modeIndexes.find((index) =>
-    Number(index.Non_unique) === 0 && index.Column_name === 'accountId' && index.Key_name !== 'PRIMARY');
-  if (uniqueAccountIndex) {
-    await queryInterface.removeIndex('OnboardingTrainingModes', uniqueAccountIndex.Key_name, { transaction });
+  for (const legacy of plan.legacy) {
+    await queryInterface.removeIndex(legacy.table, legacy.name, { transaction });
+    legacy.removed = true;
+    await artifactPlan.persistPlan(queryInterface, plan);
   }
   for (const table of ['OnboardingProgresses', 'OnboardingTrainingModes', 'OnboardingEvents']) {
-    await queryInterface.addConstraint(table, {
+    await addConstraintCaptured(queryInterface, table, {
       fields: ['organizationId'],
       name: `${table.toLowerCase()}_organization_fk`,
       onDelete: 'RESTRICT',
       onUpdate: 'CASCADE',
       references: { fields: ['id'], table: 'Organizations' },
-      transaction,
       type: 'foreign key',
-    });
-    await queryInterface.addConstraint(table, {
+    }, transaction, plan);
+    await addConstraintCaptured(queryInterface, table, {
       fields: ['membershipId'],
       name: `${table.toLowerCase()}_membership_fk`,
       onDelete: 'CASCADE',
       onUpdate: 'CASCADE',
       references: { fields: ['id'], table: 'Memberships' },
-      transaction,
       type: 'foreign key',
-    });
-    await queryInterface.addConstraint(table, {
+    }, transaction, plan);
+    await addConstraintCaptured(queryInterface, table, {
       fields: ['clubId'],
       name: `${table.toLowerCase()}_club_fk`,
       onDelete: 'RESTRICT',
       onUpdate: 'CASCADE',
       references: { fields: ['id'], table: 'Clubs' },
-      transaction,
       type: 'foreign key',
-    });
+    }, transaction, plan);
+  }
+  for (const table of TRAINING_TABLES) {
+    await addConstraintCaptured(queryInterface, table, {
+      fields: ['trainingSessionId'],
+      name: TRAINING_SESSION_FKS[table],
+      onDelete: 'CASCADE',
+      onUpdate: 'RESTRICT',
+      references: { fields: ['sessionId'], table: 'OnboardingTrainingModes' },
+      type: 'foreign key',
+    }, transaction, plan);
   }
   for (const [name, body] of Object.entries(TRIGGERS)) {
-    const timing = triggerEvent(name);
+    const event = triggerEvent(name);
     const table = name.includes('_progress_') ? 'OnboardingProgresses'
       : name.includes('_mode_') ? 'OnboardingTrainingModes' : 'OnboardingEvents';
-    await queryInterface.sequelize.query(
-      `CREATE TRIGGER \`${name}\` BEFORE ${timing} ON \`${table}\` FOR EACH ROW ${body}`,
-      { transaction },
-    );
+    await createTriggerCaptured(queryInterface, {
+      body, event, name, table,
+    }, transaction, plan);
+  }
+  for (const [name, definition] of Object.entries(TRAINING_TRIGGERS)) {
+    await createTriggerCaptured(queryInterface, {
+      ...definition,
+      name,
+    }, transaction, plan);
   }
 }
 
@@ -538,132 +679,52 @@ async function removeConstraintIfPresent(queryInterface, table, name, transactio
   if (rows.length) await queryInterface.removeConstraint(table, name, { transaction });
 }
 
-function cleanupOwnershipError(message) {
-  const error = migrationError(message);
-  error.code = 'TENANT_ONBOARDING_CLEANUP_OWNERSHIP_LOST';
-  error.operatorRepair = true;
-  return error;
-}
-
 async function assertCleanupOwnership(queryInterface, transaction) {
-  for (const [table, fields, name, unique] of INDEXES) {
-    const definition = (await indexDefinitions(queryInterface, table, transaction)).get(name);
-    if (definition && (definition.unique !== unique || definition.fields.join('|') !== fields.join('|'))) {
-      throw cleanupOwnershipError(`Onboarding cleanup index ownership lost: ${table}.${name}`);
-    }
-  }
-  for (const table of TRAINING_TABLES) {
-    const definition = (await indexDefinitions(queryInterface, table, transaction)).get(TRAINING_SESSION_INDEX);
-    if (definition && (definition.unique || definition.fields.join('|') !== 'trainingSessionId')) {
-      throw cleanupOwnershipError(`Onboarding cleanup index ownership lost: ${table}.${TRAINING_SESSION_INDEX}`);
-    }
-  }
-  const [columns] = await queryInterface.sequelize.query(
-    `SELECT TABLE_NAME,COLUMN_NAME,DATA_TYPE,CHARACTER_MAXIMUM_LENGTH
-       FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()`,
-    { transaction },
-  );
-  const expectedColumns = new Map(expectedColumnDefinitions()
-    .map((item) => [`${item.table}.${item.column}`, item]));
-  for (const row of columns) {
-    const expected = expectedColumns.get(`${row.TABLE_NAME}.${row.COLUMN_NAME}`);
-    if (!expected) continue;
-    if (row.DATA_TYPE !== expected.type ||
-      (expected.length !== null && Number(row.CHARACTER_MAXIMUM_LENGTH) !== expected.length)) {
-      throw cleanupOwnershipError(
-        `Onboarding cleanup column ownership lost: ${row.TABLE_NAME}.${row.COLUMN_NAME}`,
-      );
-    }
-  }
-  const expectedConstraints = new Map();
-  for (const table of ROOT_TABLES) {
-    for (const [suffix, column, referenced] of [
-      ['organization', 'organizationId', 'Organizations'],
-      ['membership', 'membershipId', 'Memberships'],
-      ['club', 'clubId', 'Clubs'],
-    ]) {
-      expectedConstraints.set(`${table.toLowerCase()}_${suffix}_fk`, { column, referenced, table });
-    }
-  }
-  const [constraints] = await queryInterface.sequelize.query(
-    `SELECT TABLE_NAME,CONSTRAINT_NAME,COLUMN_NAME,REFERENCED_TABLE_NAME
-       FROM information_schema.KEY_COLUMN_USAGE
-      WHERE CONSTRAINT_SCHEMA=DATABASE() AND REFERENCED_TABLE_NAME IS NOT NULL`,
-    { transaction },
-  );
-  for (const row of constraints) {
-    const expected = expectedConstraints.get(row.CONSTRAINT_NAME);
-    if (!expected) continue;
-    if (row.TABLE_NAME !== expected.table || row.COLUMN_NAME !== expected.column ||
-      row.REFERENCED_TABLE_NAME !== expected.referenced) {
-      throw cleanupOwnershipError(`Onboarding cleanup FK ownership lost: ${row.CONSTRAINT_NAME}`);
-    }
-  }
-  const [triggers] = await queryInterface.sequelize.query(
-    `SELECT TRIGGER_NAME,EVENT_MANIPULATION,EVENT_OBJECT_TABLE,ACTION_STATEMENT
-       FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE()`,
-    { transaction },
-  );
-  const normalize = (value) => String(value || '').replace(/`/g, '').replace(/\s+/g, ' ').trim().toLowerCase();
-  for (const row of triggers) {
-    const body = TRIGGERS[row.TRIGGER_NAME];
-    if (!body) continue;
-    const event = triggerEvent(row.TRIGGER_NAME);
-    const table = row.TRIGGER_NAME.includes('_progress_') ? 'OnboardingProgresses'
-      : row.TRIGGER_NAME.includes('_mode_') ? 'OnboardingTrainingModes' : 'OnboardingEvents';
-    if (row.EVENT_MANIPULATION !== event || row.EVENT_OBJECT_TABLE !== table ||
-      normalize(row.ACTION_STATEMENT) !== normalize(body)) {
-      throw cleanupOwnershipError(`Onboarding cleanup trigger ownership lost: ${row.TRIGGER_NAME}`);
-    }
-  }
+  const plan = await artifactPlan.loadPlan(queryInterface, transaction);
+  if (!plan) throw artifactPlan.cleanupOwnershipError('Onboarding artifact plan is missing');
+  await artifactPlan.assertPlanOwnership(queryInterface, plan, transaction);
+  await artifactPlan.assertLegacyRestorable(queryInterface, plan, transaction);
+  return plan;
 }
 
 async function cleanupOwnedPartialMigration(queryInterface, transaction) {
-  await assertCleanupOwnership(queryInterface, transaction);
-  for (const name of Object.keys(TRIGGERS)) {
-    await queryInterface.sequelize.query(`DROP TRIGGER IF EXISTS \`${name}\``, { transaction });
+  const plan = await assertCleanupOwnership(queryInterface, transaction);
+  await artifactPlan.restoreLegacyIndexes(queryInterface, plan, transaction);
+  await artifactPlan.removeRecordedArtifacts(queryInterface, plan, transaction);
+  await artifactPlan.dropPlanStore(queryInterface, transaction);
+}
+
+async function assertFeatureArtifactNamesFree(queryInterface, transaction) {
+  if (await artifactPlan.tableExists(queryInterface, artifactPlan.PLAN_TABLE, transaction)) {
+    throw artifactPlan.cleanupOwnershipError('Onboarding migration plan table name collision');
+  }
+  for (const [table, , name] of INDEXES) {
+    if (await artifactPlan.captureIndex(queryInterface, table, name, transaction)) {
+      throw artifactPlan.cleanupOwnershipError(`Onboarding index name collision: ${table}.${name}`);
+    }
+  }
+  for (const table of TRAINING_TABLES) {
+    if (await artifactPlan.captureIndex(queryInterface, table, TRAINING_SESSION_INDEX, transaction)) {
+      throw artifactPlan.cleanupOwnershipError(
+        `Onboarding index name collision: ${table}.${TRAINING_SESSION_INDEX}`,
+      );
+    }
+    const name = TRAINING_SESSION_FKS[table];
+    if (await artifactPlan.captureForeignKey(queryInterface, table, name, transaction)) {
+      throw artifactPlan.cleanupOwnershipError(`Onboarding FK name collision: ${table}.${name}`);
+    }
   }
   for (const table of ROOT_TABLES) {
-    for (const suffix of ['club', 'membership', 'organization']) {
-      const constraintName = `${table.toLowerCase()}_${suffix}_fk`;
-      await removeConstraintIfPresent(
-        queryInterface,
-        table,
-        constraintName,
-        transaction,
-      );
-      await removeIndexIfPresent(queryInterface, table, constraintName, transaction);
+    for (const suffix of ['organization', 'membership', 'club']) {
+      const name = `${table.toLowerCase()}_${suffix}_fk`;
+      if (await artifactPlan.captureForeignKey(queryInterface, table, name, transaction)) {
+        throw artifactPlan.cleanupOwnershipError(`Onboarding FK name collision: ${table}.${name}`);
+      }
     }
   }
-  const progressIndexes = await indexDefinitions(queryInterface, 'OnboardingProgresses', transaction);
-  if (!progressIndexes.has('onboarding_progress_account_role_task_unique')) {
-    await queryInterface.addIndex('OnboardingProgresses', ['accountId', 'role', 'taskKey'], {
-      name: 'onboarding_progress_account_role_task_unique', transaction, unique: true,
-    });
-  }
-  const modeIndexes = await indexDefinitions(queryInterface, 'OnboardingTrainingModes', transaction);
-  if (![...modeIndexes.values()].some((definition) => definition.unique
-    && definition.fields.join('|') === 'accountId')) {
-    await queryInterface.addIndex('OnboardingTrainingModes', ['accountId'], {
-      name: 'onboarding_training_modes_account_unique', transaction, unique: true,
-    });
-  }
-  for (const [table, , name] of [...INDEXES].reverse()) {
-    await removeIndexIfPresent(queryInterface, table, name, transaction);
-  }
-  for (const table of TRAINING_TABLES) {
-    await removeIndexIfPresent(queryInterface, table, TRAINING_SESSION_INDEX, transaction);
-  }
-  for (const table of TRAINING_TABLES) {
-    const columns = await columnSet(queryInterface, table);
-    if (columns.has('trainingSessionId')) {
-      await queryInterface.removeColumn(table, 'trainingSessionId', { transaction });
-    }
-  }
-  for (const [table, names] of Object.entries(ROOT_COLUMNS)) {
-    const columns = await columnSet(queryInterface, table);
-    for (const name of [...names].reverse()) {
-      if (columns.has(name)) await queryInterface.removeColumn(table, name, { transaction });
+  for (const name of [...Object.keys(TRIGGERS), ...Object.keys(TRAINING_TRIGGERS)]) {
+    if (await artifactPlan.captureTrigger(queryInterface, name, transaction)) {
+      throw artifactPlan.cleanupOwnershipError(`Onboarding trigger name collision: ${name}`);
     }
   }
 }
@@ -673,63 +734,56 @@ module.exports = {
     const state = await classify(queryInterface);
     if (state === 'ready') return;
     if (state !== 'legacy') throw migrationError('Tenant onboarding migration refused partial schema');
+    let plan = null;
     try {
       await queryInterface.sequelize.transaction(async (transaction) => {
         const tenant = await getDefaultTenant(queryInterface, transaction);
         await assertLegacyData(queryInterface, transaction);
-        await addRootColumns(queryInterface, Sequelize, transaction);
+        await assertFeatureArtifactNamesFree(queryInterface, transaction);
+        const legacy = await artifactPlan.captureLegacyUniqueIndexes(
+          queryInterface,
+          transaction,
+        );
+        plan = await artifactPlan.createPlanStore(queryInterface, Sequelize, legacy);
+        await addRootColumns(queryInterface, Sequelize, transaction, plan);
         maybeForceFailure('after_columns');
         await backfill(queryInterface, tenant, transaction);
         maybeForceFailure('after_backfill');
-        await addConstraints(queryInterface, Sequelize, transaction);
+        await addConstraints(queryInterface, Sequelize, transaction, plan);
         maybeForceFailure('after_constraints');
+        plan.status = 'ready';
+        await artifactPlan.persistPlan(queryInterface, plan);
       });
     } catch (error) {
-      try {
-        await queryInterface.sequelize.transaction(async (transaction) => {
-          await cleanupOwnedPartialMigration(queryInterface, transaction);
-        });
-      } catch (cleanupError) {
-        error.cleanupError = cleanupError;
+      if (plan || await artifactPlan.tableExists(queryInterface, artifactPlan.PLAN_TABLE)) {
+        try {
+          await queryInterface.sequelize.transaction(async (transaction) => {
+            await cleanupOwnedPartialMigration(queryInterface, transaction);
+          });
+        } catch (cleanupError) {
+          cleanupError.cause = error;
+          throw cleanupError;
+        }
       }
       throw error;
     }
   },
 
   async down(queryInterface, Sequelize) {
-    const state = await classify(queryInterface);
-    if (state === 'legacy') return;
-    if (state !== 'ready') throw migrationError('Tenant onboarding rollback refused partial schema');
+    if (!(await artifactPlan.tableExists(queryInterface, artifactPlan.PLAN_TABLE))) {
+      const state = await classify(queryInterface);
+      if (state === 'legacy') return;
+      throw migrationError('Tenant onboarding rollback refused partial schema');
+    }
     await queryInterface.sequelize.transaction(async (transaction) => {
       await getDefaultTenant(queryInterface, transaction);
-      for (const name of Object.keys(TRIGGERS)) {
-        await queryInterface.sequelize.query(`DROP TRIGGER IF EXISTS \`${name}\``, { transaction });
+      const plan = await assertCleanupOwnership(queryInterface, transaction);
+      if (plan.status !== 'ready' || plan.legacy.some((item) => !item.removed)) {
+        throw artifactPlan.cleanupOwnershipError('Onboarding rollback plan is not ready');
       }
-      for (const table of ['OnboardingProgresses', 'OnboardingTrainingModes', 'OnboardingEvents']) {
-        for (const suffix of ['club', 'membership', 'organization']) {
-          await queryInterface.removeConstraint(table, `${table.toLowerCase()}_${suffix}_fk`, { transaction });
-        }
-      }
-      await queryInterface.addIndex('OnboardingProgresses', ['accountId', 'role', 'taskKey'], {
-        name: 'onboarding_progress_account_role_task_unique', transaction, unique: true,
-      });
-      await queryInterface.addIndex('OnboardingTrainingModes', ['accountId'], {
-        name: 'onboarding_training_modes_account_unique', transaction, unique: true,
-      });
-      for (const [table, , name] of [...INDEXES].reverse()) {
-        await queryInterface.removeIndex(table, name, { transaction });
-      }
-      for (const table of TRAINING_TABLES) {
-        await queryInterface.removeIndex(table, TRAINING_SESSION_INDEX, { transaction });
-      }
-      for (const table of TRAINING_TABLES) {
-        await queryInterface.removeColumn(table, 'trainingSessionId', { transaction });
-      }
-      for (const [table, names] of Object.entries(ROOT_COLUMNS)) {
-        for (const name of [...names].reverse()) {
-          await queryInterface.removeColumn(table, name, { transaction });
-        }
-      }
+      await artifactPlan.restoreLegacyIndexes(queryInterface, plan, transaction);
+      await artifactPlan.removeRecordedArtifacts(queryInterface, plan, transaction);
+      await artifactPlan.dropPlanStore(queryInterface, transaction);
     });
   },
   _private: {
@@ -739,5 +793,8 @@ module.exports = {
     assertCleanupOwnership,
     featureArtifactsReady,
     getDefaultTenant,
+    TRAINING_SESSION_FKS,
+    TRAINING_TRIGGERS,
+    TRIGGERS,
   },
 };

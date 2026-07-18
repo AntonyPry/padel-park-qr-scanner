@@ -6,6 +6,28 @@ const fs = require('fs');
 const path = require('path');
 const db = require('../models');
 
+const MANIFEST_SCHEMA = 'setly.installation-backup';
+const REQUIRED_LABELS = Object.freeze([
+  'database',
+  'tenant-storage',
+  'legacy-shift-reports',
+  'legacy-shift-cash',
+  'attachment-orphan-detector',
+]);
+const SAFE_DETECTOR_COUNTS = Object.freeze([
+  'checksumMismatch',
+  'invalidMetadata',
+  'missingLegacy',
+  'missingStorage',
+  'legacyOrphans',
+  'storageOrphans',
+]);
+const WORKER_STATE_POLICY = Object.freeze({
+  authoritativeSource: 'database-transcription-jobs',
+  localStateIncluded: false,
+  policy: 'rebuild-local-worker-state-after-restore; do-not-replay-stale-claims',
+});
+
 function parseArgs(argv) {
   const options = {};
   for (const value of argv) {
@@ -37,13 +59,20 @@ function inventoryPath(root, label, { required = false } = {}) {
     if (required) throw new Error(`Required backup path is missing: ${absoluteRoot}`);
     return { exists: false, files: [], label, root: absoluteRoot, totalBytes: 0 };
   }
+  const rootStat = fs.lstatSync(absoluteRoot);
+  if (rootStat.isSymbolicLink() || (!rootStat.isDirectory() && !rootStat.isFile())) {
+    throw new Error(`Backup path must be a regular file or real directory: ${absoluteRoot}`);
+  }
   const files = [];
   const walk = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
       const fullPath = path.join(directory, entry.name);
-      if (entry.isDirectory()) walk(fullPath);
-      else if (entry.isFile()) {
-        const stat = fs.statSync(fullPath);
+      const stat = fs.lstatSync(fullPath);
+      if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
+        throw new Error(`Backup inventory contains symlink or special file: ${fullPath}`);
+      }
+      if (stat.isDirectory()) walk(fullPath);
+      else {
         files.push({
           bytes: stat.size,
           path: path.relative(absoluteRoot, fullPath),
@@ -52,12 +81,18 @@ function inventoryPath(root, label, { required = false } = {}) {
       }
     }
   };
-  if (fs.statSync(absoluteRoot).isDirectory()) walk(absoluteRoot);
+  if (rootStat.isDirectory()) walk(absoluteRoot);
   else {
-    const stat = fs.statSync(absoluteRoot);
-    files.push({ bytes: stat.size, path: path.basename(absoluteRoot), sha256: hashFile(absoluteRoot) });
+    files.push({
+      bytes: rootStat.size,
+      path: path.basename(absoluteRoot),
+      sha256: hashFile(absoluteRoot),
+    });
   }
   files.sort((left, right) => left.path.localeCompare(right.path));
+  if (required && files.length === 0) {
+    throw new Error(`Required backup inventory is empty: ${absoluteRoot}`);
+  }
   return {
     exists: true,
     files,
@@ -65,6 +100,89 @@ function inventoryPath(root, label, { required = false } = {}) {
     root: absoluteRoot,
     totalBytes: files.reduce((sum, file) => sum + file.bytes, 0),
   };
+}
+
+function validateAttachmentDetector(filePath) {
+  let detector;
+  try {
+    detector = JSON.parse(fs.readFileSync(path.resolve(filePath), 'utf8'));
+  } catch {
+    throw new Error('Attachment orphan detector is missing, truncated or invalid JSON');
+  }
+  if (
+    detector?.schema !== 'setly.shift-report-attachments' ||
+    detector?.version !== 1 ||
+    !detector.counts || typeof detector.counts !== 'object' ||
+    !detector.orphans || !Array.isArray(detector.orphans.legacy) ||
+    !Array.isArray(detector.orphans.storage)
+  ) {
+    throw new Error('Attachment orphan detector schema is invalid');
+  }
+  for (const name of SAFE_DETECTOR_COUNTS) {
+    if (!Number.isSafeInteger(Number(detector.counts[name])) || Number(detector.counts[name]) !== 0) {
+      throw new Error(`Attachment orphan detector is unsafe: ${name}`);
+    }
+  }
+  if (detector.orphans.legacy.length || detector.orphans.storage.length) {
+    throw new Error('Attachment orphan detector contains orphan results');
+  }
+  return {
+    counts: Object.fromEntries(SAFE_DETECTOR_COUNTS.map((name) => [name, 0])),
+    schema: detector.schema,
+    version: detector.version,
+  };
+}
+
+function validateArtifactShape(artifact) {
+  if (!artifact || artifact.exists !== true || typeof artifact.root !== 'string' ||
+    !path.isAbsolute(artifact.root) || !Array.isArray(artifact.files) ||
+    artifact.files.length === 0 || !Number.isSafeInteger(artifact.totalBytes) ||
+    artifact.totalBytes < 0) {
+    throw new Error(`Backup artifact shape is invalid: ${artifact?.label || 'unknown'}`);
+  }
+  const paths = new Set();
+  let totalBytes = 0;
+  for (const file of artifact.files) {
+    if (!file || typeof file.path !== 'string' || !file.path || path.isAbsolute(file.path) ||
+      file.path.split(/[\\/]/).some((part) => !part || part === '.' || part === '..') ||
+      !Number.isSafeInteger(file.bytes) || file.bytes < 0 ||
+      !/^[a-f0-9]{64}$/.test(file.sha256) || paths.has(file.path)) {
+      throw new Error(`Backup artifact file inventory is invalid: ${artifact.label}`);
+    }
+    paths.add(file.path);
+    totalBytes += file.bytes;
+  }
+  if (totalBytes !== artifact.totalBytes) {
+    throw new Error(`Backup artifact byte total is invalid: ${artifact.label}`);
+  }
+}
+
+function validateManifestSchema(manifest) {
+  if (!manifest || manifest.schema !== MANIFEST_SCHEMA || manifest.schemaVersion !== 1 ||
+    manifest.restoreMode !== 'installation-wide-only' ||
+    manifest.tenantSelectiveRestore !==
+      'unsupported-without-complete-pk-fk-file-remap-contract' ||
+    !sameJson(manifest.workerState, WORKER_STATE_POLICY) ||
+    !Array.isArray(manifest.artifacts) || !Array.isArray(manifest.integrationConnections)) {
+    throw new Error('Unsupported, incomplete or tenant-selective backup manifest');
+  }
+  const labels = manifest.artifacts.map((artifact) => artifact?.label);
+  if (labels.length !== REQUIRED_LABELS.length || new Set(labels).size !== labels.length ||
+    REQUIRED_LABELS.some((label) => !labels.includes(label)) ||
+    labels.some((label) => !REQUIRED_LABELS.includes(label))) {
+    throw new Error('Backup manifest artifact labels are missing, duplicate or unknown');
+  }
+  manifest.artifacts.forEach(validateArtifactShape);
+  if (!manifest.attachmentDetector || manifest.attachmentDetector.schema !==
+    'setly.shift-report-attachments' || manifest.attachmentDetector.version !== 1 ||
+    SAFE_DETECTOR_COUNTS.some((name) => manifest.attachmentDetector.counts?.[name] !== 0)) {
+    throw new Error('Backup manifest attachment detector summary is invalid');
+  }
+  return manifest;
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 async function integrationMetadata() {
@@ -101,31 +219,31 @@ function compareInventory(expected, actual) {
 }
 
 async function createManifest(options) {
-  if (!options.output || !options['db-dump'] || !options['storage-root']) {
-    throw new Error('Usage: --output=... --db-dump=... --storage-root=... [--attachment-manifest=...]');
+  if (!options.output || !options['db-dump'] || !options['storage-root'] ||
+    !options['legacy-shift-report-root'] || !options['legacy-shift-cash-root'] ||
+    !options['attachment-manifest']) {
+    throw new Error('Complete backup requires output, DB, tenant storage, both legacy roots and attachment detector');
   }
+  const attachmentDetector = validateAttachmentDetector(options['attachment-manifest']);
   const artifacts = [
     inventoryPath(options['db-dump'], 'database', { required: true }),
     inventoryPath(options['storage-root'], 'tenant-storage', { required: true }),
-    inventoryPath(options['legacy-shift-report-root'] || 'var/shift-report-attachments', 'legacy-shift-reports'),
-    inventoryPath(options['legacy-shift-cash-root'] || 'var/shift-cash-attachments', 'legacy-shift-cash'),
+    inventoryPath(options['legacy-shift-report-root'], 'legacy-shift-reports', { required: true }),
+    inventoryPath(options['legacy-shift-cash-root'], 'legacy-shift-cash', { required: true }),
+    inventoryPath(options['attachment-manifest'], 'attachment-orphan-detector', { required: true }),
   ];
-  if (options['attachment-manifest']) {
-    artifacts.push(inventoryPath(options['attachment-manifest'], 'attachment-orphan-detector', { required: true }));
-  }
   const manifest = {
     artifacts,
+    attachmentDetector,
     generatedAt: new Date().toISOString(),
     integrationConnections: await integrationMetadata(),
     restoreMode: 'installation-wide-only',
+    schema: MANIFEST_SCHEMA,
     schemaVersion: 1,
     tenantSelectiveRestore: 'unsupported-without-complete-pk-fk-file-remap-contract',
-    workerState: {
-      authoritativeSource: 'database-transcription-jobs',
-      localStateIncluded: false,
-      policy: 'rebuild-local-worker-state-after-restore; do-not-replay-stale-claims',
-    },
+    workerState: WORKER_STATE_POLICY,
   };
+  validateManifestSchema(manifest);
   fs.writeFileSync(path.resolve(options.output), `${JSON.stringify(manifest, null, 2)}\n`, {
     encoding: 'utf8',
     flag: 'wx',
@@ -135,10 +253,13 @@ async function createManifest(options) {
 
 function verifyManifest(options) {
   if (!options.manifest) throw new Error('Usage: --verify --manifest=...');
-  const manifest = JSON.parse(fs.readFileSync(path.resolve(options.manifest), 'utf8'));
-  if (manifest.schemaVersion !== 1 || manifest.restoreMode !== 'installation-wide-only') {
-    throw new Error('Unsupported or tenant-selective backup manifest');
+  let manifest;
+  try {
+    manifest = JSON.parse(fs.readFileSync(path.resolve(options.manifest), 'utf8'));
+  } catch {
+    throw new Error('Backup manifest is missing, truncated or invalid JSON');
   }
+  validateManifestSchema(manifest);
   const overrideByLabel = {
     'attachment-orphan-detector': options['attachment-manifest'],
     database: options['db-dump'],
@@ -153,6 +274,12 @@ function verifyManifest(options) {
       inventoryPath(verificationRoot, artifact.label, { required: artifact.exists }),
     );
   });
+  const detectorArtifact = manifest.artifacts.find(
+    (artifact) => artifact.label === 'attachment-orphan-detector',
+  );
+  validateAttachmentDetector(
+    overrideByLabel['attachment-orphan-detector'] || detectorArtifact.root,
+  );
   const failed = results.some((result) =>
     result.missing.length || result.mismatched.length || result.orphaned.length);
   if (failed) {
@@ -180,4 +307,14 @@ if (require.main === module) {
     .finally(() => db.sequelize.close());
 }
 
-module.exports = { compareInventory, createManifest, inventoryPath, verifyManifest };
+module.exports = {
+  MANIFEST_SCHEMA,
+  REQUIRED_LABELS,
+  WORKER_STATE_POLICY,
+  compareInventory,
+  createManifest,
+  inventoryPath,
+  validateAttachmentDetector,
+  validateManifestSchema,
+  verifyManifest,
+};

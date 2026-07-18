@@ -53,8 +53,9 @@ module.exports = (sequelize, DataTypes) => {
         }
         if (
           row.previous('sessionId') &&
-          (row.changed('clubId') || row.changed('role') ||
-            (row.changed('sessionId') && row.sessionId))
+          (row.changed('clubId') || (row.sessionId && (
+            row.changed('role') || row.changed('sessionId')
+          )))
         ) {
           throw new Error('Retained onboarding session ownership is immutable');
         }
