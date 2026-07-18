@@ -2,9 +2,6 @@ const { Op } = require('sequelize');
 const crypto = require('crypto');
 const db = require('../../models');
 const {
-  isTenantVisitsScannerEnabled,
-} = require('../tenant-context/capabilities');
-const {
   resolveVisitAccessContext,
   visitTenantWhere,
 } = require('./visit-access-context.service');
@@ -185,9 +182,7 @@ async function listEvents(query = {}, tenant = null) {
     Math.max(10, Number.parseInt(query.limit, 10) || 30),
   );
   const where = {};
-  const context = isTenantVisitsScannerEnabled()
-    ? await resolveVisitAccessContext(tenant)
-    : null;
+  const context = await resolveVisitAccessContext(tenant);
 
   if (query.eventType && query.eventType !== 'all') {
     where.eventType = query.eventType;

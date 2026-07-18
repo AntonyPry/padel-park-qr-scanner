@@ -7,19 +7,16 @@ const path = require('node:path');
 const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
+const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260716160000-add-tenant-clients-references.js';
 const VISITS_MIGRATION_FILE = '20260716180000-add-tenant-visits-scanner.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return (
@@ -58,18 +55,6 @@ async function createSchema(database) {
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
   }
   return sequelize;
-}
-
-function tenantFor(account, membership, organizationId, clubId = null) {
-  return Object.freeze({
-    accountId: account.id,
-    clubId,
-    effectiveRole: membership.role,
-    membershipId: membership.id,
-    membershipRole: membership.role,
-    organizationId,
-    scope: clubId ? 'club' : 'organization',
-  });
 }
 
 function databaseErrorCode(error) {
@@ -268,18 +253,6 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
         organizationId: defaultOrganization.id,
       },
     });
-    const defaultContext = tenantFor(
-      owner,
-      defaultMembership,
-      defaultOrganization.id,
-    );
-    const defaultClubContext = tenantFor(
-      owner,
-      defaultMembership,
-      defaultOrganization.id,
-      defaultClub.id,
-    );
-
     await t.test('single-default data-aware down/up preserves counts, checksum and FK graph', async () => {
       const migrationSource = await db.ClientSource.create({
         name: 'Migration roundtrip source',
@@ -448,8 +421,18 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
           },
         ],
       );
-      const restoredLeaf = await db.User.findByPk(migrationLeaf.id);
-      const restoredMiddle = await db.User.findByPk(migrationMiddle.id);
+      const historicalAttributes = [
+        'id',
+        'mergedIntoUserId',
+        'organizationId',
+        'sourceId',
+      ];
+      const restoredLeaf = await db.User.findByPk(migrationLeaf.id, {
+        attributes: historicalAttributes,
+      });
+      const restoredMiddle = await db.User.findByPk(migrationMiddle.id, {
+        attributes: historicalAttributes,
+      });
       assert.equal(restoredLeaf.organizationId, defaultOrganization.id);
       assert.equal(restoredLeaf.sourceId, migrationSource.id);
       assert.equal(restoredLeaf.mergedIntoUserId, migrationMiddle.id);
@@ -468,6 +451,21 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
 
     await visitsMigration.up(queryInterface, SequelizePackage);
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: VISITS_MIGRATION_FILE }]);
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: VISITS_MIGRATION_FILE,
+    });
+    const tenantContextService = require('../../src/services/tenant-context.service');
+    const defaultContext = await tenantContextService.resolveTenantContext({
+      accountId: owner.id,
+      organizationId: defaultOrganization.id,
+      scope: 'organization',
+    });
+    const defaultClubContext = await tenantContextService.resolveTenantContext({
+      accountId: owner.id,
+      clubId: defaultClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
 
     const foreignOrganization = await db.Organization.create({
       name: 'Foreign Client Organization',
@@ -480,24 +478,31 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
       slug: 'foreign-client-club',
       status: 'active',
     });
+    const foreignOwner = await db.Account.create({
+      email: `foreign-owner-${Date.now()}@clients-references.test`,
+      passwordHash: 'test-only',
+      role: 'owner',
+      staffId: null,
+      status: 'active',
+    });
     const foreignMembership = await db.Membership.create({
-      accountId: owner.id,
+      accountId: foreignOwner.id,
       organizationId: foreignOrganization.id,
       role: 'owner',
       staffId: null,
       status: 'active',
     });
-    const foreignContext = tenantFor(
-      owner,
-      foreignMembership,
-      foreignOrganization.id,
-    );
-    const foreignClubContext = tenantFor(
-      owner,
-      foreignMembership,
-      foreignOrganization.id,
-      foreignClub.id,
-    );
+    const foreignContext = await tenantContextService.resolveTenantContext({
+      accountId: foreignOwner.id,
+      organizationId: foreignOrganization.id,
+      scope: 'organization',
+    });
+    const foreignClubContext = await tenantContextService.resolveTenantContext({
+      accountId: foreignOwner.id,
+      clubId: foreignClub.id,
+      organizationId: foreignOrganization.id,
+      scope: 'club',
+    });
 
     let defaultSource;
     let foreignSource;
@@ -958,22 +963,11 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
       await foreignMembership.update({ status: 'active' });
     });
 
-    await t.test('flag off preserves legacy global reads but writes to the default Organization', async () => {
+    await t.test('flag off fails closed after a second tenant exists', async () => {
       process.env.TENANT_CLIENTS_REFERENCES_ENABLED = 'false';
-      const legacyList = await clientsService.listClients({
-        page: 1,
-        pageSize: 25,
-        status: 'all',
-      });
-      assert.ok(legacyList.items.some((row) => row.id === defaultClient.id));
-      assert.ok(legacyList.items.some((row) => row.id === foreignClient.id));
-
-      const legacySource = await referencesService.create('client-sources', {
-        name: 'Legacy default source',
-      });
-      assert.equal(
-        (await db.ClientSource.findByPk(legacySource.id)).organizationId,
-        defaultOrganization.id,
+      await assert.rejects(
+        clientsService.listClients({ page: 1, pageSize: 25, status: 'all' }),
+        (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
       );
       process.env.TENANT_CLIENTS_REFERENCES_ENABLED = 'true';
     });

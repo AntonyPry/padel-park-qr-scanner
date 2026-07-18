@@ -4,6 +4,10 @@ const {
   DEFAULT_CLUB_TIMEZONE,
   TENANT_STATUS_VALUES,
 } = require('../src/tenant-foundation/constants');
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
 
 module.exports = (sequelize, DataTypes) => {
   const Club = sequelize.define(
@@ -32,7 +36,25 @@ module.exports = (sequelize, DataTypes) => {
         defaultValue: 'active',
       },
     },
-    { tableName: 'Clubs' },
+    {
+      hooks: {
+        beforeBulkUpdate(options) {
+          assertBulkAuthorityFieldsAreMutable(
+            options,
+            ['organizationId'],
+            'Club tenant attribution is immutable',
+          );
+        },
+        beforeUpdate(club) {
+          assertInstanceAuthorityFieldsAreMutable(
+            club,
+            ['organizationId'],
+            'Club tenant attribution is immutable',
+          );
+        },
+      },
+      tableName: 'Clubs',
+    },
   );
 
   Club.associate = (models) => {

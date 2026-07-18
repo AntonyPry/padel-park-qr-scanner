@@ -1369,6 +1369,7 @@ async function listClientTelephonyCalls(clientId, account, options = {}) {
 
 async function getClientDetails(id, account = null, tenant = null) {
   const context = await resolveClientAccessContext(tenant);
+  const includeClubDetails = tenant?.scope === 'club';
   let bookingContext = null;
   if (isTenantBookingsCourtsEnabled()) {
     if (tenant?.scope === 'club') {
@@ -1404,7 +1405,9 @@ async function getClientDetails(id, account = null, tenant = null) {
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
     isTrainer(account) ? [] : getDuplicateCandidates(client, context),
-    canViewTrainingNotes(account) ? listTrainingNotes(client.id, account, tenant) : [],
+    canViewTrainingNotes(account) && includeClubDetails
+      ? listTrainingNotes(client.id, account, tenant)
+      : [],
     canViewTrainingNotes(account)
       ? clientSkillMapService.listForClient(client.id, account, { tenant })
       : [],
@@ -1421,7 +1424,7 @@ async function getClientDetails(id, account = null, tenant = null) {
       ? listClientActiveCallTasks(client.id, account, context)
       : [],
     includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
-    includeOperationalHistory
+    includeOperationalHistory && includeClubDetails
       ? getClientPrepaymentContext(client.id, account, tenant)
       : buildEmptyClientPrepaymentContext(),
   ]);
@@ -2757,7 +2760,10 @@ async function registerClientFromMessenger({
   );
 
   if (result.created) {
-    await clientSkillMapService.syncActiveSkillsForClient(result.client, { tenant });
+    await clientSkillMapService.syncActiveSkillsForClientFromProvider(
+      result.client,
+      { tenant },
+    );
   }
   return getClientDetails(result.client.id, null, tenant);
 }

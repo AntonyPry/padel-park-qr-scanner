@@ -1,7 +1,9 @@
 'use strict';
 
 const db = require('../../models');
-const { DEFAULT_ORGANIZATION_SLUG } = require('../tenant-foundation/constants');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const {
   isTenantStaffAccessEnabled,
@@ -61,16 +63,15 @@ async function resolveScopedContext(tenant, { lock, transaction }) {
 }
 
 async function resolveLegacyContext({ lock, transaction }) {
-  const organization = await db.Organization.findOne({
-    lock: queryLock(transaction, lock),
+  const singleton = await requireExactSingletonDefault({
+    lock,
+    requireClub: false,
     transaction,
-    where: { slug: DEFAULT_ORGANIZATION_SLUG, status: 'active' },
   });
-  if (!organization) throw safeTenantDenial();
   return Object.freeze({
     accountId: null,
     membershipId: null,
-    organizationId: Number(organization.id),
+    organizationId: singleton.organizationId,
     scoped: false,
   });
 }

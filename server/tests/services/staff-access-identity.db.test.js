@@ -6,17 +6,15 @@ const path = require('node:path');
 const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
+const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260716140000-add-tenant-staff-access-identity.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return (
@@ -196,6 +194,10 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       assert.equal(restoredMembership.staffId, owner.staffId);
       const after = await tenantFoundation.assertTenantFoundationInitialized();
       assert.equal(after.checksum, before.checksum);
+    });
+
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
     });
 
     const createStaff = (suffix) =>
@@ -726,11 +728,12 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       );
     });
 
-    await t.test('flag-off retains legacy reads while flag-on scopes Account reads', async () => {
+    await t.test('flag-off fails closed after a second tenant exists', async () => {
       process.env.TENANT_STAFF_ACCESS_ENABLED = 'false';
-      const legacyList = await staffService.getAll({ q: 'Shared Staff Name' });
-      assert.ok(legacyList.some((staff) => staff.id === owner.staffId));
-      assert.ok(legacyList.some((staff) => staff.id === foreignStaff.id));
+      await assert.rejects(
+        staffService.getAll({ q: 'Shared Staff Name' }),
+        (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
+      );
 
       process.env.TENANT_STAFF_ACCESS_ENABLED = 'true';
       const foreignOnlyAccount = await db.Account.create({

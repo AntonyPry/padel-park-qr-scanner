@@ -10,6 +10,9 @@ const {
   isTenantCacheRealtimeEnabled,
 } = require('../tenant-context/capabilities');
 const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
   GLOBAL_SYSTEM_ROOM,
   getRealtimeRoomsForRole,
   getTenantRoomsForContext,
@@ -92,6 +95,8 @@ function createSocketServer(
           organizationId,
           scope: 'club',
         });
+      } else {
+        await requireExactSingletonDefault();
       }
       return next();
     } catch (error) {

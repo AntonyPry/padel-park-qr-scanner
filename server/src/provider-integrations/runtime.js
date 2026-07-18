@@ -2,7 +2,9 @@
 
 const crypto = require('node:crypto');
 const { timingSafeEqual } = crypto;
-const { requireDefaultTenantContext } = require('../files-workers/tenant-context');
+const {
+  resolveTrustedTenantAttribution,
+} = require('../files-workers/tenant-context');
 
 function secretMatches(provided, expected) {
   const left = Buffer.from(String(provided || ''), 'utf8');
@@ -32,7 +34,7 @@ function assertIngressSecret(context, provided, key = 'webhookSecret') {
 }
 
 async function assertLegacyDownstreamReady(context) {
-  return requireDefaultTenantContext(context);
+  return resolveTrustedTenantAttribution(context);
 }
 
 module.exports = {

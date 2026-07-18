@@ -13,6 +13,9 @@ const {
   assertIngressSecret,
   assertLegacyDownstreamReady,
 } = require('../provider-integrations/runtime');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 
 function beelineSecret(req) {
   return req.headers['x-beeline-webhook-secret'] ||
@@ -33,7 +36,14 @@ function rejectResponse(res, error) {
 
 function connectionFirstIngress(provider, getSecret) {
   return async function resolveConnectionBeforeBody(req, res, next) {
-    if (!isTenantProviderIntegrationsEnabled()) return next();
+    if (!isTenantProviderIntegrationsEnabled()) {
+      try {
+        await requireExactSingletonDefault();
+        return next();
+      } catch (error) {
+        return rejectResponse(res, error);
+      }
+    }
     try {
       const publicId = req.params.connectionPublicId;
       const connection = await resolveIngressConnection({

@@ -5,9 +5,6 @@ const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const scannerEventsService = require('./scanner-events.service');
 const {
-  isTenantVisitsScannerEnabled,
-} = require('../tenant-context/capabilities');
-const {
   resolveVisitAccessContext,
   visitTenantWhere,
 } = require('./visit-access-context.service');
@@ -459,9 +456,7 @@ async function registerReceptionUser({
 }
 
 async function getRecentVisitCards(limit = 50, tenant = null) {
-  const context = isTenantVisitsScannerEnabled()
-    ? await resolveVisitAccessContext(tenant)
-    : null;
+  const context = await resolveVisitAccessContext(tenant);
   const visits = await db.Visit.findAll({
     where: visitTenantWhere(context),
     limit,
@@ -508,12 +503,10 @@ async function issueKey(visitId, keyNumber, account = null, tenant = null) {
   }
 
   const visit = await db.sequelize.transaction(async (transaction) => {
-    const context = isTenantVisitsScannerEnabled()
-      ? await resolveVisitAccessContext(tenant, {
-          lock: true,
-          transaction,
-        })
-      : null;
+    const context = await resolveVisitAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
     const lockedVisit = context
       ? await db.Visit.findOne({
           where: visitTenantWhere(context, { id: Number(visitId) }),
@@ -576,12 +569,10 @@ async function correctKey(visitId, keyNumber, account = null, tenant = null) {
   }
 
   return db.sequelize.transaction(async (transaction) => {
-    const context = isTenantVisitsScannerEnabled()
-      ? await resolveVisitAccessContext(tenant, {
-          lock: true,
-          transaction,
-        })
-      : null;
+    const context = await resolveVisitAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
     const lockedVisit = context
       ? await db.Visit.findOne({
           where: visitTenantWhere(context, { id: Number(visitId) }),

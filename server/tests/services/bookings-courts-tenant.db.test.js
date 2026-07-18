@@ -7,6 +7,10 @@ const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
 const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../../src/tenant-foundation/constants');
@@ -14,17 +18,7 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260718120000-add-tenant-bookings-courts.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-  'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
-  'TENANT_BOOKINGS_COURTS_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.BOOKINGS_COURTS_TEST_DB_NAME ||
@@ -379,6 +373,10 @@ test('Feature 5.5 migration, tenant isolation, races and idempotency', async () 
       ]),
     ));
     assert.deepEqual(reappliedCounts, legacyCounts);
+
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
+    });
 
     db = require('../../models');
     await db.sequelize.authenticate();
@@ -942,18 +940,13 @@ test('Feature 5.5 migration, tenant isolation, races and idempotency', async () 
     );
 
     process.env.TENANT_BOOKINGS_COURTS_ENABLED = 'false';
-    const compatibilityCourt = await bookingsService.createBookingResource({
-      clubId: foreignClub.id,
-      name: 'Flag-off exact default court',
-      organizationId: foreignOrganization.id,
-    });
-    const compatibilityRow = await db.Court.findByPk(compatibilityCourt.id);
-    assert.equal(Number(compatibilityRow.organizationId), Number(defaultOrganization.id));
-    assert.equal(Number(compatibilityRow.clubId), Number(defaultClub.id));
-    assert.equal(
-      (await bookingsService.listBookingResources({ status: 'all' }))
-        .some((court) => court.id === secondCourt.id || court.id === foreignCourt.id),
-      false,
+    await assert.rejects(
+      bookingsService.createBookingResource({
+        clubId: foreignClub.id,
+        name: 'Flag-off must not default after second tenant',
+        organizationId: foreignOrganization.id,
+      }),
+      (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
     );
     process.env.TENANT_BOOKINGS_COURTS_ENABLED = 'true';
 

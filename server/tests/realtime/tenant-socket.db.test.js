@@ -435,16 +435,14 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
       await managerAccessB.update({ status: 'active' });
     });
 
-    await t.test('flag off preserves legacy handshake and domain rooms', async () => {
+    await t.test('flag off fails closed after a second tenant exists', async () => {
       process.env.TENANT_CACHE_REALTIME_ENABLED = 'false';
-      const legacy = await connectSocket(url, { token: ownerSession.token });
-      sockets.push(legacy);
-      const serverSocket = [...io.sockets.sockets.values()].find(
-        (socket) => socket.id === legacy.id,
+      const denied = await connectSocket(
+        url,
+        { token: ownerSession.token },
+        { expectError: true },
       );
-      assert.equal(serverSocket.rooms.has('crm:domain:clients'), true);
-      assert.equal(serverSocket.rooms.has('access'), true);
-      assert.equal(serverSocket.data.tenant, undefined);
+      assert.equal(denied.error.data.code, 'TENANT_SINGLE_DEFAULT_REQUIRED');
       process.env.TENANT_CACHE_REALTIME_ENABLED = 'true';
     });
 

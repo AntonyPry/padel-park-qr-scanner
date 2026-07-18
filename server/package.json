@@ -57,6 +57,10 @@
     "tenant:providers:bootstrap": "node scripts/bootstrap-provider-connections.js",
     "tenant:foundation:assert": "node scripts/tenant-foundation-check.js",
     "tenant:routes:audit": "node scripts/audit-tenant-route-scopes.js",
+    "tenant:enforcement:audit": "node scripts/audit-final-tenant-enforcement.js",
+    "tenant:integrity:detect": "node scripts/tenant-integrity-detector.js",
+    "tenant:rc:targeted": "node scripts/run-final-tenant-rc.js",
+    "tenant:rc": "node scripts/run-final-tenant-rc.js --full",
     "test": "node --test --test-concurrency=1 tests/**/*.test.js",
     "typecheck": "tsc --noEmit"
   }

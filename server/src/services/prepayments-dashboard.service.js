@@ -471,7 +471,7 @@ async function getDashboard(query = {}, account = null, tenant = null) {
         ? corporateClientsService.listCorporateClients(
             { status: 'all' },
             authorityActor,
-            context,
+            tenant,
           )
         : Promise.resolve([]),
     ]);

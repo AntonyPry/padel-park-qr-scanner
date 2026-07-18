@@ -794,17 +794,15 @@ test('Feature 8.2 migration and real two-Organization/two-Club AuditLog isolatio
       path: '/api/flag-off-parity',
       statusCode: 200,
     });
-    assert.equal(flagOffWrite.recorded, true);
-    const flagOffStored = await db.AuditLog.findByPk(flagOffWrite.auditLogId);
-    assert.equal(Number(flagOffStored.organizationId), Number(orgA.id));
-    assert.equal(flagOffStored.clubId, null);
-    const flagOffList = await auditService.list(
-      { action: 'flag_off_parity', page: 1, pageSize: 10 },
-      actorOwnerA,
+    assert.equal(flagOffWrite.recorded, false);
+    assert.equal(flagOffWrite.errorCode, 'TENANT_SINGLE_DEFAULT_REQUIRED');
+    await assert.rejects(
+      auditService.list(
+        { action: 'flag_off_parity', page: 1, pageSize: 10 },
+        actorOwnerA,
+      ),
+      (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
     );
-    assert.equal(flagOffList.total, 1);
-    assert.equal('organizationId' in flagOffList.items[0], false);
-    assert.equal('clubId' in flagOffList.items[0], false);
     process.env.TENANT_AUDIT_LOG_ENABLED = 'true';
 
     const beforeRollbackState = await migration.__testing.classifyState(queryInterface);

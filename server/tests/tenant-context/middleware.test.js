@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { afterEach, beforeEach, test } = require('node:test');
 const tenantContextService = require('../../src/services/tenant-context.service');
 const authService = require('../../src/services/auth.service');
+const db = require('../../models');
 const {
   resolveRequestTenant,
 } = require('../../src/middleware/tenant-context');
@@ -79,17 +80,35 @@ async function runResolver(req) {
 }
 
 test('flag off preserves legacy account authorization and requires no tenant headers', async () => {
-  process.env.TENANT_CONTEXT_ENABLED = 'false';
-  const req = request('/bookings/schedule', 'club');
-  const result = await runResolver(req);
-  assert.equal(result.nextCalled, true);
-  assert.equal(req.tenant, undefined);
+  const originalOrganizations = db.Organization.findAll;
+  const originalClubs = db.Club.findAll;
+  try {
+    db.Organization.findAll = async () => [
+      { id: 1, slug: 'padel-park', status: 'active' },
+    ];
+    db.Club.findAll = async () => [
+      {
+        id: 1,
+        organizationId: 1,
+        slug: 'padel-park',
+        status: 'active',
+      },
+    ];
+    process.env.TENANT_CONTEXT_ENABLED = 'false';
+    const req = request('/bookings/schedule', 'club');
+    const result = await runResolver(req);
+    assert.equal(result.nextCalled, true);
+    assert.equal(req.tenant, undefined);
 
-  let roleNext = false;
-  requireRole('manager')(req, response(), () => {
-    roleNext = true;
-  });
-  assert.equal(roleNext, true);
+    let roleNext = false;
+    requireRole('manager')(req, response(), () => {
+      roleNext = true;
+    });
+    assert.equal(roleNext, true);
+  } finally {
+    db.Organization.findAll = originalOrganizations;
+    db.Club.findAll = originalClubs;
+  }
 });
 
 test('inactive Account remains rejected by identity auth before tenant resolution', async () => {

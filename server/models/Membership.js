@@ -4,6 +4,10 @@ const {
   MEMBERSHIP_ROLE_VALUES,
   TENANT_STATUS_VALUES,
 } = require('../src/tenant-foundation/constants');
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
 
 module.exports = (sequelize, DataTypes) => {
   const Membership = sequelize.define(
@@ -30,7 +34,25 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
     },
-    { tableName: 'Memberships' },
+    {
+      hooks: {
+        beforeBulkUpdate(options) {
+          assertBulkAuthorityFieldsAreMutable(
+            options,
+            ['organizationId', 'accountId'],
+            'Membership tenant authority is immutable',
+          );
+        },
+        beforeUpdate(membership) {
+          assertInstanceAuthorityFieldsAreMutable(
+            membership,
+            ['organizationId', 'accountId'],
+            'Membership tenant authority is immutable',
+          );
+        },
+      },
+      tableName: 'Memberships',
+    },
   );
 
   Membership.associate = (models) => {

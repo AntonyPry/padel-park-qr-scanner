@@ -163,6 +163,48 @@ test('ready Staff identity schema requires Account/Membership/Staff parity', () 
   assert.equal(classifySnapshot(partial).state, 'invalid');
 });
 
+test('final enforcement classifier accepts valid multi-tenant authority and rejects cross-parent links', () => {
+  const enforced = snapshot({
+    accounts: [
+      { id: 1, role: 'owner', staffId: null, status: 'active' },
+      { id: 2, role: 'admin', staffId: 5, status: 'active' },
+      { id: 3, role: 'owner', staffId: null, status: 'active' },
+      { id: 4, role: 'admin', staffId: 6, status: 'active' },
+    ],
+    memberships: [
+      { id: 10, accountId: 1, organizationId: 1, role: 'owner', staffId: null, status: 'active' },
+      { id: 11, accountId: 2, organizationId: 1, role: 'admin', staffId: 5, status: 'active' },
+      { id: 12, accountId: 3, organizationId: 2, role: 'owner', staffId: null, status: 'active' },
+      { id: 13, accountId: 4, organizationId: 2, role: 'admin', staffId: 6, status: 'active' },
+    ],
+    accesses: [
+      { clubId: 1, membershipId: 11, organizationId: 1, roleOverride: null, status: 'active' },
+      { clubId: 2, membershipId: 13, organizationId: 2, roleOverride: null, status: 'active' },
+    ],
+    organizations: [
+      { id: 1, slug: 'padel-park', status: 'active' },
+      { id: 2, slug: 'second', status: 'active' },
+    ],
+    clubs: [
+      { id: 1, organizationId: 1, slug: 'padel-park', status: 'active' },
+      { id: 2, organizationId: 2, slug: 'padel-park', status: 'active' },
+    ],
+  });
+  enforced.staffIdentitySchema = 'ready';
+  enforced.staffs = [
+    { id: 5, organizationId: 1, status: 'active' },
+    { id: 6, organizationId: 2, status: 'active' },
+  ];
+  const valid = classifySnapshot(enforced, { enforcementEnabled: true });
+  assert.equal(valid.state, 'initialized');
+  assert.equal(valid.diagnostics.activeOwners, 2);
+
+  enforced.accesses[1].organizationId = 1;
+  const invalid = classifySnapshot(enforced, { enforcementEnabled: true });
+  assert.equal(invalid.state, 'invalid');
+  assert.match(invalid.diagnostics.reasons.join(' '), /Organization mismatch/);
+});
+
 test('request gate cache is short, bounded and coalesces concurrent strict reads', async () => {
   invalidateTenantFoundationGateCache();
   assert.equal(resolveGateCacheTtlMs(-10), 0);

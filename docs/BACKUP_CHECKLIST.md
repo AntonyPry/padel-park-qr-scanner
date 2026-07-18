@@ -67,6 +67,19 @@ The verifier fails on missing files, checksum/size mismatches and files that wer
 
 Selective tenant restore is unsupported until Setly has a formal complete PK/FK/provider-id/file-key remap contract. Restore is installation-wide and must target an empty environment. Local disk remains a known availability limitation; object storage/S3 is a separate architecture decision.
 
+## Feature 9 isolated rehearsal
+
+Перед pre-main SaaS RC выполните installation-wide rehearsal только на disposable DB/filesystem:
+
+```bash
+cd server
+npm run tenant:rc:targeted -- --output=/private/tmp/setly-f9-rc-restore-<id>
+```
+
+Rehearsal создаёт две изолированные установки, снимает consistent logical dump с triggers/routines, копирует tenant storage и оба legacy upload roots, экспортирует только non-secret provider identity metadata, фиксирует worker state как rebuild-from-DB, сверяет SHA-256 manifest, восстанавливает в fresh DB/root и повторно запускает schema/data/tenant/file/provider/idempotency checks и broad orphan detector. Временные DB/storage удаляются в `finally`.
+
+Артефакты `restore-rehearsal-report.json`, `tenant-integrity-report.json` и `rc-command-report.json` должны иметь `ok: true`. Manifest с отсутствующим/лишним artifact class, checksum mismatch, unsafe worker policy, selective tenant scope или non-empty restore target отклоняется. Эта команда не заменяет production backup и не разрешает production restore/deploy.
+
 ## Retention
 
 - Daily backups: keep at least 14 days.

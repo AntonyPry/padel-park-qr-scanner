@@ -584,7 +584,7 @@ async function createCorporateClient(data = {}, account = null, tenant = null) {
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, authorityActor, context);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
 async function updateCorporateClient(id, data = {}, account = null, tenant = null) {
@@ -619,7 +619,7 @@ async function updateCorporateClient(id, data = {}, account = null, tenant = nul
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, authorityActor, context);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
 async function archiveCorporateClient(id, data = {}, account = null, tenant = null) {
@@ -631,7 +631,7 @@ async function archiveCorporateClient(id, data = {}, account = null, tenant = nu
   const row = await findCorporateClient(id, { context });
   await assertCorporateClientInScope(row, authorityActor, tenant);
   if (row.status === 'archived') {
-    return getCorporateClient(row.id, authorityActor, context);
+    return getCorporateClient(row.id, authorityActor, tenant);
   }
   const beforeData = row.toJSON ? row.toJSON() : { ...row };
   await row.update({
@@ -651,7 +651,7 @@ async function archiveCorporateClient(id, data = {}, account = null, tenant = nu
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, authorityActor, context);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
 async function restoreCorporateClient(id, account = null, tenant = null) {
@@ -663,7 +663,7 @@ async function restoreCorporateClient(id, account = null, tenant = null) {
   const row = await findCorporateClient(id, { context });
   await assertCorporateClientInScope(row, authorityActor, tenant);
   if (row.status === 'active') {
-    return getCorporateClient(row.id, authorityActor, context);
+    return getCorporateClient(row.id, authorityActor, tenant);
   }
   const beforeData = row.toJSON ? row.toJSON() : { ...row };
   await row.update({
@@ -682,7 +682,7 @@ async function restoreCorporateClient(id, account = null, tenant = null) {
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, authorityActor, context);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
 async function assertFinanceLinkAvailable(financeId, transaction, context = null) {
@@ -1025,7 +1025,7 @@ async function createDeposit(
     corporateClient: await getCorporateClient(
       result.clientId,
       result.actor,
-      result.context,
+      tenant,
     ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
@@ -1126,7 +1126,7 @@ async function createSpending(
     corporateClient: await getCorporateClient(
       result.clientId,
       result.actor,
-      result.context,
+      tenant,
     ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
@@ -1415,7 +1415,7 @@ async function cancelDeposit(
     corporateClient: await getCorporateClient(
       result.clientId,
       result.actor,
-      result.context,
+      tenant,
     ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
@@ -1501,7 +1501,7 @@ async function reverseSpending(
     corporateClient: await getCorporateClient(
       result.clientId,
       result.actor,
-      result.context,
+      tenant,
     ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
@@ -1575,14 +1575,14 @@ async function exportLedgerDetails(
   const client = await getCorporateClient(
     corporateClientId,
     authorityActor,
-    context,
+    tenant,
   );
   const exportQuery = { ...query, status: query.status || 'active' };
   const rows = await listLedgerEntries(
     corporateClientId,
     exportQuery,
     authorityActor,
-    context,
+    tenant,
   );
 
   await payrollService.recordChange({

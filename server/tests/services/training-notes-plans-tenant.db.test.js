@@ -7,6 +7,10 @@ const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
 const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../../src/tenant-foundation/constants');
@@ -14,19 +18,7 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260718160000-add-tenant-training-notes-plans.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-  'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
-  'TENANT_BOOKINGS_COURTS_ENABLED',
-  'TENANT_METHODOLOGY_SKILL_MAP_ENABLED',
-  'TENANT_TRAINING_NOTES_PLANS_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.TRAINING_NOTES_PLANS_TEST_DB_NAME ||
@@ -193,6 +185,7 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
         .toUpperCase().includes('BIGINT'),
       true,
     );
+
     await queryInterface.removeColumn(ownedColumn.table, ownedColumn.name);
 
     await migration.up(queryInterface, SequelizePackage);
@@ -217,6 +210,10 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
         !/\bStaff\b/.test(String(trigger.ACTION_STATEMENT))),
       true,
     );
+
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
+    });
 
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');
@@ -602,48 +599,66 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
       true,
     );
 
+    const siblingTrainingOwner = await db.Account.create({
+      email: `feature-6-2-sibling-training-${Date.now()}@example.test`,
+      passwordHash: 'test-only',
+      role: 'owner',
+      status: 'active',
+    });
+    await db.Membership.create({
+      accountId: siblingTrainingOwner.id,
+      organizationId: defaultOrganization.id,
+      role: 'owner',
+      status: 'active',
+    });
+    const siblingTrainingActor = {
+      id: siblingTrainingOwner.id,
+      role: 'owner',
+    };
+    const siblingTrainingTenant = await tenantContextService.resolveTenantContext({
+      accountId: siblingTrainingOwner.id,
+      clubId: siblingClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
+    await onboardingService.setTrainingMode(
+      actorA,
+      { isEnabled: true, role: 'owner' },
+      tenantA,
+    );
+    await onboardingService.setTrainingMode(
+      siblingTrainingActor,
+      { isEnabled: true, role: 'owner' },
+      siblingTrainingTenant,
+    );
+    const trainingMarkerA = await onboardingService.getTrainingDataMarker(actorA, tenantA);
+    const siblingTrainingMarker = await onboardingService.getTrainingDataMarker(
+      siblingTrainingActor,
+      siblingTrainingTenant,
+    );
     await db.TrainingNote.create({
       clubId: defaultClub.id,
       exercises: 'training A',
-      isTraining: true,
+      ...trainingMarkerA,
       level: 'D',
       trainedAt: '2099-03-09',
-      trainingAccountId: ownerA.id,
-      trainingRole: 'owner',
       userId: userA.id,
     });
     const siblingTrainingNote = await db.TrainingNote.create({
       clubId: siblingClub.id,
       exercises: 'training sibling',
-      isTraining: true,
+      ...siblingTrainingMarker,
       level: 'D',
       trainedAt: '2099-03-10',
-      trainingAccountId: ownerA.id,
-      trainingRole: 'owner',
       userId: userA.id,
     });
     process.env.TENANT_TRAINING_NOTES_PLANS_ENABLED = 'false';
-    const legacyNotes = await notesService.listByClient(userA.id, {
-      actor: actorA,
-      tenant: tenantSibling,
-    });
-    assert.equal(legacyNotes.some((note) => note.id === siblingTrainingNote.id), true);
-    const legacyCreatedNotes = await notesService.create(
-      userA.id,
-      {
-        exercises: 'flag-off default-club compatibility',
-        level: 'D',
-        trainedAt: '2099-03-11',
-      },
-      actorA,
-      tenantSibling,
-    );
-    const legacyCreatedId = legacyCreatedNotes.find((note) =>
-      note.exercises === 'flag-off default-club compatibility')?.id;
-    assert.ok(legacyCreatedId);
-    assert.equal(
-      Number((await db.TrainingNote.findByPk(legacyCreatedId)).clubId),
-      Number(defaultClub.id),
+    await assert.rejects(
+      notesService.listByClient(userA.id, {
+        actor: actorA,
+        tenant: tenantSibling,
+      }),
+      (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
     );
     process.env.TENANT_TRAINING_NOTES_PLANS_ENABLED = 'true';
     const summary = await onboardingService.getTrainingDataSummary(
@@ -679,8 +694,6 @@ test('Feature 6.2 migration and two-Organization/two-Club training isolation', a
       'SELECT id, clubId, userId, trainedAt FROM TrainingNotes ORDER BY id',
       { type: SequelizePackage.QueryTypes.SELECT },
     ));
-    await migration.down(queryInterface, SequelizePackage);
-    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await migration.up(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
     assert.equal(JSON.stringify(await schema.query(

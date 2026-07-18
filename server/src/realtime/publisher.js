@@ -5,6 +5,9 @@ const {
   isTenantCacheRealtimeEnabled,
 } = require('../tenant-context/capabilities');
 const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
   getRealtimeDomainRoom,
   getTenantDomainRoom,
 } = require('./permissions');
@@ -118,6 +121,10 @@ async function revalidateRoomSockets(io, room) {
 
 async function publishRealtimeChange(io, payload, account, tenant = null) {
   if (!io || !payload?.domain || !payload?.entity) return null;
+
+  if (!isTenantCacheRealtimeEnabled()) {
+    await requireExactSingletonDefault();
+  }
 
   const event = createRealtimeEvent(payload, account, tenant);
   const room = isTenantCacheRealtimeEnabled()

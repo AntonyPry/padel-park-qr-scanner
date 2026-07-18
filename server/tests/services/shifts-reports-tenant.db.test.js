@@ -8,27 +8,17 @@ const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
 const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../../src/tenant-foundation/constants');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE = '20260719160000-add-tenant-shifts-reports.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-  'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
-  'TENANT_BOOKINGS_COURTS_ENABLED',
-  'TENANT_METHODOLOGY_SKILL_MAP_ENABLED',
-  'TENANT_TRAINING_NOTES_PLANS_ENABLED',
-  'TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED',
-  'TENANT_SHIFTS_REPORTS_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.SHIFTS_REPORTS_TEST_DB_NAME ||
@@ -351,6 +341,10 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
       )).count),
       1,
     );
+
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
+    });
 
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');
@@ -1035,66 +1029,16 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
     );
 
     process.env.TENANT_SHIFTS_REPORTS_ENABLED = 'false';
-    const legacyShift = await db.Shift.create({
-      adminName: 'Legacy bridge',
-      date: '2099-08-03',
-      hours: 8,
-      status: 'closed',
-    });
-    const legacyTemplate = await db.ShiftReportTemplate.create({
-      name: 'Legacy bridge template',
-      scheduleConfig: {},
-      scheduleType: 'shift_end',
-      status: 'active',
-    });
-    const legacyReport = await db.ShiftReport.create({
-      itemsSnapshot: [],
-      scheduledAt: new Date(),
-      scheduledSlotKey: `legacy-${Date.now()}`,
-      shiftId: legacyShift.id,
-      status: 'pending',
-      templateId: legacyTemplate.id,
-      templateSnapshot: {},
-      templateVersion: 1,
-    });
-    assert.equal(Number(legacyShift.clubId), Number(clubA.id));
-    assert.equal(Number(legacyTemplate.clubId), Number(clubA.id));
-    assert.equal(Number(legacyReport.clubId), Number(clubA.id));
-    const legacySnapshot = { ...payrollA };
-    delete legacySnapshot.tenantProvenance;
-    const legacyPayrollPeriod = await db.PayrollPeriod.create({
-      fromDate: '2099-08-04',
-      snapshot: legacySnapshot,
-      status: 'reviewed',
-      toDate: '2099-08-04',
-    });
-    const legacyPayroll = await payrollService.calculatePayroll(
-      '2099-08-04',
-      '2099-08-04',
-      actorA,
-      organizationTenantA,
+    await assert.rejects(
+      db.Shift.create({
+        adminName: 'Legacy bridge must fail closed',
+        date: '2099-08-03',
+        hours: 8,
+        status: 'closed',
+      }),
+      (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
     );
-    assert.equal(legacyPayroll.source, 'snapshot');
-    assert.equal(legacyPayroll.tenantProvenance, undefined);
     process.env.TENANT_SHIFTS_REPORTS_ENABLED = 'true';
-
-    await assert.rejects(
-      payrollService.calculatePayroll(
-        '2099-08-04',
-        '2099-08-04',
-        actorA,
-        organizationTenantA,
-      ),
-      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
-    );
-    await assert.rejects(
-      payrollService.exportPayroll(
-        { periodId: legacyPayrollPeriod.id },
-        actorB,
-        organizationTenantB,
-      ),
-      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
-    );
 
     await assert.rejects(
       migration.down(queryInterface, SequelizePackage),

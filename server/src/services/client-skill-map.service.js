@@ -3,6 +3,12 @@ const {
   TRAINING_EXERCISE_E_LEVEL_VALUES,
 } = require('../constants/training-methodology');
 const {
+  isTenantMethodologySkillMapEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
+const {
   bindMethodologyActor,
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
@@ -116,6 +122,7 @@ function getClientTrainingMarker(client) {
     isTraining: Boolean(raw?.isTraining),
     trainingAccountId: raw?.trainingAccountId || null,
     trainingRole: raw?.trainingRole || null,
+    trainingSessionId: raw?.trainingSessionId || null,
   };
 }
 
@@ -351,6 +358,7 @@ async function loadClientOrFail(clientId, context, options = {}) {
       'isTraining',
       'trainingRole',
       'trainingAccountId',
+      'trainingSessionId',
     ],
     lock: options.lock,
     transaction: options.transaction,
@@ -404,6 +412,34 @@ async function syncActiveSkillsForClientWithContext(client, context, options = {
 async function syncActiveSkillsForClient(client, options = {}) {
   const context = await resolveMethodologyAccessContext(options.tenant, options);
   return syncActiveSkillsForClientWithContext(client, context, options);
+}
+
+async function syncActiveSkillsForClientFromProvider(client, options = {}) {
+  if (!isTenantMethodologySkillMapEnabled()) {
+    return syncActiveSkillsForClient(client, { ...options, tenant: null });
+  }
+  const providerContext = await resolveClientAccessContext(
+    options.tenant,
+    options,
+  );
+  if (
+    providerContext.authority !== 'provider' ||
+    !providerContext.scoped ||
+    !providerContext.connectionId ||
+    !providerContext.organizationId
+  ) {
+    const error = appError('Клиент не найден', 404);
+    error.code = 'TENANT_CONTEXT_NOT_FOUND';
+    throw error;
+  }
+  return syncActiveSkillsForClientWithContext(
+    client,
+    {
+      organizationId: providerContext.organizationId,
+      readScoped: true,
+    },
+    options,
+  );
 }
 
 async function syncActiveSkillsForClientId(clientId, options = {}) {
@@ -778,6 +814,7 @@ module.exports = {
   listForClient,
   recalculateFromStructuredTraining,
   syncActiveSkillsForClient,
+  syncActiveSkillsForClientFromProvider,
   syncActiveSkillsForClientId,
   updateEntry,
   __testing: {

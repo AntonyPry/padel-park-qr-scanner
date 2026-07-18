@@ -357,6 +357,17 @@ DB metadata содержит organization/club; download сначала пров
 - каждая migration wave имеет row-count/checksum отчет по organization/club и orphan detector;
 - удаление organization/club — отдельная retention/erasure процедура, не cascade из UI.
 
+### Feature 9 final enforcement contract
+
+- `TENANT_ENFORCEMENT_ENABLED` — внутренний server-owned capability поверх всех принятых tenant waves. Он не является production rollout flag и не разрешает provisioning или selected-club UX.
+- Любой legacy flag-off bridge сначала подтверждает exact initialized singleton default: одна active default Organization, один active default Club, полная Account/Membership/access parity и отсутствие второго tenant. При второй Organization/Club business read/write/ingress/worker/realtime операция завершается `TENANT_SINGLE_DEFAULT_REQUIRED` до мутации.
+- Additive migration `20260720100000-add-final-tenant-enforcement.js` не переписывает accepted history. Она выполняет data preflight, добавляет только доказанные composite FK/index/immutability guards для telephony/worker и foundation links, поддерживает reapply и отказывается от rollback, если tenant ownership будет потеряно.
+- `tenant:integrity:detect` — общий read-only detector. Machine-readable report включает missing parent, wrong Organization/Club/Membership, provider/storage/session links, cross-tenant child/polymorphic links и unsupported ownership states. Repair/mutation mode намеренно отсутствует.
+- `tenant:enforcement:audit` агрегирует существующие domain-specific direct ORM/raw/bulk/alias audits и route/file/worker inventory; он не заменяет и не ослабляет их.
+- Ephemeral RC fixture содержит две Organizations, минимум два Clubs в каждой, шесть ролей и совпадающие natural identities. Fixture доступен только из tests и не является seeder/provisioning API/CLI.
+- Installation restore rehearsal охватывает consistent DB dump, tenant storage и legacy upload roots, non-secret integration identity metadata, worker rebuild policy, checksums и detector. Restore разрешен только целиком в fresh isolated installation; tenant-selective restore остаётся unsupported.
+- Воспроизводимый pre-main gate: из `server/` выполнить `npm run tenant:rc -- --output=/private/tmp/setly-f9-rc-<id>`. Команда отказывается от `NODE_ENV=production`, production-like `DB_NAME` и небезопасного output path, создаёт isolated DB/storage names и очищает временную инфраструктуру в `finally`.
+
 ## 5. Cross-tenant invariants
 
 1. Каждая новая модель, endpoint, event, job, cache key, file и export явно декларирует scope: `global | organization | club | membership`.

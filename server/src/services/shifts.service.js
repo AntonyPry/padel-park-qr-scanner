@@ -7,6 +7,9 @@ const {
   isTenantShiftsReportsEnabled,
 } = require('../tenant-context/capabilities');
 const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
   bindShiftOperationsActor,
   resolveShiftOperationsAccessContext,
   shiftOperationsTenantValues,
@@ -39,7 +42,10 @@ function normalizeHours(hours) {
 }
 
 async function resolveBoundary(account, tenant, options = {}) {
-  if (!isTenantShiftsReportsEnabled()) return { account, context: null };
+  if (!isTenantShiftsReportsEnabled()) {
+    await requireExactSingletonDefault({ transaction: options.transaction });
+    return { account, context: null };
+  }
   const context = await resolveShiftOperationsAccessContext(tenant, options);
   return { account: bindShiftOperationsActor(account, context), context };
 }

@@ -1,3 +1,8 @@
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
+
 module.exports = (sequelize, DataTypes) => {
   const TelephonyTranscriptionJob = sequelize.define('TelephonyTranscriptionJob', {
     organizationId: {
@@ -108,12 +113,19 @@ module.exports = (sequelize, DataTypes) => {
     },
   }, {
     hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkAuthorityFieldsAreMutable(
+          options,
+          ['organizationId', 'clubId', 'telephonyCallId'],
+          'Transcription job tenant attribution is immutable',
+        );
+      },
       beforeUpdate(job) {
-        if (job.changed('organizationId') || job.changed('clubId')) {
-          const error = new Error('Transcription job tenant attribution is immutable');
-          error.code = 'TENANT_ATTRIBUTION_IMMUTABLE';
-          throw error;
-        }
+        assertInstanceAuthorityFieldsAreMutable(
+          job,
+          ['organizationId', 'clubId', 'telephonyCallId'],
+          'Transcription job tenant attribution is immutable',
+        );
       },
     },
   });

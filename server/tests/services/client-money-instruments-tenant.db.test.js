@@ -6,6 +6,10 @@ const path = require('node:path');
 const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
+const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
 const xlsx = require('xlsx');
 const {
   DEFAULT_CLUB_SLUG,
@@ -15,20 +19,7 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260719120000-add-tenant-finance-prepayments-wave.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-  'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
-  'TENANT_BOOKINGS_COURTS_ENABLED',
-  'TENANT_METHODOLOGY_SKILL_MAP_ENABLED',
-  'TENANT_TRAINING_NOTES_PLANS_ENABLED',
-  'TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.CLIENT_MONEY_TEST_DB_NAME ||
@@ -532,6 +523,10 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
     await migration.up(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
 
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
+    });
+
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');
     const subscriptionsService = require('../../src/services/subscriptions.service');
@@ -959,19 +954,27 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
       (error) => error.code === 'TENANT_CONTEXT_REQUIRED',
     );
 
+    await onboardingService.setTrainingMode(
+      actorA,
+      { isEnabled: true, role: 'owner' },
+      tenantA,
+    );
+    await onboardingService.setTrainingMode(
+      actorB,
+      { isEnabled: true, role: 'owner' },
+      tenantB,
+    );
+    const trainingMarkerA = await onboardingService.getTrainingDataMarker(actorA, tenantA);
+    const trainingMarkerB = await onboardingService.getTrainingDataMarker(actorB, tenantB);
     const trainingCorporateA = await db.CorporateClient.create({
       organizationId: organizationA.id,
       name: 'Feature 7.1 training A',
-      isTraining: true,
-      trainingAccountId: ownerA.id,
-      trainingRole: 'owner',
+      ...trainingMarkerA,
     });
     const trainingCorporateB = await db.CorporateClient.create({
       organizationId: organizationB.id,
       name: 'Feature 7.1 training B',
-      isTraining: true,
-      trainingAccountId: ownerB.id,
-      trainingRole: 'owner',
+      ...trainingMarkerB,
     });
     await db.CorporateLedgerEntry.create({
       organizationId: organizationA.id,
@@ -980,9 +983,7 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
       type: 'spending',
       date: '2099-03-01',
       amount: 1,
-      isTraining: true,
-      trainingAccountId: ownerA.id,
-      trainingRole: 'owner',
+      ...trainingMarkerA,
     });
     const trainingLedgerB = await db.CorporateLedgerEntry.create({
       organizationId: organizationB.id,
@@ -991,9 +992,7 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
       type: 'spending',
       date: '2099-03-01',
       amount: 1,
-      isTraining: true,
-      trainingAccountId: ownerB.id,
-      trainingRole: 'owner',
+      ...trainingMarkerB,
     });
     await onboardingService.cleanupTrainingData(actorA, { role: 'owner' }, tenantA);
     assert.equal(await db.CorporateClient.count({ where: { id: trainingCorporateA.id } }), 0);
@@ -1001,16 +1000,14 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
     assert.equal(await db.CorporateLedgerEntry.count({ where: { id: trainingLedgerB.id } }), 1);
 
     process.env.TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED = 'false';
-    const legacyTypeName = `Feature 7.1 flag off ${Date.now()}`;
-    await subscriptionsService.createSubscriptionType({
-      name: legacyTypeName,
-      sessionsTotal: 1,
-      price: 1,
-    }, null, tenantB);
-    const legacyType = await db.SubscriptionType.findOne({
-      where: { name: legacyTypeName },
-    });
-    assert.equal(Number(legacyType.organizationId), Number(organizationA.id));
+    await assert.rejects(
+      subscriptionsService.createSubscriptionType({
+        name: `Feature 7.1 flag off ${Date.now()}`,
+        sessionsTotal: 1,
+        price: 1,
+      }, null, tenantB),
+      (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
+    );
     process.env.TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED = 'true';
 
     await assert.rejects(

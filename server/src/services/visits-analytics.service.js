@@ -2,7 +2,6 @@ const XLSX = require('xlsx');
 const db = require('../../models');
 const {
   isTenantBookingsCourtsEnabled,
-  isTenantVisitsScannerEnabled,
 } = require('../tenant-context/capabilities');
 const {
   resolveVisitAccessContext,
@@ -119,7 +118,6 @@ const CANONICAL_CLIENTS_CTE = `
 
 async function resolveAnalyticsVisitContext(options = {}) {
   if (options.visitContext) return options.visitContext;
-  if (!isTenantVisitsScannerEnabled()) return null;
   return resolveVisitAccessContext(options.tenant || null);
 }
 

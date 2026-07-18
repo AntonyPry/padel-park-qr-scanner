@@ -2,9 +2,8 @@
 
 const db = require('../../models');
 const {
-  DEFAULT_CLUB_SLUG,
-  DEFAULT_ORGANIZATION_SLUG,
-} = require('../tenant-foundation/constants');
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const {
   isTenantClientBasesCallTasksEnabled,
@@ -162,33 +161,18 @@ async function loadAuthoritativeAccountMembership({
 }
 
 async function resolveLegacyContext(options = {}) {
-  const organization = await db.Organization.findOne({
-    attributes: ['id'],
-    lock: queryLock(options.transaction, options.lock),
+  const singleton = await requireExactSingletonDefault({
+    lock: options.lock,
     transaction: options.transaction,
-    where: { slug: DEFAULT_ORGANIZATION_SLUG, status: 'active' },
   });
-  if (!organization) throw safeTenantDenial();
-
-  const club = await db.Club.findOne({
-    attributes: ['id', 'organizationId'],
-    lock: queryLock(options.transaction, options.lock),
-    transaction: options.transaction,
-    where: {
-      organizationId: organization.id,
-      slug: DEFAULT_CLUB_SLUG,
-      status: 'active',
-    },
-  });
-  if (!club) throw safeTenantDenial();
 
   let authority = null;
   if (positiveId(options.accountId)) {
     authority = await loadAuthoritativeAccountMembership({
       accountId: options.accountId,
-      clubId: club.id,
+      clubId: singleton.clubId,
       lock: options.lock,
-      organizationId: organization.id,
+      organizationId: singleton.organizationId,
       transaction: options.transaction,
     });
   }
@@ -196,11 +180,11 @@ async function resolveLegacyContext(options = {}) {
   return freezeContext({
     accountId: authority ? Number(authority.membership.accountId) : null,
     authority: 'legacy-default',
-    clubId: Number(club.id),
+    clubId: singleton.clubId,
     effectiveRole: authority?.effectiveRole || null,
     membershipId: authority ? Number(authority.membership.id) : null,
     membershipRole: authority?.membership.role || null,
-    organizationId: Number(organization.id),
+    organizationId: singleton.organizationId,
     readScoped: false,
     staffId: authority?.membership.staffId
       ? Number(authority.membership.staffId)

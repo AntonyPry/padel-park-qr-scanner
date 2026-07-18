@@ -12,6 +12,9 @@ const {
   readBooleanEnv,
   tenantContextCapability,
 } = require('../tenant-context/capabilities');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 
 const ORGANIZATION_HEADER = 'x-organization-id';
 const CLUB_HEADER = 'x-club-id';
@@ -138,7 +141,10 @@ async function resolveRequestTenant(req, res, next) {
     }
     req.tenantRoute = declaration;
 
-    if (!isTenantContextEnabled()) return next();
+    if (!isTenantContextEnabled()) {
+      await requireExactSingletonDefault();
+      return next();
+    }
     if (!req.account?.id) {
       return sendError(res, { statusCode: 401 }, 'Unauthorized');
     }

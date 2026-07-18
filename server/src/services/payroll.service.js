@@ -11,6 +11,9 @@ const {
 const {
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../tenant-foundation/constants');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 
 const LOCKED_PAYROLL_STATUSES = ['reviewed', 'approved', 'paid'];
 const PAYROLL_STATUSES = ['draft', 'reviewed', 'approved', 'paid'];
@@ -244,7 +247,10 @@ async function getCategoryName(itemName, rulesMap) {
 }
 
 async function resolvePayrollBoundary(account, tenant) {
-  if (!isTenantShiftsReportsEnabled()) return { account, context: null };
+  if (!isTenantShiftsReportsEnabled()) {
+    await requireExactSingletonDefault();
+    return { account, context: null };
+  }
   const context = await resolveClientMoneyAccessContext(tenant);
   const authorityAccount = bindClientMoneyActor(account, context);
   if (!PAYROLL_VIEW_ROLES.has(authorityAccount?.role)) {

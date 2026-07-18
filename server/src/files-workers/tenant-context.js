@@ -1,8 +1,15 @@
 'use strict';
 
+const db = require('../../models');
 const {
   getTenantFoundationGateState,
 } = require('../services/tenant-foundation.service');
+const {
+  isTenantEnforcementEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 const {
   TENANT_FOUNDATION_STATES,
 } = require('../tenant-foundation/constants');
@@ -42,10 +49,29 @@ async function getExactDefaultTenant() {
         : 'TENANT_FOUNDATION_INVALID',
     );
   }
-  return {
-    clubId: Number(classification.defaultClubId),
-    organizationId: Number(classification.defaultOrganizationId),
-  };
+  return requireExactSingletonDefault();
+}
+
+async function requireActiveTenantContext(tenant, { transaction } = {}) {
+  const requested = normalizeTenantIds(tenant);
+  const [organization, club] = await Promise.all([
+    db.Organization.findOne({
+      attributes: ['id'],
+      transaction,
+      where: { id: requested.organizationId, status: 'active' },
+    }),
+    db.Club.findOne({
+      attributes: ['id'],
+      transaction,
+      where: {
+        id: requested.clubId,
+        organizationId: requested.organizationId,
+        status: 'active',
+      },
+    }),
+  ]);
+  if (!organization || !club) throw contextError();
+  return requested;
 }
 
 async function requireDefaultTenantContext(tenant) {
@@ -61,6 +87,9 @@ async function requireDefaultTenantContext(tenant) {
 }
 
 async function resolveTrustedTenantAttribution(tenant = null) {
+  if (tenant && isTenantEnforcementEnabled()) {
+    return requireActiveTenantContext(tenant);
+  }
   if (tenant) return requireDefaultTenantContext(tenant);
   return getExactDefaultTenant();
 }
@@ -87,6 +116,7 @@ module.exports = {
   contextError,
   getExactDefaultTenant,
   normalizeTenantIds,
+  requireActiveTenantContext,
   requireDefaultTenantContext,
   resolveTrustedTenantAttribution,
   tenantMatches,

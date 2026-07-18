@@ -1,3 +1,8 @@
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
+
 module.exports = (sequelize, DataTypes) => {
   const Staff = sequelize.define('Staff', {
     organizationId: {
@@ -18,6 +23,23 @@ module.exports = (sequelize, DataTypes) => {
     status: {
       type: DataTypes.ENUM('active', 'inactive', 'archived'),
       defaultValue: 'active',
+    },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkAuthorityFieldsAreMutable(
+          options,
+          ['organizationId'],
+          'Staff tenant attribution is immutable',
+        );
+      },
+      beforeUpdate(staff) {
+        assertInstanceAuthorityFieldsAreMutable(
+          staff,
+          ['organizationId'],
+          'Staff tenant attribution is immutable',
+        );
+      },
     },
   });
 

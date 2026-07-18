@@ -519,3 +519,49 @@ test('AuditLog capability depends on accepted shifts/reports isolation', () => {
     for (const name of names) restore(name, previous[name]);
   }
 });
+
+test('final tenant enforcement is server-owned and depends on accepted onboarding isolation', () => {
+  const names = [
+    'TENANT_CONTEXT_ENABLED',
+    'TENANT_CACHE_REALTIME_ENABLED',
+    'TENANT_FILES_WORKERS_ENABLED',
+    'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
+    'TENANT_STAFF_ACCESS_ENABLED',
+    'TENANT_CLIENTS_REFERENCES_ENABLED',
+    'TENANT_VISITS_SCANNER_ENABLED',
+    'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
+    'TENANT_BOOKINGS_COURTS_ENABLED',
+    'TENANT_METHODOLOGY_SKILL_MAP_ENABLED',
+    'TENANT_TRAINING_NOTES_PLANS_ENABLED',
+    'TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED',
+    'TENANT_SHIFTS_REPORTS_ENABLED',
+    'TENANT_AUDIT_LOG_ENABLED',
+    'TENANT_ONBOARDING_ENABLED',
+    'TENANT_ENFORCEMENT_ENABLED',
+  ];
+  const previous = Object.fromEntries(
+    names.map((name) => [name, process.env[name]]),
+  );
+  try {
+    for (const name of names) process.env[name] = 'true';
+    const capabilities = assertTenantCapabilityDependencies();
+    assert.equal(capabilities.tenantEnforcement, true);
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(
+        tenantContextCapability(),
+        'tenantEnforcement',
+      ),
+      false,
+    );
+
+    process.env.TENANT_ONBOARDING_ENABLED = 'false';
+    assert.throws(
+      () => assertTenantCapabilityDependencies(),
+      (error) =>
+        error.code === 'TENANT_CAPABILITY_DEPENDENCY_INVALID' &&
+        error.message.includes('TENANT_ONBOARDING_ENABLED'),
+    );
+  } finally {
+    for (const name of names) restore(name, previous[name]);
+  }
+});

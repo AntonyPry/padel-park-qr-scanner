@@ -2,6 +2,17 @@
 
 ## Before deploy
 
+### Final SaaS pre-main RC gate
+
+- Работать только с опубликованным exact Feature 9 SHA и isolated test DB/storage; production/main/deploy/provisioning flags этой командой не меняются.
+- Из `server/` выполнить `npm run tenant:rc -- --output=/private/tmp/setly-f9-rc-<id>`.
+- Gate обязан пройти: consolidated tenant audit, serialized full server suite, server typecheck, OpenAPI/generated no-drift, strict onboarding audit, full client tests/lint/build.
+- Отдельно сохранить targeted enforcement/restore evidence: `tenant-integrity-report.json`, `restore-rehearsal-report.json`, `rc-command-report.json`; все reports должны иметь `ok: true` и zero unsafe findings.
+- Подтвердить две Organizations, минимум два Clubs в каждой, шесть ролей, одинаковые natural identities, cross-tenant denial на API/service/worker/provider/cache/realtime/file/export/onboarding boundaries и same-Organization multi-Club policy.
+- Подтвердить exact-singleton flag-off parity и fail-closed до business mutation при наличии второго tenant.
+- Выполнить API/browser smoke по шести ролям на desktop и mobile `390px` согласно текущему checklist. Feature 9 не меняет visible UI/routes/roles/API response shapes; при обнаружении visible drift требуется отдельный User Preview Gate.
+- Tenant-selective restore, второй staging/production tenant, provisioning, billing, merge в `main` и deploy остаются отдельными запрещёнными действиями до соответствующего release authority.
+
 - Pull latest `main` and verify there are no unexpected local changes.
 - `server`: `npm ci`
 - `client`: `npm ci`

@@ -8,6 +8,10 @@ const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
 const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../../src/tenant-foundation/constants');
@@ -15,16 +19,7 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260717100000-add-tenant-client-bases-call-tasks.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-  'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.CLIENT_BASES_CALL_TASKS_TEST_DB_NAME ||
@@ -407,6 +402,10 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
     );
     await migration.up(queryInterface, SequelizePackage);
 
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
+    });
+
     db = require('../../models');
     await db.sequelize.authenticate();
     const legacyActor = await db.Account.findByPk(legacy.accountId);
@@ -416,7 +415,7 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
         organizationId: legacy.organizationId,
       },
     });
-    const legacyTenant = tenantFor(
+    let legacyTenant = tenantFor(
       legacyActor,
       legacyMembership,
       legacy.organizationId,
@@ -428,6 +427,7 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
     const onboardingService = require('../../src/services/onboarding.service');
 
     process.env.TENANT_CLIENT_BASES_CALL_TASKS_ENABLED = 'false';
+    process.env.TENANT_ONBOARDING_ENABLED = 'false';
     const legacyList = await clientBasesService.list({ status: 'all' });
     assert.ok(legacyList.some((base) => Number(base.id) === legacy.baseId));
     const compatibilityBase = await clientBasesService.create(
@@ -443,6 +443,14 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
     assert.equal(Number(compatibilityRow.organizationId), legacy.organizationId);
     assert.equal(Number(compatibilityRow.clubId), legacy.clubId);
     process.env.TENANT_CLIENT_BASES_CALL_TASKS_ENABLED = 'true';
+    process.env.TENANT_ONBOARDING_ENABLED = 'true';
+    const tenantContextService = require('../../src/services/tenant-context.service');
+    legacyTenant = await tenantContextService.resolveTenantContext({
+      accountId: legacyActor.id,
+      clubId: legacy.clubId,
+      organizationId: legacy.organizationId,
+      scope: 'club',
+    });
 
     const secondClub = await db.Club.create({
       name: 'Feature 5.4 second club',
@@ -463,25 +471,32 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       status: 'active',
       timezone: 'Europe/Moscow',
     });
+    const foreignActor = await db.Account.create({
+      email: `feature-5-4-foreign-owner-${Date.now()}@example.test`,
+      passwordHash: 'test-only',
+      role: 'owner',
+      staffId: null,
+      status: 'active',
+    });
     const foreignOwnerMembership = await db.Membership.create({
-      accountId: legacyActor.id,
+      accountId: foreignActor.id,
       organizationId: foreignOrganization.id,
       role: 'owner',
       staffId: null,
       status: 'active',
     });
-    const tenantSecondClub = tenantFor(
-      legacyActor,
-      legacyMembership,
-      legacy.organizationId,
-      secondClub.id,
-    );
-    const foreignTenant = tenantFor(
-      legacyActor,
-      foreignOwnerMembership,
-      foreignOrganization.id,
-      foreignClub.id,
-    );
+    const tenantSecondClub = await tenantContextService.resolveTenantContext({
+      accountId: legacyActor.id,
+      clubId: secondClub.id,
+      organizationId: legacy.organizationId,
+      scope: 'club',
+    });
+    const foreignTenant = await tenantContextService.resolveTenantContext({
+      accountId: foreignActor.id,
+      clubId: foreignClub.id,
+      organizationId: foreignOrganization.id,
+      scope: 'club',
+    });
 
     const managerA = await db.Account.create({
       email: `feature-5-4-manager-a-${Date.now()}@example.test`,
@@ -503,12 +518,12 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       roleOverride: null,
       status: 'active',
     });
-    const managerATenant = tenantFor(
-      managerA,
-      managerAMembership,
-      legacy.organizationId,
-      legacy.clubId,
-    );
+    const managerATenant = await tenantContextService.resolveTenantContext({
+      accountId: managerA.id,
+      clubId: legacy.clubId,
+      organizationId: legacy.organizationId,
+      scope: 'club',
+    });
     const managerBStaff = await db.Staff.create({
       name: `Feature 5.4 manager B staff ${Date.now()}`,
       organizationId: legacy.organizationId,
@@ -535,6 +550,12 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       organizationId: legacy.organizationId,
       roleOverride: null,
       status: 'active',
+    });
+    const managerBTenant = await tenantContextService.resolveTenantContext({
+      accountId: managerB.id,
+      clubId: secondClub.id,
+      organizationId: legacy.organizationId,
+      scope: 'club',
     });
     const foreignManagerStaff = await db.Staff.create({
       name: `Feature 5.4 foreign manager staff ${Date.now()}`,
@@ -645,7 +666,7 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
     );
 
     const foreignBase = await clientBasesService.create(
-      legacyActor,
+      foreignActor,
       {
         filters: { q: String(suffix), status: 'active' },
         name: `Feature 5.4 foreign base ${suffix}`,
@@ -1054,7 +1075,7 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       legacyTenant,
     );
     const foreignTask = await callTasksService.createFromBase(
-      legacyActor,
+      foreignActor,
       foreignBase.id,
       { title: `Feature 5.4 foreign task ${suffix}` },
       foreignTenant,
@@ -1248,50 +1269,61 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       (error) => dbErrorCode(error) === 'ER_SIGNAL_EXCEPTION',
     );
 
-    async function createTrainingTaskGraph(clubId, client, label) {
+    await onboardingService.setTrainingMode(
+      legacyActor,
+      { isEnabled: true, role: 'owner' },
+      legacyTenant,
+    );
+    await onboardingService.setTrainingMode(
+      managerB,
+      { isEnabled: true, role: 'manager' },
+      managerBTenant,
+    );
+    const legacyTrainingMarker = await onboardingService.getTrainingDataMarker(
+      legacyActor,
+      legacyTenant,
+    );
+    const siblingTrainingMarker = await onboardingService.getTrainingDataMarker(
+      managerB,
+      managerBTenant,
+    );
+
+    async function createTrainingTaskGraph(clubId, client, label, actor, marker) {
       const base = await db.ClientBase.create({
         clubId,
-        createdByAccountId: legacyActor.id,
+        createdByAccountId: actor.id,
         filters: { status: 'active' },
-        isTraining: true,
+        ...marker,
         name: `Feature 5.4 training base ${label} ${suffix}`,
         organizationId: legacy.organizationId,
         status: 'active',
-        trainingAccountId: legacyActor.id,
-        trainingRole: 'owner',
       });
       const task = await db.CallTask.create({
         clubId,
         clientBaseId: base.id,
-        createdByAccountId: legacyActor.id,
-        isTraining: true,
+        createdByAccountId: actor.id,
+        ...marker,
         organizationId: legacy.organizationId,
         scopeType: 'snapshot',
         snapshotClientCount: 1,
         status: 'backlog',
         title: `Feature 5.4 training task ${label} ${suffix}`,
-        trainingAccountId: legacyActor.id,
-        trainingRole: 'owner',
       });
       const item = await db.CallTaskClient.create({
         callTaskId: task.id,
         clientName: client.name,
         clientPhone: client.phone,
-        isTraining: true,
+        ...marker,
         status: 'new',
-        trainingAccountId: legacyActor.id,
-        trainingRole: 'owner',
         userId: client.id,
         visitCount: 0,
       });
       await db.CallTaskAttempt.create({
-        actorAccountId: legacyActor.id,
+        actorAccountId: actor.id,
         callTaskClientId: item.id,
-        isTraining: true,
+        ...marker,
         status: 'no_answer',
         summary: `Feature 5.4 training attempt ${label}`,
-        trainingAccountId: legacyActor.id,
-        trainingRole: 'owner',
       });
       return { base, item, task };
     }
@@ -1300,11 +1332,15 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       legacy.clubId,
       clientA,
       'A',
+      legacyActor,
+      legacyTrainingMarker,
     );
     const trainingGraphB = await createTrainingTaskGraph(
       secondClub.id,
       clientB,
       'B',
+      managerB,
+      siblingTrainingMarker,
     );
     const cleanup = await onboardingService.cleanupTrainingData(
       legacyActor,

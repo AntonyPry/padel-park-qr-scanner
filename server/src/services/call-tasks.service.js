@@ -613,6 +613,7 @@ async function syncDynamicTask(task, tenant = null, context = null) {
           isTraining: Boolean(raw.isTraining),
           trainingAccountId: raw.trainingAccountId || null,
           trainingRole: raw.trainingRole || null,
+          trainingSessionId: raw.trainingSessionId || null,
         })),
         {
           ignoreDuplicates: true,

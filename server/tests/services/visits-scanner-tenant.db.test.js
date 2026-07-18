@@ -7,19 +7,15 @@ const path = require('node:path');
 const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
+const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
 const XLSX = require('xlsx');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE = '20260716180000-add-tenant-visits-scanner.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.VISITS_SCANNER_TEST_DB_NAME
@@ -300,6 +296,7 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     const scannerEventsService = require('../../src/services/scanner-events.service');
     const analyticsService = require('../../src/services/visits-analytics.service');
     const analyticsController = require('../../src/controllers/visits-analytics.controller');
+    const onboardingService = require('../../src/services/onboarding.service');
     const migration = require(`../../migrations/${FEATURE_MIGRATION_FILE}`);
     const queryInterface = schema.getQueryInterface();
 
@@ -403,7 +400,7 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     const defaultMembership = await db.Membership.findOne({
       where: { accountId: owner.id, organizationId: defaultOrganization.id },
     });
-    const defaultContext = tenantFor(
+    let defaultContext = tenantFor(
       owner,
       defaultMembership,
       defaultOrganization.id,
@@ -496,18 +493,29 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       assert.deepEqual(reapplied.counts, first.counts);
     });
 
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: FEATURE_MIGRATION_FILE,
+    });
+    const tenantContextService = require('../../src/services/tenant-context.service');
+    defaultContext = await tenantContextService.resolveTenantContext({
+      accountId: owner.id,
+      clubId: defaultClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
+
     const secondClub = await db.Club.create({
       name: 'Second club in default organization',
       organizationId: defaultOrganization.id,
       slug: 'second-default-club',
       status: 'active',
     });
-    const secondClubContext = tenantFor(
-      owner,
-      defaultMembership,
-      defaultOrganization.id,
-      secondClub.id,
-    );
+    const secondClubContext = await tenantContextService.resolveTenantContext({
+      accountId: owner.id,
+      clubId: secondClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
     const foreignOrganization = await db.Organization.create({
       name: 'Foreign Visits Organization',
       slug: 'foreign-visits-organization',
@@ -519,19 +527,26 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       slug: 'foreign-visits-club',
       status: 'active',
     });
+    const foreignOwner = await db.Account.create({
+      email: `foreign-owner-${Date.now()}@visits-scanner.test`,
+      passwordHash: 'test-only',
+      role: 'owner',
+      staffId: null,
+      status: 'active',
+    });
     const foreignMembership = await db.Membership.create({
-      accountId: owner.id,
+      accountId: foreignOwner.id,
       organizationId: foreignOrganization.id,
       role: 'owner',
       staffId: null,
       status: 'active',
     });
-    const foreignContext = tenantFor(
-      owner,
-      foreignMembership,
-      foreignOrganization.id,
-      foreignClub.id,
-    );
+    const foreignContext = await tenantContextService.resolveTenantContext({
+      accountId: foreignOwner.id,
+      clubId: foreignClub.id,
+      organizationId: foreignOrganization.id,
+      scope: 'club',
+    });
 
     const [defaultClient, secondClubClient, foreignClient, concurrentClient, deviceClient] =
       await Promise.all([
@@ -565,7 +580,7 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       tenant: secondClubContext,
     });
     const foreignVisit = await accessService.createManualVisit(foreignClient.id, {
-      account: owner,
+      account: foreignOwner,
       clientEventId: 'foreign-club-visit',
       tenant: foreignContext,
     });
@@ -836,12 +851,12 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         roleOverride: null,
         status: 'active',
       });
-      const managerContext = tenantFor(
-        manager,
-        managerMembership,
-        defaultOrganization.id,
-        defaultClub.id,
-      );
+      const managerContext = await tenantContextService.resolveTenantContext({
+        accountId: manager.id,
+        clubId: defaultClub.id,
+        organizationId: defaultOrganization.id,
+        scope: 'club',
+      });
       assert.ok((await accessService.getRecentVisitCards(10, managerContext)).length > 0);
 
       await managerAccess.update({ status: 'inactive' });
@@ -955,10 +970,19 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     });
 
     await t.test('analytics, export, scanner history and training separation are club scoped', async () => {
+      await onboardingService.setTrainingMode(
+        owner,
+        { isEnabled: true, role: 'owner' },
+        defaultContext,
+      );
+      const trainingMarker = await onboardingService.getTrainingDataMarker(
+        owner,
+        defaultContext,
+      );
       const trainingVisit = await db.Visit.create({
         clubId: defaultClub.id,
         entrySource: 'manual',
-        isTraining: true,
+        ...trainingMarker,
         organizationId: defaultOrganization.id,
         userId: defaultClient.id,
       });
@@ -1038,9 +1062,11 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         });
         await queryInterface.bulkInsert('PendingSales', [{
           clientId: revenueClient.id,
+          clubId,
           createdAt: legacyRevenueNow,
           itemName: item.name,
           linkedAt: new Date(dateTime),
+          organizationId: defaultOrganization.id,
           receiptId: receipt.id,
           receiptItemId: item.id,
           saleIntent: 'subscription',
@@ -1064,7 +1090,8 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       );
 
       await queryInterface.bulkInsert('ClientSubscriptions', [{
-        clientId: revenueClient.id,
+        clientId: foreignClient.id,
+        clubId: foreignClub.id,
         createdAt: legacyRevenueNow,
         isUnlimited: false,
         saleAmount: 999,
@@ -1072,19 +1099,22 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         source: 'manual',
         startsAt: new Date('2088-03-01T09:00:00.000Z'),
         status: 'active',
-        typeName: 'Unscoped manual subscription',
+        organizationId: foreignOrganization.id,
+        typeName: 'Out-of-scope manual subscription',
         updatedAt: legacyRevenueNow,
       }]);
       await queryInterface.bulkInsert('Certificates', [{
         amountUsed: 0,
-        clientId: revenueClient.id,
-        code: 'UNSCOPED-V53-CERTIFICATE',
+        clientId: foreignClient.id,
+        clubId: foreignClub.id,
+        code: 'OUT-OF-SCOPE-V53-CERTIFICATE',
         createdAt: legacyRevenueNow,
         saleAmount: 888,
+        organizationId: foreignOrganization.id,
         source: 'manual',
         startsAt: new Date('2088-04-01T09:00:00.000Z'),
         status: 'active',
-        title: 'Unscoped manual certificate',
+        title: 'Out-of-scope manual certificate',
         unitsUsed: 0,
         updatedAt: legacyRevenueNow,
       }]);
@@ -1094,7 +1124,7 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       const courtName = 'Feature 5.5 compatibility V5.3 revenue court';
       await queryInterface.bulkInsert('Courts', [{
         ...(courtSchema.organizationId
-          ? { clubId: defaultClub.id, organizationId: defaultOrganization.id }
+          ? { clubId: foreignClub.id, organizationId: foreignOrganization.id }
           : {}),
         createdAt: now,
         isActive: true,
@@ -1109,10 +1139,10 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
       );
       await queryInterface.bulkInsert('Bookings', [{
         ...(bookingSchema.organizationId
-          ? { clubId: defaultClub.id, organizationId: defaultOrganization.id }
+          ? { clubId: foreignClub.id, organizationId: foreignOrganization.id }
           : {}),
-        clientName: revenueClient.name,
-        clientPhone: revenueClient.phone,
+        clientName: foreignClient.name,
+        clientPhone: foreignClient.phone,
         courtId: courtRows[0].id,
         createdAt: now,
         durationMinutes: 60,
@@ -1122,33 +1152,38 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
         startsAt: new Date('2088-05-01T09:00:00.000Z'),
         status: 'confirmed',
         updatedAt: now,
-        userId: revenueClient.id,
+        userId: foreignClient.id,
       }]);
       await db.Finance.create({
         amount: 777,
-        category: 'Unscoped V5.3 revenue',
+        category: 'Out-of-scope V5.3 revenue',
+        clubId: foreignClub.id,
         date: '2088-06-01',
         isTraining: false,
+        organizationId: foreignOrganization.id,
         type: 'income',
       });
       await queryInterface.bulkInsert('CorporateClients', [{
         createdAt: legacyRevenueNow,
         isTraining: false,
-        name: 'Unscoped V5.3 corporate client',
+        name: 'Out-of-scope V5.3 corporate client',
+        organizationId: foreignOrganization.id,
         status: 'active',
         updatedAt: legacyRevenueNow,
       }]);
       const [corporateRows] = await queryInterface.sequelize.query(
         'SELECT id FROM CorporateClients WHERE name=:name',
-        { replacements: { name: 'Unscoped V5.3 corporate client' } },
+        { replacements: { name: 'Out-of-scope V5.3 corporate client' } },
       );
       await queryInterface.bulkInsert('CorporateLedgerEntries', [{
         amount: 555,
+        clubId: foreignClub.id,
         corporateClientId: corporateRows[0].id,
         createdAt: legacyRevenueNow,
         date: '2088-06-02',
         financeCreatedByLedger: false,
         isTraining: false,
+        organizationId: foreignOrganization.id,
         status: 'active',
         type: 'deposit',
         updatedAt: legacyRevenueNow,
@@ -1229,30 +1264,21 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
 
       process.env.TENANT_VISITS_SCANNER_ENABLED = 'false';
       try {
-        const legacyRevenue = await analyticsService.getRevenueLtv(from, to);
-        assert.equal(legacyRevenue.coverage.cashNetRevenue, 333);
-        assert.equal(legacyRevenue.coverage.bookingPaymentsReference, 666);
-        assert.equal(legacyRevenue.coverage.manualFinanceWithoutClient, 777);
-        assert.equal(legacyRevenue.coverage.corporateLedgerExcludedAmount, 555);
-        assert.equal(legacyRevenue.summary.attributedRevenue, 2220);
+        await assert.rejects(
+          analyticsService.getRevenueLtv(from, to),
+          (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
+        );
       } finally {
         process.env.TENANT_VISITS_SCANNER_ENABLED = 'true';
       }
     });
 
-    await t.test('flag-off keeps the single-default bridge and flag-on restores club isolation', async () => {
+    await t.test('flag-off fails closed after a second tenant exists', async () => {
       process.env.TENANT_VISITS_SCANNER_ENABLED = 'false';
-      const legacyCards = await accessService.getRecentVisitCards(200);
-      assert.ok(legacyCards.some((row) => row.visitId === defaultVisit.visitId));
-      assert.ok(legacyCards.some((row) => row.visitId === foreignVisit.visitId));
-      const legacyWrite = await accessService.createManualVisit(defaultClient.id, {
-        account: owner,
-        clientEventId: 'flag-off-default-write',
-        tenant: defaultContext,
-      });
-      const stored = await db.Visit.findByPk(legacyWrite.visitId);
-      assert.equal(stored.organizationId, defaultOrganization.id);
-      assert.equal(stored.clubId, defaultClub.id);
+      await assert.rejects(
+        accessService.getRecentVisitCards(200),
+        (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
+      );
 
       process.env.TENANT_VISITS_SCANNER_ENABLED = 'true';
       const isolatedCards = await accessService.getRecentVisitCards(200, defaultContext);

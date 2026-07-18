@@ -7,6 +7,10 @@ const { test } = require('node:test');
 const mysql = require('mysql2/promise');
 const SequelizePackage = require('sequelize');
 const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../../src/tenant-foundation/constants');
@@ -14,18 +18,7 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260718140000-add-tenant-methodology-skill-map.js';
-const CAPABILITY_ENV = [
-  'TENANT_CONTEXT_ENABLED',
-  'TENANT_CACHE_REALTIME_ENABLED',
-  'TENANT_FILES_WORKERS_ENABLED',
-  'TENANT_PROVIDER_INTEGRATIONS_ENABLED',
-  'TENANT_STAFF_ACCESS_ENABLED',
-  'TENANT_CLIENTS_REFERENCES_ENABLED',
-  'TENANT_VISITS_SCANNER_ENABLED',
-  'TENANT_CLIENT_BASES_CALL_TASKS_ENABLED',
-  'TENANT_BOOKINGS_COURTS_ENABLED',
-  'TENANT_METHODOLOGY_SKILL_MAP_ENABLED',
-];
+const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
   return process.env.METHODOLOGY_SKILL_MAP_TEST_DB_NAME ||
@@ -109,7 +102,6 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
   process.env.DB_NAME = database;
   process.env.NODE_ENV = 'test';
   for (const name of CAPABILITY_ENV) process.env[name] = 'true';
-  delete process.env.TENANT_TRAINING_NOTES_PLANS_ENABLED;
 
   let schema;
   let db;
@@ -395,6 +387,10 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       [{ organizationId: defaultOrganization.id }],
     );
 
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: '20260718160000-add-tenant-training-notes-plans.js',
+    });
+
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');
     const methodologyService = require('../../src/services/training-methodology.service');
@@ -453,6 +449,18 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       accountId: accountB.id,
       organizationId: organizationB.id,
       scope: 'organization',
+    });
+    const clubTenantA = await tenantContextService.resolveTenantContext({
+      accountId: accountA.id,
+      clubId: defaultClub.id,
+      organizationId: defaultOrganization.id,
+      scope: 'club',
+    });
+    const clubTenantB = await tenantContextService.resolveTenantContext({
+      accountId: accountB.id,
+      clubId: clubB.id,
+      organizationId: organizationB.id,
+      scope: 'club',
     });
     const actorA = { id: accountA.id, role: 'owner' };
     const actorB = { id: accountB.id, role: 'owner' };
@@ -623,7 +631,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       recommendationService.recommendForGroup(
         { clientIds: [userA.id, userB.id] },
         actorA,
-        tenantA,
+        clubTenantA,
       ),
       /не найден/,
     );
@@ -823,7 +831,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       userA.id,
       { date: '2099-01-03' },
       actorA,
-      tenantA,
+      clubTenantA,
     );
     assert.equal(
       recommendationA.blocks.some((block) => Number(block.exercise?.id) === Number(exerciseB.id)),
@@ -851,27 +859,12 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     await membershipA.update({ status: 'active' });
 
     process.env.TENANT_METHODOLOGY_SKILL_MAP_ENABLED = 'false';
-    const legacyRead = await methodologyService.listSkills({}, actorA, null);
-    assert.equal(legacyRead.some((row) => Number(row.id) === Number(skillB.id)), true);
-    const flagOffSkill = await methodologyService.createSkill({
-      direction: 'tactics',
-      name: `Flag-off default skill ${Date.now()}`,
-    }, actorA, null);
-    assert.equal(Number((await db.TrainingSkill.findByPk(flagOffSkill.id)).organizationId), Number(defaultOrganization.id));
+    await assert.rejects(
+      methodologyService.listSkills({}, actorA, null),
+      (error) => error.code === 'TENANT_SINGLE_DEFAULT_REQUIRED',
+    );
     process.env.TENANT_METHODOLOGY_SKILL_MAP_ENABLED = 'true';
 
-    const clubTenantA = await tenantContextService.resolveTenantContext({
-      accountId: accountA.id,
-      clubId: defaultClub.id,
-      organizationId: defaultOrganization.id,
-      scope: 'club',
-    });
-    const clubTenantB = await tenantContextService.resolveTenantContext({
-      accountId: accountB.id,
-      clubId: clubB.id,
-      organizationId: organizationB.id,
-      scope: 'club',
-    });
     const adminAccount = await db.Account.create({
       email: `feature-6-1-admin-${Date.now()}@example.test`,
       passwordHash: 'test-only',
@@ -1019,28 +1012,42 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     assert.equal(Number(adminPlan.bookingId), Number(adminBooking.id));
     assert.equal(adminPlan.plannedExercises.length > 0, true);
 
+    await onboardingService.setTrainingMode(
+      actorA,
+      { isEnabled: true, role: 'owner' },
+      clubTenantA,
+    );
+    await onboardingService.setTrainingMode(
+      actorB,
+      { isEnabled: true, role: 'owner' },
+      clubTenantB,
+    );
+    const trainingMarkerA = await onboardingService.getTrainingDataMarker(
+      actorA,
+      clubTenantA,
+    );
+    const trainingMarkerB = await onboardingService.getTrainingDataMarker(
+      actorB,
+      clubTenantB,
+    );
     const trainingUserA = await db.User.create({
-      isTraining: true,
+      ...trainingMarkerA,
       name: 'Feature 6.1 training client A',
       organizationId: defaultOrganization.id,
       phone: '+79996100005',
       phoneNormalized: '9996100005',
       source: 'Feature 6.1',
       status: 'active',
-      trainingAccountId: accountA.id,
-      trainingRole: 'owner',
       webId: `feature-6-1-training-a-${Date.now()}`,
     });
     const trainingUserB = await db.User.create({
-      isTraining: true,
+      ...trainingMarkerB,
       name: 'Feature 6.1 training client B',
       organizationId: organizationB.id,
       phone: '+79996100006',
       phoneNormalized: '9996100006',
       source: 'Feature 6.1',
       status: 'active',
-      trainingAccountId: accountB.id,
-      trainingRole: 'owner',
       webId: `feature-6-1-training-b-${Date.now()}`,
     });
     await skillMapService.updateEntry(
@@ -1111,9 +1118,6 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       'SELECT id, name, organizationId FROM TrainingSkills ORDER BY id',
       { type: SequelizePackage.QueryTypes.SELECT },
     ));
-    await trainingOperationsMigration.down(queryInterface, SequelizePackage);
-    await migration.down(queryInterface, SequelizePackage);
-    assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await migration.up(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
     assert.equal(JSON.stringify(await schema.query(

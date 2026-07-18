@@ -3,6 +3,9 @@ const {
   isTenantAuditLogEnabled,
 } = require('../tenant-context/capabilities');
 const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
   auditTenantValues,
   auditTenantWhere,
   bindAuditActor,
@@ -152,6 +155,7 @@ function parseMetadata(metadata) {
 async function record(entry) {
   try {
     if (!isTenantAuditLogEnabled()) {
+      await requireExactSingletonDefault();
       const row = await createRecord(entry, null);
       return {
         actor: entry.account || null,
@@ -305,6 +309,7 @@ async function queryAuditRows({ context, filters, page, pageSize, transaction })
 async function list(query = {}, actor, tenant) {
   const normalized = normalizeListQuery(query);
   if (!isTenantAuditLogEnabled()) {
+    await requireExactSingletonDefault();
     assertCanView(actor);
     return queryAuditRows({ ...normalized, context: null, transaction: undefined });
   }

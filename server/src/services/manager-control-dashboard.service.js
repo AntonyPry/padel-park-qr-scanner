@@ -455,7 +455,7 @@ async function getDashboard(query = {}, account = null, tenant = null) {
     corporateClientsService.listCorporateClients(
       { status: 'active' },
       authorityActor,
-      clientMoneyContext,
+      tenant,
     ),
     callTasksService.list(authorityActor, { status: 'active' }, tenant),
     listMissedCallsWithoutResult(),

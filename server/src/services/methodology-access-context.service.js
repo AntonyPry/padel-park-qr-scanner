@@ -2,9 +2,8 @@
 
 const db = require('../../models');
 const {
-  DEFAULT_CLUB_SLUG,
-  DEFAULT_ORGANIZATION_SLUG,
-} = require('../tenant-foundation/constants');
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const {
   isTenantMethodologySkillMapEnabled,
@@ -51,32 +50,15 @@ function staffIdentityIsAuthoritative(account, membership, staff) {
 }
 
 async function resolveLegacyContext({ lock = false, transaction } = {}) {
-  const organization = await db.Organization.findOne({
-    attributes: ['id'],
-    lock: queryLock(transaction, lock),
-    transaction,
-    where: { slug: DEFAULT_ORGANIZATION_SLUG, status: 'active' },
-  });
-  if (!organization) throw safeTenantDenial();
-  const club = await db.Club.findOne({
-    attributes: ['id'],
-    lock: queryLock(transaction, lock),
-    transaction,
-    where: {
-      organizationId: organization.id,
-      slug: DEFAULT_CLUB_SLUG,
-      status: 'active',
-    },
-  });
-  if (!club) throw safeTenantDenial();
+  const singleton = await requireExactSingletonDefault({ lock, transaction });
   return freezeContext({
     accountId: null,
     authority: 'legacy-default',
-    clubId: Number(club.id),
+    clubId: singleton.clubId,
     effectiveRole: null,
     membershipId: null,
     membershipRole: null,
-    organizationId: Number(organization.id),
+    organizationId: singleton.organizationId,
     readScoped: false,
     scope: TENANT_SCOPES.ORGANIZATION,
   });

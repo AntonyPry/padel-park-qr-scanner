@@ -4,6 +4,10 @@ const {
   CLUB_ROLE_OVERRIDE_VALUES,
   TENANT_STATUS_VALUES,
 } = require('../src/tenant-foundation/constants');
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
 
 module.exports = (sequelize, DataTypes) => {
   const MembershipClubAccess = sequelize.define(
@@ -32,7 +36,25 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
     },
-    { tableName: 'MembershipClubAccesses' },
+    {
+      hooks: {
+        beforeBulkUpdate(options) {
+          assertBulkAuthorityFieldsAreMutable(
+            options,
+            ['organizationId', 'membershipId', 'clubId'],
+            'Membership Club access authority is immutable',
+          );
+        },
+        beforeUpdate(access) {
+          assertInstanceAuthorityFieldsAreMutable(
+            access,
+            ['organizationId', 'membershipId', 'clubId'],
+            'Membership Club access authority is immutable',
+          );
+        },
+      },
+      tableName: 'MembershipClubAccesses',
+    },
   );
 
   MembershipClubAccess.associate = (models) => {

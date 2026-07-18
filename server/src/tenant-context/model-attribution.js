@@ -1,9 +1,10 @@
 'use strict';
 
+const { QueryTypes } = require('sequelize');
+
 const {
-  DEFAULT_CLUB_SLUG,
-  DEFAULT_ORGANIZATION_SLUG,
-} = require('../tenant-foundation/constants');
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
 const {
   isTenantClientMoneyInstrumentsEnabled,
 } = require('./capabilities');
@@ -24,23 +25,10 @@ async function loadDefaultTenant(instance, options = {}) {
   if (!models?.Organization || !models?.Club) {
     throw missingTenantError(instance?.constructor?.name || 'Model');
   }
-  const organization = await models.Organization.findOne({
-    attributes: ['id'],
+  return requireExactSingletonDefault({
+    models,
     transaction: options.transaction,
-    where: { slug: DEFAULT_ORGANIZATION_SLUG, status: 'active' },
   });
-  if (!organization) throw missingTenantError(instance.constructor.name);
-  const club = await models.Club.findOne({
-    attributes: ['id'],
-    transaction: options.transaction,
-    where: {
-      organizationId: organization.id,
-      slug: DEFAULT_CLUB_SLUG,
-      status: 'active',
-    },
-  });
-  if (!club) throw missingTenantError(instance.constructor.name);
-  return { clubId: Number(club.id), organizationId: Number(organization.id) };
 }
 
 async function ensureTenantAttribution(instance, options, fields) {
@@ -70,6 +58,15 @@ function createTenantAttributionHooks(fields, label) {
       );
     },
     async beforeValidate(instance, options) {
+      if (
+        (
+          options?.type === QueryTypes.BULKUPDATE &&
+          immutableFields.every((field) => !options.fields?.includes(field))
+        ) || (
+          !instance.isNewRecord &&
+          immutableFields.every((field) => !instance.changed(field))
+        )
+      ) return;
       await ensureTenantAttribution(instance, options, immutableFields);
     },
     beforeUpdate(instance) {
@@ -108,6 +105,15 @@ function createCapabilityTenantAttributionHooks(fields, label, isEnabled) {
       }
     },
     async beforeValidate(instance, options) {
+      if (
+        (
+          options?.type === QueryTypes.BULKUPDATE &&
+          immutableFields.every((field) => !options.fields?.includes(field))
+        ) || (
+          !instance.isNewRecord &&
+          immutableFields.every((field) => !instance.changed(field))
+        )
+      ) return;
       await ensure(instance, options);
     },
   };
