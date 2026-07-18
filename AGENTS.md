@@ -70,6 +70,15 @@
 
 В feature worktree реализуй продуктовую фичу, но не обновляй onboarding/instructions в этой же ветке без явного запроса пользователя.
 
+Feature-чатам заранее разрешены обычные Git-операции в собственной feature-ветке:
+
+- самостоятельно выполнять `git add` и создавать локальные commits по своей задаче;
+- выполнять обычный non-force `git push` только в свою именованную feature-ветку `codex/...`, включая первый push новой remote branch;
+- после каждого push проверять clean worktree и exact local/remote SHA parity и указывать SHA в handoff;
+- fix-коммиты после QA также можно commit/push в ту же feature-ветку без отдельного подтверждения, если reviewed history не переписывается.
+
+Это разрешение не распространяется на `main`, `codex/saas-multitenancy-integration`, другие integration/release/deploy branches, чужие feature-ветки, merge/rebase/cherry-pick в общие ветки, force-push, удаление remote branches, создание PR, promotion и deploy. Эти действия требуют отдельного release/integration gate и явного разрешения соответствующей стадии.
+
 Перед дизайном и реализацией новой фичи сначала сделай existing-functionality discovery:
 
 - прочитай project map/domain inventory/domain file из vault;
