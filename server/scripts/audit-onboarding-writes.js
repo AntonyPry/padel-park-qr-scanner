@@ -78,6 +78,7 @@ function auditEventBoundaries(source, file = '<memory>') {
   const functionAliases = new Set();
   const factoryAliases = new Set();
   const objectAliases = new Map();
+  const stringAliases = new Map();
 
   function unwrapExpression(node) {
     let current = node;
@@ -94,13 +95,25 @@ function auditEventBoundaries(source, file = '<memory>') {
     return current;
   }
 
+  function resolveStaticString(node, seen = new Set()) {
+    const expression = unwrapExpression(node);
+    if (!expression) return null;
+    if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      return expression.text;
+    }
+    if (!ts.isIdentifier(expression) || seen.has(expression.text)) return null;
+    seen.add(expression.text);
+    const value = stringAliases.get(expression.text);
+    return typeof value === 'string' ? value : null;
+  }
+
   function staticPropertyName(node) {
     if (!node) return null;
     if (ts.isIdentifier(node) || ts.isStringLiteral(node) ||
       ts.isNoSubstitutionTemplateLiteral(node)) {
       return node.text;
     }
-    if (ts.isComputedPropertyName(node)) return staticPropertyName(node.expression);
+    if (ts.isComputedPropertyName(node)) return resolveStaticString(node.expression);
     return null;
   }
 
@@ -108,7 +121,7 @@ function auditEventBoundaries(source, file = '<memory>') {
     const expression = unwrapExpression(node);
     if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
     if (ts.isElementAccessExpression(expression)) {
-      return staticPropertyName(expression.argumentExpression);
+      return resolveStaticString(expression.argumentExpression);
     }
     return null;
   }
@@ -135,6 +148,24 @@ function auditEventBoundaries(source, file = '<memory>') {
     return expressionIsFactoryAlias(callee);
   }
 
+  function expressionMayBeFunctionAlias(node) {
+    const expression = unwrapExpression(node);
+    if (!expression) return false;
+    if (ts.isConditionalExpression(expression)) {
+      return expressionMayBeFunctionAlias(expression.whenTrue) ||
+        expressionMayBeFunctionAlias(expression.whenFalse);
+    }
+    if (ts.isBinaryExpression(expression) && [
+      ts.SyntaxKind.AmpersandAmpersandToken,
+      ts.SyntaxKind.BarBarToken,
+      ts.SyntaxKind.QuestionQuestionToken,
+    ].includes(expression.operatorToken.kind)) {
+      return expressionMayBeFunctionAlias(expression.left) ||
+        expressionMayBeFunctionAlias(expression.right);
+    }
+    return expressionIsFunctionAlias(expression);
+  }
+
   function factoryReturnsFunctionAlias(node) {
     const expression = unwrapExpression(node);
     if (!expression || (!ts.isArrowFunction(expression) &&
@@ -142,7 +173,7 @@ function auditEventBoundaries(source, file = '<memory>') {
       return false;
     }
     if (ts.isArrowFunction(expression) && !ts.isBlock(expression.body)) {
-      return expressionIsFunctionAlias(expression.body);
+      return expressionMayBeFunctionAlias(expression.body);
     }
     const returns = [];
     function visitReturn(child) {
@@ -154,8 +185,7 @@ function auditEventBoundaries(source, file = '<memory>') {
       ts.forEachChild(child, visitReturn);
     }
     visitReturn(expression.body);
-    return returns.length > 0 && returns.every((returned) =>
-      returned && expressionIsFunctionAlias(returned));
+    return returns.some((returned) => returned && expressionMayBeFunctionAlias(returned));
   }
 
   function expressionIsFactoryAlias(node) {
@@ -194,6 +224,53 @@ function auditEventBoundaries(source, file = '<memory>') {
       }
     }
     return changed;
+  }
+
+  function collectStaticStringAlias(name, initializer, invalidateUnknown) {
+    const expression = unwrapExpression(initializer);
+    let value;
+    if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) {
+      value = expression.text;
+    } else if (ts.isIdentifier(expression) && stringAliases.has(expression.text)) {
+      value = stringAliases.get(expression.text);
+    } else if (invalidateUnknown) {
+      value = null;
+    } else {
+      return false;
+    }
+    if (!stringAliases.has(name.text)) {
+      stringAliases.set(name.text, value);
+      return true;
+    }
+    const existing = stringAliases.get(name.text);
+    if (existing !== null && (value === null || existing !== value)) {
+      stringAliases.set(name.text, null);
+      return true;
+    }
+    return false;
+  }
+
+  function collectStaticStrings(node) {
+    let changed = false;
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
+      collectStaticStringAlias(node.name, node.initializer, false)) {
+      changed = true;
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+      const name = unwrapExpression(node.left);
+      if (ts.isIdentifier(name) &&
+        collectStaticStringAlias(name, unwrapExpression(node.right), true)) {
+        changed = true;
+      }
+    }
+    ts.forEachChild(node, (child) => {
+      if (collectStaticStrings(child)) changed = true;
+    });
+    return changed;
+  }
+
+  for (let iteration = 0; iteration < 20; iteration += 1) {
+    if (!collectStaticStrings(parsed)) break;
   }
 
   function collectNamedAlias(name, initializer) {

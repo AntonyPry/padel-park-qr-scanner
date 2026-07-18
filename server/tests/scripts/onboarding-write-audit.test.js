@@ -99,6 +99,45 @@ test('onboarding event audit follows factory-returned aliases and adjacent chain
   assert.deepEqual(auditEventBoundaries(safe), []);
 });
 
+test('onboarding event audit conservatively follows mixed and conditional factory returns', () => {
+  const unsafe = `
+    function make(flag) {
+      if (flag) return onboardingService.recordEventSafe;
+      return otherHandler;
+    }
+    const record = make(flag);
+    record(actor, 'mixed-return', { payload: {} });
+
+    const conditionalFactory = (enabled) => enabled
+      ? onboardingService.recordEventSafe.bind(onboardingService)
+      : otherHandler;
+    conditionalFactory(enabled)(actor, 'conditional-return', optionsWithoutTenant);
+
+    function nestedLogicalFactory(primary, secondary) {
+      if (primary) {
+        if (secondary) return otherHandler;
+        return secondary || onboardingService.recordEventSafe;
+      }
+      return otherHandler;
+    }
+    const nestedRecord = nestedLogicalFactory(primary, secondary);
+    nestedRecord(actor, 'nested-logical-return', { payload: {} });
+  `;
+  assert.equal(auditEventBoundaries(unsafe).length, 3);
+
+  const safe = `
+    const base = { tenant };
+    const options = { ...base, payload: {} };
+    function make(flag) {
+      if (flag) return onboardingService.recordEventSafe;
+      return otherHandler;
+    }
+    const record = make(flag);
+    record(actor, 'mixed-return-safe', options);
+  `;
+  assert.deepEqual(auditEventBoundaries(safe), []);
+});
+
 test('onboarding event audit follows static computed property references only', () => {
   const unsafe = `
     onboardingService['recordEventSafe'](actor, 'direct', { payload: {} });
@@ -113,6 +152,34 @@ test('onboarding event audit follows static computed property references only', 
     const record = onboardingService['recordEventSafe'].bind(onboardingService);
     record(actor, 'alias-safe', { ...options });
     onboardingService[eventMethod](actor, 'dynamic-unrelated', { payload: {} });
+  `;
+  assert.deepEqual(auditEventBoundaries(safe), []);
+});
+
+test('onboarding event audit resolves computed keys only from static strings', () => {
+  const unsafe = `
+    const eventMethod = \`recordEventSafe\`;
+    const eventMethodAlias = eventMethod;
+    onboardingService[eventMethodAlias](actor, 'static-alias', { payload: {} });
+
+    let assigned;
+    ({ [eventMethod]: assigned } = onboardingService);
+    assigned(actor, 'static-destructure', optionsWithoutTenant);
+  `;
+  assert.equal(auditEventBoundaries(unsafe).length, 2);
+
+  const safe = `
+    const recordEventSafe = 'otherMethod';
+    onboardingService[recordEventSafe](actor, 'other-method', { payload: {} });
+    onboardingService[dynamicMethod](actor, 'unknown-method', { payload: {} });
+
+    let reassignedMethod = 'recordEventSafe';
+    reassignedMethod = dynamicMethod;
+    onboardingService[reassignedMethod](actor, 'reassigned-method', { payload: {} });
+
+    const eventMethod = 'recordEventSafe';
+    const options = { tenant, payload: {} };
+    onboardingService[eventMethod](actor, 'static-safe', { ...options });
   `;
   assert.deepEqual(auditEventBoundaries(safe), []);
 });
