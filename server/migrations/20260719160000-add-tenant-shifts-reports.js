@@ -180,8 +180,11 @@ function reportBody(isUpdate) {
   END`;
 }
 
-function templateItemBody() {
+function templateItemBody(isUpdate) {
   return `BEGIN
+    ${isUpdate ? `IF NOT (OLD.templateId <=> NEW.templateId) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift report template item parent is immutable';
+    END IF;` : ''}
     IF NOT EXISTS (
       SELECT 1 FROM ShiftReportTemplates t WHERE t.id = NEW.templateId
     ) THEN
@@ -190,9 +193,12 @@ function templateItemBody() {
   END`;
 }
 
-function answerBody() {
+function answerBody(isUpdate) {
   return `BEGIN
     DECLARE v_template INT;
+    ${isUpdate ? `IF NOT (OLD.reportId <=> NEW.reportId) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift report answer parent is immutable';
+    END IF;` : ''}
     SELECT templateId INTO v_template FROM ShiftReports WHERE id = NEW.reportId;
     IF v_template IS NULL AND NOT EXISTS (
       SELECT 1 FROM ShiftReports r WHERE r.id = NEW.reportId
@@ -204,6 +210,41 @@ function answerBody() {
       WHERE i.id = NEW.templateItemId AND i.templateId = v_template
     ) THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift report answer template item mismatch';
+    END IF;
+  END`;
+}
+
+function cashSessionBody(isUpdate) {
+  return `BEGIN
+    ${isUpdate ? `IF NOT (OLD.shiftId <=> NEW.shiftId) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift cash session parent is immutable';
+    END IF;` : ''}
+    IF NOT EXISTS (
+      SELECT 1 FROM Shifts s WHERE s.id = NEW.shiftId
+    ) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift cash session shift mismatch';
+    END IF;
+  END`;
+}
+
+function cashExpenseBody(isUpdate) {
+  return `BEGIN
+    ${isUpdate ? `IF NOT (OLD.shiftId <=> NEW.shiftId) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift cash expense shift parent is immutable';
+    END IF;
+    IF NOT (OLD.cashSessionId <=> NEW.cashSessionId) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift cash expense session parent is immutable';
+    END IF;` : ''}
+    IF NOT EXISTS (
+      SELECT 1 FROM Shifts s WHERE s.id = NEW.shiftId
+    ) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift cash expense shift mismatch';
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM ShiftCashSessions cs
+      WHERE cs.id = NEW.cashSessionId AND cs.shiftId = NEW.shiftId
+    ) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'Shift cash expense session mismatch';
     END IF;
   END`;
 }
@@ -224,16 +265,28 @@ const TRIGGERS = Object.freeze({
     body: reportBody(true), event: 'UPDATE', table: 'ShiftReports',
   },
   shift_report_template_items_tenant_bi: {
-    body: templateItemBody(), event: 'INSERT', table: 'ShiftReportTemplateItems',
+    body: templateItemBody(false), event: 'INSERT', table: 'ShiftReportTemplateItems',
   },
   shift_report_template_items_tenant_bu: {
-    body: templateItemBody(), event: 'UPDATE', table: 'ShiftReportTemplateItems',
+    body: templateItemBody(true), event: 'UPDATE', table: 'ShiftReportTemplateItems',
   },
   shift_report_answers_tenant_bi: {
-    body: answerBody(), event: 'INSERT', table: 'ShiftReportAnswers',
+    body: answerBody(false), event: 'INSERT', table: 'ShiftReportAnswers',
   },
   shift_report_answers_tenant_bu: {
-    body: answerBody(), event: 'UPDATE', table: 'ShiftReportAnswers',
+    body: answerBody(true), event: 'UPDATE', table: 'ShiftReportAnswers',
+  },
+  shift_cash_sessions_tenant_bi: {
+    body: cashSessionBody(false), event: 'INSERT', table: 'ShiftCashSessions',
+  },
+  shift_cash_sessions_tenant_bu: {
+    body: cashSessionBody(true), event: 'UPDATE', table: 'ShiftCashSessions',
+  },
+  shift_cash_expenses_tenant_bi: {
+    body: cashExpenseBody(false), event: 'INSERT', table: 'ShiftCashExpenses',
+  },
+  shift_cash_expenses_tenant_bu: {
+    body: cashExpenseBody(true), event: 'UPDATE', table: 'ShiftCashExpenses',
   },
 });
 
@@ -522,6 +575,8 @@ async function assertLegacyDataCompatible(queryInterface, tenant) {
     ['Report shift', `SELECT COUNT(*) AS count FROM ShiftReports r LEFT JOIN Shifts s ON s.id=r.shiftId WHERE s.id IS NULL`],
     ['Report template', `SELECT COUNT(*) AS count FROM ShiftReports r LEFT JOIN ShiftReportTemplates t ON t.id=r.templateId WHERE r.templateId IS NOT NULL AND t.id IS NULL`],
     ['Answer template item', `SELECT COUNT(*) AS count FROM ShiftReportAnswers a JOIN ShiftReports r ON r.id=a.reportId JOIN ShiftReportTemplateItems i ON i.id=a.templateItemId WHERE a.templateItemId IS NOT NULL AND (r.templateId IS NULL OR i.templateId<>r.templateId)`],
+    ['Cash session shift', `SELECT COUNT(*) AS count FROM ShiftCashSessions cs LEFT JOIN Shifts s ON s.id=cs.shiftId WHERE s.id IS NULL`],
+    ['Cash expense parents', `SELECT COUNT(*) AS count FROM ShiftCashExpenses expense LEFT JOIN Shifts s ON s.id=expense.shiftId LEFT JOIN ShiftCashSessions cs ON cs.id=expense.cashSessionId WHERE s.id IS NULL OR cs.id IS NULL OR cs.shiftId<>expense.shiftId`],
   ];
   for (const [label, sql] of probes) {
     const rows = await selectRows(queryInterface, sql, tenant);

@@ -8,10 +8,15 @@ const {
   bindClientMoneyActor,
   resolveClientMoneyAccessContext,
 } = require('./client-money-access-context.service');
+const {
+  DEFAULT_ORGANIZATION_SLUG,
+} = require('../tenant-foundation/constants');
 
 const LOCKED_PAYROLL_STATUSES = ['reviewed', 'approved', 'paid'];
 const PAYROLL_STATUSES = ['draft', 'reviewed', 'approved', 'paid'];
 const PAYROLL_VIEW_ROLES = new Set(['owner', 'manager', 'accountant']);
+const PAYROLL_TENANT_PROVENANCE_KEY = 'tenantProvenance';
+const PAYROLL_TENANT_PROVENANCE_VERSION = 1;
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -58,6 +63,12 @@ function parseSnapshot(snapshot) {
   }
 
   return snapshot;
+}
+
+function stripSnapshotProvenance(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return snapshot;
+  const { [PAYROLL_TENANT_PROVENANCE_KEY]: _provenance, ...publicSnapshot } = snapshot;
+  return publicSnapshot;
 }
 
 function sumPayroll(shifts) {
@@ -240,6 +251,46 @@ async function resolvePayrollBoundary(account, tenant) {
     throw appError('Недостаточно прав для просмотра payroll', 403);
   }
   return { account: authorityAccount, context };
+}
+
+function snapshotOrganizationId(snapshot) {
+  const value = Number(snapshot?.[PAYROLL_TENANT_PROVENANCE_KEY]?.organizationId);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+async function isExactDefaultOrganizationBridge(context) {
+  if (!context) return true;
+  const [organizations, defaultOrganization] = await Promise.all([
+    db.Organization.findAll({ attributes: ['id'], limit: 2 }),
+    db.Organization.findOne({
+      attributes: ['id'],
+      where: { slug: DEFAULT_ORGANIZATION_SLUG },
+    }),
+  ]);
+  return organizations.length === 1 &&
+    Number(defaultOrganization?.id) === Number(context.organizationId);
+}
+
+async function assertSnapshotTenant(snapshot, boundary) {
+  if (!boundary.context) return;
+  const organizationId = snapshotOrganizationId(snapshot);
+  if (organizationId === Number(boundary.context.organizationId)) return;
+  if (organizationId === null && await isExactDefaultOrganizationBridge(boundary.context)) {
+    return;
+  }
+  const error = appError('Payroll-период не найден', 404);
+  error.code = 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND';
+  throw error;
+}
+
+async function canReadSnapshot(snapshot, boundary) {
+  try {
+    await assertSnapshotTenant(snapshot, boundary);
+    return true;
+  } catch (error) {
+    if (error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND') return false;
+    throw error;
+  }
 }
 
 async function buildSalesContext(fromDate, toDate, context = null) {
@@ -524,6 +575,12 @@ async function buildPayrollSnapshot(from, to, account = null, tenant = null) {
     totals: sumPayroll(shiftsHistory),
     reconciliation: salesContext.reconciliation,
     warnings: [...new Set(warnings)],
+    ...(boundary.context ? {
+      [PAYROLL_TENANT_PROVENANCE_KEY]: {
+        organizationId: Number(boundary.context.organizationId),
+        version: PAYROLL_TENANT_PROVENANCE_VERSION,
+      },
+    } : {}),
   };
 
   return snapshot;
@@ -584,22 +641,30 @@ async function assertRangeEditable(from, to, label = 'период') {
 
 async function calculatePayroll(from, to, account = null, tenant = null) {
   const { fromDate, toDate } = normalizeRange(from, to);
+  const boundary = await resolvePayrollBoundary(account, tenant);
   const period = await findExactPeriod(fromDate, toDate);
   const periodSnapshot = period ? parseSnapshot(period.snapshot) : null;
 
   if (period && period.status !== 'draft' && periodSnapshot) {
+    await assertSnapshotTenant(periodSnapshot, boundary);
     return {
-      ...periodSnapshot,
+      ...stripSnapshotProvenance(periodSnapshot),
       period: serializePeriod(period),
       locked: true,
       source: 'snapshot',
     };
   }
 
-  const snapshot = await buildPayrollSnapshot(fromDate, toDate, account, tenant);
+  if (periodSnapshot) await assertSnapshotTenant(periodSnapshot, boundary);
+  const snapshot = await buildPayrollSnapshot(
+    fromDate,
+    toDate,
+    boundary.account,
+    tenant,
+  );
 
   return {
-    ...snapshot,
+    ...stripSnapshotProvenance(snapshot),
     period: serializePeriod(period),
     locked: Boolean(period && LOCKED_PAYROLL_STATUSES.includes(period.status)),
     source: 'live',
@@ -668,11 +733,12 @@ async function recalculatePeriod(id, account, reason, tenant = null) {
   const boundary = await resolvePayrollBoundary(account, tenant);
   const period = await db.PayrollPeriod.findByPk(id);
   if (!period) throw appError('Payroll-период не найден', 404);
+  const before = parseSnapshot(period.snapshot);
+  await assertSnapshotTenant(before, boundary);
   if (period.status !== 'draft') {
     throw appError('Пересчитать можно только payroll в статусе черновика', 409);
   }
 
-  const before = parseSnapshot(period.snapshot);
   const snapshot = await buildPayrollSnapshot(
     period.fromDate,
     period.toDate,
@@ -706,6 +772,7 @@ async function transitionPeriod(id, data, account, tenant = null) {
 
   const period = await db.PayrollPeriod.findByPk(id);
   if (!period) throw appError('Payroll-период не найден', 404);
+  await assertSnapshotTenant(parseSnapshot(period.snapshot), boundary);
 
   assertTransitionAllowed(period, nextStatus);
   assertRoleCanTransition(account, nextStatus);
@@ -766,7 +833,7 @@ async function transitionPeriod(id, data, account, tenant = null) {
 }
 
 async function listPeriods(query = {}, account = null, tenant = null) {
-  await resolvePayrollBoundary(account, tenant);
+  const boundary = await resolvePayrollBoundary(account, tenant);
   const where = {};
 
   if (query.status && query.status !== 'all') where.status = query.status;
@@ -783,14 +850,17 @@ async function listPeriods(query = {}, account = null, tenant = null) {
     order: [['fromDate', 'DESC']],
   });
 
-  return rows.map((row) => {
+  const visibleRows = [];
+  for (const row of rows) {
     const snapshot = parseSnapshot(row.snapshot);
-    return {
+    if (!await canReadSnapshot(snapshot, boundary)) continue;
+    visibleRows.push({
       ...serializePeriod(row),
       totals: snapshot?.totals || null,
       generatedAt: snapshot?.generatedAt || null,
-    };
-  });
+    });
+  }
+  return visibleRows;
 }
 
 async function getHistory(query = {}, account = null, tenant = null) {
@@ -891,6 +961,7 @@ async function exportPayroll(query, account, tenant = null) {
     period = await db.PayrollPeriod.findByPk(query.periodId);
     if (!period) throw appError('Payroll-период не найден', 404);
     snapshot = parseSnapshot(period.snapshot);
+    await assertSnapshotTenant(snapshot, boundary);
   } else {
     snapshot = await buildPayrollSnapshot(query.from, query.to, account, tenant);
   }

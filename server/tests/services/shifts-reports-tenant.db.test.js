@@ -456,6 +456,11 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
       organizationId: orgA.id,
       scope: 'organization',
     });
+    const organizationTenantB = await tenantContextService.resolveTenantContext({
+      accountId: ownerB.id,
+      organizationId: orgB.id,
+      scope: 'organization',
+    });
 
     const templatePayload = {
       name: 'Ежедневный отчет',
@@ -476,6 +481,15 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
       actorA,
       tenantSibling,
     );
+    const siblingItem = await db.ShiftReportTemplateItem.create({
+      itemType: 'text',
+      label: 'Sibling',
+      photoRequired: false,
+      required: false,
+      sortOrder: 0,
+      status: 'active',
+      templateId: templateSibling.id,
+    });
     const templateB = await reportsService.createTemplate(templatePayload, actorB, tenantB);
 
     const shiftA = await shiftsService.create({
@@ -576,6 +590,121 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
       payrollA.shifts.some((row) => Number(row.id) === Number(activeShiftA.id)),
       true,
     );
+    const reviewedPeriodA = await db.PayrollPeriod.create({
+      fromDate: '2099-08-01',
+      reviewedAt: new Date(),
+      reviewedByAccountId: ownerA.id,
+      snapshot: payrollA,
+      status: 'reviewed',
+      toDate: '2099-08-01',
+    });
+    const savedPayrollA = await payrollService.calculatePayroll(
+      '2099-08-01',
+      '2099-08-01',
+      actorA,
+      organizationTenantA,
+    );
+    assert.equal(savedPayrollA.source, 'snapshot');
+    assert.equal(savedPayrollA.tenantProvenance, undefined);
+    await assert.rejects(
+      payrollService.calculatePayroll(
+        '2099-08-01',
+        '2099-08-01',
+        actorB,
+        organizationTenantB,
+      ),
+      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
+    );
+    await assert.rejects(
+      payrollService.calculatePayroll('2099-08-01', '2099-08-01'),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await assert.rejects(
+      payrollService.calculatePayroll(
+        '2099-08-01',
+        '2099-08-01',
+        actorB,
+        organizationTenantA,
+      ),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await assert.rejects(
+      payrollService.calculatePayroll(
+        '2099-08-01',
+        '2099-08-01',
+        actorA,
+        { ...organizationTenantA },
+      ),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    assert.equal(
+      (await payrollService.listPeriods({}, actorA, organizationTenantA))
+        .some((period) => Number(period.id) === Number(reviewedPeriodA.id)),
+      true,
+    );
+    assert.equal(
+      (await payrollService.listPeriods({}, actorB, organizationTenantB))
+        .some((period) => Number(period.id) === Number(reviewedPeriodA.id)),
+      false,
+    );
+    assert.ok(
+      (await payrollService.exportPayroll(
+        { periodId: reviewedPeriodA.id },
+        actorA,
+        organizationTenantA,
+      )).buffer.length > 0,
+    );
+    await assert.rejects(
+      payrollService.exportPayroll(
+        { periodId: reviewedPeriodA.id },
+        actorB,
+        organizationTenantB,
+      ),
+      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
+    );
+    await assert.rejects(
+      payrollService.transitionPeriod(
+        reviewedPeriodA.id,
+        { status: 'approved' },
+        actorB,
+        organizationTenantB,
+      ),
+      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
+    );
+    await payrollService.transitionPeriod(
+      reviewedPeriodA.id,
+      { status: 'approved' },
+      actorA,
+      organizationTenantA,
+    );
+    assert.equal((await reviewedPeriodA.reload()).status, 'approved');
+    const draftSnapshotA = await payrollService.buildPayrollSnapshot(
+      '2099-08-02',
+      '2099-08-02',
+      actorA,
+      organizationTenantA,
+    );
+    const draftPeriodA = await db.PayrollPeriod.create({
+      fromDate: '2099-08-02',
+      snapshot: draftSnapshotA,
+      status: 'draft',
+      toDate: '2099-08-02',
+    });
+    await assert.rejects(
+      payrollService.recalculatePeriod(
+        draftPeriodA.id,
+        actorB,
+        'cross organization',
+        organizationTenantB,
+      ),
+      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
+    );
+    await payrollService.recalculatePeriod(
+      draftPeriodA.id,
+      actorA,
+      'same organization',
+      organizationTenantA,
+    );
 
     const templatesA = await reportsService.listTemplates({}, actorA, tenantA);
     assert.equal(templatesA.some((row) => Number(row.id) === Number(templateA.id)), true);
@@ -596,13 +725,17 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
       /Шаблон отчета не найден/,
     );
     const reportsA = await reportsService.listReports({}, actorA, tenantA);
-    assert.equal((await reportsService.listReports({}, actorA, tenantSibling)).length, 0);
+    assert.equal((await reportsService.listReports({}, actorA, tenantSibling)).length, 1);
     assert.equal((await reportsService.listReports({}, actorB, tenantB)).length, 0);
     assert.ok(shiftA.id && shiftSibling.id && shiftB.id);
 
     const reportA = await db.ShiftReport.findOne({
       where: { shiftId: shiftA.id, templateId: templateA.id },
     });
+    const siblingReport = await db.ShiftReport.findOne({
+      where: { shiftId: shiftSibling.id, templateId: templateSibling.id },
+    });
+    assert.ok(siblingReport);
     assert.equal(reportsA.some((row) => Number(row.id) === Number(reportA.id)), true);
     await assert.rejects(
       reportsService.getReport(reportA.id, actorA, tenantSibling),
@@ -623,6 +756,15 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
     await assert.rejects(
       reportsService.listReports({}, actorA, tenantA),
       (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND',
+    );
+    await assert.rejects(
+      payrollService.calculatePayroll(
+        '2099-08-01',
+        '2099-08-01',
+        actorA,
+        organizationTenantA,
+      ),
+      (error) => error.code === 'TENANT_CONTEXT_NOT_FOUND' || error.statusCode === 403,
     );
     await ownerMembershipA.update({ role: 'owner' });
     const staffTenantA = await tenantContextService.resolveTenantContext({
@@ -668,15 +810,75 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
     const storedAttachment = storedAttachments[0];
     assert.equal(Number(storedAttachment.clubId), Number(clubA.id));
     assert.equal(Number(storedAttachment.organizationId), Number(orgA.id));
+    const storedFile = await reportsService.getAttachment(
+      reportA.id,
+      answerA.id,
+      attachment.id,
+      actorA,
+      tenantA,
+    );
     assert.equal(
-      fs.existsSync((await reportsService.getAttachment(
-        reportA.id,
-        answerA.id,
-        attachment.id,
-        actorA,
-        tenantA,
-      )).absolutePath),
+      fs.existsSync(storedFile.absolutePath),
       true,
+    );
+    const templateItemA = await db.ShiftReportTemplateItem.findByPk(
+      answerA.templateItemId,
+    );
+    await expectDatabaseReject(
+      templateItemA.update({ templateId: templateSibling.id }),
+      /template item parent is immutable/i,
+    );
+    await templateItemA.reload();
+    assert.equal(Number(templateItemA.templateId), Number(templateA.id));
+    await expectDatabaseReject(
+      db.sequelize.query(
+        'UPDATE ShiftReportTemplateItems SET templateId=:templateId WHERE id=:id',
+        { replacements: { id: templateItemA.id, templateId: templateSibling.id } },
+      ),
+      /template item parent is immutable/i,
+    );
+    const attachmentMetadataBefore = JSON.stringify(storedAttachments);
+    await expectDatabaseReject(
+      answerA.update({
+        reportId: siblingReport.id,
+        templateItemId: siblingItem.id,
+      }),
+      /answer parent is immutable/i,
+    );
+    await answerA.reload();
+    assert.equal(Number(answerA.reportId), Number(reportA.id));
+    assert.equal(
+      JSON.stringify(
+        typeof answerA.attachments === 'string'
+          ? JSON.parse(answerA.attachments)
+          : answerA.attachments,
+      ),
+      attachmentMetadataBefore,
+    );
+    await expectDatabaseReject(
+      db.sequelize.query(`
+        UPDATE ShiftReportAnswers
+        SET reportId=:reportId, templateItemId=:templateItemId
+        WHERE id=:id
+      `, {
+        replacements: {
+          id: answerA.id,
+          reportId: siblingReport.id,
+          templateItemId: siblingItem.id,
+        },
+      }),
+      /answer parent is immutable/i,
+    );
+    await answerA.reload();
+    assert.equal(Number(answerA.reportId), Number(reportA.id));
+    assert.equal(fs.existsSync(storedFile.absolutePath), true);
+    assert.equal(
+      JSON.stringify(
+        typeof answerA.attachments === 'string'
+          ? JSON.parse(answerA.attachments)
+          : answerA.attachments,
+      ),
+      attachmentMetadataBefore,
     );
     await assert.rejects(
       reportsService.getAttachment(
@@ -717,19 +919,109 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
       }),
       /report shift club mismatch/i,
     );
-    const siblingItem = await db.ShiftReportTemplateItem.create({
-      itemType: 'text',
-      label: 'Sibling',
-      photoRequired: false,
-      required: false,
-      sortOrder: 0,
-      status: 'active',
-      templateId: templateSibling.id,
-    });
     await expectDatabaseReject(
       answerA.update({ templateItemId: siblingItem.id }),
       /answer template item mismatch/i,
     );
+    const cashSessionA = await db.ShiftCashSession.create({
+      contextKey: 'feature-8-1-a',
+      shiftId: shiftA.id,
+      status: 'open',
+    });
+    const cashSessionSibling = await db.ShiftCashSession.create({
+      contextKey: 'feature-8-1-sibling',
+      shiftId: shiftSibling.id,
+      status: 'open',
+    });
+    const cashExpenseAttachments = [{
+      id: 'feature-8-1-cash-attachment',
+      path: 'tenant/feature-8-1-cash-attachment.png',
+    }];
+    const cashExpenseA = await db.ShiftCashExpense.create({
+      amount: 100,
+      attachments: cashExpenseAttachments,
+      cashSessionId: cashSessionA.id,
+      description: 'Feature 8.1 expense',
+      shiftId: shiftA.id,
+      spentAt: new Date('2099-08-01T12:00:00.000Z'),
+      status: 'active',
+    });
+    await expectDatabaseReject(
+      cashSessionA.update({ shiftId: shiftSibling.id }),
+      /cash session parent is immutable/i,
+    );
+    await cashSessionA.reload();
+    assert.equal(Number(cashSessionA.shiftId), Number(shiftA.id));
+    await expectDatabaseReject(
+      db.sequelize.query(
+        'UPDATE ShiftCashSessions SET shiftId=:shiftId WHERE id=:id',
+        { replacements: { id: cashSessionA.id, shiftId: shiftSibling.id } },
+      ),
+      /cash session parent is immutable/i,
+    );
+    await expectDatabaseReject(
+      cashExpenseA.update({ shiftId: shiftSibling.id }),
+      /cash expense shift parent is immutable/i,
+    );
+    await cashExpenseA.reload();
+    await expectDatabaseReject(
+      cashExpenseA.update({ cashSessionId: cashSessionSibling.id }),
+      /cash expense session parent is immutable/i,
+    );
+    await cashExpenseA.reload();
+    await expectDatabaseReject(
+      db.sequelize.query(`
+        UPDATE ShiftCashExpenses
+        SET shiftId=:shiftId, cashSessionId=:cashSessionId
+        WHERE id=:id
+      `, {
+        replacements: {
+          cashSessionId: cashSessionSibling.id,
+          id: cashExpenseA.id,
+          shiftId: shiftSibling.id,
+        },
+      }),
+      /cash expense shift parent is immutable/i,
+    );
+    await expectDatabaseReject(
+      db.ShiftCashExpense.create({
+        amount: 50,
+        attachments: [],
+        cashSessionId: cashSessionSibling.id,
+        description: 'Inconsistent parents',
+        shiftId: shiftA.id,
+        spentAt: new Date('2099-08-01T13:00:00.000Z'),
+        status: 'active',
+      }),
+      /cash expense session mismatch/i,
+    );
+    await expectDatabaseReject(
+      db.sequelize.query(`
+        INSERT INTO ShiftCashExpenses
+          (shiftId,cashSessionId,amount,description,spentAt,status,attachments,isTraining,createdAt,updatedAt)
+        VALUES
+          (:shiftId,:cashSessionId,50,'Raw inconsistent parents',NOW(),'active','[]',0,NOW(),NOW())
+      `, {
+        replacements: {
+          cashSessionId: cashSessionSibling.id,
+          shiftId: shiftA.id,
+        },
+      }),
+      /cash expense session mismatch/i,
+    );
+    await cashExpenseA.reload();
+    assert.equal(Number(cashExpenseA.shiftId), Number(shiftA.id));
+    assert.equal(Number(cashExpenseA.cashSessionId), Number(cashSessionA.id));
+    assert.equal(
+      JSON.stringify(
+        typeof cashExpenseA.attachments === 'string'
+          ? JSON.parse(cashExpenseA.attachments)
+          : cashExpenseA.attachments,
+      ),
+      JSON.stringify(cashExpenseAttachments),
+    );
+    await cashSessionA.update({ openingComment: 'Valid lifecycle update' });
+    await cashExpenseA.update({ description: 'Valid lifecycle update' });
     await expectDatabaseReject(
       db.Shift.create({
         adminName: staffA.staff.name,
@@ -768,7 +1060,41 @@ test('Feature 8.1 migration and two-Organization/two-Club shift isolation', asyn
     assert.equal(Number(legacyShift.clubId), Number(clubA.id));
     assert.equal(Number(legacyTemplate.clubId), Number(clubA.id));
     assert.equal(Number(legacyReport.clubId), Number(clubA.id));
+    const legacySnapshot = { ...payrollA };
+    delete legacySnapshot.tenantProvenance;
+    const legacyPayrollPeriod = await db.PayrollPeriod.create({
+      fromDate: '2099-08-04',
+      snapshot: legacySnapshot,
+      status: 'reviewed',
+      toDate: '2099-08-04',
+    });
+    const legacyPayroll = await payrollService.calculatePayroll(
+      '2099-08-04',
+      '2099-08-04',
+      actorA,
+      organizationTenantA,
+    );
+    assert.equal(legacyPayroll.source, 'snapshot');
+    assert.equal(legacyPayroll.tenantProvenance, undefined);
     process.env.TENANT_SHIFTS_REPORTS_ENABLED = 'true';
+
+    await assert.rejects(
+      payrollService.calculatePayroll(
+        '2099-08-04',
+        '2099-08-04',
+        actorA,
+        organizationTenantA,
+      ),
+      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
+    );
+    await assert.rejects(
+      payrollService.exportPayroll(
+        { periodId: legacyPayrollPeriod.id },
+        actorB,
+        organizationTenantB,
+      ),
+      (error) => error.code === 'TENANT_PAYROLL_SNAPSHOT_NOT_FOUND',
+    );
 
     await assert.rejects(
       migration.down(queryInterface, SequelizePackage),
