@@ -1,7 +1,10 @@
 'use strict';
 
 const db = require('../../models');
-const { DEFAULT_ORGANIZATION_SLUG } = require('../tenant-foundation/constants');
+const {
+  DEFAULT_CLUB_SLUG,
+  DEFAULT_ORGANIZATION_SLUG,
+} = require('../tenant-foundation/constants');
 const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const {
   isTenantMethodologySkillMapEnabled,
@@ -55,10 +58,21 @@ async function resolveLegacyContext({ lock = false, transaction } = {}) {
     where: { slug: DEFAULT_ORGANIZATION_SLUG, status: 'active' },
   });
   if (!organization) throw safeTenantDenial();
+  const club = await db.Club.findOne({
+    attributes: ['id'],
+    lock: queryLock(transaction, lock),
+    transaction,
+    where: {
+      organizationId: organization.id,
+      slug: DEFAULT_CLUB_SLUG,
+      status: 'active',
+    },
+  });
+  if (!club) throw safeTenantDenial();
   return freezeContext({
     accountId: null,
     authority: 'legacy-default',
-    clubId: null,
+    clubId: Number(club.id),
     effectiveRole: null,
     membershipId: null,
     membershipRole: null,

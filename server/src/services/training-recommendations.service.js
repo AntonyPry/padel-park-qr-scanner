@@ -8,9 +8,11 @@ const trainingNotesService = require('./training-notes.service');
 const {
   bindMethodologyActor,
   methodologyTenantWhere,
-  resolveMethodologyAccessContext,
   validateBookingPlanRecommendationDelegation,
 } = require('./methodology-access-context.service');
+const {
+  resolveTrainingOperationsAccessContext,
+} = require('./training-operations-access-context.service');
 
 const VIEW_ROLES = new Set(['owner', 'manager', 'trainer']);
 const MAX_SKILL_LEVEL = 5;
@@ -1554,7 +1556,7 @@ async function recommendForClient(
   tenant = null,
   options = {},
 ) {
-  const context = await resolveMethodologyAccessContext(tenant);
+  const context = await resolveTrainingOperationsAccessContext(tenant);
   const authorityActor = options.bookingPlanRecommendationDelegation
     ? validateBookingPlanRecommendationDelegation(
         options.bookingPlanRecommendationDelegation,
@@ -1603,7 +1605,7 @@ async function recommendForGroup(
   tenant = null,
   options = {},
 ) {
-  const context = await resolveMethodologyAccessContext(tenant);
+  const context = await resolveTrainingOperationsAccessContext(tenant);
   const authorityActor = options.bookingPlanRecommendationDelegation
     ? validateBookingPlanRecommendationDelegation(
         options.bookingPlanRecommendationDelegation,

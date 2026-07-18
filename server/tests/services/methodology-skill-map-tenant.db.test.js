@@ -94,6 +94,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     'DB_NAME',
     'NODE_ENV',
     'TENANT_METHODOLOGY_SKILL_MAP_MIGRATION_FAIL_STEP',
+    'TENANT_TRAINING_NOTES_PLANS_ENABLED',
   ].map((name) => [name, process.env[name]]));
   const admin = await mysql.createConnection({
     host: process.env.DB_HOST || '127.0.0.1',
@@ -108,6 +109,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
   process.env.DB_NAME = database;
   process.env.NODE_ENV = 'test';
   for (const name of CAPABILITY_ENV) process.env[name] = 'true';
+  delete process.env.TENANT_TRAINING_NOTES_PLANS_ENABLED;
 
   let schema;
   let db;
@@ -371,6 +373,10 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
        ON \`${historyTrigger.table}\` FOR EACH ROW ${historyTrigger.body}`,
     );
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
+    const trainingOperationsMigration = require(
+      '../../migrations/20260718160000-add-tenant-training-notes-plans.js',
+    );
+    await trainingOperationsMigration.up(queryInterface, SequelizePackage);
     const defaultOrganization = await selectOne(
       schema,
       'SELECT id FROM Organizations WHERE slug=:slug',
@@ -726,6 +732,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     await clientsService.removeArchivedClient(archivedB.id, tenantB);
 
     const noteA = await db.TrainingNote.create({
+      clubId: defaultClub.id,
       level: 'D',
       trainedAt: '2099-01-01',
       trainerAccountId: accountA.id,
@@ -791,6 +798,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     });
     const planB = await db.TrainingPlan.create({
       bookingId: bookingB.id,
+      clubId: clubB.id,
       kind: 'personal',
       plannedAt: '2099-01-02',
       sourceType: 'manual',
@@ -1103,6 +1111,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       'SELECT id, name, organizationId FROM TrainingSkills ORDER BY id',
       { type: SequelizePackage.QueryTypes.SELECT },
     ));
+    await trainingOperationsMigration.down(queryInterface, SequelizePackage);
     await migration.down(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await migration.up(queryInterface, SequelizePackage);

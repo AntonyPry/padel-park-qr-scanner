@@ -16,6 +16,7 @@ const {
   isTenantClientBasesCallTasksEnabled,
   isTenantBookingsCourtsEnabled,
   isTenantMethodologySkillMapEnabled,
+  isTenantTrainingNotesPlansEnabled,
 } = require('../tenant-context/capabilities');
 const {
   bookingTenantWhere,
@@ -26,6 +27,10 @@ const {
   methodologyTenantWhere,
   resolveMethodologyAccessContext,
 } = require('./methodology-access-context.service');
+const {
+  resolveTrainingOperationsAccessContext,
+  trainingOperationsTenantWhere,
+} = require('./training-operations-access-context.service');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -85,6 +90,7 @@ const METHODOLOGY_TRAINING_MODELS = new Set([
   'ClientTrainingSkill',
   'ClientTrainingSkillHistory',
 ]);
+const TRAINING_OPERATION_MODELS = new Set(['TrainingNote', 'TrainingPlan']);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -184,17 +190,35 @@ async function resolveTrainingMethodologyContext(tenant, options = {}) {
   return resolveMethodologyAccessContext(tenant, options);
 }
 
+async function resolveTrainingOperationsContext(tenant, options = {}) {
+  if (!isTenantTrainingNotesPlansEnabled()) return null;
+  return resolveTrainingOperationsAccessContext(tenant, options);
+}
+
 function getTrainingEntityQuery(
   entity,
   role,
   context,
   bookingContext = null,
   methodologyContext = null,
+  trainingOperationsContext = null,
 ) {
   const where = getTrainingEntityWhere(entity, role);
   if (methodologyContext && entity.modelName === 'User') {
     return {
       where: methodologyTenantWhere(methodologyContext, where, { force: true }),
+    };
+  }
+  if (
+    trainingOperationsContext &&
+    TRAINING_OPERATION_MODELS.has(entity.modelName)
+  ) {
+    return {
+      where: trainingOperationsTenantWhere(
+        trainingOperationsContext,
+        where,
+        { force: true },
+      ),
     };
   }
   if (
@@ -981,6 +1005,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
   assertOwner(authorityActor);
   const callTaskContext = await resolveTrainingCallTaskContext(authorityActor, tenant);
   const bookingContext = await resolveTrainingBookingContext(tenant);
+  const trainingOperationsContext = await resolveTrainingOperationsContext(tenant);
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
@@ -992,6 +1017,7 @@ async function getTrainingDataSummary(actor, query = {}, tenant = null) {
             callTaskContext,
             bookingContext,
             methodologyContext,
+            trainingOperationsContext,
           ))
         : 0;
 
@@ -1180,6 +1206,10 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
       lock: true,
       transaction,
     });
+    const trainingOperationsContext = await resolveTrainingOperationsContext(
+      tenant,
+      { lock: true, transaction },
+    );
     const bookingWhere = bookingContext
       ? bookingTenantWhere(
           bookingContext,
@@ -1200,6 +1230,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
           callTaskContext,
           bookingContext,
           methodologyContext,
+          trainingOperationsContext,
         ).where,
         transaction,
       ),
@@ -1297,6 +1328,7 @@ async function cleanupTrainingData(actor, query = {}, tenant = null) {
         callTaskContext,
         bookingContext,
         methodologyContext,
+        trainingOperationsContext,
       );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],

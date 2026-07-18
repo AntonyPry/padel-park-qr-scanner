@@ -14,8 +14,11 @@ const DOMAIN_MODELS = Object.freeze({
   ClientTrainingSkillHistory: 'ClientTrainingSkillHistories',
   TrainingExercise: 'TrainingExercises',
   TrainingExerciseSkill: 'TrainingExerciseSkills',
+  TrainingNote: 'TrainingNotes',
   TrainingNoteExercise: 'TrainingNoteExercises',
+  TrainingPlan: 'TrainingPlans',
   TrainingPlanExercise: 'TrainingPlanExercises',
+  TrainingPlanParticipant: 'TrainingPlanParticipants',
   TrainingSkill: 'TrainingSkills',
 });
 const ALLOWLISTS = Object.freeze({
@@ -31,6 +34,11 @@ const ALLOWLISTS = Object.freeze({
   ]),
   TrainingExercise: new Set(['src/services/training-methodology.service.js']),
   TrainingExerciseSkill: new Set(['src/services/training-methodology.service.js']),
+  TrainingNote: new Set([
+    'src/services/clients.service.js',
+    'src/services/onboarding.service.js',
+    'src/services/training-notes.service.js',
+  ]),
   TrainingNoteExercise: new Set([
     'src/services/training-notes.service.js',
     'src/services/onboarding.service.js',
@@ -38,6 +46,15 @@ const ALLOWLISTS = Object.freeze({
   TrainingPlanExercise: new Set([
     'src/services/training-plans.service.js',
     'src/services/onboarding.service.js',
+  ]),
+  TrainingPlan: new Set([
+    'src/services/onboarding.service.js',
+    'src/services/training-plans.service.js',
+  ]),
+  TrainingPlanParticipant: new Set([
+    'src/services/clients.service.js',
+    'src/services/onboarding.service.js',
+    'src/services/training-plans.service.js',
   ]),
   TrainingSkill: new Set(['src/services/training-methodology.service.js']),
 });

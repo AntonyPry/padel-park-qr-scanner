@@ -154,13 +154,13 @@ export const queryKeys = {
       return key('organization', 'clients');
     },
     detail: (clientId: number | null) =>
-      key('organization', 'clients', 'detail', clientId),
+      key('club', 'clients', 'detail', clientId),
     list: (params: Record<string, unknown>) =>
       key('organization', 'clients', 'list', params),
     trainingRecommendation: (
       clientId: number | null,
       params: { date?: string; goal?: string },
-    ) => key('organization', 'clients', 'training-recommendation', clientId, params),
+    ) => key('club', 'clients', 'training-recommendation', clientId, params),
   },
   corporateClients: {
     get club() {

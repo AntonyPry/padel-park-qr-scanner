@@ -10,6 +10,10 @@ const {
 const {
   isTenantBookingsCourtsEnabled,
 } = require('../tenant-context/capabilities');
+const {
+  resolveTrainingOperationsAccessContext,
+  trainingOperationsTenantWhere,
+} = require('./training-operations-access-context.service');
 
 const CORPORATE_CLIENT_STATUSES = ['active', 'archived'];
 const CORPORATE_LEDGER_ENTRY_STATUSES = ['active', 'canceled'];
@@ -708,8 +712,15 @@ async function buildSpendingMetadata(data, trainingMarker, transaction, tenant =
     'ID тренерской заметки',
   );
   if (trainingNoteId) {
-    const trainingNote = await db.TrainingNote.findByPk(trainingNoteId, {
+    const trainingContext = await resolveTrainingOperationsAccessContext(tenant, {
       transaction,
+    });
+    const trainingNote = await db.TrainingNote.findOne({
+      transaction,
+      where: trainingOperationsTenantWhere(
+        trainingContext,
+        { id: trainingNoteId },
+      ),
     });
     if (!trainingNote) throw appError('Тренерская заметка списания не найдена', 404);
     assertEntityMatchesTrainingScope(

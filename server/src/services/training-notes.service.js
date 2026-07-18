@@ -3,11 +3,14 @@ const clientSkillMapService = require('./client-skill-map.service');
 const onboardingService = require('./onboarding.service');
 const { Op } = require('sequelize');
 const {
-  bindMethodologyActor,
   methodologyTenantWhere,
-  resolveMethodologyAccessContext,
   validateBookingPlanRecommendationDelegation,
 } = require('./methodology-access-context.service');
+const {
+  bindTrainingOperationsActor,
+  resolveTrainingOperationsAccessContext,
+  trainingOperationsTenantWhere,
+} = require('./training-operations-access-context.service');
 
 const LEVELS = new Set(['D', 'D+', 'C', 'C+', 'B', 'B+', 'A']);
 const NOTE_ROLES = new Set(['owner', 'manager', 'trainer']);
@@ -278,7 +281,7 @@ async function assertClientExists(clientId, context, options = {}) {
 }
 
 async function listByClient(clientId, options = {}) {
-  const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const context = await resolveTrainingOperationsAccessContext(options.tenant, options);
   if (options.bookingPlanRecommendationDelegation) {
     validateBookingPlanRecommendationDelegation(
       options.bookingPlanRecommendationDelegation,
@@ -286,14 +289,14 @@ async function listByClient(clientId, options = {}) {
       context,
     );
   } else if (context.readScoped) {
-    assertCanUseNotes(bindMethodologyActor(options.actor, context));
+    assertCanUseNotes(bindTrainingOperationsActor(options.actor, context));
   }
   if (!options.skipClientCheck) {
     await assertClientExists(clientId, context, options);
   }
 
   const notes = await db.TrainingNote.findAll({
-    where: { userId: Number(clientId) },
+    where: trainingOperationsTenantWhere(context, { userId: Number(clientId) }),
     include: [
       ...(context.readScoped
         ? [{
@@ -340,11 +343,33 @@ async function getNoteOrFail(noteId, context, options = {}) {
     ],
     lock: options.lock,
     transaction: options.transaction,
-    where: { id: Number(noteId) },
+    where: trainingOperationsTenantWhere(
+      context,
+      { id: Number(noteId) },
+      { force: Boolean(options.forceTenant) },
+    ),
   });
 
   if (!note) throw appError('Запись тренировки не найдена', 404);
   return note;
+}
+
+async function getNoteForMutationOrFail(noteId, context, transaction) {
+  const root = await db.TrainingNote.findOne({
+    attributes: ['id'],
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: trainingOperationsTenantWhere(
+      context,
+      { id: Number(noteId) },
+      { force: true },
+    ),
+  });
+  if (!root) throw appError('Запись тренировки не найдена', 404);
+  return getNoteOrFail(noteId, context, {
+    forceTenant: true,
+    transaction,
+  });
 }
 
 function assertCanChangeNote(note, actor) {
@@ -367,35 +392,48 @@ function assertClientIsEditable(note) {
 }
 
 async function createRecord(clientId, data, actor, options = {}) {
-  const context = await resolveMethodologyAccessContext(options.tenant, options);
-  const authorityActor = bindMethodologyActor(actor, context);
-  if (context.readScoped) assertCanUseNotes(authorityActor);
-  const client = options.client || await assertClientExists(clientId, context, options);
-  if (Number(client.organizationId) !== Number(context.organizationId)) {
-    throw appError('Клиент не найден', 404);
-  }
-  if (client.status === 'archived') {
-    throw appError('Архивный клиент доступен только для просмотра', 409);
-  }
-
-  const exerciseResults = normalizeExerciseResults(data.exerciseResults) || [];
-  const exerciseById = await loadApprovedExercisesByIds(
-    exerciseResults.map((result) => result.trainingExerciseId),
-    context,
-    options,
-  );
-  const structuredExerciseNames = getExerciseNames(exerciseResults, exerciseById);
-  const exercises = normalizeText(data.exercises) || normalizeText(structuredExerciseNames);
-  const note = normalizeText(data.note);
-  if (!exercises && !note && exerciseResults.length === 0) {
-    throw appError('Заполните упражнения или заметку');
-  }
-  const trainingMarker =
-    options.trainingMarker || await onboardingService.getTrainingDataMarker(authorityActor);
-
   return withTransaction(options, async (transaction) => {
+    const writeOptions = {
+      ...options,
+      lock: transaction.LOCK.UPDATE,
+      forceTenant: true,
+      transaction,
+    };
+    const context = await resolveTrainingOperationsAccessContext(
+      options.tenant,
+      writeOptions,
+    );
+    const authorityActor = bindTrainingOperationsActor(actor, context);
+    if (context.readScoped) assertCanUseNotes(authorityActor);
+    const client = await assertClientExists(
+      clientId,
+      context,
+      writeOptions,
+    );
+    if (Number(client.organizationId) !== Number(context.organizationId)) {
+      throw appError('Клиент не найден', 404);
+    }
+    if (client.status === 'archived') {
+      throw appError('Архивный клиент доступен только для просмотра', 409);
+    }
+
+    const exerciseResults = normalizeExerciseResults(data.exerciseResults) || [];
+    const exerciseById = await loadApprovedExercisesByIds(
+      exerciseResults.map((result) => result.trainingExerciseId),
+      context,
+      writeOptions,
+    );
+    const structuredExerciseNames = getExerciseNames(exerciseResults, exerciseById);
+    const exercises = normalizeText(data.exercises) || normalizeText(structuredExerciseNames);
+    const note = normalizeText(data.note);
+    if (!exercises && !note && exerciseResults.length === 0) {
+      throw appError('Заполните упражнения или заметку');
+    }
+    const trainingMarker = options.trainingMarker ||
+      await onboardingService.getTrainingDataMarker(authorityActor);
     const created = await db.TrainingNote.create(
       {
+        clubId: context.clubId,
         userId: Number(clientId),
         trainerAccountId: authorityActor?.id || null,
         trainedAt: normalizeDateOnly(data.trainedAt),
@@ -451,43 +489,53 @@ async function create(clientId, data, actor, tenant = null) {
 }
 
 async function updateRecord(noteId, data, actor, options = {}) {
-  const context = await resolveMethodologyAccessContext(options.tenant, options);
-  const authorityActor = bindMethodologyActor(actor, context);
-  if (context.readScoped) assertCanUseNotes(authorityActor);
-  const note = options.note || await getNoteOrFail(noteId, context, options);
-  if (Number(note.User?.organizationId) !== Number(context.organizationId)) {
-    throw appError('Запись тренировки не найдена', 404);
-  }
-  assertCanChangeNote(note, authorityActor);
-  assertClientIsEditable(note);
+  return withTransaction(options, async (transaction) => {
+    const writeOptions = {
+      ...options,
+      lock: transaction.LOCK.UPDATE,
+      forceTenant: true,
+      transaction,
+    };
+    const context = await resolveTrainingOperationsAccessContext(
+      options.tenant,
+      writeOptions,
+    );
+    const authorityActor = bindTrainingOperationsActor(actor, context);
+    if (context.readScoped) assertCanUseNotes(authorityActor);
+    const note = await getNoteForMutationOrFail(noteId, context, transaction);
+    if (
+      Number(note.clubId) !== Number(context.clubId) ||
+      Number(note.User?.organizationId) !== Number(context.organizationId)
+    ) {
+      throw appError('Запись тренировки не найдена', 404);
+    }
+    assertCanChangeNote(note, authorityActor);
+    assertClientIsEditable(note);
 
-  const exerciseResults = normalizeExerciseResults(data.exerciseResults);
-  const exerciseById = await loadApprovedExercisesByIds(
-    (exerciseResults || []).map((result) => result.trainingExerciseId),
-    context,
-    options,
-  );
-  const structuredExerciseNames = exerciseResults
-    ? getExerciseNames(exerciseResults, exerciseById)
-    : null;
-  const nextExercises =
-    data.exercises === undefined
+    const exerciseResults = normalizeExerciseResults(data.exerciseResults);
+    const exerciseById = await loadApprovedExercisesByIds(
+      (exerciseResults || []).map((result) => result.trainingExerciseId),
+      context,
+      writeOptions,
+    );
+    const structuredExerciseNames = exerciseResults
+      ? getExerciseNames(exerciseResults, exerciseById)
+      : null;
+    const nextExercises = data.exercises === undefined
       ? exerciseResults === null
         ? note.exercises
         : normalizeText(structuredExerciseNames)
       : normalizeText(data.exercises);
-  const nextNote = data.note === undefined ? note.note : normalizeText(data.note);
-  const nextExerciseResultsCount =
-    exerciseResults === null ? note.exerciseResults?.length || 0 : exerciseResults.length;
+    const nextNote = data.note === undefined ? note.note : normalizeText(data.note);
+    const nextExerciseResultsCount = exerciseResults === null
+      ? note.exerciseResults?.length || 0
+      : exerciseResults.length;
+    if (!nextExercises && !nextNote && nextExerciseResultsCount === 0) {
+      throw appError('Заполните упражнения или заметку');
+    }
+    const shouldRecalculateSkillMap =
+      exerciseResults !== null || data.trainedAt !== undefined;
 
-  if (!nextExercises && !nextNote && nextExerciseResultsCount === 0) {
-    throw appError('Заполните упражнения или заметку');
-  }
-
-  const shouldRecalculateSkillMap =
-    exerciseResults !== null || data.trainedAt !== undefined;
-
-  await withTransaction(options, async (transaction) => {
     await note.update(
       {
         exercises: nextExercises,
@@ -522,9 +570,8 @@ async function updateRecord(noteId, data, actor, options = {}) {
         { client: note.User, tenant: options.tenant, transaction },
       );
     }
+    return note;
   });
-
-  return note;
 }
 
 async function update(noteId, data, actor, tenant = null) {
@@ -544,26 +591,32 @@ async function update(noteId, data, actor, tenant = null) {
 }
 
 async function remove(noteId, actor, tenant = null) {
-  const context = await resolveMethodologyAccessContext(tenant);
-  const authorityActor = bindMethodologyActor(actor, context);
-  if (context.readScoped) assertCanUseNotes(authorityActor);
-  const note = await getNoteOrFail(noteId, context);
-  if (Number(note.User?.organizationId) !== Number(context.organizationId)) {
-    throw appError('Запись тренировки не найдена', 404);
-  }
-  assertCanChangeNote(note, authorityActor);
-  assertClientIsEditable(note);
-  const clientId = note.userId;
-
-  await db.sequelize.transaction(async (transaction) => {
+  const result = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveTrainingOperationsAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const authorityActor = bindTrainingOperationsActor(actor, context);
+    if (context.readScoped) assertCanUseNotes(authorityActor);
+    const note = await getNoteForMutationOrFail(noteId, context, transaction);
+    if (
+      Number(note.clubId) !== Number(context.clubId) ||
+      Number(note.User?.organizationId) !== Number(context.organizationId)
+    ) {
+      throw appError('Запись тренировки не найдена', 404);
+    }
+    assertCanChangeNote(note, authorityActor);
+    assertClientIsEditable(note);
+    const clientId = note.userId;
     await note.destroy({ transaction });
     await clientSkillMapService.recalculateFromStructuredTraining(
       clientId,
       authorityActor,
       { client: note.User, tenant, transaction },
     );
+    return { authorityActor, clientId };
   });
-  return listByClient(clientId, { actor: authorityActor, tenant });
+  return listByClient(result.clientId, { actor: result.authorityActor, tenant });
 }
 
 module.exports = {

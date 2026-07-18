@@ -1,5 +1,9 @@
 module.exports = (sequelize, DataTypes) => {
   const TrainingPlan = sequelize.define('TrainingPlan', {
+    clubId: {
+      allowNull: false,
+      type: DataTypes.INTEGER,
+    },
     kind: {
       allowNull: false,
       type: DataTypes.ENUM('personal', 'group'),
@@ -55,9 +59,27 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       type: DataTypes.INTEGER,
     },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        if (Object.prototype.hasOwnProperty.call(options.attributes || {}, 'clubId')) {
+          const error = new Error('TrainingPlan club attribution is immutable');
+          error.code = 'TRAINING_PLAN_CLUB_IMMUTABLE';
+          throw error;
+        }
+      },
+      beforeUpdate(plan) {
+        if (plan.changed('clubId')) {
+          const error = new Error('TrainingPlan club attribution is immutable');
+          error.code = 'TRAINING_PLAN_CLUB_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   TrainingPlan.associate = (models) => {
+    TrainingPlan.belongsTo(models.Club, { foreignKey: 'clubId' });
     TrainingPlan.belongsTo(models.Account, {
       as: 'trainerAccount',
       foreignKey: 'trainerAccountId',

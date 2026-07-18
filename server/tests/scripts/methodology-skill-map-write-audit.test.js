@@ -17,6 +17,15 @@ test('methodology/skill-map repository audit passes exact writer allowlists', ()
     'src/services/clients.service.js',
     'src/services/onboarding.service.js',
   ]);
+  assert.deepEqual([...ALLOWLISTS.TrainingNote].sort(), [
+    'src/services/clients.service.js',
+    'src/services/onboarding.service.js',
+    'src/services/training-notes.service.js',
+  ]);
+  assert.deepEqual([...ALLOWLISTS.TrainingPlan].sort(), [
+    'src/services/onboarding.service.js',
+    'src/services/training-plans.service.js',
+  ]);
   assert.deepEqual(auditRepository(), []);
 });
 
