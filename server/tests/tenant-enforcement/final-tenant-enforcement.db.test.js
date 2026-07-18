@@ -12,6 +12,12 @@ const {
   migrateAll,
   seedTwoTenantFixture,
 } = require('../helpers/final-tenant-rc-fixture');
+const {
+  FOREIGN_KEY_DEFINITIONS,
+  INDEX_DEFINITIONS,
+  TRIGGER_DEFINITIONS,
+  classifyFinalEnforcementDefinition,
+} = require('../../src/tenant-enforcement/final-enforcement-definition');
 
 const CAPABILITY_ENV = [
   'TENANT_CONTEXT_ENABLED',
@@ -46,6 +52,53 @@ async function expectDatabaseReject(promise, pattern) {
   );
 }
 
+async function enforcementFingerprint(schema) {
+  const queries = [
+    `SELECT TABLE_NAME,INDEX_NAME,NON_UNIQUE,INDEX_TYPE,SEQ_IN_INDEX,COLUMN_NAME,SUB_PART,COLLATION
+       FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA=DATABASE()
+        AND (INDEX_NAME LIKE 'uq_final_%' OR INDEX_NAME LIKE 'fk_final_%')
+      ORDER BY TABLE_NAME,INDEX_NAME,SEQ_IN_INDEX`,
+    `SELECT k.TABLE_NAME,k.CONSTRAINT_NAME,k.COLUMN_NAME,k.REFERENCED_TABLE_NAME,
+            k.REFERENCED_COLUMN_NAME,k.ORDINAL_POSITION,r.UPDATE_RULE,r.DELETE_RULE
+       FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE AS k
+       LEFT JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS AS r
+         ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA
+        AND r.TABLE_NAME=k.TABLE_NAME
+        AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
+      WHERE k.CONSTRAINT_SCHEMA=DATABASE()
+        AND k.CONSTRAINT_NAME LIKE 'fk_final_%'
+      ORDER BY k.TABLE_NAME,k.CONSTRAINT_NAME,k.ORDINAL_POSITION`,
+    `SELECT EVENT_OBJECT_TABLE,TRIGGER_NAME,EVENT_MANIPULATION,ACTION_TIMING,
+            ACTION_ORIENTATION,ACTION_STATEMENT
+       FROM INFORMATION_SCHEMA.TRIGGERS
+      WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME LIKE 'trg_final_%'
+      ORDER BY EVENT_OBJECT_TABLE,TRIGGER_NAME`,
+    `SELECT
+       (SELECT COUNT(*) FROM Organizations) AS organizations,
+       (SELECT COUNT(*) FROM Clubs) AS clubs,
+       (SELECT COUNT(*) FROM Staffs) AS staffs,
+       (SELECT COUNT(*) FROM Memberships) AS memberships,
+       (SELECT COUNT(*) FROM MembershipClubAccesses) AS accesses,
+       (SELECT COUNT(*) FROM TelephonyCalls) AS calls,
+       (SELECT COUNT(*) FROM TelephonyRawEvents) AS rawEvents,
+       (SELECT COUNT(*) FROM TelephonyTranscriptionJobs) AS jobs,
+       (SELECT COUNT(*) FROM TelephonyTranscriptSegments) AS segments`,
+  ];
+  const result = [];
+  for (const sql of queries) {
+    const [rows] = await schema.query(sql);
+    result.push(rows);
+  }
+  return JSON.stringify(result);
+}
+
+async function expectBlockedWithoutMutation(schema, operation, code = 'TENANT_ENFORCEMENT_MIGRATION_BLOCKED') {
+  const before = await enforcementFingerprint(schema);
+  await assert.rejects(operation(), (error) => error.code === code);
+  assert.equal(await enforcementFingerprint(schema), before);
+}
+
 test('Feature 9 final enforcement, detector and two-Organization RC matrix', async () => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for Feature 9 DB gate');
   const database = process.env.TENANT_ENFORCEMENT_TEST_DB_NAME ||
@@ -54,6 +107,7 @@ test('Feature 9 final enforcement, detector and two-Organization RC matrix', asy
     ...CAPABILITY_ENV,
     'DB_NAME',
     'NODE_ENV',
+    'TENANT_ENFORCEMENT_MIGRATION_FAIL_AFTER',
     'TENANT_ENFORCEMENT_TEST_DB_NAME',
   ].map((name) => [name, process.env[name]]));
   let rootDb;
@@ -69,9 +123,258 @@ test('Feature 9 final enforcement, detector and two-Organization RC matrix', asy
     assert.equal(migrations.at(-1), '20260720100000-add-final-tenant-enforcement.js');
     const finalMigration = require('../../migrations/20260720100000-add-final-tenant-enforcement');
     const queryInterface = schema.getQueryInterface();
+    const {
+      createArtifact,
+      runUp,
+    } = finalMigration.__testing;
+    const {
+      runTenantIntegrityDetector,
+    } = require('../../src/tenant-enforcement/integrity-detector');
+
+    assert.equal(
+      (await classifyFinalEnforcementDefinition(schema)).state,
+      'ready',
+    );
 
     await finalMigration.down(queryInterface, SequelizePackage);
+    const legacyFingerprint = await enforcementFingerprint(schema);
+    assert.equal(
+      (await classifyFinalEnforcementDefinition(schema)).state,
+      'legacy',
+    );
+    for (const stage of ['indexes', 'foreignKeys', 'triggers']) {
+      process.env.TENANT_ENFORCEMENT_MIGRATION_FAIL_AFTER = stage;
+      await assert.rejects(
+        finalMigration.up(queryInterface, SequelizePackage),
+        new RegExp(`forced failure after ${stage}`),
+      );
+      delete process.env.TENANT_ENFORCEMENT_MIGRATION_FAIL_AFTER;
+      assert.equal(await enforcementFingerprint(schema), legacyFingerprint);
+      assert.equal(
+        (await classifyFinalEnforcementDefinition(schema)).state,
+        'legacy',
+      );
+    }
+
     await finalMigration.up(queryInterface, SequelizePackage);
+    await finalMigration.up(queryInterface, SequelizePackage);
+    assert.equal(
+      (await classifyFinalEnforcementDefinition(schema)).state,
+      'ready',
+    );
+    await finalMigration.down(queryInterface, SequelizePackage);
+    assert.equal(await enforcementFingerprint(schema), legacyFingerprint);
+    await finalMigration.up(queryInterface, SequelizePackage);
+
+    const trigger = TRIGGER_DEFINITIONS[0];
+    const assertDefinitionDrift = async (key, state = 'drift') => {
+      const classification = await classifyFinalEnforcementDefinition(schema);
+      const artifact = classification.artifacts.find((item) => item.key === key);
+      assert.equal(artifact.state, state);
+      const report = await runTenantIntegrityDetector({ sequelize: schema, strict: true });
+      assert.equal(report.ok, false);
+      assert.ok(report.findings.some((finding) =>
+        finding.code === (state === 'absent'
+          ? 'FINAL_ENFORCEMENT_DEFINITION_MISSING'
+          : 'FINAL_ENFORCEMENT_DEFINITION_DRIFT') &&
+        finding.details.key === key));
+    };
+    const restoreTrigger = async () => {
+      await schema.query(`DROP TRIGGER IF EXISTS ${trigger.name}`);
+      await createArtifact(queryInterface, trigger);
+    };
+
+    const [ownedStaffInsert] = await schema.query(
+      `INSERT INTO Staffs (organizationId,name,role,status,createdAt,updatedAt)
+       SELECT organizationId,'Feature 9 rollback guard','Test','active',NOW(),NOW()
+         FROM Clubs WHERE id=(SELECT MIN(id) FROM Clubs)`,
+    );
+    await expectBlockedWithoutMutation(
+      schema,
+      () => finalMigration.down(queryInterface, SequelizePackage),
+      'TENANT_ENFORCEMENT_ROLLBACK_REFUSED',
+    );
+    await schema.query('DELETE FROM Staffs WHERE id=:id', {
+      replacements: { id: Number(ownedStaffInsert) },
+    });
+
+    await schema.query(`DROP TRIGGER ${trigger.name}`);
+    await expectBlockedWithoutMutation(
+      schema,
+      () => finalMigration.up(queryInterface, SequelizePackage),
+    );
+    await assertDefinitionDrift(`trigger:${trigger.name}`, 'absent');
+    await createArtifact(queryInterface, trigger);
+
+    for (const lookalike of [
+      `CREATE TRIGGER ${trigger.name} BEFORE UPDATE ON ${trigger.table}
+       FOR EACH ROW BEGIN SET @tenant_lookalike = OLD.organizationId; END`,
+      `CREATE TRIGGER ${trigger.name} AFTER UPDATE ON ${trigger.table}
+       FOR EACH ROW ${trigger.body}`,
+      `CREATE TRIGGER ${trigger.name} BEFORE UPDATE ON Organizations
+       FOR EACH ROW BEGIN SET @tenant_wrong_table = OLD.id; END`,
+    ]) {
+      await schema.query(`DROP TRIGGER ${trigger.name}`);
+      await schema.query(lookalike);
+      await expectBlockedWithoutMutation(
+        schema,
+        () => finalMigration.up(queryInterface, SequelizePackage),
+      );
+      await expectBlockedWithoutMutation(
+        schema,
+        () => finalMigration.down(queryInterface, SequelizePackage),
+      );
+      await assertDefinitionDrift(`trigger:${trigger.name}`);
+      await restoreTrigger();
+    }
+
+    const ruleForeignKey = FOREIGN_KEY_DEFINITIONS.find(
+      (definition) => definition.name === 'fk_final_telephony_calls_client_tenant',
+    );
+    await queryInterface.removeConstraint(ruleForeignKey.table, ruleForeignKey.name);
+    await queryInterface.addConstraint(ruleForeignKey.table, {
+      fields: [...ruleForeignKey.columns],
+      name: ruleForeignKey.name,
+      onDelete: 'CASCADE',
+      onUpdate: 'CASCADE',
+      references: {
+        fields: [...ruleForeignKey.referencedColumns],
+        table: ruleForeignKey.referencedTable,
+      },
+      type: 'foreign key',
+    });
+    await expectBlockedWithoutMutation(
+      schema,
+      () => finalMigration.up(queryInterface, SequelizePackage),
+    );
+    await assertDefinitionDrift(`foreignKey:${ruleForeignKey.name}`);
+    await queryInterface.removeConstraint(ruleForeignKey.table, ruleForeignKey.name);
+    await createArtifact(queryInterface, ruleForeignKey);
+
+    const referenceForeignKey = FOREIGN_KEY_DEFINITIONS.find(
+      (definition) => definition.name === 'fk_final_telephony_calls_staff_tenant',
+    );
+    await queryInterface.removeConstraint(referenceForeignKey.table, referenceForeignKey.name);
+    await queryInterface.addConstraint(referenceForeignKey.table, {
+      fields: [...referenceForeignKey.columns],
+      name: referenceForeignKey.name,
+      onDelete: 'RESTRICT',
+      onUpdate: 'RESTRICT',
+      references: { fields: ['organizationId', 'id'], table: 'Users' },
+      type: 'foreign key',
+    });
+    await expectBlockedWithoutMutation(
+      schema,
+      () => finalMigration.up(queryInterface, SequelizePackage),
+    );
+    await assertDefinitionDrift(`foreignKey:${referenceForeignKey.name}`);
+    await queryInterface.removeConstraint(referenceForeignKey.table, referenceForeignKey.name);
+    await createArtifact(queryInterface, referenceForeignKey);
+
+    const orderedChildForeignKey = FOREIGN_KEY_DEFINITIONS.find(
+      (definition) => definition.name === 'fk_final_telephony_raw_events_call_tenant',
+    );
+    await queryInterface.removeConstraint(
+      orderedChildForeignKey.table,
+      orderedChildForeignKey.name,
+    );
+    await queryInterface.addIndex(
+      orderedChildForeignKey.referencedTable,
+      ['organizationId', 'id', 'clubId'],
+      { name: 'uq_f9_test_call_org_id_club', unique: true },
+    );
+    await queryInterface.addIndex(
+      orderedChildForeignKey.table,
+      ['organizationId', 'telephonyCallId', 'clubId'],
+      { name: 'idx_f9_test_raw_event_call_wrong_order' },
+    );
+    await queryInterface.addConstraint(orderedChildForeignKey.table, {
+      fields: ['organizationId', 'telephonyCallId', 'clubId'],
+      name: orderedChildForeignKey.name,
+      onDelete: 'RESTRICT',
+      onUpdate: 'RESTRICT',
+      references: {
+        fields: ['organizationId', 'id', 'clubId'],
+        table: orderedChildForeignKey.referencedTable,
+      },
+      type: 'foreign key',
+    });
+    await expectBlockedWithoutMutation(
+      schema,
+      () => finalMigration.up(queryInterface, SequelizePackage),
+    );
+    await assertDefinitionDrift(`foreignKey:${orderedChildForeignKey.name}`);
+    await queryInterface.removeConstraint(
+      orderedChildForeignKey.table,
+      orderedChildForeignKey.name,
+    );
+    await queryInterface.removeIndex(
+      orderedChildForeignKey.table,
+      'idx_f9_test_raw_event_call_wrong_order',
+    );
+    await queryInterface.removeIndex(
+      orderedChildForeignKey.referencedTable,
+      'uq_f9_test_call_org_id_club',
+    );
+    await createArtifact(queryInterface, orderedChildForeignKey);
+
+    const tenantIndex = INDEX_DEFINITIONS.find(
+      (definition) => definition.name === 'uq_final_telephony_calls_tenant_identity',
+    );
+    const indexDependents = FOREIGN_KEY_DEFINITIONS.filter((definition) =>
+      definition.referencedTable === tenantIndex.table &&
+      JSON.stringify(definition.referencedColumns) === JSON.stringify(tenantIndex.columns));
+    for (const dependent of indexDependents) {
+      await queryInterface.removeConstraint(dependent.table, dependent.name);
+    }
+    await queryInterface.removeIndex(tenantIndex.table, tenantIndex.name);
+    await queryInterface.addIndex(
+      tenantIndex.table,
+      ['organizationId', 'id', 'clubId'],
+      { name: tenantIndex.name, unique: false, using: 'HASH' },
+    );
+    await expectBlockedWithoutMutation(
+      schema,
+      () => finalMigration.up(queryInterface, SequelizePackage),
+    );
+    await assertDefinitionDrift(`index:${tenantIndex.name}`);
+    await queryInterface.removeIndex(tenantIndex.table, tenantIndex.name);
+    await createArtifact(queryInterface, tenantIndex);
+    for (const dependent of indexDependents) await createArtifact(queryInterface, dependent);
+
+    await finalMigration.down(queryInterface, SequelizePackage);
+    await assert.rejects(
+      runUp(queryInterface, {
+        beforeCleanup: async () => {
+          await schema.query(`DROP TRIGGER ${trigger.name}`);
+          await schema.query(
+            `CREATE TRIGGER ${trigger.name} BEFORE UPDATE ON ${trigger.table}
+             FOR EACH ROW BEGIN SET @tenant_cleanup_ownership_lost = OLD.organizationId; END`,
+          );
+        },
+        failAfter: 'triggers',
+      }),
+      (error) => error.code === 'TENANT_ENFORCEMENT_OPERATOR_REPAIR_REQUIRED',
+    );
+    const ownershipLost = await classifyFinalEnforcementDefinition(schema);
+    assert.equal(ownershipLost.state, 'partial');
+    assert.equal(
+      ownershipLost.artifacts.filter((artifact) => artifact.state === 'exact').length,
+      ownershipLost.artifacts.length - 1,
+    );
+    for (const definition of TRIGGER_DEFINITIONS) {
+      await schema.query(`DROP TRIGGER IF EXISTS ${definition.name}`);
+    }
+    for (const definition of [...FOREIGN_KEY_DEFINITIONS].reverse()) {
+      await queryInterface.removeConstraint(definition.table, definition.name);
+    }
+    for (const definition of [...INDEX_DEFINITIONS].reverse()) {
+      await queryInterface.removeIndex(definition.table, definition.name);
+    }
+    assert.equal(
+      (await classifyFinalEnforcementDefinition(schema)).state,
+      'legacy',
+    );
     await finalMigration.up(queryInterface, SequelizePackage);
 
     const fixture = await seedTwoTenantFixture(schema);
@@ -80,9 +383,6 @@ test('Feature 9 final enforcement, detector and two-Organization RC matrix', asy
     const {
       classifyTenantFoundation,
     } = require('../../src/services/tenant-foundation.service');
-    const {
-      runTenantIntegrityDetector,
-    } = require('../../src/tenant-enforcement/integrity-detector');
     const tenantContextService = require('../../src/services/tenant-context.service');
     const classification = await classifyTenantFoundation({ sequelize: rootDb.sequelize });
     assert.equal(classification.state, 'initialized');

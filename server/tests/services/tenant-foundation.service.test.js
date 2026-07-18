@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const {
+  classifyLegacySnapshot,
   classifySnapshot,
   getTenantFoundationGateState,
   invalidateTenantFoundationGateCache,
@@ -161,6 +162,56 @@ test('ready Staff identity schema requires Account/Membership/Staff parity', () 
   partial.staffIdentitySchema = 'partial';
   partial.staffs = [];
   assert.equal(classifySnapshot(partial).state, 'invalid');
+});
+
+test('legacy singleton classifier rejects duplicate membership/access and stale owner authority', () => {
+  const duplicateMembership = snapshot({
+    accounts: [{ id: 1, role: 'owner', status: 'active' }],
+    memberships: [
+      { id: 10, accountId: 1, organizationId: 1, role: 'owner', status: 'active' },
+      { id: 11, accountId: 1, organizationId: 1, role: 'owner', status: 'active' },
+    ],
+  });
+  const membershipResult = classifyLegacySnapshot(duplicateMembership);
+  assert.equal(membershipResult.state, 'invalid');
+  assert.match(membershipResult.diagnostics.reasons.join(' '), /exactly one default Membership/);
+
+  const duplicateAccess = snapshot({
+    accounts: [
+      { id: 1, role: 'owner', status: 'active' },
+      { id: 2, role: 'manager', status: 'active' },
+    ],
+    memberships: [
+      { id: 10, accountId: 1, organizationId: 1, role: 'owner', status: 'active' },
+      { id: 11, accountId: 2, organizationId: 1, role: 'manager', status: 'active' },
+    ],
+    accesses: [
+      { clubId: 1, membershipId: 11, organizationId: 1, roleOverride: null, status: 'active' },
+      { clubId: 1, membershipId: 11, organizationId: 1, roleOverride: null, status: 'active' },
+    ],
+  });
+  const accessResult = classifyLegacySnapshot(duplicateAccess);
+  assert.equal(accessResult.state, 'invalid');
+  assert.match(accessResult.diagnostics.reasons.join(' '), /exactly one Club access/);
+
+  const staleStaff = snapshot({
+    accounts: [{ id: 1, role: 'owner', staffId: 99, status: 'active' }],
+    memberships: [
+      {
+        id: 10,
+        accountId: 1,
+        organizationId: 1,
+        role: 'owner',
+        staffId: 99,
+        status: 'active',
+      },
+    ],
+  });
+  staleStaff.staffIdentitySchema = 'ready';
+  staleStaff.staffs = [];
+  const staffResult = classifyLegacySnapshot(staleStaff);
+  assert.equal(staffResult.state, 'invalid');
+  assert.match(staffResult.diagnostics.reasons.join(' '), /stale Staff/);
 });
 
 test('final enforcement classifier accepts valid multi-tenant authority and rejects cross-parent links', () => {

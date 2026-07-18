@@ -1,8 +1,7 @@
 'use strict';
 
 const {
-  DEFAULT_CLUB_SLUG,
-  DEFAULT_ORGANIZATION_SLUG,
+  TENANT_FOUNDATION_STATES,
 } = require('../tenant-foundation/constants');
 
 class TenantSingletonRequiredError extends Error {
@@ -15,62 +14,72 @@ class TenantSingletonRequiredError extends Error {
   }
 }
 
-function queryLock(transaction, lock) {
-  return transaction && lock ? transaction.LOCK.SHARE : undefined;
+function resolveSequelize(models) {
+  return models?.sequelize ||
+    models?.Organization?.sequelize ||
+    models?.Club?.sequelize ||
+    null;
+}
+
+async function classifyExactLegacySnapshot({ models, transaction }) {
+  const sequelize = resolveSequelize(models);
+  if (!sequelize) {
+    throw new TenantSingletonRequiredError({
+      reasons: ['tenant foundation sequelize authority is unavailable'],
+    });
+  }
+  const {
+    classifyLegacySnapshot,
+    loadTenantFoundationSnapshot,
+  } = require('../services/tenant-foundation.service');
+  const classify = async (activeTransaction) => {
+    const snapshot = await loadTenantFoundationSnapshot({
+      lock: true,
+      sequelize,
+      transaction: activeTransaction,
+    });
+    return classifyLegacySnapshot(snapshot);
+  };
+  if (transaction) return classify(transaction);
+  const SequelizePackage = require('sequelize');
+  return sequelize.transaction(
+    {
+      isolationLevel:
+        SequelizePackage.Transaction.ISOLATION_LEVELS.REPEATABLE_READ,
+    },
+    classify,
+  );
 }
 
 async function requireExactSingletonDefault({
-  lock = false,
   models = null,
   requireClub = true,
   transaction,
 } = {}) {
   const db = models || require('../../models');
-  const modelOptions = {
-    lock: queryLock(transaction, lock),
+  const classification = await classifyExactLegacySnapshot({
+    models: db,
     transaction,
-  };
-  const [organizations, clubs] = await Promise.all([
-    db.Organization.findAll({
-      ...modelOptions,
-      attributes: ['id', 'slug', 'status'],
-      order: [['id', 'ASC']],
-    }),
-    db.Club.findAll({
-      ...modelOptions,
-      attributes: ['id', 'organizationId', 'slug', 'status'],
-      order: [['id', 'ASC']],
-    }),
-  ]);
-  const organization = organizations[0] || null;
-  const club = clubs[0] || null;
-  const validOrganization = Boolean(
-    organizations.length === 1 &&
-      organization.slug === DEFAULT_ORGANIZATION_SLUG &&
-      organization.status === 'active',
-  );
-  const validClub = Boolean(
-    clubs.length === 1 &&
-      club.slug === DEFAULT_CLUB_SLUG &&
-      club.status === 'active' &&
-      Number(club.organizationId) === Number(organization?.id),
-  );
-
-  if (!validOrganization || (requireClub && !validClub)) {
+  });
+  if (classification.state !== TENANT_FOUNDATION_STATES.INITIALIZED) {
     throw new TenantSingletonRequiredError({
-      clubCount: clubs.length,
-      organizationCount: organizations.length,
+      checksum: classification.checksum,
+      counts: classification.counts,
+      reasons: classification.diagnostics?.reasons || [],
       requireClub,
+      state: classification.state,
     });
   }
-
+  // requireClub controls only what the legacy caller consumes. Eligibility
+  // always requires the classifier's exact one-Organization/one-Club graph.
   return Object.freeze({
-    clubId: validClub ? Number(club.id) : null,
-    organizationId: Number(organization.id),
+    clubId: requireClub ? Number(classification.defaultClubId) : null,
+    organizationId: Number(classification.defaultOrganizationId),
   });
 }
 
 module.exports = {
   TenantSingletonRequiredError,
+  classifyExactLegacySnapshot,
   requireExactSingletonDefault,
 };

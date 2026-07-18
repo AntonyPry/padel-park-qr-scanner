@@ -37,6 +37,9 @@ const OPTIONAL_CLUB_TABLES = new Set([
   'OnboardingEvents',
   'OnboardingProgresses',
 ]);
+const {
+  classifyFinalEnforcementDefinition,
+} = require('./final-enforcement-definition');
 
 function quoteIdentifier(value) {
   return `\`${String(value).replaceAll('`', '``')}\``;
@@ -266,27 +269,27 @@ function inspectDefinition(definition, { strict }) {
     }
   }
 
-  const expectedTriggers = {
-    Clubs: 'trg_final_clubs_tenant_immutable',
-    MembershipClubAccesses: 'trg_final_accesses_tenant_immutable',
-    Memberships: 'trg_final_memberships_authority_immutable',
-    Staffs: 'trg_final_staffs_tenant_immutable',
-    TelephonyTranscriptSegments: 'trg_final_transcript_segments_link_immutable',
-    TelephonyTranscriptionJobs: 'trg_final_transcription_jobs_tenant_immutable',
-  };
-  for (const [tableName, triggerName] of Object.entries(expectedTriggers)) {
-    const table = definition.byTable.get(tableName);
-    if (!table?.triggers.some((trigger) => trigger.triggerName === triggerName)) {
-      findings.push(finding(
-        'MISSING_IMMUTABILITY_TRIGGER',
-        tableName,
-        1,
-        [],
-        { triggerName },
-      ));
-    }
-  }
   return findings;
+}
+
+function inspectFinalEnforcementDefinition(classification) {
+  return classification.artifacts
+    .filter((artifact) => artifact.state !== 'exact')
+    .map((artifact) => finding(
+      artifact.state === 'absent'
+        ? 'FINAL_ENFORCEMENT_DEFINITION_MISSING'
+        : 'FINAL_ENFORCEMENT_DEFINITION_DRIFT',
+      artifact.expected.table,
+      1,
+      [],
+      {
+        actual: artifact.actual,
+        equivalents: artifact.equivalents,
+        expected: artifact.expected,
+        key: artifact.key,
+        state: artifact.state,
+      },
+    ));
 }
 
 async function detectDirectTenantViolations(sequelize, definition, { sampleLimit, strict }) {
@@ -413,6 +416,10 @@ async function runTenantIntegrityDetector({
   if (!sequelize) throw new TypeError('sequelize is required');
   const definition = await loadDefinition(sequelize);
   const findings = inspectDefinition(definition, { strict });
+  if (strict) {
+    const finalEnforcement = await classifyFinalEnforcementDefinition(sequelize);
+    findings.push(...inspectFinalEnforcementDefinition(finalEnforcement));
+  }
   for (const foreignKey of definition.foreignKeys) {
     findings.push(...await detectForeignKeyViolations(sequelize, foreignKey, sampleLimit));
   }
@@ -463,5 +470,6 @@ module.exports = {
   OPTIONAL_ORGANIZATION_TABLES,
   PROVIDER_ROOTS,
   loadDefinition,
+  inspectFinalEnforcementDefinition,
   runTenantIntegrityDetector,
 };

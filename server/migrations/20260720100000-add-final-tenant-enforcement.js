@@ -1,49 +1,47 @@
 'use strict';
 
-const CONSTRAINTS = Object.freeze({
-  callBooking: 'fk_final_telephony_calls_booking_tenant',
-  callClient: 'fk_final_telephony_calls_client_tenant',
-  callStaff: 'fk_final_telephony_calls_staff_tenant',
-  jobCall: 'fk_final_transcription_jobs_call_tenant',
-  rawEventCall: 'fk_final_telephony_raw_events_call_tenant',
-  segmentJobCall: 'fk_final_transcript_segments_job_call',
-});
+const {
+  FINAL_ENFORCEMENT_DEFINITIONS,
+  FOREIGN_KEY_DEFINITIONS,
+  INDEX_DEFINITIONS,
+  TRIGGER_DEFINITIONS,
+  artifactKey,
+  classifyFinalEnforcementDefinition,
+  triggerCreateSql,
+} = require('../src/tenant-enforcement/final-enforcement-definition');
 
-const INDEXES = Object.freeze({
-  callTenantIdentity: 'uq_final_telephony_calls_tenant_identity',
-  jobCallIdentity: 'uq_final_transcription_jobs_call_identity',
-});
+const CONSTRAINTS = Object.freeze(Object.fromEntries(
+  FOREIGN_KEY_DEFINITIONS.map((definition) => [definition.name, definition.name]),
+));
+const INDEXES = Object.freeze(Object.fromEntries(
+  INDEX_DEFINITIONS.map((definition) => [definition.name, definition.name]),
+));
+const TRIGGERS = Object.freeze(Object.fromEntries(
+  TRIGGER_DEFINITIONS.map((definition) => [definition.name, definition.name]),
+));
 
-const TRIGGERS = Object.freeze({
-  clubs: 'trg_final_clubs_tenant_immutable',
-  membershipAccesses: 'trg_final_accesses_tenant_immutable',
-  memberships: 'trg_final_memberships_authority_immutable',
-  staffs: 'trg_final_staffs_tenant_immutable',
-  transcriptSegments: 'trg_final_transcript_segments_link_immutable',
-  transcriptionJobs: 'trg_final_transcription_jobs_tenant_immutable',
-});
-
-function migrationError(message, details = []) {
+function migrationError(message, details = [], code = 'TENANT_ENFORCEMENT_MIGRATION_BLOCKED') {
   const error = new Error(message);
-  error.code = 'TENANT_ENFORCEMENT_MIGRATION_BLOCKED';
+  error.code = code;
   error.details = details;
   return error;
 }
 
-async function objectNames(queryInterface, type) {
-  const [rows] = await queryInterface.sequelize.query(
-    type === 'constraint'
-      ? `SELECT CONSTRAINT_NAME AS name
-           FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
-          WHERE TABLE_SCHEMA = DATABASE()`
-      : `SELECT DISTINCT INDEX_NAME AS name
-           FROM INFORMATION_SCHEMA.STATISTICS
-          WHERE TABLE_SCHEMA = DATABASE()`,
-  );
-  return new Set(rows.map((row) => row.name));
+function definitionDetails(classification) {
+  return classification.artifacts
+    .filter((artifact) => artifact.state !== (
+      classification.state === 'ready' ? 'exact' : 'absent'
+    ))
+    .map((artifact) => ({
+      actual: artifact.actual,
+      equivalents: artifact.equivalents,
+      expected: artifact.expected,
+      key: artifact.key,
+      state: artifact.state,
+    }));
 }
 
-async function runPreflight(queryInterface) {
+async function runDataPreflight(queryInterface) {
   const checks = [
     {
       code: 'MEMBERSHIP_STAFF_ORGANIZATION_MISMATCH',
@@ -111,143 +109,182 @@ async function runPreflight(queryInterface) {
     });
   }
   if (failures.length > 0) {
-    throw migrationError('Final tenant enforcement preflight failed', failures);
+    throw migrationError('Final tenant enforcement data preflight failed', failures);
   }
 }
 
-async function addIndexes(queryInterface) {
-  const existing = await objectNames(queryInterface, 'index');
-  if (!existing.has(INDEXES.callTenantIdentity)) {
-    await queryInterface.addIndex(
-      'TelephonyCalls',
-      ['id', 'organizationId', 'clubId'],
-      { name: INDEXES.callTenantIdentity, unique: true },
+async function runDefinitionPreflight(queryInterface, allowedStates) {
+  const classification = await classifyFinalEnforcementDefinition(queryInterface.sequelize);
+  if (!allowedStates.includes(classification.state)) {
+    throw migrationError(
+      'Final tenant enforcement definition is partial or contains a lookalike',
+      definitionDetails(classification),
     );
   }
-  if (!existing.has(INDEXES.jobCallIdentity)) {
-    await queryInterface.addIndex(
-      'TelephonyTranscriptionJobs',
-      ['id', 'telephonyCallId'],
-      { name: INDEXES.jobCallIdentity, unique: true },
-    );
-  }
+  return classification;
 }
 
-async function addConstraints(queryInterface) {
-  const existing = await objectNames(queryInterface, 'constraint');
-  const definitions = [
-    {
-      fields: ['telephonyCallId', 'organizationId', 'clubId'],
-      name: CONSTRAINTS.jobCall,
-      references: {
-        fields: ['id', 'organizationId', 'clubId'],
-        table: 'TelephonyCalls',
-      },
-      table: 'TelephonyTranscriptionJobs',
-    },
-    {
-      fields: ['telephonyCallId', 'organizationId', 'clubId'],
-      name: CONSTRAINTS.rawEventCall,
-      references: {
-        fields: ['id', 'organizationId', 'clubId'],
-        table: 'TelephonyCalls',
-      },
-      table: 'TelephonyRawEvents',
-    },
-    {
-      fields: ['transcriptionJobId', 'telephonyCallId'],
-      name: CONSTRAINTS.segmentJobCall,
-      references: {
-        fields: ['id', 'telephonyCallId'],
-        table: 'TelephonyTranscriptionJobs',
-      },
-      table: 'TelephonyTranscriptSegments',
-    },
-    {
-      fields: ['organizationId', 'userId'],
-      name: CONSTRAINTS.callClient,
-      references: { fields: ['organizationId', 'id'], table: 'Users' },
-      table: 'TelephonyCalls',
-    },
-    {
-      fields: ['organizationId', 'staffId'],
-      name: CONSTRAINTS.callStaff,
-      references: { fields: ['organizationId', 'id'], table: 'Staffs' },
-      table: 'TelephonyCalls',
-    },
-    {
-      fields: ['organizationId', 'clubId', 'linkedBookingId'],
-      name: CONSTRAINTS.callBooking,
-      references: {
-        fields: ['organizationId', 'clubId', 'id'],
-        table: 'Bookings',
-      },
-      table: 'TelephonyCalls',
-    },
-  ];
-  for (const definition of definitions) {
-    if (existing.has(definition.name)) continue;
-    await queryInterface.addConstraint(definition.table, {
-      fields: definition.fields,
+async function createArtifact(queryInterface, definition) {
+  if (definition.kind === 'index') {
+    await queryInterface.addIndex(definition.table, [...definition.columns], {
       name: definition.name,
-      onDelete: 'RESTRICT',
-      onUpdate: 'RESTRICT',
-      references: definition.references,
+      unique: definition.unique,
+      using: definition.indexType,
+    });
+    return;
+  }
+  if (definition.kind === 'foreignKey') {
+    await queryInterface.addConstraint(definition.table, {
+      fields: [...definition.columns],
+      name: definition.name,
+      onDelete: definition.deleteRule,
+      onUpdate: definition.updateRule,
+      references: {
+        fields: [...definition.referencedColumns],
+        table: definition.referencedTable,
+      },
       type: 'foreign key',
     });
+    return;
+  }
+  await queryInterface.sequelize.query(triggerCreateSql(definition));
+}
+
+async function dropArtifact(queryInterface, definition) {
+  if (definition.kind === 'trigger') {
+    await queryInterface.sequelize.query(`DROP TRIGGER ${definition.name}`);
+  } else if (definition.kind === 'foreignKey') {
+    await queryInterface.removeConstraint(definition.table, definition.name);
+  } else {
+    await queryInterface.removeIndex(definition.table, definition.name);
   }
 }
 
-async function dropTriggers(queryInterface) {
-  for (const triggerName of Object.values(TRIGGERS)) {
-    await queryInterface.sequelize.query(`DROP TRIGGER IF EXISTS ${triggerName}`);
+function sameArray(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+async function preflightOwnedCleanup(queryInterface, ownedKeys) {
+  const classification = await classifyFinalEnforcementDefinition(queryInterface.sequelize);
+  const ownershipFailures = [];
+  for (const artifact of classification.artifacts) {
+    const owned = ownedKeys.has(artifact.key);
+    if (owned && artifact.state !== 'exact') {
+      ownershipFailures.push({ key: artifact.key, reason: 'owned-artifact-definition-changed' });
+    } else if (!owned && artifact.state !== 'absent') {
+      ownershipFailures.push({ key: artifact.key, reason: 'unowned-artifact-appeared' });
+    }
   }
+
+  for (const index of INDEX_DEFINITIONS) {
+    if (!ownedKeys.has(artifactKey(index))) continue;
+    const allowedDependencies = new Set(FOREIGN_KEY_DEFINITIONS
+      .filter((foreignKey) => ownedKeys.has(artifactKey(foreignKey)))
+      .map(artifactKey));
+    for (const foreignKey of classification.loaded.foreignKeys) {
+      const parentDependency =
+        foreignKey.referencedTable === index.table &&
+        sameArray(foreignKey.referencedColumns, index.columns);
+      const childDependency =
+        foreignKey.table === index.table &&
+        foreignKey.columns.length <= index.columns.length &&
+        sameArray(foreignKey.columns, index.columns.slice(0, foreignKey.columns.length));
+      if ((parentDependency || childDependency) &&
+        !allowedDependencies.has(artifactKey(foreignKey))) {
+        ownershipFailures.push({
+          dependency: artifactKey(foreignKey),
+          key: artifactKey(index),
+          reason: 'unexpected-index-dependent-foreign-key',
+        });
+      }
+    }
+  }
+  if (ownershipFailures.length > 0) {
+    throw migrationError(
+      'Final tenant enforcement cleanup ownership was lost; operator repair is required',
+      ownershipFailures,
+      'TENANT_ENFORCEMENT_OPERATOR_REPAIR_REQUIRED',
+    );
+  }
+  return classification;
 }
 
-function immutableTriggerSql(name, table, comparisons, message) {
-  return `CREATE TRIGGER ${name}
-          BEFORE UPDATE ON ${table}
-          FOR EACH ROW
-          BEGIN
-            IF ${comparisons.map(
-    (column) => `NOT (OLD.${column} <=> NEW.${column})`,
-  ).join(' OR ')} THEN
-              SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = '${message}';
-            END IF;
-          END`;
-}
-
-async function createTriggers(queryInterface) {
-  const definitions = [
-    [TRIGGERS.clubs, 'Clubs', ['organizationId'], 'Club tenant attribution is immutable'],
-    [
-      TRIGGERS.memberships,
-      'Memberships',
-      ['organizationId', 'accountId'],
-      'Membership tenant authority is immutable',
-    ],
-    [
-      TRIGGERS.membershipAccesses,
-      'MembershipClubAccesses',
-      ['organizationId', 'membershipId', 'clubId'],
-      'Membership Club access authority is immutable',
-    ],
-    [TRIGGERS.staffs, 'Staffs', ['organizationId'], 'Staff tenant attribution is immutable'],
-    [
-      TRIGGERS.transcriptionJobs,
-      'TelephonyTranscriptionJobs',
-      ['organizationId', 'clubId', 'telephonyCallId'],
-      'Transcription job tenant attribution is immutable',
-    ],
-    [
-      TRIGGERS.transcriptSegments,
-      'TelephonyTranscriptSegments',
-      ['transcriptionJobId', 'telephonyCallId'],
-      'Transcript segment ownership links are immutable',
-    ],
+async function cleanupOwnedArtifacts(queryInterface, ownedKeys) {
+  // All ownership and dependency checks complete before the first irreversible
+  // DDL cleanup statement. If any artifact drifted, preserve the whole graph.
+  await preflightOwnedCleanup(queryInterface, ownedKeys);
+  const ordered = [
+    ...TRIGGER_DEFINITIONS,
+    ...[...FOREIGN_KEY_DEFINITIONS].reverse(),
+    ...[...INDEX_DEFINITIONS].reverse(),
   ];
-  for (const definition of definitions) {
-    await queryInterface.sequelize.query(immutableTriggerSql(...definition));
+  for (const definition of ordered) {
+    if (ownedKeys.has(artifactKey(definition))) {
+      await dropArtifact(queryInterface, definition);
+    }
+  }
+  const after = await classifyFinalEnforcementDefinition(queryInterface.sequelize);
+  if (after.state !== 'legacy') {
+    throw migrationError(
+      'Final tenant enforcement cleanup did not restore the exact legacy definition',
+      definitionDetails(after),
+      'TENANT_ENFORCEMENT_OPERATOR_REPAIR_REQUIRED',
+    );
+  }
+}
+
+function configuredFailureStage(options) {
+  if (options.failAfter) return options.failAfter;
+  if (process.env.NODE_ENV === 'test') {
+    return process.env.TENANT_ENFORCEMENT_MIGRATION_FAIL_AFTER || null;
+  }
+  return null;
+}
+
+async function runUp(queryInterface, options = {}) {
+  // Both definition and data checks are complete before the first DDL.
+  const definition = await runDefinitionPreflight(queryInterface, ['legacy', 'ready']);
+  await runDataPreflight(queryInterface);
+  if (definition.state === 'ready') return { state: 'ready' };
+
+  const created = new Set();
+  const failureStage = configuredFailureStage(options);
+  try {
+    for (const [stage, definitions] of [
+      ['indexes', INDEX_DEFINITIONS],
+      ['foreignKeys', FOREIGN_KEY_DEFINITIONS],
+      ['triggers', TRIGGER_DEFINITIONS],
+    ]) {
+      for (const artifact of definitions) {
+        await createArtifact(queryInterface, artifact);
+        created.add(artifactKey(artifact));
+      }
+      const staged = await classifyFinalEnforcementDefinition(queryInterface.sequelize);
+      for (const key of created) {
+        const artifact = staged.artifacts.find((item) => item.key === key);
+        if (artifact?.state !== 'exact') {
+          throw migrationError('Created final enforcement artifact has definition drift', [
+            { key, state: artifact?.state || 'missing' },
+          ]);
+        }
+      }
+      if (failureStage === stage) throw new Error(`forced failure after ${stage}`);
+    }
+    const ready = await classifyFinalEnforcementDefinition(queryInterface.sequelize);
+    if (ready.state !== 'ready') {
+      throw migrationError('Final tenant enforcement did not reach exact ready state',
+        definitionDetails(ready));
+    }
+    return { state: 'created' };
+  } catch (originalError) {
+    if (options.beforeCleanup) await options.beforeCleanup();
+    try {
+      await cleanupOwnedArtifacts(queryInterface, created);
+    } catch (cleanupError) {
+      cleanupError.cause = originalError;
+      throw cleanupError;
+    }
+    throw originalError;
   }
 }
 
@@ -256,6 +293,10 @@ async function assertRollbackSafe(queryInterface) {
     `SELECT
        (SELECT COUNT(*) FROM Organizations) AS organizations,
        (SELECT COUNT(*) FROM Clubs) AS clubs,
+       (SELECT COUNT(*) FROM Staffs) AS staffs,
+       (SELECT COUNT(*) FROM Memberships) AS memberships,
+       (SELECT COUNT(*) FROM MembershipClubAccesses) AS accesses,
+       (SELECT COUNT(*) FROM TelephonyCalls) AS calls,
        (SELECT COUNT(*) FROM TelephonyRawEvents) AS rawEvents,
        (SELECT COUNT(*) FROM TelephonyTranscriptionJobs) AS jobs,
        (SELECT COUNT(*) FROM TelephonyTranscriptSegments) AS segments`,
@@ -263,61 +304,38 @@ async function assertRollbackSafe(queryInterface) {
   if (
     Number(counts.organizations) > 1 ||
     Number(counts.clubs) > 1 ||
+    Number(counts.staffs) > 0 ||
+    Number(counts.memberships) > 0 ||
+    Number(counts.accesses) > 0 ||
+    Number(counts.calls) > 0 ||
     Number(counts.rawEvents) > 0 ||
     Number(counts.jobs) > 0 ||
     Number(counts.segments) > 0
   ) {
-    const error = migrationError(
+    throw migrationError(
       'Rollback would remove accepted multi-tenant enforcement from owned data',
       [counts],
+      'TENANT_ENFORCEMENT_ROLLBACK_REFUSED',
     );
-    error.code = 'TENANT_ENFORCEMENT_ROLLBACK_REFUSED';
-    throw error;
   }
+  return counts;
 }
 
-async function removeConstraintIfPresent(queryInterface, table, name) {
-  const existing = await objectNames(queryInterface, 'constraint');
-  if (existing.has(name)) await queryInterface.removeConstraint(table, name);
-}
-
-async function removeIndexIfPresent(queryInterface, table, name) {
-  const existing = await objectNames(queryInterface, 'index');
-  if (existing.has(name)) await queryInterface.removeIndex(table, name);
+async function runDown(queryInterface) {
+  // Definition and data refusal checks both finish before the first DROP.
+  const definition = await runDefinitionPreflight(queryInterface, ['ready']);
+  await assertRollbackSafe(queryInterface);
+  const ownedKeys = new Set(definition.artifacts.map((artifact) => artifact.key));
+  await cleanupOwnedArtifacts(queryInterface, ownedKeys);
 }
 
 module.exports = {
   async up(queryInterface) {
-    await runPreflight(queryInterface);
-    await addIndexes(queryInterface);
-    await addConstraints(queryInterface);
-    await dropTriggers(queryInterface);
-    await createTriggers(queryInterface);
+    await runUp(queryInterface);
   },
 
   async down(queryInterface) {
-    await assertRollbackSafe(queryInterface);
-    await dropTriggers(queryInterface);
-    for (const [table, name] of [
-      ['TelephonyTranscriptSegments', CONSTRAINTS.segmentJobCall],
-      ['TelephonyRawEvents', CONSTRAINTS.rawEventCall],
-      ['TelephonyTranscriptionJobs', CONSTRAINTS.jobCall],
-      ['TelephonyCalls', CONSTRAINTS.callBooking],
-      ['TelephonyCalls', CONSTRAINTS.callStaff],
-      ['TelephonyCalls', CONSTRAINTS.callClient],
-    ]) {
-      await removeConstraintIfPresent(queryInterface, table, name);
-    }
-    await removeIndexIfPresent(
-      queryInterface,
-      'TelephonyTranscriptionJobs',
-      INDEXES.jobCallIdentity,
-    );
-    await removeIndexIfPresent(
-      queryInterface,
-      'TelephonyCalls',
-      INDEXES.callTenantIdentity,
-    );
+    await runDown(queryInterface);
   },
 
   __testing: {
@@ -325,6 +343,12 @@ module.exports = {
     INDEXES,
     TRIGGERS,
     assertRollbackSafe,
-    runPreflight,
+    cleanupOwnedArtifacts,
+    createArtifact,
+    preflightOwnedCleanup,
+    runDataPreflight,
+    runDefinitionPreflight,
+    runDown,
+    runUp,
   },
 };

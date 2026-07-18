@@ -24,8 +24,28 @@ async function adminConnection() {
   return mysql.createConnection({
     host: process.env.DB_HOST || '127.0.0.1',
     password: process.env.DB_PASSWORD,
+    port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
     user: process.env.DB_USER,
   });
+}
+
+async function createFreshDisposableDatabase(database) {
+  assertDisposableDatabaseName(database);
+  const admin = await adminConnection();
+  try {
+    await admin.query(
+      `CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+    );
+  } catch (error) {
+    if (error?.code === 'ER_DB_CREATE_EXISTS') {
+      const collision = new Error(`Disposable Feature 9 database already exists: ${database}`);
+      collision.code = 'TENANT_RC_DATABASE_COLLISION';
+      throw collision;
+    }
+    throw error;
+  } finally {
+    await admin.end();
+  }
 }
 
 async function createDisposableDatabase(database) {
@@ -61,6 +81,7 @@ function connect(database) {
       dialect: 'mysql',
       host: process.env.DB_HOST || '127.0.0.1',
       logging: false,
+      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : undefined,
     },
   );
 }
@@ -400,6 +421,7 @@ module.exports = {
   assertDisposableDatabaseName,
   connect,
   createDisposableDatabase,
+  createFreshDisposableDatabase,
   dropDisposableDatabase,
   migrateAll,
   seedTwoTenantFixture,
