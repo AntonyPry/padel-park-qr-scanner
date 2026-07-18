@@ -294,6 +294,18 @@ Onboarding-чат не подтверждает каждое `Onboarding impact:
 10. Integration/QA выполняет один полный release gate: merged feature set + onboarding changes + tests + migrations + audits + browser QA + release checklist.
 11. QA автоматически отправляет итоговый handoff в указанный coordination thread. Только после решения coordination chat по release gate выполняются merge/deploy.
 
+### Git-права Feature-чатов
+
+Feature-чат не должен останавливаться ради отдельного разрешения на сохранение собственной работы. В своей именованной ветке `codex/...` ему заранее разрешено:
+
+- выполнять `git add`;
+- создавать обычные commits по scope своей задачи;
+- делать обычный non-force push в эту же feature-ветку, включая создание remote branch;
+- добавлять и публиковать fix-коммиты поверх reviewed SHA без переписывания истории;
+- после push подтверждать clean worktree и exact local/tracking/`git ls-remote` SHA parity.
+
+Публикация feature-ветки не означает acceptance, promotion или release и сама по себе не разрешает продолжить integration chain. Feature-чат не может без отдельного stage authorization пушить в `main`, `codex/saas-multitenancy-integration`, release/deploy branches или чужую ветку; делать force-push, rebase/squash reviewed history, merge/cherry-pick в общую ветку, удалять remote branch, создавать PR, выполнять promotion или deploy.
+
 Когда QA/release chat говорит `ready for merge/deploy`, он должен вернуть временный production runbook с дампом БД перед deploy. Не сохраняй пароль в workflow-файлах; для smoke используй `API_SMOKE_EMAIL=egorsmi19@gmail.com`. Если пароль уже известен проектному контексту, не проси пользователя подставлять `<пароль>` или `<prod-password>` вручную; запускай smoke сам с секретом в защищенном контексте или показывай команду через уже установленную переменную `API_SMOKE_PASSWORD`, не раскрывая значение.
 
 Шаблон runbook:
