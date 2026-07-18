@@ -199,6 +199,25 @@ async function getColumn(queryInterface, table, column) {
   return rows[0] || null;
 }
 
+async function getTableDefinition(queryInterface, table) {
+  const rows = await selectRows(queryInterface, `
+    SELECT TABLE_NAME, ENGINE, TABLE_COLLATION
+    FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table
+  `, { table });
+  return rows[0] || null;
+}
+
+async function getTableIndexes(queryInterface, table) {
+  return selectRows(queryInterface, `
+    SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
+           SUB_PART, COLLATION, INDEX_TYPE
+    FROM INFORMATION_SCHEMA.STATISTICS
+    WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table
+    ORDER BY INDEX_NAME, SEQ_IN_INDEX
+  `, { table });
+}
+
 async function getIndex(queryInterface, name) {
   return selectRows(queryInterface, `
     SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
@@ -222,6 +241,15 @@ async function getForeignKey(queryInterface, name) {
     ORDER BY k.ORDINAL_POSITION
   `, { name });
   return rows;
+}
+
+async function getConstraintNameOwners(queryInterface, name) {
+  return selectRows(queryInterface, `
+    SELECT TABLE_NAME, CONSTRAINT_NAME, CONSTRAINT_TYPE
+    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+    WHERE CONSTRAINT_SCHEMA = DATABASE() AND CONSTRAINT_NAME = :name
+    ORDER BY TABLE_NAME, CONSTRAINT_TYPE
+  `, { name });
 }
 
 async function getAccountForeignKeys(queryInterface) {
@@ -300,6 +328,27 @@ function legacyAccountForeignKeyIsCanonical(rows) {
   });
 }
 
+function groupIndexes(rows) {
+  const grouped = new Map();
+  for (const row of rows) {
+    const name = rowValue(row, 'INDEX_NAME');
+    if (!grouped.has(name)) grouped.set(name, []);
+    grouped.get(name).push(row);
+  }
+  return [...grouped.entries()].map(([name, indexRows]) => ({
+    name,
+    rows: indexRows,
+  }));
+}
+
+function supportingIndex(rows, column, { unique = false, preferredName = null } = {}) {
+  const candidates = groupIndexes(rows).filter(({ rows: indexRows }) =>
+    rowValue(indexRows[0], 'COLUMN_NAME') === column &&
+    (!unique || Number(rowValue(indexRows[0], 'NON_UNIQUE')) === 0));
+  return candidates.find(({ name }) => sameIdentifier(name, preferredName)) ||
+    candidates[0] || null;
+}
+
 function triggerIsCanonical(row, expected) {
   return Boolean(
     row && sameIdentifier(rowValue(row, 'EVENT_OBJECT_TABLE'), expected.table) &&
@@ -313,6 +362,13 @@ function signature(kind, rows) {
   const normalized = rows.map((row) => Object.fromEntries(
     Object.entries(row).sort(([left], [right]) => left.localeCompare(right)),
   ));
+  normalized.forEach((row) => {
+    for (const key of ['EVENT_OBJECT_TABLE', 'REFERENCED_TABLE_NAME', 'TABLE_NAME']) {
+      if (row[key] !== undefined && row[key] !== null) {
+        row[key] = String(row[key]).toLowerCase();
+      }
+    }
+  });
   if (kind === 'trigger') {
     normalized.forEach((row) => {
       if (row.ACTION_STATEMENT !== undefined) row.ACTION_STATEMENT = normalizeSql(row.ACTION_STATEMENT);
@@ -338,6 +394,10 @@ async function readArtifact(queryInterface, kind, item) {
     const row = await getTrigger(queryInterface, item.name);
     return row && sameIdentifier(rowValue(row, 'EVENT_OBJECT_TABLE'), item.table) ? [row] : [];
   }
+  if (kind === 'table') {
+    const row = await getTableDefinition(queryInterface, item.table);
+    return row ? [row] : [];
+  }
   throw migrationError(`Unknown artifact kind ${kind}`);
 }
 
@@ -354,6 +414,83 @@ async function refresh(queryInterface, created, kind, item) {
   const rows = await readArtifact(queryInterface, kind, item);
   if (rows.length === 0) throw migrationError(`Cannot refresh ${kind} ${item.name}`);
   tracked.signature = signature(kind, rows);
+}
+
+function cleanupOwnershipError(message) {
+  const error = migrationError(
+    `${message}; operator repair required`,
+    'TENANT_AUDIT_LOG_CLEANUP_OWNERSHIP_LOST',
+  );
+  error.operatorRepair = true;
+  return error;
+}
+
+async function captureLegacyAccountForeignKeyRestoration(queryInterface, rows = null) {
+  const foreignKeyRows = rows || await getAccountForeignKeys(queryInterface);
+  if (!legacyAccountForeignKeyIsCanonical(foreignKeyRows)) {
+    throw migrationError('Legacy AuditLog accountId foreign key is not canonical');
+  }
+  const foreignKey = foreignKeyRows[0];
+  const constraintName = rowValue(foreignKey, 'CONSTRAINT_NAME');
+  const sourceTable = rowValue(foreignKey, 'TABLE_NAME');
+  const sourceColumnName = rowValue(foreignKey, 'COLUMN_NAME');
+  const referencedTable = rowValue(foreignKey, 'REFERENCED_TABLE_NAME');
+  const referencedColumnName = rowValue(foreignKey, 'REFERENCED_COLUMN_NAME');
+  const [sourceColumn, referencedColumn, sourceTableDefinition,
+    referencedTableDefinition, sourceIndexes, referencedIndexes,
+    constraintOwners] = await Promise.all([
+    getColumn(queryInterface, sourceTable, sourceColumnName),
+    getColumn(queryInterface, referencedTable, referencedColumnName),
+    getTableDefinition(queryInterface, sourceTable),
+    getTableDefinition(queryInterface, referencedTable),
+    getTableIndexes(queryInterface, sourceTable),
+    getTableIndexes(queryInterface, referencedTable),
+    getConstraintNameOwners(queryInterface, constraintName),
+  ]);
+  const sourceIndex = supportingIndex(sourceIndexes, sourceColumnName, {
+    preferredName: 'audit_logs_account_id_idx',
+  });
+  const referencedIndex = supportingIndex(referencedIndexes, referencedColumnName, {
+    preferredName: 'PRIMARY',
+    unique: true,
+  });
+  if (
+    !sourceColumn || !referencedColumn || !sourceTableDefinition ||
+    !referencedTableDefinition || !sourceIndex || !referencedIndex ||
+    constraintOwners.length !== 1 ||
+    !sameIdentifier(rowValue(constraintOwners[0], 'TABLE_NAME'), sourceTable) ||
+    rowValue(constraintOwners[0], 'CONSTRAINT_TYPE') !== 'FOREIGN KEY'
+  ) {
+    throw migrationError('Legacy AuditLog accountId restoration prerequisites are incomplete');
+  }
+  const sourceIndexItem = { name: sourceIndex.name, table: sourceTable };
+  const referencedIndexItem = { name: referencedIndex.name, table: referencedTable };
+  const [sourceIndexRows, referencedIndexRows] = await Promise.all([
+    readArtifact(queryInterface, 'index', sourceIndexItem),
+    readArtifact(queryInterface, 'index', referencedIndexItem),
+  ]);
+  const definitions = [
+    ['column', { name: sourceColumnName, table: sourceTable }, [sourceColumn]],
+    ['column', { name: referencedColumnName, table: referencedTable }, [referencedColumn]],
+    ['table', { name: sourceTable, table: sourceTable }, [sourceTableDefinition]],
+    ['table', { name: referencedTable, table: referencedTable }, [referencedTableDefinition]],
+    ['index', sourceIndexItem, sourceIndexRows],
+    ['index', referencedIndexItem, referencedIndexRows],
+  ].map(([kind, item, definitionRows]) => ({
+    kind,
+    item,
+    signature: signature(kind, definitionRows),
+  }));
+  return {
+    constraintName,
+    definitions,
+    foreignKeyRows,
+    foreignKeySignature: signature('foreignKey', foreignKeyRows),
+    referencedColumnName,
+    referencedTable,
+    sourceColumnName,
+    sourceTable,
+  };
 }
 
 async function classifyState(queryInterface) {
@@ -421,37 +558,72 @@ async function preflightCleanupInvocation(queryInterface, plan) {
   for (const [kind, item] of items) {
     const rows = await readArtifact(queryInterface, kind, item);
     if (rows.length === 0 || signature(kind, rows) !== item.signature) {
-      const error = migrationError(
-        `AuditLog cleanup ownership lost for ${kind} ${item.table}.${item.name}; operator repair required`,
-        'TENANT_AUDIT_LOG_CLEANUP_OWNERSHIP_LOST',
+      throw cleanupOwnershipError(
+        `AuditLog cleanup ownership lost for ${kind} ${item.table}.${item.name}`,
       );
-      error.operatorRepair = true;
-      throw error;
     }
   }
-  const currentAccountForeignKeys = await getAccountForeignKeys(queryInterface);
-  if (plan.removedAccountForeignKeys.length > 0 && currentAccountForeignKeys.length > 0) {
-    const error = migrationError(
-      'AuditLog cleanup ownership lost because accountId foreign key reappeared',
-      'TENANT_AUDIT_LOG_CLEANUP_OWNERSHIP_LOST',
-    );
-    error.operatorRepair = true;
-    throw error;
+
+  for (const restoration of plan.removedAccountForeignKeys) {
+    const [currentAccountForeignKeys, constraintOwners, orphanRows] = await Promise.all([
+      getAccountForeignKeys(queryInterface),
+      getConstraintNameOwners(queryInterface, restoration.constraintName),
+      selectRows(queryInterface, `
+        SELECT COUNT(*) AS count
+        FROM \`${restoration.sourceTable}\` source
+        LEFT JOIN \`${restoration.referencedTable}\` target
+          ON target.\`${restoration.referencedColumnName}\` =
+             source.\`${restoration.sourceColumnName}\`
+        WHERE source.\`${restoration.sourceColumnName}\` IS NOT NULL
+          AND target.\`${restoration.referencedColumnName}\` IS NULL
+      `),
+    ]);
+    if (currentAccountForeignKeys.length > 0) {
+      throw cleanupOwnershipError(
+        'AuditLog cleanup ownership lost because accountId foreign key reappeared',
+      );
+    }
+    if (constraintOwners.length > 0) {
+      throw cleanupOwnershipError(
+        `AuditLog cleanup ownership lost because constraint name ${restoration.constraintName} is occupied`,
+      );
+    }
+    for (const definition of restoration.definitions) {
+      const rows = await readArtifact(queryInterface, definition.kind, definition.item);
+      if (rows.length === 0 || signature(definition.kind, rows) !== definition.signature) {
+        throw cleanupOwnershipError(
+          `AuditLog cleanup restoration source changed for ${definition.kind} ` +
+          `${definition.item.table}.${definition.item.name}`,
+        );
+      }
+    }
+    if (Number(rowValue(orphanRows[0], 'count') || 0) > 0) {
+      throw cleanupOwnershipError(
+        'AuditLog cleanup cannot restore accountId foreign key because orphan actors exist',
+      );
+    }
   }
 }
 
-async function restoreAccountForeignKey(queryInterface, row) {
-  await queryInterface.addConstraint('AuditLogs', {
-    fields: ['accountId'],
-    name: rowValue(row, 'CONSTRAINT_NAME'),
+async function restoreAccountForeignKey(queryInterface, restoration) {
+  const row = restoration.foreignKeyRows[0];
+  await queryInterface.addConstraint(restoration.sourceTable, {
+    fields: [restoration.sourceColumnName],
+    name: restoration.constraintName,
     onDelete: rowValue(row, 'DELETE_RULE'),
     onUpdate: rowValue(row, 'UPDATE_RULE'),
     references: {
-      field: rowValue(row, 'REFERENCED_COLUMN_NAME'),
-      table: rowValue(row, 'REFERENCED_TABLE_NAME'),
+      field: restoration.referencedColumnName,
+      table: restoration.referencedTable,
     },
     type: 'foreign key',
   });
+  const restoredRows = await getForeignKey(queryInterface, restoration.constraintName);
+  if (signature('foreignKey', restoredRows) !== restoration.foreignKeySignature) {
+    throw cleanupOwnershipError(
+      `AuditLog cleanup restored ${restoration.constraintName} with a different definition`,
+    );
+  }
 }
 
 async function cleanupInvocation(queryInterface, plan) {
@@ -468,8 +640,8 @@ async function cleanupInvocation(queryInterface, plan) {
   for (const item of [...plan.column].reverse()) {
     await queryInterface.removeColumn(item.table, item.name);
   }
-  for (const row of plan.removedAccountForeignKeys) {
-    await restoreAccountForeignKey(queryInterface, row);
+  for (const restoration of plan.removedAccountForeignKeys) {
+    await restoreAccountForeignKey(queryInterface, restoration);
   }
 }
 
@@ -518,7 +690,9 @@ module.exports = {
       if (!legacyAccountForeignKeyIsCanonical(accountForeignKeys)) {
         throw migrationError('Legacy AuditLog accountId foreign key changed during migration');
       }
-      plan.removedAccountForeignKeys.push(...accountForeignKeys);
+      plan.removedAccountForeignKeys.push(
+        await captureLegacyAccountForeignKeyRestoration(queryInterface, accountForeignKeys),
+      );
       await queryInterface.removeConstraint(
         'AuditLogs',
         rowValue(accountForeignKeys[0], 'CONSTRAINT_NAME'),
@@ -647,8 +821,11 @@ module.exports = {
     FOREIGN_KEYS,
     INDEXES,
     TRIGGERS,
+    captureLegacyAccountForeignKeyRestoration,
     classifyState,
     cleanupInvocation,
+    getConstraintNameOwners,
+    getForeignKey,
     normalizeSql,
     preflightCleanupInvocation,
     readArtifact,

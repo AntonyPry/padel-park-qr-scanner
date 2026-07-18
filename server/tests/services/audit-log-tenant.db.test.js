@@ -83,6 +83,79 @@ async function selectOne(sequelize, sql, replacements = {}) {
   return rows[0] || null;
 }
 
+async function selectAll(sequelize, sql, replacements = {}) {
+  return sequelize.query(sql, {
+    replacements,
+    type: SequelizePackage.QueryTypes.SELECT,
+  });
+}
+
+async function cleanupStateSnapshot(sequelize) {
+  const [tables, columns, indexes, foreignKeys, triggers, auditRows] = await Promise.all([
+    selectAll(sequelize, `
+      SELECT TABLE_NAME, ENGINE, TABLE_COLLATION
+      FROM INFORMATION_SCHEMA.TABLES
+      WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME
+    `),
+    selectAll(sequelize, `
+      SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE,
+             IS_NULLABLE, COLUMN_DEFAULT, EXTRA, CHARACTER_SET_NAME,
+             COLLATION_NAME, COLUMN_COMMENT, GENERATION_EXPRESSION
+      FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME, ORDINAL_POSITION
+    `),
+    selectAll(sequelize, `
+      SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
+             SUB_PART, COLLATION, INDEX_TYPE
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA=DATABASE()
+      ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+    `),
+    selectAll(sequelize, `
+      SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME,
+             k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
+             r.UPDATE_RULE, r.DELETE_RULE
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE k
+      JOIN INFORMATION_SCHEMA.REFERENTIAL_CONSTRAINTS r
+        ON r.CONSTRAINT_SCHEMA=k.CONSTRAINT_SCHEMA
+       AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
+      WHERE k.CONSTRAINT_SCHEMA=DATABASE()
+      ORDER BY k.TABLE_NAME, k.CONSTRAINT_NAME, k.ORDINAL_POSITION
+    `),
+    selectAll(sequelize, `
+      SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, EVENT_MANIPULATION,
+             ACTION_TIMING, ACTION_STATEMENT
+      FROM INFORMATION_SCHEMA.TRIGGERS
+      WHERE TRIGGER_SCHEMA=DATABASE()
+      ORDER BY TRIGGER_NAME
+    `),
+    selectAll(sequelize, 'SELECT * FROM AuditLogs ORDER BY id'),
+  ]);
+  return { auditRows, columns, foreignKeys, indexes, tables, triggers };
+}
+
+function emptyCleanupPlan(restoration) {
+  return {
+    column: [],
+    foreignKey: [],
+    index: [],
+    removedAccountForeignKeys: [restoration],
+    trigger: [],
+  };
+}
+
+async function assertMutationFreeCleanupRefusal(migration, queryInterface, schema, plan) {
+  const before = await cleanupStateSnapshot(schema);
+  await assert.rejects(
+    migration.__testing.cleanupInvocation(queryInterface, plan),
+    (error) => error.code === 'TENANT_AUDIT_LOG_CLEANUP_OWNERSHIP_LOST' &&
+      error.operatorRepair === true,
+  );
+  assert.deepEqual(await cleanupStateSnapshot(schema), before);
+}
+
 async function expectDatabaseReject(promise, pattern) {
   await assert.rejects(
     promise,
@@ -184,6 +257,131 @@ test('Feature 8.2 migration and real two-Organization/two-Club AuditLog isolatio
       `), legacyChecksum);
     }
 
+    async function captureAndRemoveLegacyAccountForeignKey() {
+      const restoration = await migration.__testing
+        .captureLegacyAccountForeignKeyRestoration(queryInterface);
+      await queryInterface.removeConstraint('AuditLogs', restoration.constraintName);
+      return {
+        plan: emptyCleanupPlan(restoration),
+        restoration,
+      };
+    }
+
+    {
+      const { plan, restoration } = await captureAndRemoveLegacyAccountForeignKey();
+      await queryInterface.createTable('AuditCleanupCollision', {
+        accountId: { allowNull: true, type: SequelizePackage.INTEGER },
+        id: {
+          allowNull: false,
+          autoIncrement: true,
+          primaryKey: true,
+          type: SequelizePackage.INTEGER,
+        },
+      });
+      await queryInterface.addConstraint('AuditCleanupCollision', {
+        fields: ['accountId'],
+        name: restoration.constraintName,
+        onDelete: 'RESTRICT',
+        onUpdate: 'RESTRICT',
+        references: { field: 'id', table: 'Accounts' },
+        type: 'foreign key',
+      });
+      await assertMutationFreeCleanupRefusal(
+        migration,
+        queryInterface,
+        schema,
+        plan,
+      );
+      await queryInterface.removeConstraint(
+        'AuditCleanupCollision',
+        restoration.constraintName,
+      );
+      await queryInterface.dropTable('AuditCleanupCollision');
+      await migration.__testing.cleanupInvocation(queryInterface, plan);
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    }
+
+    {
+      const { plan } = await captureAndRemoveLegacyAccountForeignKey();
+      await queryInterface.changeColumn('AuditLogs', 'accountId', {
+        allowNull: true,
+        type: SequelizePackage.BIGINT,
+      });
+      await assertMutationFreeCleanupRefusal(
+        migration,
+        queryInterface,
+        schema,
+        plan,
+      );
+      await queryInterface.changeColumn('AuditLogs', 'accountId', {
+        allowNull: true,
+        type: SequelizePackage.INTEGER,
+      });
+      await migration.__testing.cleanupInvocation(queryInterface, plan);
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    }
+
+    {
+      const { plan, restoration } = await captureAndRemoveLegacyAccountForeignKey();
+      await schema.query(`
+        INSERT INTO AuditLogs
+          (accountId,role,action,entityType,method,path,statusCode,createdAt,updatedAt)
+        VALUES
+          (2147483647,NULL,'orphan','system','POST','/api/orphan',200,NOW(),NOW())
+      `);
+      await assertMutationFreeCleanupRefusal(
+        migration,
+        queryInterface,
+        schema,
+        plan,
+      );
+      await schema.query("DELETE FROM AuditLogs WHERE action='orphan'");
+      await migration.__testing.cleanupInvocation(queryInterface, plan);
+      const restored = await migration.__testing.getForeignKey(
+        queryInterface,
+        restoration.constraintName,
+      );
+      assert.equal(
+        migration.__testing.signature('foreignKey', restored),
+        restoration.foreignKeySignature,
+      );
+    }
+
+    {
+      const { plan, restoration } = await captureAndRemoveLegacyAccountForeignKey();
+      await queryInterface.addConstraint('AuditLogs', {
+        fields: ['accountId'],
+        name: restoration.constraintName,
+        onDelete: 'RESTRICT',
+        onUpdate: 'RESTRICT',
+        references: { field: 'id', table: 'Accounts' },
+        type: 'foreign key',
+      });
+      await assertMutationFreeCleanupRefusal(
+        migration,
+        queryInterface,
+        schema,
+        plan,
+      );
+      await queryInterface.removeConstraint('AuditLogs', restoration.constraintName);
+      await migration.__testing.cleanupInvocation(queryInterface, plan);
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    }
+
+    {
+      const { plan, restoration } = await captureAndRemoveLegacyAccountForeignKey();
+      await migration.__testing.cleanupInvocation(queryInterface, plan);
+      const restored = await migration.__testing.getForeignKey(
+        queryInterface,
+        restoration.constraintName,
+      );
+      assert.equal(
+        migration.__testing.signature('foreignKey', restored),
+        restoration.foreignKeySignature,
+      );
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    }
+
     await queryInterface.addColumn('AuditLogs', 'organizationId', {
       allowNull: true,
       type: SequelizePackage.INTEGER,
@@ -208,9 +406,11 @@ test('Feature 8.2 migration and real two-Organization/two-Club AuditLog isolatio
       allowNull: true,
       type: SequelizePackage.BIGINT,
     });
-    await assert.rejects(
-      migration.__testing.cleanupInvocation(queryInterface, cleanupPlan),
-      (error) => error.code === 'TENANT_AUDIT_LOG_CLEANUP_OWNERSHIP_LOST',
+    await assertMutationFreeCleanupRefusal(
+      migration,
+      queryInterface,
+      schema,
+      cleanupPlan,
     );
     assert.equal(
       (await queryInterface.describeTable('AuditLogs')).organizationId.type
