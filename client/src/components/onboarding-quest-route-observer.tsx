@@ -6,20 +6,40 @@ import {
 } from '@/lib/onboarding-quest';
 import { useAuth } from '@/lib/useAuth';
 
+const ONBOARDING_TASK_DETAIL_ROUTE = '/admin/onboarding/:taskKey';
+
+function clearActiveQuestOnTaskDetailEntry(pathname: string) {
+  if (!matchPath(ONBOARDING_TASK_DETAIL_ROUTE, pathname)) return;
+  if (!getStoredActiveOnboardingQuest()) return;
+
+  clearStoredActiveOnboardingQuest();
+}
+
 export function OnboardingQuestRouteObserver() {
   const { account } = useAuth();
   const location = useLocation();
-  const taskKey = matchPath(
-    '/admin/onboarding/:taskKey',
-    location.pathname,
-  )?.params.taskKey;
 
   useEffect(() => {
-    if (!account?.id || !taskKey) return;
-    if (!getStoredActiveOnboardingQuest()) return;
+    if (!account?.id) return;
 
-    clearStoredActiveOnboardingQuest();
-  }, [account?.id, location.key, location.pathname, taskKey]);
+    clearActiveQuestOnTaskDetailEntry(location.pathname);
+  }, [account?.id, location.pathname]);
+
+  useEffect(() => {
+    if (!account?.id) return;
+
+    const handleHistoryEntry = () => {
+      clearActiveQuestOnTaskDetailEntry(window.location.pathname);
+    };
+
+    window.addEventListener('popstate', handleHistoryEntry);
+    window.addEventListener('pageshow', handleHistoryEntry);
+
+    return () => {
+      window.removeEventListener('popstate', handleHistoryEntry);
+      window.removeEventListener('pageshow', handleHistoryEntry);
+    };
+  }, [account?.id]);
 
   return null;
 }
