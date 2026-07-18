@@ -24,8 +24,6 @@ import {
 } from 'lucide-react';
 import {
   Link,
-  matchPath,
-  useLocation,
   useNavigate,
   useParams,
   useSearchParams,
@@ -73,7 +71,6 @@ import { getApiErrorMessage } from '@/lib/api';
 import {
   activateOnboardingQuest,
   clearStoredActiveOnboardingQuest,
-  getStoredActiveOnboardingQuest,
 } from '@/lib/onboarding-quest';
 import { getAccountRoleLabel, type AccountRole } from '@/lib/roles';
 import { useTheme } from '@/lib/theme-context';
@@ -1260,11 +1257,6 @@ function TaskDetailView({
 
 export default function OnboardingPage() {
   const { taskKey } = useParams<{ taskKey?: string }>();
-  const location = useLocation();
-  const locationTaskKey = matchPath(
-    '/admin/onboarding/:taskKey',
-    location.pathname,
-  )?.params.taskKey;
   const [searchParams, setSearchParams] = useSearchParams();
   const { account } = useAuth();
   const queryClient = useQueryClient();
@@ -1294,24 +1286,12 @@ export default function OnboardingPage() {
   });
 
   useEffect(() => {
-    if (!account?.role || !taskKey || locationTaskKey !== taskKey) return;
-
-    const activeQuest = getStoredActiveOnboardingQuest();
-    if (activeQuest) {
-      clearStoredActiveOnboardingQuest();
-    }
+    if (!account?.role || !taskKey) return;
 
     void queryClient.invalidateQueries({
       queryKey: queryKeys.onboarding.task(taskKey, roleForQueryKey),
     });
-  }, [
-    account?.role,
-    location.key,
-    locationTaskKey,
-    queryClient,
-    roleForQueryKey,
-    taskKey,
-  ]);
+  }, [account?.role, queryClient, roleForQueryKey, taskKey]);
 
   const completeInstructionMutation = useMutation({
     mutationFn: (detail: OnboardingTaskDetail) =>
