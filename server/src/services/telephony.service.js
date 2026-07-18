@@ -1671,9 +1671,20 @@ async function receiveBeelineEvent({
 async function processRawEvent(rawEvent, transaction = undefined) {
   const payload = asObject(parseJsonField(rawEvent.payload));
   const normalized = normalizePayload(payload);
-  const connection = rawEventConnection(rawEvent);
+  let connection = rawEventConnection(rawEvent);
   if (isTenantProviderIntegrationsEnabled() && !connection?.connectionId) {
     throw appError('Provider attribution is missing', 409);
+  }
+  if (!isTenantProviderIntegrationsEnabled() && connection && !connection.connectionId) {
+    const legacyContext = await resolveLegacyProviderContext('beeline');
+    if (
+      connection.provider !== 'beeline' ||
+      Number(connection.organizationId) !== Number(legacyContext.organizationId) ||
+      Number(connection.clubId) !== Number(legacyContext.clubId)
+    ) {
+      throw appError('Legacy provider attribution does not match the singleton tenant', 409);
+    }
+    connection = legacyContext;
   }
 
   if (!hasStableCallIdentity(normalized) && isServiceXsiEvent(normalized, payload)) {

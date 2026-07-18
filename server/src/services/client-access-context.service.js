@@ -8,6 +8,9 @@ const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
 const {
   isTenantClientsReferencesEnabled,
 } = require('../tenant-context/capabilities');
+const {
+  isLegacyProviderContext,
+} = require('../provider-integrations/rollout');
 const { safeTenantDenial } = require('./tenant-context.service');
 
 function positiveId(value) {
@@ -176,12 +179,36 @@ async function resolveLegacyContext({ lock, transaction }) {
   });
 }
 
+async function resolveLegacyProviderContext(authority, { lock, transaction }) {
+  const singleton = await requireExactSingletonDefault({ lock, transaction });
+  if (
+    !isLegacyProviderContext(authority, 'beeline') ||
+    positiveId(authority.organizationId) !== singleton.organizationId ||
+    positiveId(authority.clubId) !== singleton.clubId
+  ) {
+    throw safeTenantDenial();
+  }
+  return Object.freeze({
+    accountId: null,
+    authority: 'legacy-provider',
+    clubId: singleton.clubId,
+    connectionId: null,
+    membershipId: null,
+    organizationId: singleton.organizationId,
+    provider: 'beeline',
+    scoped: true,
+  });
+}
+
 async function resolveClientAccessContext(authority, options = {}) {
   if (!isTenantClientsReferencesEnabled()) {
     return resolveLegacyContext(options);
   }
   if (isProviderAuthority(authority)) {
     return resolveProviderContext(authority, options);
+  }
+  if (isLegacyProviderContext(authority, 'beeline')) {
+    return resolveLegacyProviderContext(authority, options);
   }
   return resolveRequestContext(authority, options);
 }
@@ -191,6 +218,7 @@ module.exports = {
     isProviderAuthority,
     positiveId,
     resolveLegacyContext,
+    resolveLegacyProviderContext,
     resolveProviderContext,
     resolveRequestContext,
   },

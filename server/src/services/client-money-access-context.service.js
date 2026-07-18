@@ -9,6 +9,9 @@ const {
   isTenantClientMoneyInstrumentsEnabled,
 } = require('../tenant-context/capabilities');
 const {
+  isLegacyProviderContext,
+} = require('../provider-integrations/rollout');
+const {
   isTrustedTenantContext,
   safeTenantDenial,
 } = require('./tenant-context.service');
@@ -133,6 +136,33 @@ async function resolveProviderContext(authority, { lock = false, transaction } =
   });
 }
 
+async function resolveLegacyProviderAuthority(
+  authority,
+  { lock = false, transaction } = {},
+) {
+  const singleton = await requireExactSingletonDefault({ lock, transaction });
+  if (
+    !isLegacyProviderContext(authority, 'evotor') ||
+    positiveId(authority.organizationId) !== singleton.organizationId ||
+    positiveId(authority.clubId) !== singleton.clubId
+  ) {
+    throw safeTenantDenial();
+  }
+  return freezeContext({
+    accountId: null,
+    authority: 'legacy-provider',
+    clubId: singleton.clubId,
+    connectionId: null,
+    effectiveRole: null,
+    membershipId: null,
+    membershipRole: null,
+    organizationId: singleton.organizationId,
+    provider: 'evotor',
+    readScoped: true,
+    scope: TENANT_SCOPES.CLUB,
+  });
+}
+
 async function resolveRequestContext(tenant, { lock = false, transaction } = {}) {
   const trusted = isTrustedTenantContext(tenant) || resolvedContexts.has(tenant);
   if (
@@ -238,6 +268,9 @@ async function resolveClientMoneyAccessContext(authority, options = {}) {
   }
   if (isProviderAuthority(authority)) {
     return resolveProviderContext(authority, options);
+  }
+  if (isLegacyProviderContext(authority, 'evotor')) {
+    return resolveLegacyProviderAuthority(authority, options);
   }
   return resolveRequestContext(authority, options);
 }

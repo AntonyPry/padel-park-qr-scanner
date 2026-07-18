@@ -14,6 +14,12 @@ const HARDENING_MIGRATION = require('../../migrations/20260716100000-harden-tena
 const VALIDATION_MIGRATION = require(
   '../../migrations/20260716120000-validate-provider-reconciliation-connections'
 );
+const PROVIDER_VALIDATION_MIGRATION_FILE =
+  '20260716120000-validate-provider-reconciliation-connections.js';
+const {
+  ACCEPTED_TENANT_CAPABILITY_ENV,
+  applyAcceptedTenantMigrations,
+} = require('../helpers/accepted-tenant-schema');
 
 function databaseName() {
   return process.env.TENANT_PROVIDER_TEST_DB_NAME ||
@@ -37,7 +43,11 @@ async function migrateFresh(database) {
     },
   });
   const migrations = fs.readdirSync(path.join(SERVER_ROOT, 'migrations'))
-    .filter((file) => file.endsWith('.js'))
+    .filter(
+      (file) =>
+        file.endsWith('.js') &&
+        file.localeCompare(PROVIDER_VALIDATION_MIGRATION_FILE) <= 0,
+    )
     .sort();
   for (const file of migrations) {
     const migration = require(path.join(SERVER_ROOT, 'migrations', file));
@@ -107,6 +117,10 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     TENANT_FILES_WORKERS_ENABLED: process.env.TENANT_FILES_WORKERS_ENABLED,
     TENANT_PROVIDER_INTEGRATIONS_ENABLED: process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED,
   };
+  for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) {
+    if (!Object.hasOwn(previous, name)) previous[name] = process.env[name];
+  }
+  previous.TENANT_ENFORCEMENT_ENABLED = process.env.TENANT_ENFORCEMENT_ENABLED;
   process.env.DB_NAME = database;
   process.env.NODE_ENV = 'test';
   process.env.INTEGRATION_SECRETS_MASTER_KEY = Buffer.alloc(32, 11).toString('base64');
@@ -163,6 +177,11 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
         true,
       );
     });
+
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: PROVIDER_VALIDATION_MIGRATION_FILE,
+    });
+    for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'true';
 
     await t.test('bootstrap-pending blocks provider ingress before connection lookup', async () => {
       tenantFoundation.invalidateTenantFoundationGateCache();

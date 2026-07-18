@@ -11,15 +11,27 @@ const {
 const { PROVIDER_PURPOSE } = require('./constants');
 
 const RECONCILABLE_PROVIDERS = Object.freeze(['beeline', 'evotor']);
+const legacyProviderContexts = new WeakSet();
 
 async function resolveLegacyProviderContext(provider) {
   const tenant = await resolveTrustedTenantAttribution();
-  return Object.freeze({
+  const context = Object.freeze({
     ...tenant,
     connectionId: null,
     legacy: true,
     provider,
   });
+  legacyProviderContexts.add(context);
+  return context;
+}
+
+function isLegacyProviderContext(context, provider = null) {
+  return Boolean(
+    context &&
+      legacyProviderContexts.has(context) &&
+      context.legacy === true &&
+      (!provider || context.provider === provider),
+  );
 }
 
 function assertReconciliationConnection(connection) {
@@ -249,6 +261,7 @@ async function reconcileLegacyProviderRows(connection) {
 }
 
 module.exports = {
+  isLegacyProviderContext,
   reconcileLegacyProviderRows,
   resolveLegacyProviderContext,
 };
