@@ -32,11 +32,30 @@ const WORKER_STATE_POLICY = Object.freeze({
   localStateIncluded: false,
   policy: 'rebuild-local-worker-state-after-restore; do-not-replay-stale-claims',
 });
+const BACKUP_MANIFEST_CLI_OPTIONS = Object.freeze([
+  'attachment-manifest',
+  'db-dump',
+  'expect-empty',
+  'legacy-shift-cash-root',
+  'legacy-shift-report-root',
+  'manifest',
+  'output',
+  'storage-root',
+  'verify',
+]);
+const BACKUP_MANIFEST_CLI_OPTION_SET = new Set(BACKUP_MANIFEST_CLI_OPTIONS);
 
 function parseArgs(argv) {
   const options = {};
   for (const value of argv) {
+    if (!value.startsWith('--')) throw new Error(`Unsupported backup argument: ${value}`);
     const [key, ...rest] = value.replace(/^--/, '').split('=');
+    if (!BACKUP_MANIFEST_CLI_OPTION_SET.has(key)) {
+      throw new Error(`Unsupported backup argument: --${key}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      throw new Error(`Duplicate backup argument: --${key}`);
+    }
     options[key] = rest.join('=') || true;
   }
   return options;
@@ -373,6 +392,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  BACKUP_MANIFEST_CLI_OPTIONS,
   EMPTY_DIRECTORY_LABELS,
   MANIFEST_SCHEMA,
   REQUIRED_LABELS,
@@ -381,6 +401,7 @@ module.exports = {
   createManifest,
   inventoryManifestArtifact,
   inventoryPath,
+  parseArgs,
   parseExpectedEmptyLabels,
   validateAttachmentDetector,
   validateManifestSchema,

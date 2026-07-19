@@ -258,7 +258,10 @@ trap - EXIT HUP INT TERM
 sudo certbot certificates
 sudo certbot renew --dry-run
 sudo journalctl -u nginx --since '15 minutes ago' --no-pager
-pm2 logs padel-bot --lines 200 --nostream
+pm2 list
+: "${SETLY_PM2_APP:?Set SETLY_PM2_APP only after matching pm2 describe to the Setly cwd/script}"
+pm2 describe "$SETLY_PM2_APP"
+pm2 logs "$SETLY_PM2_APP" --lines 200 --nostream
 sudo ss -ltnp 'sport = :3000'
 ```
 
@@ -286,19 +289,65 @@ certificate files не удалять в аварийном порядке.
 
 В protected env выставить full-stop, `BOTS_ENABLED=false`,
 `BACKGROUND_RUNNERS_ENABLED=false`, `INSTALLATION_PROVISIONING_ENABLED=false`
-и все 16 tenant flags в `false`. Затем:
+и все 16 tenant flags в `false`. На live preflight 19 июля 2026 года имена
+process были `bot` и `transcription-worker`, но runbook никогда не принимает эти
+имена по умолчанию: сначала выполнить `pm2 list`, сопоставить cwd/script через
+`pm2 describe`, затем явно экспортировать `SETLY_PM2_APP` и
+`SETLY_TRANSCRIPTION_PM2_APP`. Затем:
 
 ```bash
 cd /opt/padel-park-qr-scanner
 export SETLY_RELEASE_SHA="$(git rev-parse HEAD)"
 export SETLY_BACKUP_ROOT="/opt/backups/setly/$(date +%Y%m%d-%H%M%S)"
 
-pm2 describe padel-bot
-pm2 stop padel-bot
+pm2 list
+: "${SETLY_PM2_APP:?Set the verified Setly PM2 app name}"
+: "${SETLY_TRANSCRIPTION_PM2_APP:?Set the verified transcription worker PM2 app name}"
+pm2 describe "$SETLY_PM2_APP"
+pm2 describe "$SETLY_TRANSCRIPTION_PM2_APP"
+pm2 stop "$SETLY_TRANSCRIPTION_PM2_APP"
+pm2 stop "$SETLY_PM2_APP"
 sudo ss -ltnp 'sport = :3000'
 install -d "$SETLY_BACKUP_ROOT/tenant-storage"
 install -d "$SETLY_BACKUP_ROOT/legacy-shift-reports"
 install -d "$SETLY_BACKUP_ROOT/legacy-shift-cash"
+
+# Set this variable only after read-only DB/file detector evidence proves every
+# named source root is legitimately empty or absent. It may contain only the
+# three labels accepted by --expect-empty.
+if [[ -z "${SETLY_EXPECT_EMPTY_LABELS+x}" ]]; then
+  echo 'SETLY_EXPECT_EMPTY_LABELS must be explicitly set, even when empty' >&2
+  exit 1
+fi
+
+setly_label_expected_empty() {
+  case ",${SETLY_EXPECT_EMPTY_LABELS}," in
+    *",$1,"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+setly_freeze_root() {
+  local source_root="$1" target_root="$2" label="$3"
+  if [[ -L "$source_root" ]] || [[ -e "$source_root" && ! -d "$source_root" ]]; then
+    echo "Unsafe source root: $source_root" >&2
+    return 1
+  fi
+  if [[ -d "$source_root" ]] && find "$source_root" -mindepth 1 -print -quit | grep -q .; then
+    cp -a "$source_root"/. "$target_root"/
+  elif ! setly_label_expected_empty "$label"; then
+    echo "Empty or missing source root lacks explicit --expect-empty proof: $label" >&2
+    return 1
+  fi
+}
+
+setly_freeze_root server/var/tenant-storage \
+  "$SETLY_BACKUP_ROOT/tenant-storage" tenant-storage
+setly_freeze_root server/var/shift-report-attachments \
+  "$SETLY_BACKUP_ROOT/legacy-shift-reports" legacy-shift-reports
+setly_freeze_root server/var/shift-cash-attachments \
+  "$SETLY_BACKUP_ROOT/legacy-shift-cash" legacy-shift-cash
+unset -f setly_freeze_root setly_label_expected_empty
 
 cd server
 set -a
@@ -313,12 +362,6 @@ MYSQL_PWD="$DB_PASSWORD" mysqldump \
 test -s "$SETLY_BACKUP_ROOT/database.sql.gz"
 gzip -t "$SETLY_BACKUP_ROOT/database.sql.gz"
 
-cp -a var/tenant-storage/. "$SETLY_BACKUP_ROOT/tenant-storage/"
-cp -a var/shift-report-attachments/. "$SETLY_BACKUP_ROOT/legacy-shift-reports/"
-cp -a var/shift-cash-attachments/. "$SETLY_BACKUP_ROOT/legacy-shift-cash/"
-
-# Set only after verifying the named frozen roots are genuinely empty.
-# Example: export SETLY_EXPECT_EMPTY_LABELS=tenant-storage
 SETLY_EMPTY_ARGS=()
 if [[ -n "${SETLY_EXPECT_EMPTY_LABELS:-}" ]]; then
   SETLY_EMPTY_ARGS=(--expect-empty="$SETLY_EXPECT_EMPTY_LABELS")
@@ -335,18 +378,22 @@ npm run tenant:rollout:gate -- \
   --output="$SETLY_BACKUP_ROOT/rollout-before.json"
 ```
 
-Если source root отсутствовал, сначала подтвердить по DB/file detector, что в
-нём действительно нет исторических файлов, затем создать пустой real directory
-и явно добавить соответствующий label в `SETLY_EXPECT_EMPTY_LABELS`. Без
-`--expect-empty` пустой root fail-closed; с флагом non-empty/missing root тоже
-fail-closed. Symlink и special file запрещены. Не возобновлять production
-traffic до green restore и post-migration evidence.
+Если source root отсутствовал, сначала подтвердить по read-only DB/file detector,
+что в нём действительно нет исторических файлов, затем явно добавить label в
+`SETLY_EXPECT_EMPTY_LABELS`; создавать фиктивный source root не нужно. На live
+preflight отсутствовали `tenant-storage` и `shift-report-attachments`, а
+`shift-cash-attachments` был пуст, поэтому все три состояния требуют явного
+expected-empty evidence перед freeze. Без `--expect-empty` пустой backup root
+fail-closed; с флагом non-empty/missing backup root тоже fail-closed. Symlink и
+special file запрещены. Не возобновлять production traffic до green restore и
+post-migration evidence.
 
 Перед dump отдельно остановить/drain внешний transcription worker в его
 supervisor-контуре. Full-stop/остановленный API не примет его claim/complete
 mutations, но worker не должен сохранить незавершённый local attempt и replay-ить
-его после cutover. `pm2 describe` обязан подтвердить именно Setly process; не
-использовать неразобранный numeric process id.
+его после cutover. `pm2 describe` обязан подтвердить оба process через явно
+заданные `SETLY_PM2_APP` и `SETLY_TRANSCRIPTION_PM2_APP`; не использовать
+неразобранный numeric process id или предполагаемое имя.
 
 ### 2. Restore rehearsal — только empty installation
 
@@ -440,6 +487,12 @@ npm run tenant:files-workers:attachments -- --apply
 npm run tenant:files-workers:attachments -- \
   --output="$SETLY_BACKUP_ROOT/attachments-after-apply.json"
 ```
+
+Каждый `--output` attachment detector указывает на новый файл в уже
+существующем writable real directory. CLI пишет JSON атомарно, не перезаписывает
+existing file и отказывается от symlink/special target; тот же manifest остаётся
+в stdout. Exit code `2` означает unsafe detector counts и блокирует следующий
+шаг, даже если evidence file был успешно сохранён.
 
 `rollout-post.json` обязан показать `preservation.ok=true`, unchanged business
 PK/counts/historical column values, exact one default Organization/Club и

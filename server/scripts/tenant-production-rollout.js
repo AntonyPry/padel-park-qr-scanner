@@ -34,6 +34,22 @@ const {
 
 const REPORT_SCHEMA = 'setly.tenant-production-rollout-gate';
 const REPORT_SCHEMA_VERSION = 1;
+const ROLLOUT_CLI_OPTIONS = Object.freeze([
+  'backup-manifest',
+  'baseline',
+  'db-dump',
+  'expect-empty',
+  'expected-sha',
+  'legacy-shift-cash-root',
+  'legacy-shift-report-root',
+  'output',
+  'phase',
+  'preservation-report',
+  'restore-report',
+  'stage',
+  'storage-root',
+]);
+const ROLLOUT_CLI_OPTION_SET = new Set(ROLLOUT_CLI_OPTIONS);
 const PHASES = new Set([
   'before-migrations',
   'restore-rehearsal',
@@ -47,11 +63,17 @@ function parseArgs(argv) {
     const value = argv[index];
     if (!value.startsWith('--')) throw new Error(`Unsupported argument: ${value}`);
     const separator = value.indexOf('=');
+    const key = value.slice(2, separator === -1 ? undefined : separator);
+    if (!ROLLOUT_CLI_OPTION_SET.has(key)) {
+      throw new Error(`Unsupported rollout argument: --${key}`);
+    }
+    if (Object.prototype.hasOwnProperty.call(options, key)) {
+      throw new Error(`Duplicate rollout argument: --${key}`);
+    }
     if (separator !== -1) {
-      options[value.slice(2, separator)] = value.slice(separator + 1);
+      options[key] = value.slice(separator + 1);
       continue;
     }
-    const key = value.slice(2);
     const next = argv[index + 1];
     if (next && !next.startsWith('--')) {
       options[key] = next;
@@ -496,6 +518,7 @@ module.exports = {
   PHASES,
   REPORT_SCHEMA,
   REPORT_SCHEMA_VERSION,
+  ROLLOUT_CLI_OPTIONS,
   assertUniqueArtifactRoots,
   assertSameRelease,
   currentGitHead,

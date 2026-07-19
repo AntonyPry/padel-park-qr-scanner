@@ -35,6 +35,11 @@ The installation manifest has five mandatory, unique artifact labels: `database`
 
 Create and verify the installation-wide manifest after the dump and storage snapshot are complete:
 
+The attachment detector `--output` parent must already exist and be writable,
+and the target filename must be new. The CLI atomically creates a regular
+mode-`0600` JSON file, refuses existing/symlink/special targets, retains the same
+JSON on stdout and exits `2` when detector counts are unsafe.
+
 ```bash
 npm run tenant:files-workers:attachments -- --output=/secure/backup/attachments.json
 npm run tenant:backup:manifest -- \
