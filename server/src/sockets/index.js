@@ -18,6 +18,9 @@ const {
   getTenantRoomsForContext,
   revalidateSocket,
 } = require('../realtime');
+const {
+  isRolloutMaintenanceActive,
+} = require('../tenant-rollout/contract');
 
 const ACCESS_SOCKET_ROOM = 'access';
 
@@ -31,6 +34,18 @@ function parseAllowedOrigin(value) {
 
   if (origins.length === 0) return '*';
   return origins.length === 1 ? origins[0] : origins;
+}
+
+function rolloutSocketMaintenanceGate(_socket, next) {
+  if (isRolloutMaintenanceActive()) {
+    const maintenanceError = new Error('ROLLOUT_MAINTENANCE_ACTIVE');
+    maintenanceError.data = {
+      code: 'ROLLOUT_MAINTENANCE_ACTIVE',
+      status: 503,
+    };
+    return next(maintenanceError);
+  }
+  return next();
 }
 
 function createSocketServer(
@@ -48,6 +63,7 @@ function createSocketServer(
     },
   });
 
+  io.use(rolloutSocketMaintenanceGate);
   io.use(async (socket, next) => {
     try {
       await assertFoundationInitialized();
@@ -140,4 +156,5 @@ function createSocketServer(
 module.exports = {
   ACCESS_SOCKET_ROOM,
   createSocketServer,
+  rolloutSocketMaintenanceGate,
 };

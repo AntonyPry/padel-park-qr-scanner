@@ -2,6 +2,23 @@
 
 ## Before deploy
 
+### Feature 10.3 staged SaaS go-live gate
+
+- Следовать [`MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md`](./MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md); этот checklist сам по себе не разрешает `main`, deploy, production flags или второй tenant.
+- До первой migration остановить старый production process, включить `SETLY_ROLLOUT_MAINTENANCE_MODE=full-stop`, выключить bots/runners и installation provisioning, явно задать все tenant capabilities как `false`.
+- Остановить/drain внешний transcription worker и исключить replay его local
+  state; PM2 target проверять по имени/описанию, не по неразобранному numeric id.
+- Сохранить consistent raw DB + tenant storage + оба legacy roots и green `tenant:rollout:gate --phase=before-migrations` exact release SHA.
+- Восстановить raw capture в отдельную пустую installation; применить migrations/provider bootstrap, проверить manifest/attachments и получить green `--phase=restore-rehearsal` для того же baseline.
+- На production после migrations получить green `--phase=post-migrations`: business table counts/primary-key/historical-value digests unchanged, exact default Organization/Club, all migrations up, strict integrity zero findings.
+- Включать capabilities только dependency prefix с full-stop между stages. Рекомендуемые smoke checkpoints: `cache-realtime`, `provider-integrations`, `bookings-courts`, `shifts-reports`, `enforcement`.
+- Runtime rollback — только к предыдущему green flag prefix с сохранением additive schema/backfill. Schema down и selective tenant restore не являются штатным rollback.
+- Второй production tenant остаётся запрещён до final stage, permanent SaaS QA и отдельного production authorization.
+- В отдельно разрешённый production day проверить FirstVDS authoritative NS,
+  A/no-conflicting-AAAA-or-CNAME, dedicated `ops.setly.tech` Nginx/TLS и
+  Host/CORS/direct-route contract; REG.RU DNS/NS не менять, `/activate-owner`
+  оставить только на `setly.tech`.
+
 ### Final SaaS pre-main RC gate
 
 - Работать только с опубликованным exact Feature 9 SHA и isolated test DB/storage; production/main/deploy/provisioning flags этой командой не меняются.

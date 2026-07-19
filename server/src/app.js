@@ -26,9 +26,16 @@ const {
   ONBOARDING_COMPLETED_TASKS_HEADER,
   ONBOARDING_PROGRESSED_TASKS_HEADER,
 } = require('./middleware/onboarding-quest');
+const {
+  rolloutMaintenanceGate,
+} = require('./middleware/rollout-maintenance');
+const {
+  validateRolloutMaintenanceConfiguration,
+} = require('./tenant-rollout/contract');
 
 function createApp({ onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
+  validateRolloutMaintenanceConfiguration();
   const app = express();
 
   app.set('onTenantInitialized', onTenantInitialized);
@@ -39,6 +46,7 @@ function createApp({ onTenantInitialized } = {}) {
     ],
   }));
   app.use(requestTiming);
+  app.use('/api', rolloutMaintenanceGate);
   app.use('/api', tenantFoundationGate);
   const providerIngress = [
     attachRouteDeclaration,

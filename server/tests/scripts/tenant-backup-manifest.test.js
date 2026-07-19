@@ -11,7 +11,9 @@ const {
   WORKER_STATE_POLICY,
   compareInventory,
   createManifest,
+  inventoryManifestArtifact,
   inventoryPath,
+  parseExpectedEmptyLabels,
   validateAttachmentDetector,
   validateManifestSchema,
   verifyManifest,
@@ -133,6 +135,29 @@ test('backup manifest creation includes only non-secret integration metadata', a
     assert.equal(requestedAttributes.includes('credentialsEncrypted'), false);
     assert.equal(JSON.stringify(created).includes('token'), false);
     assert.equal(verifyManifest({ manifest: output }).ok, true);
+
+    fs.rmSync(path.join(data.paths.storage, 'artifact.bin'));
+    const emptyOutput = path.join(data.root, 'created-empty-manifest.json');
+    const createdEmpty = await createManifest({
+      'attachment-manifest': data.paths.detector,
+      'db-dump': data.paths.database,
+      'expect-empty': 'tenant-storage',
+      'legacy-shift-cash-root': data.paths.cash,
+      'legacy-shift-report-root': data.paths.reports,
+      output: emptyOutput,
+      'storage-root': data.paths.storage,
+    });
+    const emptyStorage = createdEmpty.artifacts.find(
+      (artifact) => artifact.label === 'tenant-storage',
+    );
+    assert.equal(emptyStorage.expectedEmpty, true);
+    assert.deepEqual(emptyStorage.files, []);
+    assert.equal(verifyManifest({ manifest: emptyOutput }).ok, true);
+    fs.writeFileSync(path.join(data.paths.storage, 'late-file.bin'), 'late');
+    assert.throws(
+      () => verifyManifest({ manifest: emptyOutput }),
+      /missing, mismatched or orphaned/,
+    );
     await assert.rejects(createManifest({
       'attachment-manifest': data.paths.detector,
       'db-dump': data.paths.database,
@@ -166,7 +191,7 @@ test('backup manifest refuses empty, missing, duplicate and unknown artifact lab
       artifacts: data.manifest.artifacts.map((artifact, index) =>
         index === 0 ? { ...artifact, files: [] } : artifact),
     }),
-    /shape/,
+    /shape|empty-state/,
   );
 });
 
@@ -209,6 +234,22 @@ test('backup inventory refuses missing, empty, symlink and special roots', () =>
   const empty = path.join(data.root, 'empty');
   fs.mkdirSync(empty);
   assert.throws(() => inventoryPath(empty, 'tenant-storage', { required: true }), /empty/);
+  const expectedEmptyLabels = parseExpectedEmptyLabels('tenant-storage');
+  const expectedEmpty = inventoryManifestArtifact(
+    empty,
+    'tenant-storage',
+    expectedEmptyLabels,
+  );
+  assert.equal(expectedEmpty.expectedEmpty, true);
+  assert.deepEqual(expectedEmpty.files, []);
+  assert.throws(
+    () => parseExpectedEmptyLabels('database'),
+    /accepts unique directory labels/,
+  );
+  assert.throws(
+    () => parseExpectedEmptyLabels('tenant-storage,tenant-storage'),
+    /accepts unique directory labels/,
+  );
   const link = path.join(data.root, 'link');
   fs.symlinkSync(data.paths.storage, link);
   assert.throws(() => inventoryPath(link, 'tenant-storage', { required: true }), /symlink|regular/);

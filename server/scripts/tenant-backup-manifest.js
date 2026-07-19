@@ -14,6 +14,11 @@ const REQUIRED_LABELS = Object.freeze([
   'legacy-shift-cash',
   'attachment-orphan-detector',
 ]);
+const EMPTY_DIRECTORY_LABELS = Object.freeze([
+  'tenant-storage',
+  'legacy-shift-reports',
+  'legacy-shift-cash',
+]);
 const SAFE_DETECTOR_COUNTS = Object.freeze([
   'checksumMismatch',
   'invalidMetadata',
@@ -102,6 +107,37 @@ function inventoryPath(root, label, { required = false } = {}) {
   };
 }
 
+function parseExpectedEmptyLabels(value) {
+  if (!value) return new Set();
+  const labels = String(value)
+    .split(',')
+    .map((label) => label.trim())
+    .filter(Boolean);
+  if (
+    new Set(labels).size !== labels.length ||
+    labels.some((label) => !EMPTY_DIRECTORY_LABELS.includes(label))
+  ) {
+    throw new Error(
+      `--expect-empty accepts unique directory labels: ${EMPTY_DIRECTORY_LABELS.join(', ')}`,
+    );
+  }
+  return new Set(labels);
+}
+
+function inventoryManifestArtifact(root, label, expectedEmptyLabels) {
+  const expectedEmpty = expectedEmptyLabels.has(label);
+  const artifact = inventoryPath(root, label, { required: !expectedEmpty });
+  if (expectedEmpty) {
+    if (!artifact.exists || artifact.files.length !== 0 || artifact.totalBytes !== 0) {
+      throw new Error(`Expected-empty backup root is missing or non-empty: ${label}`);
+    }
+    if (!fs.lstatSync(path.resolve(root)).isDirectory()) {
+      throw new Error(`Expected-empty backup root must be a directory: ${label}`);
+    }
+  }
+  return { ...artifact, expectedEmpty };
+}
+
 function validateAttachmentDetector(filePath) {
   let detector;
   try {
@@ -136,9 +172,19 @@ function validateAttachmentDetector(filePath) {
 function validateArtifactShape(artifact) {
   if (!artifact || artifact.exists !== true || typeof artifact.root !== 'string' ||
     !path.isAbsolute(artifact.root) || !Array.isArray(artifact.files) ||
-    artifact.files.length === 0 || !Number.isSafeInteger(artifact.totalBytes) ||
+    (artifact.expectedEmpty !== undefined &&
+      typeof artifact.expectedEmpty !== 'boolean') ||
+    !Number.isSafeInteger(artifact.totalBytes) ||
     artifact.totalBytes < 0) {
     throw new Error(`Backup artifact shape is invalid: ${artifact?.label || 'unknown'}`);
+  }
+  const expectedEmpty = artifact.expectedEmpty === true;
+  if (
+    (expectedEmpty && !EMPTY_DIRECTORY_LABELS.includes(artifact.label)) ||
+    (expectedEmpty && (artifact.files.length !== 0 || artifact.totalBytes !== 0)) ||
+    (!expectedEmpty && artifact.files.length === 0)
+  ) {
+    throw new Error(`Backup artifact empty-state is invalid: ${artifact.label}`);
   }
   const paths = new Set();
   let totalBytes = 0;
@@ -225,12 +271,25 @@ async function createManifest(options) {
     throw new Error('Complete backup requires output, DB, tenant storage, both legacy roots and attachment detector');
   }
   const attachmentDetector = validateAttachmentDetector(options['attachment-manifest']);
+  const expectedEmptyLabels = parseExpectedEmptyLabels(options['expect-empty']);
   const artifacts = [
-    inventoryPath(options['db-dump'], 'database', { required: true }),
-    inventoryPath(options['storage-root'], 'tenant-storage', { required: true }),
-    inventoryPath(options['legacy-shift-report-root'], 'legacy-shift-reports', { required: true }),
-    inventoryPath(options['legacy-shift-cash-root'], 'legacy-shift-cash', { required: true }),
-    inventoryPath(options['attachment-manifest'], 'attachment-orphan-detector', { required: true }),
+    inventoryManifestArtifact(options['db-dump'], 'database', expectedEmptyLabels),
+    inventoryManifestArtifact(options['storage-root'], 'tenant-storage', expectedEmptyLabels),
+    inventoryManifestArtifact(
+      options['legacy-shift-report-root'],
+      'legacy-shift-reports',
+      expectedEmptyLabels,
+    ),
+    inventoryManifestArtifact(
+      options['legacy-shift-cash-root'],
+      'legacy-shift-cash',
+      expectedEmptyLabels,
+    ),
+    inventoryManifestArtifact(
+      options['attachment-manifest'],
+      'attachment-orphan-detector',
+      expectedEmptyLabels,
+    ),
   ];
   const manifest = {
     artifacts,
@@ -269,9 +328,15 @@ function verifyManifest(options) {
   };
   const results = manifest.artifacts.map((artifact) => {
     const verificationRoot = overrideByLabel[artifact.label] || artifact.root;
+    const current = inventoryPath(verificationRoot, artifact.label, {
+      required: !artifact.expectedEmpty,
+    });
+    if (!current.exists) {
+      throw new Error(`Expected-empty backup root is missing: ${artifact.label}`);
+    }
     return compareInventory(
       artifact,
-      inventoryPath(verificationRoot, artifact.label, { required: artifact.exists }),
+      current,
     );
   });
   const detectorArtifact = manifest.artifacts.find(
@@ -308,12 +373,15 @@ if (require.main === module) {
 }
 
 module.exports = {
+  EMPTY_DIRECTORY_LABELS,
   MANIFEST_SCHEMA,
   REQUIRED_LABELS,
   WORKER_STATE_POLICY,
   compareInventory,
   createManifest,
+  inventoryManifestArtifact,
   inventoryPath,
+  parseExpectedEmptyLabels,
   validateAttachmentDetector,
   validateManifestSchema,
   verifyManifest,

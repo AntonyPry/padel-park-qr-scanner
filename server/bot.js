@@ -29,6 +29,9 @@ const {
 const {
   assertLegacyDownstreamReady,
 } = require('./src/provider-integrations/runtime');
+const {
+  isRolloutMaintenanceActive,
+} = require('./src/tenant-rollout/contract');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
@@ -228,6 +231,10 @@ async function startVkBot() {
 
 async function startBackgroundComponents() {
   await assertTenantFoundationInitialized();
+  if (isRolloutMaintenanceActive()) {
+    console.log('🛑 Bots/runners отключены: SETLY_ROLLOUT_MAINTENANCE_MODE=full-stop.');
+    return;
+  }
   if (isTenantFilesWorkersEnabled() && !isTenantProviderIntegrationsEnabled()) {
     const deferred = Object.entries(BACKGROUND_COMPONENT_POLICIES)
       .filter(([, policy]) => policy.classification === 'deferred')

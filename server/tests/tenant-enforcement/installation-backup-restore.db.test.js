@@ -17,6 +17,10 @@ const {
 const {
   buildTenantStorageKey,
 } = require('../../src/storage/tenant-storage');
+const {
+  collectInstallationIdentitySnapshot,
+  compareInstallationIdentitySnapshots,
+} = require('../../src/tenant-rollout/preservation-evidence');
 
 function mysqlArgs(database) {
   const args = [
@@ -169,6 +173,9 @@ test('Feature 9 installation-wide backup/restore rehearsal', async () => {
     const fixture = await seedTwoTenantFixture(source);
     const sourceCounts = await tableCounts(source);
     const sourceIdentity = await tenantIdentityInventory(source);
+    const sourcePreservation = await collectInstallationIdentitySnapshot({
+      sequelize: source,
+    });
 
     const sourceStorage = path.join(tempRoot, 'source-tenant-storage');
     const sourceLegacyReports = path.join(tempRoot, 'source-legacy-reports');
@@ -218,6 +225,56 @@ test('Feature 9 installation-wide backup/restore rehearsal', async () => {
     restored = connect(restoreDatabase);
     assert.deepEqual(await tableCounts(restored), sourceCounts);
     assert.deepEqual(await tenantIdentityInventory(restored), sourceIdentity);
+    await restored.query(
+      'ALTER TABLE `Users` ADD COLUMN `rolloutEvidenceOnly` VARCHAR(16) NULL',
+    );
+    const preservedColumnsByTable = Object.fromEntries(
+      sourcePreservation.tables.map((table) => [
+        table.tableName,
+        table.preservedColumns,
+      ]),
+    );
+    const restoredPreservation = await collectInstallationIdentitySnapshot({
+      preservedColumnsByTable,
+      sequelize: restored,
+    });
+    const preservation = compareInstallationIdentitySnapshots(
+      sourcePreservation,
+      restoredPreservation,
+    );
+    assert.equal(preservation.ok, true, JSON.stringify(preservation.findings, null, 2));
+
+    const [historicalRows] = await restored.query(
+      'SELECT `id`, `name` FROM `Users` ORDER BY `id` LIMIT 1',
+    );
+    assert.equal(historicalRows.length, 1);
+    const historicalRow = historicalRows[0];
+    await restored.query(
+      'UPDATE `Users` SET `name` = :changedName WHERE `id` = :id',
+      {
+        replacements: {
+          changedName: `${historicalRow.name} changed`,
+          id: historicalRow.id,
+        },
+      },
+    );
+    const changedPreservation = await collectInstallationIdentitySnapshot({
+      preservedColumnsByTable,
+      sequelize: restored,
+    });
+    const changedComparison = compareInstallationIdentitySnapshots(
+      sourcePreservation,
+      changedPreservation,
+    );
+    assert.equal(changedComparison.ok, false);
+    assert.equal(changedComparison.findings.some(
+      (finding) => finding.code === 'ROLLOUT_HISTORICAL_DATA_CHANGED',
+    ), true);
+    await restored.query(
+      'UPDATE `Users` SET `name` = :name WHERE `id` = :id',
+      { replacements: { id: historicalRow.id, name: historicalRow.name } },
+    );
+    await restored.query('ALTER TABLE `Users` DROP COLUMN `rolloutEvidenceOnly`');
 
     const finalMigration = require('../../migrations/20260720100000-add-final-tenant-enforcement');
     await finalMigration.up(restored.getQueryInterface(), SequelizePackage);

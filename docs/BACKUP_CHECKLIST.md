@@ -2,6 +2,17 @@
 
 ## Complete Setly backup
 
+Для первого production multi-tenant cutover backup начинается до tenant migrations:
+
+- при остановленном старом process снять raw capture и `tenant:rollout:gate --phase=before-migrations`;
+- восстановить его в пустую installation и получить связанный `--phase=restore-rehearsal` report;
+- только затем принимать production `--phase=post-migrations` report;
+- каждый report должен ссылаться на тот же immutable baseline/artifact digest,
+  clean checkout и exact release SHA; before/post evidence сравнивает counts,
+  primary keys и значения всех исторических колонок business tables.
+
+Полный порядок: [`MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md`](./MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md).
+
 - Put API mutations, provider ingress and background workers into maintenance mode for the capture window. A database dump and file snapshot taken at unrelated times are not a consistent backup.
 - Create a database dump **and a consistent copy of uploads** before every production deploy. A DB-only backup is incomplete.
 - Include legacy `server/var/shift-report-attachments`, legacy `server/var/shift-cash-attachments` and tenant `SETLY_STORAGE_ROOT` (default `server/var/tenant-storage`).
@@ -20,7 +31,7 @@ mysqldump --single-transaction --routines --triggers --default-character-set=utf
 
 The uploads manifest must contain schema/version, `generatedAt`, storage root, and relative opaque storage object keys with file counts/bytes/checksums grouped by tenant and domain. It must not copy user-supplied original filename metadata, credentials, phones, recording URLs or transcript/audio content.
 
-The installation manifest has five mandatory, unique artifact labels: `database`, `tenant-storage`, `legacy-shift-reports`, `legacy-shift-cash` and `attachment-orphan-detector`. Empty inventories, unknown or duplicate labels, missing roots, symlinks and special files are refused. Restore overrides must map one-to-one to these labels; they cannot substitute a different artifact class.
+The installation manifest has five mandatory, unique artifact labels: `database`, `tenant-storage`, `legacy-shift-reports`, `legacy-shift-cash` and `attachment-orphan-detector`. Empty inventories are refused by default. A directory root that is known to be legitimately empty can be declared explicitly with comma-separated `--expect-empty=tenant-storage,legacy-shift-reports,legacy-shift-cash`; only listed real directories are accepted, they must contain zero files, and the empty state is rechecked on restore. Database dump and attachment detector can never use this exception. Unknown or duplicate labels, missing roots, symlinks and special files are refused. Restore overrides must map one-to-one to these labels; they cannot substitute a different artifact class.
 
 Create and verify the installation-wide manifest after the dump and storage snapshot are complete:
 

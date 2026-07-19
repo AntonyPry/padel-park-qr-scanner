@@ -368,6 +368,16 @@ DB metadata содержит organization/club; download сначала пров
 - Installation restore rehearsal охватывает consistent DB dump, tenant storage и legacy upload roots, non-secret integration identity metadata, worker rebuild policy, checksums и detector. Restore разрешен только целиком в fresh isolated installation; tenant-selective restore остаётся unsupported.
 - Воспроизводимый pre-main gate: из `server/` выполнить `npm run tenant:rc -- --output=/private/tmp/setly-f9-rc-<id>`. Команда отказывается от `NODE_ENV=production`, production-like `DB_NAME` и небезопасного output path, создаёт isolated DB/storage names и очищает временную инфраструктуру в `finally`.
 
+### Feature 10.3 production rollout contract
+
+- Канонический staged cutover, historical singleton preservation evidence, maintenance barrier, rollback и second-tenant boundary описаны в [`MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md`](./MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md).
+- Production migration должна доказать unchanged counts, primary-key sets и
+  значения всех существовавших до migrations колонок прежних business tables
+  до открытия трафика; default tenant control rows проверяются отдельно exact
+  foundation/integrity gates.
+- Capability flags включаются только dependency prefix. Runtime rollback возвращает предыдущий green prefix и не удаляет additive tenant attribution.
+- Второй production tenant запрещён до final Feature 10.3 stage, permanent SaaS QA и отдельного production authorization.
+
 ## 5. Cross-tenant invariants
 
 1. Каждая новая модель, endpoint, event, job, cache key, file и export явно декларирует scope: `global | organization | club | membership`.
@@ -380,7 +390,7 @@ DB metadata содержит organization/club; download сначала пров
 8. Изоляционные тесты используют минимум две organizations, одинаковые natural keys и пользователя с разными ролями/club access; до Feature 9 это разрешено только в isolated ephemeral test DB.
 9. Cross-organization join запрещен по умолчанию. Разрешение требует отдельного ADR и platform-level authorization.
 10. SaaS billing entities (`SaasPlan`, `OrganizationSubscription`, `UsageRecord`, SaaS `Invoice`) не создаются в этом эпике.
-11. До acceptance Feature 9 production schema содержит ровно default Organization и default Club; provisioning второго tenant запрещен.
+11. До final acceptance Feature 10.3 и отдельного production authorization production schema содержит ровно default Organization и default Club; provisioning второго tenant запрещен.
 12. Organization/club request без обязательных explicit tenant headers отклоняется, даже если server хранит last-selected context.
 13. После bootstrap ни одна Organization, включая inactive/archived, не может остаться без active owner Membership. До bootstrap допустима только полностью пустая тройка Accounts/Memberships/MembershipClubAccesses.
 

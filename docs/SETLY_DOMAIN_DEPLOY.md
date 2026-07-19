@@ -1,28 +1,55 @@
 # Setly Domain Deployment
 
-Production domain: `setly.tech`.
+Production domain: `setly.tech`. The dedicated installation-operator hostname is
+`ops.setly.tech`.
 
 ## DNS
 
-Required records:
+Verified public DNS on July 19, 2026:
 
 - `setly.tech A 155.212.163.43`
-- `www.setly.tech A 155.212.163.43` or a wildcard `*.setly.tech A 155.212.163.43`
+- `www.setly.tech A 155.212.163.43`
+- authoritative NS: `ns1.firstvds.ru`, `ns2.firstvds.ru`
+- `ops.setly.tech` and random subdomains resolve to `155.212.163.43` through
+  the existing wildcard record.
 
-The wildcard DNS record does not automatically create a wildcard TLS certificate. The production certificate only needs `setly.tech` and `www.setly.tech` for the current deployment.
+FirstVDS is the active DNS zone owner while these NS are authoritative. Do not
+edit REG.RU DNS records or change NS delegation. No DNS mutation is required for
+basic `ops.setly.tech` resolution. For explicit production ownership, add in the
+FirstVDS DNS panel an `A` record with host `ops`, value `155.212.163.43`, TTL
+`3600`; it overrides the wildcard for this hostname.
+
+The wildcard DNS record does not automatically create a wildcard TLS
+certificate. Use a separate Nginx vhost and preferably a separate certificate
+for `ops.setly.tech`.
 
 ## Nginx
 
 The frontend is served from `/opt/padel-park-qr-scanner/client/dist`. API and Socket.IO are proxied to the Node process on `127.0.0.1:3000`.
 
-The initial HTTP bootstrap configuration is `deploy/nginx/setly.tech.conf`. Install it once before the first Certbot run with:
+The initial HTTP bootstrap configurations are `deploy/nginx/setly.tech.conf`
+and `deploy/nginx/ops.setly.tech.conf`. The operator vhost exposes only the
+installation UI, the required operator provisioning API paths and `/api/health`;
+it does not expose ordinary CRM, Socket.IO or `/activate-owner`. The product
+vhost denies `/installation` and operator API paths while keeping public owner
+activation available.
+
+For a fresh installation, install both bootstrap files only during a separately
+authorized production change:
 
 ```bash
 install -m 0644 deploy/nginx/setly.tech.conf /etc/nginx/sites-available/setly.tech
+install -m 0644 deploy/nginx/ops.setly.tech.conf /etc/nginx/sites-available/ops.setly.tech
 ln -sfn /etc/nginx/sites-available/setly.tech /etc/nginx/sites-enabled/setly.tech
+ln -sfn /etc/nginx/sites-available/ops.setly.tech /etc/nginx/sites-enabled/ops.setly.tech
 nginx -t
 systemctl reload nginx
 ```
+
+For an existing Certbot-managed production vhost, do not reinstall
+`deploy/nginx/setly.tech.conf`. Back up the installed file and merge only its
+new `/installation` and operator-API deny locations. Install
+`ops.setly.tech.conf` as a new vhost, then run `nginx -t` before reload.
 
 Certbot modifies the installed runtime file when it enables TLS. Do not copy the HTTP bootstrap file over `/etc/nginx/sites-available/setly.tech` after certificate issuance. After the first successful HTTPS setup, capture a sanitized final TLS configuration in infrastructure code without certificate private keys or other secrets.
 
@@ -37,6 +64,12 @@ server {
     root /opt/padel-park-qr-scanner/client/dist;
     index index.html;
     client_max_body_size 64m;
+
+    location = /installation { return 404; }
+    location ^~ /installation/ { return 404; }
+    location ~ ^/api/installation/provisioning/(status|session|snapshot|organizations(?:/|$)) {
+        return 404;
+    }
 
     location /api/ {
         proxy_pass http://127.0.0.1:3000;
@@ -73,11 +106,28 @@ Set these values in the production server environment without committing secrets
 ```dotenv
 CLIENT_ORIGIN=https://setly.tech,https://www.setly.tech
 CORS_ORIGIN=https://setly.tech,https://www.setly.tech
+HOST=127.0.0.1
 BEELINE_CALLBACK_URL=https://setly.tech/api/integrations/beeline/events
+PUBLIC_APP_URL=https://setly.tech
+INSTALLATION_ACTIVATION_BASE_URL=https://setly.tech
 ```
+
+`ops.setly.tech` does not use Socket.IO and its operator API is same-origin, so
+do not add it to `CLIENT_ORIGIN` merely because the hostname exists. The
+operator token remains in browser `sessionStorage`, which scopes it to the
+`https://ops.setly.tech` origin; the operator vhost removes backend CORS response
+headers so another browser origin cannot read provisioning responses.
+The Node process must listen on `127.0.0.1:3000`; do not expose its port through
+the public firewall, because direct backend access would bypass Nginx host/path
+separation.
 
 After changing `BEELINE_CALLBACK_URL`, restart the server and update the XSI subscription from the Beeline integration modal so the provider starts sending events to HTTPS.
 
 ## Verification
 
-Verify DNS, Nginx, HTTPS, API, SPA fallback and Socket.IO after deployment. Keep the old IP available only as an emergency diagnostic endpoint; normal users should use `https://setly.tech`.
+Verify DNS, both Nginx vhosts, HTTPS, API, SPA fallback and Socket.IO after
+deployment. Issue the operator certificate through the existing contour with
+`certbot --nginx -d ops.setly.tech`, then verify renewal with
+`certbot renew --dry-run`. Keep the old IP available only as an emergency
+diagnostic endpoint; normal users use `https://setly.tech`, and authorized
+installation operators use `https://ops.setly.tech`.
