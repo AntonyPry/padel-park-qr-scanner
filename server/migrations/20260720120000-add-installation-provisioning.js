@@ -548,12 +548,15 @@ async function reservedArtifacts(queryInterface) {
   const tableNames = Object.values(TABLES);
   const triggerNames = TRIGGERS.map((item) => item.name);
   const constraintNames = FOREIGN_KEYS.map((item) => item.name);
-  const indexNames = INDEXES.map((item) => item.name);
   return Promise.all([
     rows(queryInterface, `SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (:tableNames)`, { tableNames }),
     rows(queryInterface, `SELECT TRIGGER_NAME FROM INFORMATION_SCHEMA.TRIGGERS WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME IN (:triggerNames)`, { triggerNames }),
     rows(queryInterface, `SELECT CONSTRAINT_NAME FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE WHERE CONSTRAINT_SCHEMA=DATABASE() AND CONSTRAINT_NAME IN (:constraintNames)`, { constraintNames }),
-    rows(queryInterface, `SELECT TABLE_NAME, INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME IN (:indexNames)`, { indexNames }),
+    Promise.all(INDEXES.map((item) => rows(queryInterface, `
+      SELECT TABLE_NAME, INDEX_NAME
+        FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table AND INDEX_NAME=:name
+    `, item))).then((results) => results.flat()),
   ]);
 }
 

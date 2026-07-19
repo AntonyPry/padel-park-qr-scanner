@@ -89,6 +89,27 @@ artifacts created by the current invocation and restores the legacy global
 skill-name unique. Up and down are re-applicable. Down refuses while a second
 Organization exists.
 
+MySQL index identity is always evaluated as `(table, index name)`, because
+index names are table-local. Schema-global lookups remain only for artifacts
+whose MySQL identity is actually schema-global, including trigger and foreign
+key constraint names. A production restore rehearsal proved this boundary with
+canonical `TrainingSkills.training_skills_name_unique(name)` and an unrelated
+operator-owned `TrainingSkillsBackup_20260711` carrying the same local index
+name: the authoritative table migrates while the backup table schema, 18 rows,
+and checksum remain unchanged. Wrong uniqueness, columns/order, prefix,
+direction, index type, or visibility on authoritative `TrainingSkills` still
+classify as `partial` and are refused before mutation.
+
+The same table-scoped index lookup rule is applied to the later training
+operations, client-money, shifts/reports, AuditLog, and installation-provisioning
+tenant migrations and to bookings cleanup ownership checks. The retained
+rehearsal inventory confirmed the expected Feature 7.1 legacy uniques
+(`EvotorSaleSettings.itemName`,
+`SubscriptionTypes.subscription_types_name_unique`, and both Certificates
+`code` uniques), definition-discovered onboarding uniques, and the canonical
+`AuditLogs.accountId → Accounts.id` legacy FK; no additional compatibility
+exception or definition broadening is required.
+
 ## API, UI, cache, realtime, and exports
 
 - Existing response shapes and UI behavior are unchanged; tenant fields stay

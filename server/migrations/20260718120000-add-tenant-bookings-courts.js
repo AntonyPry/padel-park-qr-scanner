@@ -534,8 +534,10 @@ async function readInventory(queryInterface) {
     `SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME, SUB_PART, COLLATION, INDEX_TYPE
        FROM INFORMATION_SCHEMA.STATISTICS
       WHERE TABLE_SCHEMA = DATABASE()
+        AND TABLE_NAME IN (${tablePlaceholders})
         AND (INDEX_NAME LIKE 'uq\\_mt\\_booking%' ESCAPE '\\\\'
-          OR INDEX_NAME LIKE 'idx\\_mt\\_booking%' ESCAPE '\\\\')`);
+          OR INDEX_NAME LIKE 'idx\\_mt\\_booking%' ESCAPE '\\\\')`,
+    ROOT_TABLES);
   const foreignKeys = await queryRows(queryInterface,
     `SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME, k.ORDINAL_POSITION,
             k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
@@ -874,12 +876,9 @@ async function trackCreatedArtifact(queryInterface, target, kind, item) {
 async function readSameNameConflicts(queryInterface, kind, item) {
   if (queryInterface.sequelize.getDialect() !== 'mysql') return [];
   if (kind === 'index') {
-    return queryRows(queryInterface,
-      `SELECT TABLE_NAME, INDEX_NAME
-         FROM INFORMATION_SCHEMA.STATISTICS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND INDEX_NAME = :name
-          AND TABLE_NAME <> :table`, item);
+    // MySQL index identity is table-local, so an operator-owned backup table
+    // may legally reuse this name without conflicting with this artifact.
+    return [];
   }
   if (kind === 'constraint') {
     return queryRows(queryInterface,

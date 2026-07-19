@@ -218,14 +218,15 @@ async function getTableIndexes(queryInterface, table) {
   `, { table });
 }
 
-async function getIndex(queryInterface, name) {
+async function getIndex(queryInterface, table, name) {
   return selectRows(queryInterface, `
     SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
            SUB_PART, COLLATION, INDEX_TYPE
     FROM INFORMATION_SCHEMA.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE() AND INDEX_NAME = :name
-    ORDER BY TABLE_NAME, SEQ_IN_INDEX
-  `, { name });
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = :table AND INDEX_NAME = :name
+    ORDER BY SEQ_IN_INDEX
+  `, { name, table });
 }
 
 async function getForeignKey(queryInterface, name) {
@@ -383,8 +384,7 @@ async function readArtifact(queryInterface, kind, item) {
     return row ? [row] : [];
   }
   if (kind === 'index') {
-    return (await getIndex(queryInterface, item.name))
-      .filter((row) => sameIdentifier(rowValue(row, 'TABLE_NAME'), item.table));
+    return getIndex(queryInterface, item.table, item.name);
   }
   if (kind === 'foreignKey') {
     return (await getForeignKey(queryInterface, item.name))
@@ -496,7 +496,8 @@ async function captureLegacyAccountForeignKeyRestoration(queryInterface, rows = 
 async function classifyState(queryInterface) {
   const columns = await Promise.all(Object.entries(COLUMNS).map(([name, expected]) =>
     getColumn(queryInterface, expected.table, name)));
-  const indexes = await Promise.all(Object.keys(INDEXES).map((name) => getIndex(queryInterface, name)));
+  const indexes = await Promise.all(Object.entries(INDEXES).map(([name, expected]) =>
+    getIndex(queryInterface, expected.table, name)));
   const foreignKeys = await Promise.all(Object.keys(FOREIGN_KEYS).map((name) => getForeignKey(queryInterface, name)));
   const triggers = await Promise.all(Object.keys(TRIGGERS).map((name) => getTrigger(queryInterface, name)));
   const accountForeignKeys = await getAccountForeignKeys(queryInterface);

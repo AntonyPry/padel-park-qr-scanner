@@ -12,6 +12,8 @@ const COLUMNS = Object.freeze([
   ['TrainingExercises', 'organizationId'],
 ]);
 
+const INDEX_VISIBILITY_SUPPORT = new WeakMap();
+
 const INDEXES = Object.freeze({
   training_skills_org_id_unique: {
     columns: ['organizationId', 'id'],
@@ -347,6 +349,10 @@ function value(row, key) {
   return row[key] ?? row[key.toLowerCase()] ?? null;
 }
 
+function sameIdentifier(left, right) {
+  return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+}
+
 async function getColumn(queryInterface, table, column) {
   const rows = await selectRows(queryInterface, `
     SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE,
@@ -360,14 +366,37 @@ async function getColumn(queryInterface, table, column) {
   return rows[0] || null;
 }
 
-async function getIndex(queryInterface, name) {
+async function supportsIndexVisibility(queryInterface) {
+  if (INDEX_VISIBILITY_SUPPORT.has(queryInterface)) {
+    return INDEX_VISIBILITY_SUPPORT.get(queryInterface);
+  }
+  let supported;
+  try {
+    await queryInterface.sequelize.query(
+      'SELECT IS_VISIBLE FROM INFORMATION_SCHEMA.STATISTICS LIMIT 0',
+    );
+    supported = true;
+  } catch (error) {
+    const code = error?.parent?.code || error?.original?.code || error?.code;
+    if (!['ER_BAD_FIELD_ERROR', 'ER_PARSE_ERROR'].includes(code)) throw error;
+    supported = false;
+  }
+  INDEX_VISIBILITY_SUPPORT.set(queryInterface, supported);
+  return supported;
+}
+
+async function getIndex(queryInterface, table, name) {
+  const visibility = await supportsIndexVisibility(queryInterface)
+    ? 'IS_VISIBLE'
+    : "'YES' AS IS_VISIBLE";
   const rows = await selectRows(queryInterface, `
     SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
-           SUB_PART, COLLATION, INDEX_TYPE
+           SUB_PART, COLLATION, INDEX_TYPE, ${visibility}
     FROM INFORMATION_SCHEMA.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE() AND INDEX_NAME = :name
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = :table AND INDEX_NAME = :name
     ORDER BY SEQ_IN_INDEX
-  `, { name });
+  `, { name, table });
   return rows;
 }
 
@@ -443,6 +472,7 @@ function normalizeIndexRows(rows) {
     columnName: value(row, 'COLUMN_NAME'),
     indexName: value(row, 'INDEX_NAME'),
     indexType: String(value(row, 'INDEX_TYPE') || '').toUpperCase(),
+    isVisible: String(value(row, 'IS_VISIBLE') || '').toUpperCase(),
     nonUnique: Number(value(row, 'NON_UNIQUE')),
     sequence: Number(value(row, 'SEQ_IN_INDEX')),
     subPart: value(row, 'SUB_PART') === null ? null : Number(value(row, 'SUB_PART')),
@@ -497,8 +527,7 @@ async function readArtifactRows(queryInterface, kind, item) {
     return row ? [row] : [];
   }
   if (kind === 'index') {
-    const rows = await getIndex(queryInterface, item.name);
-    return rows.filter((row) => value(row, 'TABLE_NAME') === item.table);
+    return getIndex(queryInterface, item.table, item.name);
   }
   if (kind === 'constraint') {
     return selectRows(queryInterface, `
@@ -516,17 +545,18 @@ async function readArtifactRows(queryInterface, kind, item) {
   }
   if (kind === 'trigger') {
     const row = await getTrigger(queryInterface, item.name);
-    return row && value(row, 'EVENT_OBJECT_TABLE') === item.table ? [row] : [];
+    return row && sameIdentifier(value(row, 'EVENT_OBJECT_TABLE'), item.table)
+      ? [row]
+      : [];
   }
   throw migrationError(`Unknown methodology artifact kind: ${kind}`);
 }
 
 async function readSameNameConflicts(queryInterface, kind, item) {
   if (kind === 'index') {
-    return selectRows(queryInterface, `
-      SELECT TABLE_NAME, INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
-      WHERE TABLE_SCHEMA = DATABASE() AND INDEX_NAME = :name AND TABLE_NAME <> :table
-    `, item);
+    // MySQL index names are table-local. A same-named index on an operator
+    // backup table is unrelated ownership, not a collision.
+    return [];
   }
   if (kind === 'constraint') {
     return selectRows(queryInterface, `
@@ -572,21 +602,22 @@ function columnIsCanonical(column) {
 function indexIsCanonical(rows, expected) {
   return rows.length === expected.columns.length &&
     rows.every((row, index) =>
-      row.TABLE_NAME === expected.table &&
+      sameIdentifier(row.TABLE_NAME, expected.table) &&
       Number(row.NON_UNIQUE) === (expected.unique ? 0 : 1) &&
       Number(row.SEQ_IN_INDEX) === index + 1 &&
       row.COLUMN_NAME === expected.columns[index] &&
       row.SUB_PART === null &&
       ['A', null].includes(row.COLLATION) &&
-      row.INDEX_TYPE === 'BTREE');
+      row.INDEX_TYPE === 'BTREE' &&
+      row.IS_VISIBLE === 'YES');
 }
 
 function foreignKeyIsCanonical(row, expected) {
   return Boolean(
     row &&
-      row.TABLE_NAME === expected.table &&
+      sameIdentifier(row.TABLE_NAME, expected.table) &&
       row.COLUMN_NAME === expected.column &&
-      row.REFERENCED_TABLE_NAME === expected.referencedTable &&
+      sameIdentifier(row.REFERENCED_TABLE_NAME, expected.referencedTable) &&
       row.REFERENCED_COLUMN_NAME === expected.referencedColumn &&
       row.UPDATE_RULE === expected.onUpdate &&
       row.DELETE_RULE === expected.onDelete,
@@ -596,7 +627,7 @@ function foreignKeyIsCanonical(row, expected) {
 function triggerIsCanonical(row, expected) {
   return Boolean(
     row &&
-      row.EVENT_OBJECT_TABLE === expected.table &&
+      sameIdentifier(row.EVENT_OBJECT_TABLE, expected.table) &&
       row.EVENT_MANIPULATION === expected.event &&
       row.ACTION_TIMING === 'BEFORE' &&
       normalizeSql(row.ACTION_STATEMENT) === normalizeSql(expected.body),
@@ -604,7 +635,11 @@ function triggerIsCanonical(row, expected) {
 }
 
 async function legacyUniqueIsCanonical(queryInterface) {
-  const rows = await getIndex(queryInterface, 'training_skills_name_unique');
+  const rows = await getIndex(
+    queryInterface,
+    'TrainingSkills',
+    'training_skills_name_unique',
+  );
   return indexIsCanonical(rows, {
     columns: ['name'],
     table: 'TrainingSkills',
@@ -617,7 +652,8 @@ async function classifyState(queryInterface) {
     COLUMNS.map(([table, column]) => getColumn(queryInterface, table, column)),
   );
   const indexRows = await Promise.all(
-    Object.keys(INDEXES).map((name) => getIndex(queryInterface, name)),
+    Object.entries(INDEXES).map(([name, expected]) =>
+      getIndex(queryInterface, expected.table, name)),
   );
   const fkRows = await Promise.all(
     Object.keys(FOREIGN_KEYS).map((name) => getForeignKey(queryInterface, name)),
@@ -984,8 +1020,10 @@ module.exports = {
     artifactSignature,
     classifyState,
     cleanupInvocation,
+    indexIsCanonical,
     normalizeSql,
     readArtifactRows,
     readSameNameConflicts,
+    supportsIndexVisibility,
   },
 };

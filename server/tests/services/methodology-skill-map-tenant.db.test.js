@@ -65,6 +65,34 @@ async function selectOne(sequelize, sql, replacements = {}) {
   return rows[0] || null;
 }
 
+async function snapshotTables(sequelize, tables) {
+  const snapshot = {};
+  for (const table of tables) {
+    const [createRows] = await sequelize.query(`SHOW CREATE TABLE \`${table}\``);
+    const rows = await sequelize.query(`SELECT * FROM \`${table}\` ORDER BY id`, {
+      type: SequelizePackage.QueryTypes.SELECT,
+    });
+    const indexes = await sequelize.query(`
+      SELECT INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
+             SUB_PART, COLLATION, INDEX_TYPE
+      FROM INFORMATION_SCHEMA.STATISTICS
+      WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table
+      ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    `, {
+      replacements: { table },
+      type: SequelizePackage.QueryTypes.SELECT,
+    });
+    const [checksumRows] = await sequelize.query(`CHECKSUM TABLE \`${table}\``);
+    snapshot[table] = {
+      checksum: checksumRows[0]?.Checksum ?? checksumRows[0]?.checksum ?? null,
+      create: createRows[0]?.['Create Table'],
+      indexes,
+      rows,
+    };
+  }
+  return JSON.stringify(snapshot);
+}
+
 function restoreEnv(previous) {
   for (const [name, value] of Object.entries(previous)) {
     if (value === undefined) delete process.env[name];
@@ -123,12 +151,140 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       removedLegacyUnique: null,
       triggers: [],
     });
+    const productionShapeNow = new Date('2026-07-11T12:00:00.000Z');
+    await queryInterface.bulkInsert('TrainingSkills', Array.from(
+      { length: 18 },
+      (_value, index) => ({
+        createdAt: productionShapeNow,
+        description: `Production-shaped methodology row ${index + 1}`,
+        direction: 'technique',
+        name: `P${String(index + 1).padStart(2, '0')} production skill`,
+        status: 'active',
+        updatedAt: productionShapeNow,
+      }),
+    ));
+    await schema.query(
+      'CREATE TABLE `TrainingSkillsBackup_20260711` LIKE `TrainingSkills`',
+    );
+    await schema.query(
+      'INSERT INTO `TrainingSkillsBackup_20260711` SELECT * FROM `TrainingSkills`',
+    );
+    const backupSnapshot = await snapshotTables(schema, [
+      'TrainingSkillsBackup_20260711',
+    ]);
+
+    const canonicalIndexRow = {
+      COLLATION: 'A',
+      COLUMN_NAME: 'name',
+      INDEX_TYPE: 'BTREE',
+      IS_VISIBLE: 'YES',
+      NON_UNIQUE: 0,
+      SEQ_IN_INDEX: 1,
+      SUB_PART: null,
+      TABLE_NAME: 'TrainingSkills',
+    };
+    const canonicalLegacyIndex = {
+      columns: ['name'],
+      table: 'TrainingSkills',
+      unique: true,
+    };
+    assert.equal(migration.__testing.indexIsCanonical(
+      [canonicalIndexRow],
+      canonicalLegacyIndex,
+    ), true);
+    for (const lookalike of [
+      { ...canonicalIndexRow, COLLATION: 'D' },
+      { ...canonicalIndexRow, INDEX_TYPE: 'HASH' },
+      { ...canonicalIndexRow, IS_VISIBLE: 'NO' },
+      { ...canonicalIndexRow, NON_UNIQUE: 1 },
+      { ...canonicalIndexRow, SEQ_IN_INDEX: 2 },
+      { ...canonicalIndexRow, SUB_PART: 32 },
+      { ...canonicalIndexRow, TABLE_NAME: 'TrainingSkillsBackup_20260711' },
+    ]) {
+      assert.equal(migration.__testing.indexIsCanonical(
+        [lookalike],
+        canonicalLegacyIndex,
+      ), false);
+    }
+
+    const productionLegacyRows = await migration.__testing.readArtifactRows(
+      queryInterface,
+      'index',
+      { name: 'training_skills_name_unique', table: 'TrainingSkills' },
+    );
+    assert.equal(migration.__testing.indexIsCanonical(
+      productionLegacyRows,
+      canonicalLegacyIndex,
+    ), true, JSON.stringify(productionLegacyRows));
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await migration.up(queryInterface, SequelizePackage);
+    assert.equal(await snapshotTables(schema, [
+      'TrainingSkillsBackup_20260711',
+    ]), backupSnapshot);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
     await migration.up(queryInterface, SequelizePackage);
     await migration.down(queryInterface, SequelizePackage);
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
+    assert.equal(await snapshotTables(schema, [
+      'TrainingSkillsBackup_20260711',
+    ]), backupSnapshot);
+    await schema.query(`
+      DELETE FROM TrainingSkills
+      WHERE description LIKE 'Production-shaped methodology row %'
+    `);
+
+    const canonicalLegacyIndexName = 'training_skills_name_unique';
+    const assertAuthoritativeLookalikeRefused = async () => {
+      const before = await snapshotTables(schema, [
+        'TrainingExercises',
+        'TrainingSkills',
+        'TrainingSkillsBackup_20260711',
+      ]);
+      await assert.rejects(
+        migration.up(queryInterface, SequelizePackage),
+        /refused partial schema/,
+      );
+      assert.equal(await snapshotTables(schema, [
+        'TrainingExercises',
+        'TrainingSkills',
+        'TrainingSkillsBackup_20260711',
+      ]), before);
+    };
+    await queryInterface.removeIndex('TrainingSkills', canonicalLegacyIndexName);
+    const authoritativeLookalikes = [
+      async () => queryInterface.addIndex('TrainingSkills', ['name'], {
+        name: canonicalLegacyIndexName,
+      }),
+      async () => schema.query(
+        `CREATE UNIQUE INDEX \`${canonicalLegacyIndexName}\`
+         ON \`TrainingSkills\` (\`name\`(4))`,
+      ),
+      async () => queryInterface.addIndex('TrainingSkills', ['name', 'status'], {
+        name: canonicalLegacyIndexName,
+        unique: true,
+      }),
+    ];
+    if (await migration.__testing.supportsIndexVisibility(queryInterface)) {
+      authoritativeLookalikes.push(async () => {
+        await queryInterface.addIndex('TrainingSkills', ['name'], {
+          name: canonicalLegacyIndexName,
+          unique: true,
+        });
+        await schema.query(
+          `ALTER TABLE \`TrainingSkills\`
+           ALTER INDEX \`${canonicalLegacyIndexName}\` INVISIBLE`,
+        );
+      });
+    }
+    for (const createLookalike of authoritativeLookalikes) {
+      await createLookalike();
+      await assertAuthoritativeLookalikeRefused();
+      await queryInterface.removeIndex('TrainingSkills', canonicalLegacyIndexName);
+    }
+    await queryInterface.addIndex('TrainingSkills', ['name'], {
+      name: canonicalLegacyIndexName,
+      unique: true,
+    });
 
     const legacyNow = new Date();
     await queryInterface.bulkInsert('TrainingSkills', [{
@@ -201,6 +357,9 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
         (await migration.__testing.classifyState(queryInterface)).state,
         'legacy',
       );
+      assert.equal(await snapshotTables(schema, [
+        'TrainingSkillsBackup_20260711',
+      ]), backupSnapshot);
     }
 
     const columnTracker = cleanupTracker();
@@ -390,6 +549,9 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     await applyAcceptedTenantMigrations(queryInterface, {
       afterFile: '20260718160000-add-tenant-training-notes-plans.js',
     });
+    assert.equal(await snapshotTables(schema, [
+      'TrainingSkillsBackup_20260711',
+    ]), backupSnapshot);
 
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');

@@ -285,6 +285,10 @@ function rowValue(row, key) {
   return row[key] ?? row[key.toLowerCase()] ?? null;
 }
 
+function sameIdentifier(left, right) {
+  return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+}
+
 async function getColumn(queryInterface, table, column) {
   const rows = await selectRows(queryInterface, `
     SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, IS_NULLABLE,
@@ -296,14 +300,15 @@ async function getColumn(queryInterface, table, column) {
   return rows[0] || null;
 }
 
-async function getIndex(queryInterface, name) {
+async function getIndex(queryInterface, table, name) {
   return selectRows(queryInterface, `
     SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
            SUB_PART, COLLATION, INDEX_TYPE
     FROM INFORMATION_SCHEMA.STATISTICS
-    WHERE TABLE_SCHEMA = DATABASE() AND INDEX_NAME = :name
-    ORDER BY TABLE_NAME, SEQ_IN_INDEX
-  `, { name });
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = :table AND INDEX_NAME = :name
+    ORDER BY SEQ_IN_INDEX
+  `, { name, table });
 }
 
 async function getForeignKey(queryInterface, name) {
@@ -347,7 +352,7 @@ function columnIsCanonical(column) {
 
 function indexIsCanonical(rows, expected) {
   return rows.length === expected.columns.length && rows.every((row, index) =>
-    rowValue(row, 'TABLE_NAME') === expected.table &&
+    sameIdentifier(rowValue(row, 'TABLE_NAME'), expected.table) &&
     Number(rowValue(row, 'NON_UNIQUE')) === (expected.unique ? 0 : 1) &&
     Number(rowValue(row, 'SEQ_IN_INDEX')) === index + 1 &&
     rowValue(row, 'COLUMN_NAME') === expected.columns[index] &&
@@ -359,9 +364,12 @@ function indexIsCanonical(rows, expected) {
 function foreignKeyIsCanonical(row, expected) {
   return Boolean(
     row &&
-      rowValue(row, 'TABLE_NAME') === expected.table &&
+      sameIdentifier(rowValue(row, 'TABLE_NAME'), expected.table) &&
       rowValue(row, 'COLUMN_NAME') === expected.column &&
-      rowValue(row, 'REFERENCED_TABLE_NAME') === expected.referencedTable &&
+      sameIdentifier(
+        rowValue(row, 'REFERENCED_TABLE_NAME'),
+        expected.referencedTable,
+      ) &&
       rowValue(row, 'REFERENCED_COLUMN_NAME') === expected.referencedColumn &&
       rowValue(row, 'UPDATE_RULE') === expected.onUpdate &&
       rowValue(row, 'DELETE_RULE') === expected.onDelete,
@@ -371,7 +379,7 @@ function foreignKeyIsCanonical(row, expected) {
 function triggerIsCanonical(row, expected) {
   return Boolean(
     row &&
-      rowValue(row, 'EVENT_OBJECT_TABLE') === expected.table &&
+      sameIdentifier(rowValue(row, 'EVENT_OBJECT_TABLE'), expected.table) &&
       rowValue(row, 'EVENT_MANIPULATION') === expected.event &&
       rowValue(row, 'ACTION_TIMING') === 'BEFORE' &&
       normalizeSql(rowValue(row, 'ACTION_STATEMENT')) === normalizeSql(expected.body),
@@ -396,16 +404,17 @@ async function readArtifact(queryInterface, kind, item) {
     return row ? [row] : [];
   }
   if (kind === 'index') {
-    return (await getIndex(queryInterface, item.name))
-      .filter((row) => rowValue(row, 'TABLE_NAME') === item.table);
+    return getIndex(queryInterface, item.table, item.name);
   }
   if (kind === 'foreignKey') {
     const row = await getForeignKey(queryInterface, item.name);
-    return row && rowValue(row, 'TABLE_NAME') === item.table ? [row] : [];
+    return row && sameIdentifier(rowValue(row, 'TABLE_NAME'), item.table) ? [row] : [];
   }
   if (kind === 'trigger') {
     const row = await getTrigger(queryInterface, item.name);
-    return row && rowValue(row, 'EVENT_OBJECT_TABLE') === item.table ? [row] : [];
+    return row && sameIdentifier(rowValue(row, 'EVENT_OBJECT_TABLE'), item.table)
+      ? [row]
+      : [];
   }
   throw migrationError(`Unknown artifact kind ${kind}`);
 }
@@ -427,8 +436,8 @@ async function refresh(queryInterface, created, kind, item) {
 async function classifyState(queryInterface) {
   const columns = await Promise.all(COLUMNS.map(([table, name]) =>
     getColumn(queryInterface, table, name)));
-  const indexes = await Promise.all(Object.keys(INDEXES).map((name) =>
-    getIndex(queryInterface, name)));
+  const indexes = await Promise.all(Object.entries(INDEXES).map(([name, expected]) =>
+    getIndex(queryInterface, expected.table, name)));
   const foreignKeys = await Promise.all(Object.keys(FOREIGN_KEYS).map((name) =>
     getForeignKey(queryInterface, name)));
   const triggers = await Promise.all(Object.keys(TRIGGERS).map((name) =>

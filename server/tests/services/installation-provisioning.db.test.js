@@ -198,19 +198,31 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       await queryInterface.addIndex('Organizations', ['status'], {
         name: 'idx_installation_provisioning_org_created',
       });
-      const indexLookalikeBefore = await provisioningSchemaFingerprint(schema);
-      await assert.rejects(
-        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
-        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
-      );
-      assert.equal(await provisioningSchemaFingerprint(schema), indexLookalikeBefore);
-      await queryInterface.removeIndex('Organizations', 'idx_installation_provisioning_org_created');
-
+      const operatorIndexBefore = await provisioningSchemaFingerprint(schema);
       await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
       assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'ready');
-      const readyFingerprint = await provisioningSchemaFingerprint(schema);
+      const readyWithOperatorIndex = await provisioningSchemaFingerprint(schema);
+      assert.notEqual(readyWithOperatorIndex, operatorIndexBefore);
       await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
-      assert.equal(await provisioningSchemaFingerprint(schema), readyFingerprint);
+      assert.equal(await provisioningSchemaFingerprint(schema), readyWithOperatorIndex);
+      const [operatorIndexRows] = await schema.query(`
+        SELECT TABLE_NAME, INDEX_NAME, COLUMN_NAME
+          FROM INFORMATION_SCHEMA.STATISTICS
+         WHERE TABLE_SCHEMA=DATABASE()
+           AND TABLE_NAME='Organizations'
+           AND INDEX_NAME='idx_installation_provisioning_org_created'
+      `);
+      assert.deepEqual(operatorIndexRows.map((row) => ({
+        column: row.COLUMN_NAME,
+        name: row.INDEX_NAME,
+        table: String(row.TABLE_NAME).toLowerCase(),
+      })), [{
+        column: 'status',
+        name: 'idx_installation_provisioning_org_created',
+        table: 'organizations',
+      }]);
+      await queryInterface.removeIndex('Organizations', 'idx_installation_provisioning_org_created');
+      const readyFingerprint = await provisioningSchemaFingerprint(schema);
 
       const roleLiteralTrigger = FEATURE_MIGRATION.__testing.TRIGGERS.find(
         (item) => item.name === 'trg_owner_activation_tokens_bi',
