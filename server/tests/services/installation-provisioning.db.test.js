@@ -24,11 +24,11 @@ const FEATURE_MIGRATION = require('../../migrations/20260720120000-add-installat
 function payload(suffix, idempotencyKey = crypto.randomUUID()) {
   return {
     clubs: [
-      { name: `Клуб ${suffix} Центр`, slug: `${suffix}-center`, timezone: 'Europe/Moscow' },
-      { name: `Клуб ${suffix} Север`, slug: `${suffix}-north`, timezone: 'Europe/Moscow' },
+      { name: `Клуб ${suffix} Центр`, timezone: 'Europe/Moscow' },
+      { name: `Клуб ${suffix} Север`, timezone: 'Europe/Moscow' },
     ],
     idempotencyKey,
-    organization: { name: `Организация ${suffix}`, slug: `organization-${suffix}` },
+    organization: { name: `Организация ${suffix}` },
     owner: {
       email: `owner-${suffix}@provisioning.test`,
       name: `Владелец ${suffix}`,
@@ -43,8 +43,14 @@ function tokenFromLink(link) {
 
 async function counts(db, suffix) {
   const [organizations, clubs, accounts, operations, activations] = await Promise.all([
-    db.Organization.count({ where: { slug: `organization-${suffix}` } }),
-    db.Club.count({ where: { slug: [`${suffix}-center`, `${suffix}-north`] } }),
+    db.Organization.count({ where: { name: `Организация ${suffix}` } }),
+    db.Club.count({
+      where: {
+        name: {
+          [db.Sequelize.Op.in]: [`Клуб ${suffix} Центр`, `Клуб ${suffix} Север`],
+        },
+      },
+    }),
     db.Account.count({ where: { email: `owner-${suffix}@provisioning.test` } }),
     db.InstallationProvisioningOperation.count(),
     db.OwnerActivationToken.count(),
@@ -108,7 +114,11 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       created = await provisioning.provisionOrganization(payload('alpha'), operator);
       assert.equal(created.idempotency.replayed, false);
       assert.equal(created.clubs.length, 2);
-      assert.deepEqual(created.clubs.map((club) => club.slug), ['alpha-center', 'alpha-north']);
+      assert.equal(created.organization.slug, 'organizatsiya-alpha');
+      assert.deepEqual(
+        created.clubs.map((club) => club.slug),
+        ['klub-alpha-tsentr', 'klub-alpha-sever'],
+      );
       assert.equal(created.activation.state, 'pending');
       assert.match(created.activation.link, /^http:\/\/127\.0\.0\.1:5182\/activate-owner#token=/u);
       rawToken = tokenFromLink(created.activation.link);
@@ -128,7 +138,10 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       const auditMetadata = typeof audit.metadata === 'string'
         ? JSON.parse(audit.metadata)
         : audit.metadata;
-      assert.deepEqual(auditMetadata.clubSlugs, ['alpha-center', 'alpha-north']);
+      assert.deepEqual(
+        auditMetadata.clubSlugs,
+        ['klub-alpha-tsentr', 'klub-alpha-sever'],
+      );
     });
 
     await t.test('same key is idempotent and a changed payload is rejected without duplicate graph', async () => {
@@ -157,18 +170,21 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       );
       assert.deepEqual(await counts(db, 'rollback'), before);
       const retry = await provisioning.provisionOrganization(input, operator);
-      assert.equal(retry.organization.slug, 'organization-rollback');
+      assert.equal(retry.organization.slug, 'organizatsiya-rollback');
       assert.equal(retry.clubs.length, 2);
     });
 
-    await t.test('duplicate slug and email validations leave no partial tenant graph', async () => {
-      const slugDuplicate = payload('duplicate-slug');
-      slugDuplicate.organization.slug = created.organization.slug;
+    await t.test('duplicate organization name and email leave no partial tenant graph', async () => {
+      const nameDuplicate = payload('duplicate-name');
+      nameDuplicate.organization.name = created.organization.name;
       await assert.rejects(
-        provisioning.provisionOrganization(slugDuplicate, operator),
-        (error) => error.code === 'ORGANIZATION_SLUG_EXISTS',
+        provisioning.provisionOrganization(nameDuplicate, operator),
+        (error) => error.code === 'ORGANIZATION_NAME_EXISTS',
       );
-      assert.equal(await db.Organization.count({ where: { name: slugDuplicate.organization.name } }), 0);
+      assert.equal(
+        await db.Account.count({ where: { email: nameDuplicate.owner.email } }),
+        0,
+      );
 
       const emailDuplicate = payload('duplicate-email');
       emailDuplicate.owner.email = created.owner.email;
@@ -176,7 +192,30 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
         provisioning.provisionOrganization(emailDuplicate, operator),
         (error) => error.code === 'OWNER_EMAIL_EXISTS',
       );
-      assert.equal(await db.Organization.count({ where: { slug: emailDuplicate.organization.slug } }), 0);
+      assert.equal(
+        await db.Organization.count({ where: { name: emailDuplicate.organization.name } }),
+        0,
+      );
+    });
+
+    await t.test('internal organization and club slugs resolve collisions deterministically', async () => {
+      const firstInput = payload('slug-collision-a');
+      firstInput.organization.name = 'A B';
+      firstInput.clubs = [
+        { name: 'Центральный клуб', timezone: 'Europe/Moscow' },
+        { name: 'Центральный клуб', timezone: 'Europe/Samara' },
+      ];
+      const first = await provisioning.provisionOrganization(firstInput, operator);
+      assert.equal(first.organization.slug, 'a-b');
+      assert.deepEqual(first.clubs.map((club) => club.slug), [
+        'tsentralnyy-klub',
+        'tsentralnyy-klub-2',
+      ]);
+
+      const secondInput = payload('slug-collision-b');
+      secondInput.organization.name = 'A-B';
+      const second = await provisioning.provisionOrganization(secondInput, operator);
+      assert.equal(second.organization.slug, 'a-b-2');
     });
 
     await t.test('activation is single-use and enables ordinary login plus exact membership discovery', async () => {
@@ -199,7 +238,10 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
         (item) => item.organization.id === created.organization.id,
       );
       assert.equal(membership.role, 'owner');
-      assert.deepEqual(membership.clubs.map((club) => club.slug), ['alpha-center', 'alpha-north']);
+      assert.deepEqual(
+        membership.clubs.map((club) => club.slug),
+        ['klub-alpha-tsentr', 'klub-alpha-sever'],
+      );
       assert.equal(discovery.recommendedContext.organizationId > 0, true);
     });
 

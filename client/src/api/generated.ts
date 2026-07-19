@@ -359,13 +359,11 @@ export type InstallationProvisioningSnapshotResponse = Record<string, unknown>;
 export type InstallationProvisioningCreateBody = {
   clubs: Array<{
     name: string;
-    slug: string;
     timezone: string;
   }>;
   idempotencyKey: string;
   organization: {
     name: string;
-    slug: string;
   };
   owner: {
     email: string;

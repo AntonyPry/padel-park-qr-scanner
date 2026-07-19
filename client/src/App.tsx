@@ -63,7 +63,10 @@ function PageLoader() {
 function ApplicationContent() {
   const location = useLocation();
 
-  if (location.pathname === '/installation/provisioning') {
+  if (
+    location.pathname === '/installation' ||
+    location.pathname === '/installation/provisioning'
+  ) {
     return (
       <Suspense fallback={<PageLoader />}>
         <InstallationProvisioningPage />

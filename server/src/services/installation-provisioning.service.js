@@ -16,6 +16,12 @@ const {
 
 const ACTIVATION_TTL_MS = 24 * 60 * 60 * 1000;
 const ACTIVATION_PATH = '/activate-owner';
+const CYRILLIC_SLUG_MAP = Object.freeze({
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
+  и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
+  с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'ts', ч: 'ch', ш: 'sh',
+  щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+});
 
 function provisioningError(message, statusCode, code, details) {
   const error = new Error(message);
@@ -39,16 +45,58 @@ function sha256(value) {
   return crypto.createHash('sha256').update(String(value)).digest('hex');
 }
 
+function canonicalSlug(value, fallback) {
+  const transliterated = Array.from(String(value).trim().toLowerCase())
+    .map((character) => CYRILLIC_SLUG_MAP[character] ?? character)
+    .join('');
+  const slug = transliterated
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/gu, '')
+    .replace(/[^a-z0-9]+/gu, '-')
+    .replace(/^-+|-+$/gu, '')
+    .slice(0, 150)
+    .replace(/-+$/gu, '');
+  return slug || fallback;
+}
+
+function allocateClubSlugs(clubs) {
+  const used = new Set();
+  return clubs.map((club) => {
+    const base = canonicalSlug(club.name, 'club');
+    let slug = base;
+    let suffix = 2;
+    while (used.has(slug)) {
+      slug = `${base}-${suffix}`;
+      suffix += 1;
+    }
+    used.add(slug);
+    return slug;
+  });
+}
+
+async function allocateOrganizationSlug(name, transaction) {
+  const base = canonicalSlug(name, 'organization');
+  const organizations = await db.Organization.findAll({
+    attributes: ['slug'],
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: { slug: { [db.Sequelize.Op.like]: `${base}%` } },
+  });
+  const used = new Set(organizations.map((organization) => organization.slug));
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (used.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
 function stablePayload(payload) {
   return JSON.stringify({
     clubs: payload.clubs.map((club) => ({
       name: club.name.trim(),
-      slug: club.slug.trim().toLowerCase(),
       timezone: club.timezone.trim(),
     })),
     organization: {
       name: payload.organization.name.trim(),
-      slug: payload.organization.slug.trim().toLowerCase(),
     },
     owner: {
       email: payload.owner.email.trim().toLowerCase(),
@@ -165,7 +213,7 @@ async function assertUniqueInput(payload, transaction) {
     db.Organization.findOne({
       lock: transaction.LOCK.UPDATE,
       transaction,
-      where: { slug: payload.organization.slug },
+      where: { name: payload.organization.name },
     }),
     db.Account.findOne({
       lock: transaction.LOCK.UPDATE,
@@ -175,9 +223,9 @@ async function assertUniqueInput(payload, transaction) {
   ]);
   if (organization) {
     throw provisioningError(
-      'Организация с таким slug уже существует',
+      'Организация с таким названием уже существует',
       409,
-      'ORGANIZATION_SLUG_EXISTS',
+      'ORGANIZATION_NAME_EXISTS',
     );
   }
   if (account) {
@@ -216,16 +264,26 @@ async function provisionOrganization(input, operator, options = {}) {
       }
 
       await assertUniqueInput(normalized, transaction);
+      const organizationSlug = await allocateOrganizationSlug(
+        normalized.organization.name,
+        transaction,
+      );
       const organization = await db.Organization.create(
-        { ...normalized.organization, status: 'active' },
+        { ...normalized.organization, slug: organizationSlug, status: 'active' },
         { transaction },
       );
       if (options.failAfter === 'organization') throw new Error('Forced failure after Organization');
 
       const clubs = [];
-      for (const club of normalized.clubs) {
+      const clubSlugs = allocateClubSlugs(normalized.clubs);
+      for (const [index, club] of normalized.clubs.entries()) {
         clubs.push(await db.Club.create(
-          { ...club, organizationId: organization.id, status: 'active' },
+          {
+            ...club,
+            organizationId: organization.id,
+            slug: clubSlugs[index],
+            status: 'active',
+          },
           { transaction },
         ));
       }
@@ -319,9 +377,9 @@ async function provisionOrganization(input, operator, options = {}) {
       }
       if (uniquePaths.has('slug')) {
         throw provisioningError(
-          'Организация с таким slug уже существует',
+          'Не удалось создать организацию с таким названием. Укажите другое название',
           409,
-          'ORGANIZATION_SLUG_EXISTS',
+          'ORGANIZATION_NAME_CONFLICT',
         );
       }
     }
@@ -518,7 +576,13 @@ async function reissueActivation(organizationId, operator) {
 }
 
 module.exports = {
-  _private: { activationState, sha256, stablePayload },
+  _private: {
+    activationState,
+    allocateClubSlugs,
+    canonicalSlug,
+    sha256,
+    stablePayload,
+  },
   activateOwner,
   getInstallationSnapshot,
   inspectActivation,

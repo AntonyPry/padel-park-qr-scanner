@@ -1828,18 +1828,12 @@
                           "minLength": 2,
                           "maxLength": 160
                         },
-                        "slug": {
-                          "type": "string",
-                          "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
-                        },
                         "timezone": {
-                          "type": "string",
-                          "pattern": "^[A-Za-z_]+(?:\\/[A-Za-z0-9_+-]+)+$"
+                          "type": "string"
                         }
                       },
                       "required": [
                         "name",
-                        "slug",
                         "timezone"
                       ],
                       "additionalProperties": false
@@ -1857,15 +1851,10 @@
                         "type": "string",
                         "minLength": 2,
                         "maxLength": 160
-                      },
-                      "slug": {
-                        "type": "string",
-                        "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
                       }
                     },
                     "required": [
-                      "name",
-                      "slug"
+                      "name"
                     ],
                     "additionalProperties": false
                   },

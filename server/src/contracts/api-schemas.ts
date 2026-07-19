@@ -72,6 +72,18 @@ const statusFilter = z.enum(['active', 'archived', 'inactive', 'all']);
 const archiveStatus = z.enum(['active', 'archived']);
 const requiredString = z.string().trim().min(1, 'Поле обязательно');
 const nameString = z.string().trim().min(2, 'Минимум 2 символа').max(160, 'Слишком длинное значение');
+const ianaTimezone = z.string().trim().refine(
+  (value: string) => {
+    if (!value.includes('/')) return false;
+    try {
+      new Intl.DateTimeFormat('ru-RU', { timeZone: value }).format(new Date());
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: 'Выберите город или регион из списка' },
+);
 const optionalString = z.union([z.string().trim(), z.literal(''), z.null()]).optional();
 const jsonObject = z.record(z.string(), z.unknown());
 const optionalJsonObject = z.union([jsonObject, z.null()]).optional();
@@ -1265,40 +1277,16 @@ const apiSchemas = {
               z
                 .object({
                   name: nameString,
-                  slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, 'Slug клуба указан некорректно'),
-                  timezone: z.string().trim().regex(/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+$/u, 'Часовой пояс указан некорректно'),
+                  timezone: ianaTimezone,
                 })
                 .strict(),
             )
             .min(1, 'Добавьте хотя бы один клуб')
-            .max(20, 'За одну операцию можно создать до 20 клубов')
-            .superRefine((
-              clubs: Array<{ slug: string }>,
-              context: {
-                addIssue(issue: {
-                  code: string;
-                  message: string;
-                  path: Array<string | number>;
-                }): void;
-              },
-            ) => {
-              const seen = new Set<string>();
-              clubs.forEach((club: { slug: string }, index: number) => {
-                if (seen.has(club.slug)) {
-                  context.addIssue({
-                    code: z.ZodIssueCode.custom,
-                    message: 'Slug клубов не должны повторяться',
-                    path: [index, 'slug'],
-                  });
-                }
-                seen.add(club.slug);
-              });
-            }),
+            .max(20, 'За одну операцию можно создать до 20 клубов'),
           idempotencyKey: z.string().uuid('Ключ повторной отправки указан некорректно'),
           organization: z
             .object({
               name: nameString,
-              slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, 'Slug организации указан некорректно'),
             })
             .strict(),
           owner: z
