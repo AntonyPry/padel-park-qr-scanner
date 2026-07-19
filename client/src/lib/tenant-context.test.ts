@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   applyTenantHeaders,
+  cancelTenantSensitiveRequests,
   clearActiveTenantContext,
+  getTenantRequestSignal,
   getActiveTenantContext,
   resolveClientRequestTenantScope,
   selectTenantContext,
@@ -142,5 +144,28 @@ describe('tenant context transport', () => {
     setTenantContextCapability(false);
     expect(() => applyTenantHeaders('/api/bookings/schedule', {}, headers)).not.toThrow();
     expect([...headers.entries()]).toEqual([]);
+  });
+
+  it('aborts old tenant requests without aborting fresh global discovery', () => {
+    setTenantContextCapability(true);
+    selectTenantContext(discovery);
+    const oldTenantSignal = new AbortController().signal;
+    const combinedSignal = getTenantRequestSignal(
+      '/api/bookings/schedule',
+      { signal: oldTenantSignal },
+    );
+    const globalSignal = getTenantRequestSignal('/api/auth/me/memberships', {});
+
+    expect(combinedSignal?.aborted).toBe(false);
+    expect(globalSignal).toBeUndefined();
+    cancelTenantSensitiveRequests();
+    expect(combinedSignal?.aborted).toBe(true);
+    expect(() =>
+      applyTenantHeaders('/api/bookings/schedule', {}, new Headers()),
+    ).toThrow('Tenant context transition is in progress');
+    selectTenantContext(discovery);
+    expect(() =>
+      applyTenantHeaders('/api/bookings/schedule', {}, new Headers()),
+    ).not.toThrow();
   });
 });

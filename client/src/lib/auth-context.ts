@@ -1,6 +1,9 @@
 import { createContext } from 'react';
 import type { AccountRole } from '@/lib/roles';
-import type { ActiveTenantContext } from '@/lib/tenant-context';
+import type {
+  ActiveTenantContext,
+  TenantDiscoveryResponse,
+} from '@/lib/tenant-context';
 
 interface StaffProfile {
   id: number;
@@ -35,12 +38,16 @@ export interface AuthContextValue {
   loading: boolean;
   setupRequired: boolean;
   tenantContext: ActiveTenantContext | null;
+  tenantDiscovery: TenantDiscoveryResponse | null;
   tenantCacheRealtimeEnabled: boolean;
   tenantContextEnabled: boolean;
+  tenantError: string | null;
   tenantReady: boolean;
+  tenantSwitching: boolean;
   login: (credentials: Credentials) => Promise<void>;
   bootstrap: (data: BootstrapData) => Promise<void>;
   logout: () => void;
+  switchTenantContext: (organizationId: number, clubId: number) => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

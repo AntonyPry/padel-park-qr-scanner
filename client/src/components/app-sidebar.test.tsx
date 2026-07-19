@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppSidebar } from '@/components/app-sidebar';
@@ -76,6 +76,44 @@ function renderSidebar(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  const switchTenantContext = vi.fn().mockResolvedValue(undefined);
+  const tenantDiscovery = tenantContextEnabled
+    ? {
+        memberships: [
+          {
+            clubs: [
+              {
+                effectiveRole: normalizedOptions.effectiveRole || role,
+                id: 12,
+                name: 'Падел Парк Сокол',
+                slug: 'padel-park-sokol',
+                timezone: 'Europe/Moscow',
+              },
+              {
+                effectiveRole: 'admin' as const,
+                id: 13,
+                name: 'Падел Парк на Набережной с длинным названием',
+                slug: 'padel-park-river',
+                timezone: 'Europe/Moscow',
+              },
+            ],
+            id: 21,
+            organization: {
+              id: 11,
+              name: 'Setly Sports Group',
+              slug: 'setly-sports',
+            },
+            role: normalizedOptions.membershipRole || role,
+          },
+        ],
+        recommendedContext: {
+          clubId: 12,
+          effectiveRole: normalizedOptions.effectiveRole || role,
+          membershipId: 21,
+          organizationId: 11,
+        },
+      }
+    : null;
   const result = render(
     <QueryClientProvider client={queryClient}>
       <MemoryRouter initialEntries={[normalizedOptions.path || '/admin/catalog']}>
@@ -103,7 +141,11 @@ function renderSidebar(
               : null,
             tenantCacheRealtimeEnabled: false,
             tenantContextEnabled,
+            tenantDiscovery,
+            tenantError: null,
             tenantReady: true,
+            tenantSwitching: false,
+            switchTenantContext,
           }}
         >
           <SidebarProvider>
@@ -113,7 +155,7 @@ function renderSidebar(
       </MemoryRouter>
     </QueryClientProvider>,
   );
-  return { ...result, queryClient };
+  return { ...result, queryClient, switchTenantContext };
 }
 
 function renderSidebarAndWorkspace(path = '/admin/shift/motivation') {
@@ -139,7 +181,11 @@ function renderSidebarAndWorkspace(path = '/admin/shift/motivation') {
             tenantContext: null,
             tenantCacheRealtimeEnabled: false,
             tenantContextEnabled: false,
+            tenantDiscovery: null,
+            tenantError: null,
             tenantReady: true,
+            tenantSwitching: false,
+            switchTenantContext: vi.fn(),
           }}
         >
           <SidebarProvider>
@@ -227,6 +273,24 @@ describe('AppSidebar authorization', () => {
     expect(screen.queryByRole('link', { name: 'Монитор входов' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Бронирование' })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Тренерский кабинет' })).toBeInTheDocument();
+  });
+
+  it('shows exact organization and club choices without an aggregate context', async () => {
+    const { switchTenantContext } = renderSidebar('owner', {
+      tenantContextEnabled: true,
+    });
+
+    const trigger = screen.getByRole('button', {
+      name: /Сменить организацию или клуб/,
+    });
+    expect(trigger).toHaveTextContent('Setly Sports Group');
+    expect(trigger).toHaveTextContent('Падел Парк Сокол');
+
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    expect(await screen.findByText('Падел Парк на Набережной с длинным названием')).toBeInTheDocument();
+    expect(screen.queryByText('Все клубы')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText('Падел Парк на Набережной с длинным названием'));
+    expect(switchTenantContext).toHaveBeenCalledWith(11, 13);
   });
 });
 

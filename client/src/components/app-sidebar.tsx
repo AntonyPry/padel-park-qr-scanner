@@ -13,6 +13,9 @@ import {
   ListChecks,
   ClipboardCheck,
   Boxes,
+  Building2,
+  Check,
+  ChevronsUpDown,
   LogOut,
   ListTree,
   PhoneCall,
@@ -22,6 +25,7 @@ import {
   Wallet,
   WalletCards,
   SlidersHorizontal,
+  MapPin,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
@@ -50,6 +54,19 @@ import { selectAuthorizationRole } from '@/lib/authorization';
 import { getAccountRoleLabel } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './theme-toggle';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import type {
+  TenantDiscoveryResponse,
+  ActiveTenantContext,
+} from '@/lib/tenant-context';
 
 type NavItem = {
   title: string;
@@ -248,13 +265,102 @@ function NavigationBadge({ badge }: { badge: NonNullable<NavItem['badge']> }) {
   );
 }
 
+function TenantSwitcher({
+  context,
+  discovery,
+  onSwitch,
+}: {
+  context: ActiveTenantContext;
+  discovery: TenantDiscoveryResponse;
+  onSwitch: (organizationId: number, clubId: number) => Promise<void>;
+}) {
+  const activeMembership = discovery.memberships.find(
+    (membership) => membership.id === context.membershipId,
+  );
+  const activeClub = activeMembership?.clubs.find((club) => club.id === context.clubId);
+
+  if (!activeMembership || !activeClub) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Сменить организацию или клуб. Сейчас ${activeMembership.organization.name}, ${activeClub.name}`}
+          className="group mt-3 flex w-full min-w-0 items-center gap-2.5 rounded-xl border border-sidebar-border/80 bg-sidebar-accent/35 px-3 py-2.5 text-left shadow-sm shadow-foreground/5 outline-none transition hover:bg-sidebar-accent/65 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background/75 text-primary ring-1 ring-sidebar-border/70">
+            <Building2 className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/55">
+              {activeMembership.organization.name}
+            </span>
+            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm font-semibold text-sidebar-foreground">
+              <MapPin className="size-3.5 shrink-0 text-primary/75" />
+              <span className="truncate">{activeClub.name}</span>
+            </span>
+          </span>
+          <ChevronsUpDown className="size-4 shrink-0 text-sidebar-foreground/55 transition group-hover:text-sidebar-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        sideOffset={8}
+        className="max-h-[min(70vh,34rem)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-1.5"
+      >
+        <DropdownMenuLabel className="px-2.5 py-2 text-[11px] uppercase tracking-wide">
+          Выберите рабочий клуб
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {discovery.memberships.map((membership, index) => (
+          <DropdownMenuGroup key={membership.id}>
+            {index > 0 ? <DropdownMenuSeparator className="my-1.5" /> : null}
+            <DropdownMenuLabel className="flex items-center gap-2 px-2.5 pb-1 pt-2 text-xs text-foreground">
+              <Building2 className="size-3.5 text-muted-foreground" />
+              <span className="truncate">{membership.organization.name}</span>
+            </DropdownMenuLabel>
+            {membership.clubs.map((club) => {
+              const active =
+                membership.id === context.membershipId && club.id === context.clubId;
+              return (
+                <DropdownMenuItem
+                  key={`${membership.id}:${club.id}`}
+                  aria-current={active ? 'true' : undefined}
+                  className="min-h-11 rounded-lg px-2.5 py-2"
+                  onSelect={() => {
+                    if (!active) {
+                      void onSwitch(membership.organization.id, club.id);
+                    }
+                  }}
+                >
+                  <MapPin className="size-4 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{club.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {getAccountRoleLabel(club.effectiveRole)}
+                    </span>
+                  </span>
+                  {active ? <Check className="size-4 text-primary" /> : null}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuGroup>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AppSidebar() {
   const location = useLocation();
   const {
     account,
     logout,
     tenantContext,
+    tenantDiscovery,
     tenantContextEnabled,
+    switchTenantContext,
   } = useAuth();
   const authority = {
     accountRole: account?.role,
@@ -342,6 +448,13 @@ export function AppSidebar() {
           </span>
           <ThemeToggle />
         </div>
+        {tenantContextEnabled && tenantContext && tenantDiscovery ? (
+          <TenantSwitcher
+            context={tenantContext}
+            discovery={tenantDiscovery}
+            onSwitch={switchTenantContext}
+          />
+        ) : null}
       </SidebarHeader>
 
       <SidebarContent>

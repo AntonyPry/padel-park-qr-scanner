@@ -72,7 +72,11 @@ function renderProtected(
             : null,
           tenantCacheRealtimeEnabled: false,
           tenantContextEnabled,
+          tenantDiscovery: null,
+          tenantError: null,
           tenantReady: true,
+          tenantSwitching: false,
+          switchTenantContext: vi.fn(),
         }}
       >
         <Routes>

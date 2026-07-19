@@ -56,3 +56,13 @@ export function clearTenantSensitiveQueryCache(client: QueryClient = queryClient
   void client.cancelQueries({ predicate });
   client.removeQueries({ predicate });
 }
+
+export async function beginTenantContextTransition(
+  client: QueryClient = queryClient,
+) {
+  const predicate = (query: { queryKey: readonly unknown[] }) =>
+    isTenantSensitiveQueryKey(query.queryKey);
+  await client.cancelQueries({ predicate });
+  client.removeQueries({ predicate });
+  client.getMutationCache().clear();
+}

@@ -55,7 +55,12 @@ function DomainProbe() {
 }
 
 function SessionProbe() {
-  const { account: currentAccount, logout, tenantContext } = useAuth();
+  const {
+    account: currentAccount,
+    logout,
+    switchTenantContext,
+    tenantContext,
+  } = useAuth();
   return (
     <div>
       <span>
@@ -64,6 +69,9 @@ function SessionProbe() {
       <button type="button" onClick={logout}>logout-probe</button>
       <button type="button" onClick={() => void apiFetch('/api/bookings/schedule')}>
         unauthorized-probe
+      </button>
+      <button type="button" onClick={() => void switchTenantContext(11, 13)}>
+        switch-probe
       </button>
     </div>
   );
@@ -231,6 +239,72 @@ describe('AuthProvider tenant bootstrap', () => {
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
     expect(getActiveTenantContext()).toBeNull();
+  });
+
+  it('re-discovers authority before switching to one exact club', async () => {
+    setAuthToken('test-token');
+    let discoveryCalls = 0;
+    const multiClubDiscovery = {
+      ...discovery,
+      memberships: [
+        {
+          ...discovery.memberships[0],
+          clubs: [
+            discovery.memberships[0].clubs[0],
+            {
+              effectiveRole: 'trainer',
+              id: 13,
+              name: 'Second club',
+              slug: 'second-club',
+              timezone: 'Europe/Moscow',
+            },
+          ],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/status')) {
+          return Response.json({
+            capabilities: { tenantCacheRealtime: true, tenantContext: true },
+            setupRequired: false,
+          });
+        }
+        if (url.endsWith('/api/auth/me')) return Response.json({ account });
+        if (url.endsWith('/api/auth/me/memberships')) {
+          discoveryCalls += 1;
+          return Response.json(multiClubDiscovery);
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <SessionProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByText('session:manager@padelpark.demo club:12'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'switch-probe' }));
+
+    expect(
+      await screen.findByText('session:manager@padelpark.demo club:13'),
+    ).toBeInTheDocument();
+    expect(discoveryCalls).toBe(2);
+    expect(getActiveTenantContext()).toMatchObject({
+      clubId: 13,
+      effectiveRole: 'trainer',
+      membershipId: 21,
+      membershipRole: 'manager',
+      organizationId: 11,
+    });
   });
 
   it('keeps Account.role as identity while exposing separate membership and club roles', async () => {

@@ -68,7 +68,11 @@ function authValue(clubId = 12, account = true): AuthContextValue {
         }
       : null,
     tenantContextEnabled: true,
+    tenantDiscovery: null,
+    tenantError: null,
     tenantReady: true,
+    tenantSwitching: false,
+    switchTenantContext: vi.fn(),
   };
 }
 

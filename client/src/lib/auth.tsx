@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react';
@@ -19,6 +20,9 @@ import {
 } from '@/lib/auth-context';
 import {
   clearActiveTenantContext,
+  cancelTenantSensitiveRequests,
+  activateTenantContext,
+  findDiscoveredTenantContext,
   getActiveTenantContext,
   isTenantCacheRealtimeCapabilityEnabled,
   selectTenantContext,
@@ -28,6 +32,7 @@ import {
   type TenantDiscoveryResponse,
 } from '@/lib/tenant-context';
 import {
+  beginTenantContextTransition,
   clearTenantSensitiveQueryCache,
   queryClient,
   transitionTenantQueryCache,
@@ -52,9 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [setupRequired, setSetupRequired] = useState(false);
   const [tenantContext, setTenantContext] = useState<ActiveTenantContext | null>(null);
+  const [tenantDiscovery, setTenantDiscovery] = useState<TenantDiscoveryResponse | null>(null);
   const [tenantCacheRealtimeEnabled, setTenantCacheRealtimeEnabled] = useState(false);
   const [tenantContextEnabled, setTenantContextEnabled] = useState(false);
+  const [tenantError, setTenantError] = useState<string | null>(null);
   const [tenantReady, setTenantReady] = useState(true);
+  const [tenantSwitching, setTenantSwitching] = useState(false);
+  const tenantSwitchLockRef = useRef(false);
 
   const initializeTenantContext = useCallback(
     async (identityAccount: Account, capabilities: ServerCapabilities = {}) => {
@@ -74,6 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         clearActiveTenantContext();
         setTenantContext(null);
+        setTenantDiscovery(null);
+        setTenantError(null);
         setTenantReady(true);
         return identityAccount;
       }
@@ -91,11 +102,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await transitionTenantQueryCache(queryClient, previousContext, selected);
       }
       setTenantContext(selected);
+      setTenantDiscovery(discovery);
+      setTenantError(null);
       setTenantReady(true);
       return identityAccount;
     },
     [],
   );
+
+  const switchTenantContext = useCallback(async (organizationId: number, clubId: number) => {
+    if (!tenantContextEnabled || tenantSwitchLockRef.current) return;
+    if (
+      tenantContext?.organizationId === organizationId &&
+      tenantContext.clubId === clubId
+    ) {
+      return;
+    }
+
+    tenantSwitchLockRef.current = true;
+    setTenantSwitching(true);
+    setTenantReady(false);
+    setTenantError(null);
+    cancelTenantSensitiveRequests();
+    clearActiveTenantContext();
+    setTenantContext(null);
+
+    try {
+      await beginTenantContextTransition(queryClient);
+      const response = await apiFetch('/api/auth/me/memberships');
+      if (!response.ok) {
+        throw new Error(await readError(response, 'Не удалось перепроверить доступные клубы'));
+      }
+      const discovery = (await response.json()) as TenantDiscoveryResponse;
+      const selected = findDiscoveredTenantContext(discovery, { organizationId, clubId });
+      if (!selected) {
+        throw new Error('Выбранный клуб больше недоступен. Обновите страницу или войдите снова.');
+      }
+
+      activateTenantContext(selected);
+      setTenantDiscovery(discovery);
+      setTenantContext(selected);
+      setTenantReady(true);
+    } catch (error) {
+      console.error('Tenant context switch failed:', error);
+      clearActiveTenantContext();
+      clearTenantSensitiveQueryCache(queryClient);
+      setTenantDiscovery(null);
+      setTenantContext(null);
+      setTenantError(
+        error instanceof Error ? error.message : 'Не удалось переключить клуб',
+      );
+      setTenantReady(false);
+      // The previous authority is intentionally not restored: a failed fresh
+      // discovery must fail closed instead of reviving stale access.
+    } finally {
+      tenantSwitchLockRef.current = false;
+      setTenantSwitching(false);
+    }
+  }, [tenantContext, tenantContextEnabled]);
 
   const logout = useCallback(() => {
     clearAuthToken();
@@ -104,9 +168,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setTenantContextCapability(false);
     setAccount(null);
     setTenantContext(null);
+    setTenantDiscovery(null);
     setTenantCacheRealtimeEnabled(false);
     setTenantContextEnabled(false);
+    setTenantError(null);
     setTenantReady(true);
+    setTenantSwitching(false);
+    tenantSwitchLockRef.current = false;
   }, []);
 
   const refresh = useCallback(async () => {
@@ -133,6 +201,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         clearAuthToken();
         clearTenantSensitiveQueryCache(queryClient);
         setAccount(null);
+        setTenantDiscovery(null);
+        setTenantError(null);
         setTenantReady(true);
         return;
       }
@@ -143,6 +213,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setTenantContextEnabled(contextEnabled);
         setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
         setAccount(null);
+        setTenantDiscovery(null);
+        setTenantError(null);
         setTenantReady(true);
         return;
       }
@@ -164,8 +236,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
+      setTenantDiscovery(null);
       setTenantCacheRealtimeEnabled(false);
       setTenantContextEnabled(false);
+      setTenantError(error instanceof Error ? error.message : 'Ошибка tenant context');
       setTenantReady(false);
     } finally {
       setLoading(false);
@@ -183,8 +257,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
+      setTenantDiscovery(null);
       setTenantCacheRealtimeEnabled(false);
       setTenantContextEnabled(false);
+      setTenantError(null);
       setTenantReady(true);
     };
     window.addEventListener('auth:expired', handleExpired);
@@ -264,12 +340,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       setupRequired,
       tenantContext,
+      tenantDiscovery,
       tenantCacheRealtimeEnabled,
       tenantContextEnabled,
+      tenantError,
       tenantReady,
+      tenantSwitching,
       login,
       bootstrap,
       logout,
+      switchTenantContext,
     }),
     [
       account,
@@ -279,9 +359,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       setupRequired,
       tenantContext,
+      tenantDiscovery,
       tenantCacheRealtimeEnabled,
       tenantContextEnabled,
+      tenantError,
       tenantReady,
+      tenantSwitching,
+      switchTenantContext,
     ],
   );
 

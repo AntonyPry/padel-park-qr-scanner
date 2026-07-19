@@ -1,7 +1,9 @@
 import { API_URL } from '@/config';
 import {
   applyTenantHeaders,
+  cancelTenantSensitiveRequests,
   clearActiveTenantContext,
+  getTenantRequestSignal,
   setTenantContextCapability,
 } from '@/lib/tenant-context';
 import {
@@ -33,6 +35,7 @@ export function setAuthToken(token: string) {
 export function clearAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
   clearStoredTrainingMode();
+  cancelTenantSensitiveRequests();
   clearActiveTenantContext();
   setTenantContextCapability(false);
   clearStoredActiveOnboardingQuest();
@@ -112,7 +115,11 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
   }
 
   const url = input.startsWith('http') ? input : `${API_URL}${input}`;
-  const response = await fetch(url, { ...init, headers });
+  const response = await fetch(url, {
+    ...init,
+    headers,
+    signal: getTenantRequestSignal(input, init),
+  });
 
   applyOnboardingProgressResponse(response);
 

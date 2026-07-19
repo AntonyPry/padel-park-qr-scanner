@@ -2,6 +2,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it, vi } from 'vitest';
 import { createTenantQueryKey, type TenantQueryAuthority } from '@/api/query-keys';
 import {
+  beginTenantContextTransition,
   clearTenantSensitiveQueryCache,
   transitionTenantQueryCache,
 } from './query-client';
@@ -102,5 +103,18 @@ describe('tenant query cache lifecycle', () => {
 
     expect(client.getQueryData(key)).toBe(data);
     expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+  });
+
+  it('clears mutation lifecycle state before the new context mounts', async () => {
+    const client = createClient();
+    client.getMutationCache().build(client, {
+      mutationFn: async () => ({ ok: true }),
+      mutationKey: ['bookings', 'save'],
+    });
+    expect(client.getMutationCache().getAll()).toHaveLength(1);
+
+    await beginTenantContextTransition(client);
+
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
   });
 });

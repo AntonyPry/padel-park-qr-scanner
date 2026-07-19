@@ -43,6 +43,8 @@ export interface ActiveTenantContext {
 let tenantCapabilityEnabled = false;
 let tenantCacheRealtimeCapabilityEnabled = false;
 let activeTenantContext: ActiveTenantContext | null = null;
+let tenantRequestController = new AbortController();
+let tenantTransitionActive = false;
 
 function readPreference() {
   try {
@@ -73,11 +75,44 @@ function persistPreference(context: ActiveTenantContext) {
   );
 }
 
+function toActiveTenantContext(
+  membership: TenantMembershipDiscovery,
+  club: TenantClubDiscovery,
+): ActiveTenantContext {
+  return {
+    clubId: club.id,
+    effectiveRole: club.effectiveRole,
+    membershipId: membership.id,
+    membershipRole: membership.role,
+    organizationId: membership.organization.id,
+  };
+}
+
+export function findDiscoveredTenantContext(
+  discovery: TenantDiscoveryResponse,
+  requested: Pick<ActiveTenantContext, 'clubId' | 'organizationId'>,
+) {
+  for (const membership of discovery.memberships) {
+    if (membership.organization.id !== requested.organizationId) continue;
+    const club = membership.clubs.find((candidate) => candidate.id === requested.clubId);
+    if (club) return toActiveTenantContext(membership, club);
+  }
+  return null;
+}
+
+export function activateTenantContext(context: ActiveTenantContext) {
+  activeTenantContext = Object.freeze({ ...context });
+  tenantTransitionActive = false;
+  persistPreference(activeTenantContext);
+  return activeTenantContext;
+}
+
 export function setTenantContextCapability(enabled: boolean) {
   tenantCapabilityEnabled = enabled;
   if (!enabled) {
     tenantCacheRealtimeCapabilityEnabled = false;
     activeTenantContext = null;
+    tenantTransitionActive = false;
   }
 }
 
@@ -105,15 +140,28 @@ export function clearActiveTenantContext(options: { clearPreference?: boolean } 
   if (options.clearPreference) localStorage.removeItem(TENANT_PREFERENCE_KEY);
 }
 
+export function cancelTenantSensitiveRequests() {
+  tenantTransitionActive = true;
+  tenantRequestController.abort('Tenant context changed');
+  tenantRequestController = new AbortController();
+}
+
+export function getTenantRequestSignal(
+  input: string,
+  init: RequestInit,
+) {
+  if (!tenantCapabilityEnabled) return init.signal;
+  const scope = resolveClientRequestTenantScope(input, init.method || 'GET');
+  if (!scope || scope === 'global' || scope === 'provider_ingress' || scope === 'worker') {
+    return init.signal;
+  }
+  if (!init.signal) return tenantRequestController.signal;
+  return AbortSignal.any([init.signal, tenantRequestController.signal]);
+}
+
 export function selectTenantContext(discovery: TenantDiscoveryResponse) {
   const available = discovery.memberships.flatMap((membership) =>
-    membership.clubs.map((club) => ({
-      clubId: club.id,
-      effectiveRole: club.effectiveRole,
-      membershipId: membership.id,
-      membershipRole: membership.role,
-      organizationId: membership.organization.id,
-    })),
+    membership.clubs.map((club) => toActiveTenantContext(membership, club)),
   );
   if (available.length === 0) {
     throw new Error('Для аккаунта нет доступного активного клуба');
@@ -133,9 +181,7 @@ export function selectTenantContext(discovery: TenantDiscoveryResponse) {
     ) ||
     available[0];
 
-  activeTenantContext = Object.freeze(selected);
-  persistPreference(selected);
-  return activeTenantContext;
+  return activateTenantContext(selected);
 }
 
 function normalizeApiPath(input: string) {
@@ -179,6 +225,9 @@ export function applyTenantHeaders(input: string, init: RequestInit, headers: He
     throw new Error(`Tenant scope is not declared for client request: ${init.method || 'GET'} ${input}`);
   }
   if (scope === 'global' || scope === 'provider_ingress' || scope === 'worker') return;
+  if (tenantTransitionActive) {
+    throw new Error('Tenant context transition is in progress');
+  }
   if (!activeTenantContext) {
     throw new Error('Tenant context is not ready');
   }
