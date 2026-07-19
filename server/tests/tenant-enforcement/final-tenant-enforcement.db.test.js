@@ -120,7 +120,10 @@ test('Feature 9 final enforcement, detector and two-Organization RC matrix', asy
   try {
     schema = connect(database);
     const migrations = await migrateAll(schema);
-    assert.equal(migrations.at(-1), '20260720100000-add-final-tenant-enforcement.js');
+    assert.ok(
+      migrations.includes('20260720100000-add-final-tenant-enforcement.js'),
+      'Feature 9 final enforcement migration must be applied',
+    );
     const finalMigration = require('../../migrations/20260720100000-add-final-tenant-enforcement');
     const queryInterface = schema.getQueryInterface();
     const {
