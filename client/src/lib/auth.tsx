@@ -33,7 +33,7 @@ import {
 } from '@/lib/tenant-context';
 import {
   beginTenantContextTransition,
-  clearTenantSensitiveQueryCache,
+  clearTenantClientState,
   queryClient,
   transitionTenantQueryCache,
 } from '@/lib/query-client';
@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
       if (!contextEnabled) {
         if (previousCacheRealtimeEnabled !== cacheRealtimeEnabled) {
-          clearTenantSensitiveQueryCache(queryClient);
+          await clearTenantClientState(queryClient);
         } else {
           await transitionTenantQueryCache(queryClient, previousContext, null);
         }
@@ -97,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const discovery = (await response.json()) as TenantDiscoveryResponse;
       const selected = selectTenantContext(discovery);
       if (previousCacheRealtimeEnabled !== cacheRealtimeEnabled) {
-        clearTenantSensitiveQueryCache(queryClient);
+        await clearTenantClientState(queryClient);
       } else {
         await transitionTenantQueryCache(queryClient, previousContext, selected);
       }
@@ -146,7 +146,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.error('Tenant context switch failed:', error);
       clearActiveTenantContext();
-      clearTenantSensitiveQueryCache(queryClient);
+      await clearTenantClientState(queryClient);
       setTenantDiscovery(null);
       setTenantContext(null);
       setTenantError(
@@ -163,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(() => {
     clearAuthToken();
-    clearTenantSensitiveQueryCache(queryClient);
+    void clearTenantClientState(queryClient);
     clearActiveTenantContext();
     setTenantContextCapability(false);
     setAccount(null);
@@ -199,7 +199,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setTenantContextEnabled(contextEnabled);
         setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
         clearAuthToken();
-        clearTenantSensitiveQueryCache(queryClient);
+        await clearTenantClientState(queryClient);
         setAccount(null);
         setTenantDiscovery(null);
         setTenantError(null);
@@ -208,6 +208,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!getAuthToken()) {
+        cancelTenantSensitiveRequests();
+        clearActiveTenantContext();
+        await clearTenantClientState(queryClient);
         setTenantContextCapability(contextEnabled);
         setTenantCacheRealtimeCapability(cacheRealtimeEnabled);
         setTenantContextEnabled(contextEnabled);
@@ -222,7 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const meRes = await apiFetch('/api/auth/me');
       if (!meRes.ok) {
         clearAuthToken();
-        clearTenantSensitiveQueryCache(queryClient);
+        await clearTenantClientState(queryClient);
         setAccount(null);
         return;
       }
@@ -231,8 +234,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccount(await initializeTenantContext(data.account, status.capabilities));
     } catch (error) {
       console.error('Auth refresh failed:', error);
+      cancelTenantSensitiveRequests();
       clearActiveTenantContext();
-      clearTenantSensitiveQueryCache(queryClient);
+      await clearTenantClientState(queryClient);
       setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
@@ -252,8 +256,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleExpired = () => {
+      cancelTenantSensitiveRequests();
       clearActiveTenantContext();
-      clearTenantSensitiveQueryCache(queryClient);
+      void clearTenantClientState(queryClient);
       setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
@@ -289,7 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccount(await initializeTenantContext(data.account, data.capabilities));
     } catch (error) {
       clearAuthToken();
-      clearTenantSensitiveQueryCache(queryClient);
+      await clearTenantClientState(queryClient);
       setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);
@@ -322,7 +327,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setAccount(await initializeTenantContext(session.account, session.capabilities));
     } catch (error) {
       clearAuthToken();
-      clearTenantSensitiveQueryCache(queryClient);
+      await clearTenantClientState(queryClient);
       setTenantContextCapability(false);
       setAccount(null);
       setTenantContext(null);

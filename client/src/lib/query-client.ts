@@ -50,19 +50,16 @@ export async function transitionTenantQueryCache(
   client.removeQueries({ predicate });
 }
 
-export function clearTenantSensitiveQueryCache(client: QueryClient = queryClient) {
+export async function clearTenantClientState(client: QueryClient = queryClient) {
   const predicate = (query: { queryKey: readonly unknown[] }) =>
     isTenantSensitiveQueryKey(query.queryKey);
-  void client.cancelQueries({ predicate });
+  client.getMutationCache().clear();
+  await client.cancelQueries({ predicate });
   client.removeQueries({ predicate });
 }
 
 export async function beginTenantContextTransition(
   client: QueryClient = queryClient,
 ) {
-  const predicate = (query: { queryKey: readonly unknown[] }) =>
-    isTenantSensitiveQueryKey(query.queryKey);
-  await client.cancelQueries({ predicate });
-  client.removeQueries({ predicate });
-  client.getMutationCache().clear();
+  await clearTenantClientState(client);
 }

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTenantQueryKey, type TenantQueryAuthority } from '@/api/query-keys';
 import {
   beginTenantContextTransition,
-  clearTenantSensitiveQueryCache,
+  clearTenantClientState,
   transitionTenantQueryCache,
 } from './query-client';
 import type { ActiveTenantContext } from './tenant-context';
@@ -78,19 +78,39 @@ describe('tenant query cache lifecycle', () => {
     expect(client.getQueryData(organizationKey)).toEqual({ organization: 1 });
   });
 
-  it('logout/401 cleanup removes tenant-sensitive keys but preserves global cache', () => {
+  it('auth cleanup removes tenant queries and completed mutation state but preserves global cache', async () => {
     const client = createClient();
     const current = authority(context(1, 11, 21));
     const tenantKey = createTenantQueryKey(current, 'club', 'bookings', 42);
     client.setQueryData(tenantKey, 'tenant');
     client.setQueryData(['clients', 42], 'legacy-tenant');
     client.setQueryData(['publicConfig'], 'global');
+    const mutation = client.getMutationCache().build(client, {
+      mutationFn: async (variables: { organizationId: number; payload: string }) => ({
+        organizationId: variables.organizationId,
+        result: 'tenant-A-result',
+      }),
+      mutationKey: ['bookings', 'save'],
+    });
+    await mutation.execute({
+      organizationId: 1001,
+      payload: 'tenant-A-sensitive-draft',
+    });
+    expect(mutation.state).toMatchObject({
+      data: { organizationId: 1001, result: 'tenant-A-result' },
+      status: 'success',
+      variables: {
+        organizationId: 1001,
+        payload: 'tenant-A-sensitive-draft',
+      },
+    });
 
-    clearTenantSensitiveQueryCache(client);
+    await clearTenantClientState(client);
 
     expect(client.getQueryData(tenantKey)).toBeUndefined();
     expect(client.getQueryData(['clients', 42])).toBeUndefined();
     expect(client.getQueryData(['publicConfig'])).toBe('global');
+    expect(client.getMutationCache().getAll()).toHaveLength(0);
   });
 
   it('background invalidation keeps loaded data visible while marking it stale', async () => {

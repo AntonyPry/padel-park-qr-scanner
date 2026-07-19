@@ -5,6 +5,7 @@ import { AuthGate } from '@/components/AuthGate';
 import { apiFetch, clearAuthToken, setAuthToken } from '@/lib/api';
 import { AuthProvider } from '@/lib/auth';
 import { useAuth, useAuthorizationRole } from '@/lib/useAuth';
+import { queryClient } from '@/lib/query-client';
 import { getActiveTenantContext } from '@/lib/tenant-context';
 
 const account = {
@@ -123,9 +124,33 @@ function installSessionFetch(options: { discoveryStatus?: number; onDiscovery?: 
   });
 }
 
+async function seedCompletedTenantMutation(label: string) {
+  const mutation = queryClient.getMutationCache().build(queryClient, {
+    mutationFn: async (variables: { organizationId: number; payload: string }) => ({
+      organizationId: variables.organizationId,
+      result: `${label}-result`,
+    }),
+    mutationKey: ['bookings', 'save', label],
+  });
+  await mutation.execute({
+    organizationId: 1001,
+    payload: `${label}-sensitive-draft`,
+  });
+  expect(mutation.state).toMatchObject({
+    data: { organizationId: 1001, result: `${label}-result` },
+    status: 'success',
+    variables: {
+      organizationId: 1001,
+      payload: `${label}-sensitive-draft`,
+    },
+  });
+  return mutation;
+}
+
 afterEach(() => {
   cleanup();
   clearAuthToken();
+  queryClient.clear();
   localStorage.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
@@ -257,15 +282,72 @@ describe('AuthProvider tenant bootstrap', () => {
       await screen.findByText('session:manager@padelpark.demo club:12'),
     ).toBeInTheDocument();
     expect(getActiveTenantContext()?.clubId).toBe(12);
+    await seedCompletedTenantMutation('logout');
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'logout-probe' }));
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
     expect(getActiveTenantContext()).toBeNull();
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it('aborts an in-flight tenant request on explicit logout', async () => {
+    setAuthToken('test-token');
+    let tenantRequestAborted = false;
+    let markTenantRequestStarted!: () => void;
+    const tenantRequestStarted = new Promise<void>((resolve) => {
+      markTenantRequestStarted = resolve;
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/status')) {
+          return Response.json({ capabilities: { tenantContext: true }, setupRequired: false });
+        }
+        if (url.endsWith('/api/auth/me')) return Response.json({ account });
+        if (url.endsWith('/api/auth/me/memberships')) return Response.json(discovery);
+        if (url.endsWith('/api/bookings/schedule')) {
+          return new Promise<Response>((_resolve, reject) => {
+            markTenantRequestStarted();
+            init?.signal?.addEventListener('abort', () => {
+              tenantRequestAborted = true;
+              reject(new DOMException('Tenant request aborted', 'AbortError'));
+            });
+          });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <SessionProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByText('session:manager@padelpark.demo club:12'),
+    ).toBeInTheDocument();
+    const pendingTenantRequest = apiFetch('/api/bookings/schedule').catch((error) => error);
+    await tenantRequestStarted;
+    fireEvent.click(screen.getByRole('button', { name: 'logout-probe' }));
+
+    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
+    expect(tenantRequestAborted).toBe(true);
+    expect(await pendingTenantRequest).toMatchObject({ name: 'AbortError' });
   });
 
   it('re-discovers authority before switching to one exact club', async () => {
     setAuthToken('test-token');
     let discoveryCalls = 0;
+    let tenantRequestAborted = false;
+    let markTenantRequestStarted!: () => void;
+    const tenantRequestStarted = new Promise<void>((resolve) => {
+      markTenantRequestStarted = resolve;
+    });
     const multiClubDiscovery = {
       ...discovery,
       memberships: [
@@ -286,7 +368,7 @@ describe('AuthProvider tenant bootstrap', () => {
     };
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith('/api/auth/status')) {
           return Response.json({
@@ -298,6 +380,15 @@ describe('AuthProvider tenant bootstrap', () => {
         if (url.endsWith('/api/auth/me/memberships')) {
           discoveryCalls += 1;
           return Response.json(multiClubDiscovery);
+        }
+        if (url.endsWith('/api/bookings/schedule')) {
+          return new Promise<Response>((_resolve, reject) => {
+            markTenantRequestStarted();
+            init?.signal?.addEventListener('abort', () => {
+              tenantRequestAborted = true;
+              reject(new DOMException('Tenant request aborted', 'AbortError'));
+            });
+          });
         }
         throw new Error(`Unexpected request: ${url}`);
       }),
@@ -314,11 +405,15 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(
       await screen.findByText('session:manager@padelpark.demo club:12'),
     ).toBeInTheDocument();
+    const pendingTenantRequest = apiFetch('/api/bookings/schedule').catch((error) => error);
+    await tenantRequestStarted;
     fireEvent.click(screen.getByRole('button', { name: 'switch-probe' }));
 
     expect(
       await screen.findByText('session:manager@padelpark.demo club:13'),
     ).toBeInTheDocument();
+    expect(tenantRequestAborted).toBe(true);
+    expect(await pendingTenantRequest).toMatchObject({ name: 'AbortError' });
     expect(discoveryCalls).toBe(2);
     expect(getActiveTenantContext()).toMatchObject({
       clubId: 13,
@@ -468,6 +563,8 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(
       await screen.findByText('session:manager@padelpark.demo club:12'),
     ).toBeInTheDocument();
+    await seedCompletedTenantMutation('revoked-switch');
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'switch-probe' }));
 
     expect(
@@ -476,6 +573,7 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(screen.getByText(/Выбранный клуб больше недоступен/)).toBeInTheDocument();
     expect(screen.queryByText('session:manager@padelpark.demo club:12')).not.toBeInTheDocument();
     expect(getActiveTenantContext()).toBeNull();
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
     expect(discoveryCalls).toBe(2);
     expect(consoleError).toHaveBeenCalledTimes(1);
   });
@@ -541,10 +639,44 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(
       await screen.findByText('session:manager@padelpark.demo club:12'),
     ).toBeInTheDocument();
+    await seedCompletedTenantMutation('expired');
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'unauthorized-probe' }));
 
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
     expect(getActiveTenantContext()).toBeNull();
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
+  });
+
+  it('clears completed mutation state after a non-OK auth refresh', async () => {
+    setAuthToken('test-token');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/status')) {
+          return Response.json({ capabilities: { tenantContext: true }, setupRequired: false });
+        }
+        if (url.endsWith('/api/auth/me')) {
+          return Response.json({ error: 'Session revoked' }, { status: 403 });
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+    await seedCompletedTenantMutation('auth-refresh-failure');
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <SessionProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
+    expect(getActiveTenantContext()).toBeNull();
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
   });
 
   it('does not retry or redirect-loop when discovery safely denies context', async () => {
@@ -560,6 +692,8 @@ describe('AuthProvider tenant bootstrap', () => {
         },
       }),
     );
+    await seedCompletedTenantMutation('initialization-failure');
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(1);
 
     render(
       <AuthProvider>
@@ -573,6 +707,7 @@ describe('AuthProvider tenant bootstrap', () => {
     await waitFor(() => expect(discoveryCalls).toBe(1));
     expect(consoleError).toHaveBeenCalledTimes(1);
     expect(getActiveTenantContext()).toBeNull();
+    expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
   });
 
   it('keeps an already ready session visible across a parent background rerender', async () => {
