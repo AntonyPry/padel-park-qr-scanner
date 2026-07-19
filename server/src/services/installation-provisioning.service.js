@@ -139,6 +139,70 @@ function activationState(token, now = new Date()) {
   return 'pending';
 }
 
+function ownerAuthorityError() {
+  return provisioningError(
+    'Полномочия владельца для этой организации недоступны',
+    410,
+    'OWNER_AUTHORITY_UNAVAILABLE',
+  );
+}
+
+async function lockOwnerAuthorityGraph(organizationId, accountId, transaction) {
+  const organization = await db.Organization.findByPk(organizationId, {
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+  });
+  const account = await db.Account.findByPk(accountId, {
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+  });
+  const membership = await db.Membership.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: { accountId, organizationId, role: 'owner', status: 'active' },
+  });
+  const staffId = account?.staffId;
+  const staff = staffId
+    ? await db.Staff.findByPk(staffId, { lock: transaction.LOCK.UPDATE, transaction })
+    : null;
+  if (
+    !organization || organization.status !== 'active' ||
+    !account || account.status !== 'active' || account.role !== 'owner' ||
+    !membership || Number(membership.staffId) !== Number(staffId) ||
+    !staff || staff.status !== 'active' || Number(staff.organizationId) !== Number(organizationId)
+  ) {
+    throw ownerAuthorityError();
+  }
+  return { account, membership, organization, staff };
+}
+
+async function lockOperationAuthority(operation, transaction) {
+  const authority = await lockOwnerAuthorityGraph(
+    operation.organizationId,
+    operation.ownerAccountId,
+    transaction,
+  );
+  const [activationToken, auditLog] = await Promise.all([
+    db.OwnerActivationToken.findByPk(operation.activationTokenId, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    }),
+    db.AuditLog.findByPk(operation.auditLogId, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    }),
+  ]);
+  if (
+    !activationToken ||
+    Number(activationToken.organizationId) !== Number(operation.organizationId) ||
+    Number(activationToken.accountId) !== Number(operation.ownerAccountId) ||
+    !auditLog || Number(auditLog.organizationId) !== Number(operation.organizationId)
+  ) {
+    throw ownerAuthorityError();
+  }
+  return { ...authority, activationToken, auditLog };
+}
+
 async function loadOperationResult(operation, { replayed, transaction }) {
   const [organization, clubs, account, activationToken, auditLog] = await Promise.all([
     db.Organization.findByPk(operation.organizationId, { transaction }),
@@ -455,29 +519,39 @@ async function getInstallationSnapshot() {
 }
 
 async function inspectActivation(rawToken) {
-  const token = await db.OwnerActivationToken.findOne({
-    include: [
-      { model: db.Organization, attributes: ['id', 'name', 'slug'] },
-      {
-        model: db.Account,
-        attributes: ['id', 'email'],
-        include: [{ model: db.Staff, attributes: ['name'] }],
-      },
-    ],
-    where: { tokenHash: sha256(rawToken) },
-  });
-  if (!token) return { state: 'invalid' };
-  const state = activationState(token);
-  if (state !== 'pending') return { state };
-  return {
-    expiresAt: token.expiresAt,
-    organization: token.Organization,
-    owner: {
-      email: token.Account.email,
-      name: token.Account.Staff?.name || token.Account.email,
-    },
-    state,
-  };
+  try {
+    return await db.sequelize.transaction(async (transaction) => {
+      const token = await db.OwnerActivationToken.findOne({
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: { tokenHash: sha256(rawToken) },
+      });
+      if (!token) return { state: 'invalid' };
+      const authority = await lockOwnerAuthorityGraph(
+        token.organizationId,
+        token.accountId,
+        transaction,
+      );
+      const state = activationState(token);
+      if (state !== 'pending') return { state };
+      return {
+        expiresAt: token.expiresAt,
+        organization: {
+          id: authority.organization.id,
+          name: authority.organization.name,
+          slug: authority.organization.slug,
+        },
+        owner: {
+          email: authority.account.email,
+          name: authority.staff.name || authority.account.email,
+        },
+        state,
+      };
+    });
+  } catch (error) {
+    if (error?.code === 'OWNER_AUTHORITY_UNAVAILABLE') return { state: 'invalid' };
+    throw error;
+  }
 }
 
 async function activateOwner(rawToken, password) {
@@ -495,6 +569,7 @@ async function activateOwner(rawToken, password) {
         'OWNER_ACTIVATION_UNAVAILABLE',
       );
     }
+    await lockOwnerAuthorityGraph(token.organizationId, token.accountId, transaction);
     const account = await accountMetadata.updateAccountMetadata(
       token.accountId,
       { passwordHash: authService.hashPassword(password) },
@@ -532,9 +607,9 @@ async function reissueActivation(organizationId, operator) {
         'PROVISIONED_ORGANIZATION_NOT_FOUND',
       );
     }
-    const currentActivation = await db.OwnerActivationToken.findByPk(
-      operation.activationTokenId,
-      { lock: transaction.LOCK.UPDATE, transaction },
+    const { activationToken: currentActivation } = await lockOperationAuthority(
+      operation,
+      transaction,
     );
     if (!currentActivation || currentActivation.consumedAt) {
       throw provisioningError(
@@ -594,6 +669,8 @@ module.exports = {
     activationState,
     allocateClubSlugs,
     canonicalSlug,
+    lockOperationAuthority,
+    lockOwnerAuthorityGraph,
     sha256,
     stablePayload,
   },

@@ -58,6 +58,44 @@ async function counts(db, suffix) {
   return { accounts, activations, clubs, operations, organizations };
 }
 
+async function provisioningSchemaFingerprint(schema) {
+  const [rows] = await schema.query(`
+    SELECT 'column' AS kind, TABLE_NAME AS ownerName, COLUMN_NAME AS artifactName,
+           CONCAT(ORDINAL_POSITION, ':', COLUMN_TYPE, ':', IS_NULLABLE, ':',
+                  COALESCE(COLUMN_DEFAULT, '<null>'), ':', EXTRA) AS definition
+      FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA=DATABASE()
+       AND TABLE_NAME IN ('OwnerActivationTokens', 'InstallationProvisioningOperations')
+    UNION ALL
+    SELECT 'index', TABLE_NAME, INDEX_NAME,
+           CONCAT(NON_UNIQUE, ':', SEQ_IN_INDEX, ':', COLUMN_NAME)
+      FROM INFORMATION_SCHEMA.STATISTICS
+     WHERE TABLE_SCHEMA=DATABASE()
+       AND (TABLE_NAME IN ('OwnerActivationTokens', 'InstallationProvisioningOperations')
+            OR INDEX_NAME LIKE '%installation_provisioning%'
+            OR INDEX_NAME LIKE '%owner_activation%')
+    UNION ALL
+    SELECT 'constraint', TABLE_NAME, CONSTRAINT_NAME,
+           CONCAT(COLUMN_NAME, ':', COALESCE(REFERENCED_TABLE_NAME, ''), ':',
+                  COALESCE(REFERENCED_COLUMN_NAME, ''))
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+     WHERE CONSTRAINT_SCHEMA=DATABASE()
+       AND (TABLE_NAME IN ('OwnerActivationTokens', 'InstallationProvisioningOperations')
+            OR CONSTRAINT_NAME LIKE 'fk_installation_provisioning%'
+            OR CONSTRAINT_NAME LIKE 'fk_owner_activation%')
+    UNION ALL
+    SELECT 'trigger', EVENT_OBJECT_TABLE, TRIGGER_NAME,
+           CONCAT(ACTION_TIMING, ':', EVENT_MANIPULATION, ':', ACTION_STATEMENT)
+      FROM INFORMATION_SCHEMA.TRIGGERS
+     WHERE TRIGGER_SCHEMA=DATABASE()
+       AND (EVENT_OBJECT_TABLE IN ('OwnerActivationTokens', 'InstallationProvisioningOperations')
+            OR TRIGGER_NAME LIKE 'trg_installation_provisioning%'
+            OR TRIGGER_NAME LIKE 'trg_owner_activation%')
+    ORDER BY kind, ownerName, artifactName, definition
+  `);
+  return JSON.stringify(rows);
+}
+
 test('Feature 10.2 atomic provisioning and secure owner activation', async (t) => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for provisioning DB tests');
   const database = process.env.INSTALLATION_PROVISIONING_TEST_DB_NAME ||
@@ -65,6 +103,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
   const previous = Object.fromEntries([
     ...CAPABILITY_ENV,
     'DB_NAME',
+    'INSTALLATION_PROVISIONING_MIGRATION_FAIL_STEP',
     'NODE_ENV',
     'INSTALLATION_ACTIVATION_BASE_URL',
   ].map((name) => [name, process.env[name]]));
@@ -82,7 +121,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     await migrateAll(schema);
     const queryInterface = schema.getQueryInterface();
     await FEATURE_MIGRATION.down(queryInterface);
-    await t.test('migration rolls down and reapplies on a fresh schema', async () => {
+    await t.test('migration failure/ownership/lookalike matrix is restart-safe', async () => {
       const tablesAfterDown = new Set(
         (await queryInterface.showAllTables()).map((table) =>
           typeof table === 'string' ? table : table.tableName,
@@ -90,7 +129,199 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       );
       assert.equal(tablesAfterDown.has('OwnerActivationTokens'), false);
       assert.equal(tablesAfterDown.has('InstallationProvisioningOperations'), false);
+
+      for (const step of FEATURE_MIGRATION.__testing.DDL_STEPS) {
+        process.env.INSTALLATION_PROVISIONING_MIGRATION_FAIL_STEP = step;
+        await assert.rejects(
+          FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+          (error) => error.code === 'INSTALLATION_PROVISIONING_MIGRATION_FORCED_FAILURE',
+          step,
+        );
+        delete process.env.INSTALLATION_PROVISIONING_MIGRATION_FAIL_STEP;
+        assert.equal(
+          (await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state,
+          'absent',
+          step,
+        );
+        assert.equal(await provisioningSchemaFingerprint(schema), '[]', step);
+      }
+
+      await queryInterface.createTable('OwnerActivationTokens', {
+        id: { allowNull: false, primaryKey: true, type: SequelizePackage.INTEGER },
+      });
+      const partialBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), partialBefore);
+      await queryInterface.dropTable('OwnerActivationTokens');
+
+      await schema.query(`
+        CREATE TRIGGER trg_owner_activation_tokens_bi
+        BEFORE UPDATE ON Organizations FOR EACH ROW SET @provisioning_lookalike=OLD.id
+      `);
+      const triggerLookalikeBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), triggerLookalikeBefore);
+      await schema.query('DROP TRIGGER trg_owner_activation_tokens_bi');
+
+      await queryInterface.addIndex('Organizations', ['status'], {
+        name: 'idx_installation_provisioning_org_created',
+      });
+      const indexLookalikeBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), indexLookalikeBefore);
+      await queryInterface.removeIndex('Organizations', 'idx_installation_provisioning_org_created');
+
       await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
+      assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'ready');
+      const readyFingerprint = await provisioningSchemaFingerprint(schema);
+      await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
+      assert.equal(await provisioningSchemaFingerprint(schema), readyFingerprint);
+
+      await queryInterface.removeIndex(
+        'InstallationProvisioningOperations',
+        'idx_installation_provisioning_org_created',
+      );
+      const missingIndexBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), missingIndexBefore);
+      await queryInterface.addIndex(
+        'InstallationProvisioningOperations',
+        ['organizationId', 'createdAt'],
+        { name: 'idx_installation_provisioning_org_created' },
+      );
+
+      const changedTrigger = FEATURE_MIGRATION.__testing.TRIGGERS.find(
+        (item) => item.name === 'trg_owner_activation_tokens_bd',
+      );
+      await schema.query(`DROP TRIGGER \`${changedTrigger.name}\``);
+      await schema.query(`
+        CREATE TRIGGER \`${changedTrigger.name}\`
+        BEFORE DELETE ON OwnerActivationTokens FOR EACH ROW
+        BEGIN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='lookalike'; END
+      `);
+      const changedTriggerBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), changedTriggerBefore);
+      await schema.query(`DROP TRIGGER \`${changedTrigger.name}\``);
+      await schema.query(
+        `CREATE TRIGGER \`${changedTrigger.name}\` BEFORE ${changedTrigger.event} ` +
+        `ON \`${changedTrigger.table}\` FOR EACH ROW ${changedTrigger.body}`,
+      );
+
+      await queryInterface.removeConstraint(
+        'InstallationProvisioningOperations',
+        'fk_installation_provisioning_owner',
+      );
+      await queryInterface.addConstraint('InstallationProvisioningOperations', {
+        fields: ['ownerAccountId'],
+        name: 'fk_installation_provisioning_owner',
+        onDelete: 'RESTRICT',
+        onUpdate: 'RESTRICT',
+        references: { field: 'id', table: 'Staffs' },
+        type: 'foreign key',
+      });
+      const changedForeignKeyBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), changedForeignKeyBefore);
+      await queryInterface.removeConstraint(
+        'InstallationProvisioningOperations',
+        'fk_installation_provisioning_owner',
+      );
+      await queryInterface.addConstraint('InstallationProvisioningOperations', {
+        fields: ['ownerAccountId'],
+        name: 'fk_installation_provisioning_owner',
+        onDelete: 'RESTRICT',
+        onUpdate: 'RESTRICT',
+        references: { field: 'id', table: 'Accounts' },
+        type: 'foreign key',
+      });
+
+      const trackedIndex = {
+        name: 'uq_installation_provisioning_idempotency_hash',
+        table: 'InstallationProvisioningOperations',
+      };
+      const trackedRows = await FEATURE_MIGRATION.__testing.readArtifact(
+        queryInterface,
+        'index',
+        trackedIndex,
+      );
+      const ownershipPlan = {
+        foreignKey: [],
+        index: [{
+          ...trackedIndex,
+          signature: FEATURE_MIGRATION.__testing.artifactSignature('index', trackedRows),
+        }],
+        table: [],
+        trigger: [],
+      };
+      await queryInterface.removeIndex(trackedIndex.table, trackedIndex.name);
+      await queryInterface.addIndex(trackedIndex.table, ['payloadHash'], {
+        name: trackedIndex.name,
+        unique: true,
+      });
+      const ownershipBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.__testing.preflightCleanupInvocation(queryInterface, ownershipPlan),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_CLEANUP_OWNERSHIP_LOST',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), ownershipBefore);
+      await queryInterface.removeIndex(trackedIndex.table, trackedIndex.name);
+      await queryInterface.addIndex(trackedIndex.table, ['idempotencyKeyHash'], {
+        name: trackedIndex.name,
+        unique: true,
+      });
+
+      const trackedTable = { table: FEATURE_MIGRATION.__testing.TABLES.operation };
+      const completeOwnershipPlan = {
+        foreignKey: [],
+        index: [],
+        table: [{
+          ...trackedTable,
+          signature: FEATURE_MIGRATION.__testing.artifactSignature(
+            'table',
+            await FEATURE_MIGRATION.__testing.readArtifact(
+              queryInterface,
+              'table',
+              trackedTable,
+            ),
+          ),
+        }],
+        trigger: [],
+      };
+      const unownedIndex = 'idx_installation_provisioning_unowned_probe';
+      await queryInterface.addIndex(trackedTable.table, ['payloadHash'], {
+        name: unownedIndex,
+      });
+      const unownedBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.__testing.preflightCleanupInvocation(
+          queryInterface,
+          completeOwnershipPlan,
+        ),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_CLEANUP_OWNERSHIP_LOST',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), unownedBefore);
+      await queryInterface.removeIndex(trackedTable.table, unownedIndex);
+
+      assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'ready');
       const tablesAfterUp = new Set(
         (await queryInterface.showAllTables()).map((table) =>
           typeof table === 'string' ? table : table.tableName,
@@ -105,6 +336,8 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     db = require('../../models');
     const provisioning = require('../../src/services/installation-provisioning.service');
     const auth = require('../../src/services/auth.service');
+    const accountLifecycle = require('../../src/services/account-lifecycle.service');
+    const auditService = require('../../src/services/audit.service');
     const tenantContext = require('../../src/services/tenant-context.service');
     const operator = { username: 'db-test-operator' };
 
@@ -209,6 +442,249 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       );
     });
 
+    await t.test('DB and ORM guards reject cross-Organization inserts and reparenting', async () => {
+      const peer = await provisioning.provisionOrganization(payload('authority-peer'), operator);
+      const peerOperation = await db.InstallationProvisioningOperation.findByPk(
+        peer.idempotency.operationId,
+      );
+      const legacyOrganization = await db.Organization.findOne({
+        where: { id: { [db.Sequelize.Op.notIn]: [created.organization.id, peer.organization.id] } },
+      });
+      assert.ok(legacyOrganization);
+
+      await assert.rejects(
+        db.sequelize.query(`
+          INSERT INTO OwnerActivationTokens
+            (organizationId, accountId, tokenHash, expiresAt, consumedAt, invalidatedAt, createdAt, updatedAt)
+          VALUES
+            (:organizationId, :accountId, :tokenHash, DATE_ADD(NOW(), INTERVAL 1 DAY), NULL, NULL, NOW(), NOW())
+        `, {
+          replacements: {
+            accountId: peer.owner.accountId,
+            organizationId: legacyOrganization.id,
+            tokenHash: crypto.createHash('sha256').update('cross-owner-token').digest('hex'),
+          },
+        }),
+        /Owner activation authority mismatch/u,
+      );
+      await assert.rejects(
+        db.sequelize.query(`
+          INSERT INTO InstallationProvisioningOperations
+            (idempotencyKeyHash, payloadHash, organizationId, ownerAccountId,
+             activationTokenId, auditLogId, createdAt, updatedAt)
+          VALUES
+            (:keyHash, :payloadHash, :organizationId, :ownerAccountId,
+             :activationTokenId, :auditLogId, NOW(), NOW())
+        `, {
+          replacements: {
+            activationTokenId: peerOperation.activationTokenId,
+            auditLogId: peerOperation.auditLogId,
+            keyHash: crypto.createHash('sha256').update('cross-operation-key').digest('hex'),
+            organizationId: legacyOrganization.id,
+            ownerAccountId: peer.owner.accountId,
+            payloadHash: crypto.createHash('sha256').update('cross-operation-payload').digest('hex'),
+          },
+        }),
+        /Provisioning owner authority mismatch/u,
+      );
+
+      const authorityOnly = await db.sequelize.transaction(async (transaction) => {
+        const organization = await db.Organization.create({
+          name: 'Организация authority-only',
+          slug: 'organization-authority-only',
+          status: 'active',
+        }, { transaction });
+        const { account } = await accountLifecycle.createProvisionedOwner({
+          email: 'owner-authority-only@provisioning.test',
+          name: 'Владелец authority-only',
+          organizationId: organization.id,
+          passwordHash: auth.hashPassword('AuthorityFixture1234!'),
+          phone: '+79991110000',
+        }, { transaction });
+        const activation = await db.OwnerActivationToken.create({
+          accountId: account.id,
+          expiresAt: new Date(Date.now() + 60_000),
+          organizationId: organization.id,
+          tokenHash: crypto.createHash('sha256').update('authority-only-token').digest('hex'),
+        }, { transaction });
+        const audit = await auditService.recordInstallation({
+          action: 'installation.provisioning.create',
+          entityId: String(organization.id),
+          entityType: 'organization',
+          method: 'POST',
+          organizationId: organization.id,
+          path: '/api/installation/provisioning/organizations',
+          statusCode: 201,
+          summary: 'Authority guard fixture',
+        }, transaction);
+        return { account, activation, audit, organization };
+      });
+      const insertOperation = (overrides) => db.sequelize.query(`
+        INSERT INTO InstallationProvisioningOperations
+          (idempotencyKeyHash, payloadHash, organizationId, ownerAccountId,
+           activationTokenId, auditLogId, createdAt, updatedAt)
+        VALUES
+          (:keyHash, :payloadHash, :organizationId, :ownerAccountId,
+           :activationTokenId, :auditLogId, NOW(), NOW())
+      `, {
+        replacements: {
+          activationTokenId: authorityOnly.activation.id,
+          auditLogId: authorityOnly.audit.id,
+          keyHash: crypto.createHash('sha256').update(overrides.label).digest('hex'),
+          organizationId: authorityOnly.organization.id,
+          ownerAccountId: authorityOnly.account.id,
+          payloadHash: crypto.createHash('sha256').update(`${overrides.label}-payload`).digest('hex'),
+          ...overrides,
+        },
+      });
+      await assert.rejects(
+        insertOperation({ activationTokenId: peerOperation.activationTokenId, label: 'token-mismatch' }),
+        /Provisioning activation authority mismatch/u,
+      );
+      await assert.rejects(
+        insertOperation({ auditLogId: peerOperation.auditLogId, label: 'audit-mismatch' }),
+        /Provisioning audit authority mismatch/u,
+      );
+
+      const peerToken = await db.OwnerActivationToken.findByPk(peerOperation.activationTokenId);
+      await assert.rejects(
+        peerToken.update({ organizationId: legacyOrganization.id }),
+        (error) => error.code === 'TENANT_AUTHORITY_IMMUTABLE',
+      );
+      await assert.rejects(
+        peerOperation.update({ ownerAccountId: created.owner.accountId }),
+        (error) => error.code === 'TENANT_AUTHORITY_IMMUTABLE',
+      );
+      await assert.rejects(
+        db.sequelize.query(
+          'UPDATE OwnerActivationTokens SET organizationId=:organizationId WHERE id=:id',
+          { replacements: { id: peerToken.id, organizationId: legacyOrganization.id } },
+        ),
+        /Owner activation authority is immutable/u,
+      );
+      const createdOperation = await db.InstallationProvisioningOperation.findByPk(
+        created.idempotency.operationId,
+      );
+      await assert.rejects(
+        db.sequelize.query(
+          'UPDATE InstallationProvisioningOperations SET activationTokenId=:tokenId WHERE id=:id',
+          { replacements: { id: createdOperation.id, tokenId: peerToken.id } },
+        ),
+        /Provisioning activation authority mismatch/u,
+      );
+      await assert.rejects(
+        db.sequelize.query(
+          'UPDATE InstallationProvisioningOperations SET organizationId=:organizationId WHERE id=:id',
+          { replacements: { id: createdOperation.id, organizationId: legacyOrganization.id } },
+        ),
+        /Provisioning operation authority is immutable/u,
+      );
+    });
+
+    await t.test('stale owner authority fails closed and never changes the victim password', async () => {
+      const cases = [
+        {
+          name: 'membership status',
+          mutate: ({ membership }) => db.sequelize.query(
+            "UPDATE Memberships SET status='inactive' WHERE id=:id",
+            { replacements: { id: membership.id } },
+          ),
+          restore: ({ membership }) => db.sequelize.query(
+            "UPDATE Memberships SET status='active' WHERE id=:id",
+            { replacements: { id: membership.id } },
+          ),
+        },
+        {
+          name: 'membership role',
+          mutate: ({ membership }) => db.sequelize.query(
+            "UPDATE Memberships SET role='manager' WHERE id=:id",
+            { replacements: { id: membership.id } },
+          ),
+          restore: ({ membership }) => db.sequelize.query(
+            "UPDATE Memberships SET role='owner' WHERE id=:id",
+            { replacements: { id: membership.id } },
+          ),
+        },
+        {
+          name: 'account status',
+          mutate: ({ account }) => db.sequelize.query(
+            "UPDATE Accounts SET status='inactive' WHERE id=:id",
+            { replacements: { id: account.id } },
+          ),
+          restore: ({ account }) => db.sequelize.query(
+            "UPDATE Accounts SET status='active' WHERE id=:id",
+            { replacements: { id: account.id } },
+          ),
+        },
+        {
+          name: 'organization status',
+          mutate: ({ organization }) => db.sequelize.query(
+            "UPDATE Organizations SET status='inactive' WHERE id=:id",
+            { replacements: { id: organization.id } },
+          ),
+          restore: ({ organization }) => db.sequelize.query(
+            "UPDATE Organizations SET status='active' WHERE id=:id",
+            { replacements: { id: organization.id } },
+          ),
+        },
+        {
+          name: 'staff status',
+          mutate: ({ staff }) => db.sequelize.query(
+            "UPDATE Staffs SET status='inactive' WHERE id=:id",
+            { replacements: { id: staff.id } },
+          ),
+          restore: ({ staff }) => db.sequelize.query(
+            "UPDATE Staffs SET status='active' WHERE id=:id",
+            { replacements: { id: staff.id } },
+          ),
+        },
+      ];
+
+      for (const [index, staleCase] of cases.entries()) {
+        const provisioned = await provisioning.provisionOrganization(
+          payload(`stale-${index}`),
+          operator,
+        );
+        const activationToken = tokenFromLink(provisioned.activation.link);
+        const account = await db.Account.findByPk(provisioned.owner.accountId);
+        const organization = await db.Organization.findByPk(provisioned.organization.id);
+        const membership = await db.Membership.findOne({
+          where: { accountId: account.id, organizationId: organization.id },
+        });
+        const staff = await db.Staff.findByPk(account.staffId);
+        const graph = { account, membership, organization, staff };
+        const passwordHash = account.passwordHash;
+        const activationCount = await db.OwnerActivationToken.count({
+          where: { accountId: account.id, organizationId: organization.id },
+        });
+        await staleCase.mutate(graph);
+        try {
+          assert.deepEqual(
+            await provisioning.inspectActivation(activationToken),
+            { state: 'invalid' },
+            staleCase.name,
+          );
+          await assert.rejects(
+            provisioning.activateOwner(activationToken, 'MustNotBeStored123!'),
+            (error) => error.code === 'OWNER_AUTHORITY_UNAVAILABLE',
+          );
+          await assert.rejects(
+            provisioning.reissueActivation(organization.id, operator),
+            (error) => error.code === 'OWNER_AUTHORITY_UNAVAILABLE',
+          );
+          assert.equal((await db.Account.findByPk(account.id)).passwordHash, passwordHash);
+          assert.equal(
+            await db.OwnerActivationToken.count({
+              where: { accountId: account.id, organizationId: organization.id },
+            }),
+            activationCount,
+          );
+        } finally {
+          await staleCase.restore(graph);
+        }
+      }
+    });
+
     await t.test('internal organization and club slugs resolve collisions deterministically', async () => {
       const firstInput = payload('slug-collision-a');
       firstInput.organization.name = 'A B';
@@ -278,6 +754,47 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       );
       const reissueAudit = await db.AuditLog.findByPk(reissued.audit.id);
       assert.equal(reissueAudit.action, 'installation.owner_activation.reissue');
+    });
+
+    await t.test('consumed token state cannot be reverted or made impossible', async () => {
+      const operation = await db.InstallationProvisioningOperation.findByPk(
+        created.idempotency.operationId,
+      );
+      const consumed = await db.OwnerActivationToken.findByPk(operation.activationTokenId);
+      assert.ok(consumed.consumedAt);
+      await assert.rejects(
+        db.sequelize.query(
+          'UPDATE OwnerActivationTokens SET consumedAt=NULL WHERE id=:id',
+          { replacements: { id: consumed.id } },
+        ),
+        /consumption is irreversible/u,
+      );
+      await assert.rejects(
+        db.sequelize.query(
+          'UPDATE OwnerActivationTokens SET invalidatedAt=NOW() WHERE id=:id',
+          { replacements: { id: consumed.id } },
+        ),
+        /state is impossible/u,
+      );
+    });
+
+    await t.test('populated rollback is refused without changing activation history', async () => {
+      const before = {
+        activations: await db.OwnerActivationToken.count(),
+        operations: await db.InstallationProvisioningOperation.count(),
+      };
+      await assert.rejects(
+        FEATURE_MIGRATION.down(db.sequelize.getQueryInterface()),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_ROLLBACK_DATA_PRESENT',
+      );
+      assert.deepEqual({
+        activations: await db.OwnerActivationToken.count(),
+        operations: await db.InstallationProvisioningOperation.count(),
+      }, before);
+      assert.equal(
+        (await FEATURE_MIGRATION.__testing.classifyState(db.sequelize.getQueryInterface())).state,
+        'ready',
+      );
     });
   } finally {
     if (db) await db.sequelize.close();
