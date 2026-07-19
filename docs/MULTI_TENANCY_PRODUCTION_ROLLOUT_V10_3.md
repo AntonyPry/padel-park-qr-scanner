@@ -185,8 +185,10 @@ bootstrap-файл поверх установленного TLS-конфига.
 
 - `https://ops.setly.tech/` перенаправляет на `/installation`;
 - разрешены только `/installation`, `/installation/provisioning`, статические
-  frontend assets, `/api/health` и operator endpoints `status`, `session`,
-  `snapshot`, `organizations`, `activation/reissue`;
+  frontend assets под `/assets/`, точные root files `/favicon.ico`,
+  `/setly-mark.png`, `/favicon-32x32.png`, `/favicon-16x16.png`,
+  `/apple-touch-icon.png`, `/api/health` и operator endpoints `status`,
+  `session`, `snapshot`, `organizations`, `activation/reissue`;
 - `/api/installation/provisioning/activation/status` и `activation/consume`
   не доступны через `ops`; `/activate-owner` остаётся на `setly.tech`;
 - `setly.tech` не отдаёт `/installation` и operator API даже по direct URL;
