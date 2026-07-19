@@ -1,9 +1,10 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const shiftReportsService = require('../../src/services/shift-reports.service');
 const { buildTenantStorageKey } = require('../../src/storage/tenant-storage');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalModels = {
   Account: db.Account,
@@ -16,9 +17,15 @@ const originalModels = {
   Staff: db.Staff,
   sequelize: db.sequelize,
 };
+let restoreSingleton;
+
+beforeEach(() => {
+  restoreSingleton = mockExactSingletonDefault(db);
+});
 
 afterEach(() => {
   Object.assign(db, originalModels);
+  restoreSingleton();
 });
 
 function makeModel(payload) {
@@ -32,6 +39,13 @@ function makeModel(payload) {
       return { ...this };
     },
   };
+}
+
+async function runTestTransaction(optionsOrCallback, maybeCallback) {
+  const callback = typeof optionsOrCallback === 'function'
+    ? optionsOrCallback
+    : maybeCallback;
+  return callback({ id: 'transaction' });
 }
 
 test('ensureReportsForShift creates scheduled reports with item snapshots', async () => {
@@ -66,11 +80,7 @@ test('ensureReportsForShift creates scheduled reports with item snapshots', asyn
     version: 3,
   });
 
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
   db.ShiftReportTemplate = {
     async findAll() {
       return [template];
@@ -154,11 +164,7 @@ test('deleting a template item soft-deletes it and bumps template version', asyn
     version: 4,
   });
 
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
   db.ShiftReportTemplateItem = {
     async findByPk(id) {
       assert.equal(Number(id), item.id);
@@ -294,11 +300,7 @@ test('ensureReportsForShift applies every active template without legacy role or
     },
   };
   db.ShiftReportAnswer = { async bulkCreate() {} };
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
 
   await shiftReportsService.ensureReportsForShift({
     date: '2026-07-17',
@@ -345,11 +347,7 @@ test('submit saves a report comment separately from item answers', async () => {
       return report;
     },
   };
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
 
   const saved = await shiftReportsService.saveReport(
     report.id,
@@ -390,11 +388,7 @@ test('submit does not require photos for photo-enabled answers', async () => {
       return report;
     },
   };
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
 
   const saved = await shiftReportsService.saveReport(
     report.id,

@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const analyticsService = require('../../src/services/visits-analytics.service');
 const clientBasesService = require('../../src/services/client-bases.service');
@@ -8,7 +8,12 @@ const clientBasesController = require('../../src/controllers/client-bases.contro
 const {
   createActiveTrainingFixture,
   getDefaultTenantIds,
+  mockExactSingletonDefault,
 } = require('../helpers/tenant-fixtures');
+
+let restoreSingleton;
+beforeEach(() => { restoreSingleton = mockExactSingletonDefault(db); });
+afterEach(() => { restoreSingleton(); });
 
 function createApiResponse() {
   return {

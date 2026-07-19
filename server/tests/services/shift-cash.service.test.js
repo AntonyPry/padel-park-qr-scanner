@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const financeService = require('../../src/services/finance.service');
 const onboardingService = require('../../src/services/onboarding.service');
@@ -8,6 +8,7 @@ const shiftCashService = require('../../src/services/shift-cash.service');
 const attachmentStorage = require('../../src/services/shift-cash-attachments');
 const { buildTenantStorageKey, checksumBuffer } = require('../../src/storage/tenant-storage');
 const migration = require('../../migrations/20260714100000-create-shift-cash');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalModels = {
   Category: db.Category,
@@ -24,6 +25,11 @@ const originalFunctions = {
   recordEventSafe: onboardingService.recordEventSafe,
   storeAttachment: attachmentStorage.storeAttachment,
 };
+let restoreSingleton;
+
+beforeEach(() => {
+  restoreSingleton = mockExactSingletonDefault(db);
+});
 
 afterEach(() => {
   Object.assign(db, originalModels);
@@ -32,6 +38,7 @@ afterEach(() => {
   onboardingService.getTrainingDataMarker = originalFunctions.getTrainingDataMarker;
   onboardingService.recordEventSafe = originalFunctions.recordEventSafe;
   payrollService.recordChange = originalFunctions.recordChange;
+  restoreSingleton();
 });
 
 function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {

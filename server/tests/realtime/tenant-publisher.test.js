@@ -9,6 +9,7 @@ const {
   publishGlobalSystemEvent,
   publishRealtimeChange,
 } = require('../../src/realtime');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 function restore(name, value) {
   if (value === undefined) delete process.env[name];
@@ -44,22 +45,10 @@ function fakeIo() {
 test('flag off preserves the legacy event shape and role/domain room', async () => {
   const previousContext = process.env.TENANT_CONTEXT_ENABLED;
   const previousIsolation = process.env.TENANT_CACHE_REALTIME_ENABLED;
-  const originalOrganizations = db.Organization.findAll;
-  const originalClubs = db.Club.findAll;
+  const restoreSingleton = mockExactSingletonDefault(db);
   try {
     process.env.TENANT_CONTEXT_ENABLED = 'true';
     process.env.TENANT_CACHE_REALTIME_ENABLED = 'false';
-    db.Organization.findAll = async () => [
-      { id: 1, slug: 'padel-park', status: 'active' },
-    ];
-    db.Club.findAll = async () => [
-      {
-        id: 1,
-        organizationId: 1,
-        slug: 'padel-park',
-        status: 'active',
-      },
-    ];
     const io = fakeIo();
     const event = await publishRealtimeChange(
       io,
@@ -70,8 +59,7 @@ test('flag off preserves the legacy event shape and role/domain room', async () 
     assert.equal('organizationId' in event, false);
     assert.equal(event.entityId, '42');
   } finally {
-    db.Organization.findAll = originalOrganizations;
-    db.Club.findAll = originalClubs;
+    restoreSingleton();
     restore('TENANT_CONTEXT_ENABLED', previousContext);
     restore('TENANT_CACHE_REALTIME_ENABLED', previousIsolation);
   }

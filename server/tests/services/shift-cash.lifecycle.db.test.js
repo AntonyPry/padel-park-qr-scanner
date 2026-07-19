@@ -5,8 +5,10 @@ const shiftCashService = require('../../src/services/shift-cash.service');
 const attachmentStorage = require('../../src/services/shift-cash-attachments');
 const shiftsService = require('../../src/services/shifts.service');
 const onboardingService = require('../../src/services/onboarding.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 test('DB-backed shift cash lifecycle closes cash and shift atomically after rollback-safe variance validation', async () => {
+  const restoreSingleton = mockExactSingletonDefault(db);
   await db.sequelize.authenticate();
 
   const suffix = `${Date.now()}`;
@@ -235,6 +237,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(Number(persistedSession.expectedClosingCash), 4200);
     assert.equal(Number(persistedSession.variance), 0);
   } finally {
+    restoreSingleton();
     onboardingService.recordEventSafe = originalRecordEventSafe;
     attachmentStorage.deleteAttachmentFile = originalDeleteAttachmentFile;
     attachmentStorage.storeAttachment = originalStoreAttachment;

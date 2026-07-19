@@ -74,23 +74,39 @@ async function createActiveTrainingFixture(
   };
 }
 
-function mockExactSingletonDefault(db, { clubId = 1, organizationId = 1 } = {}) {
-  const originalClubFindAll = db.Club.findAll;
-  const originalOrganizationFindAll = db.Organization.findAll;
-  db.Organization.findAll = async () => [{
-    id: organizationId,
-    slug: DEFAULT_ORGANIZATION_SLUG,
-    status: 'active',
-  }];
-  db.Club.findAll = async () => [{
-    id: clubId,
-    organizationId,
-    slug: DEFAULT_CLUB_SLUG,
-    status: 'active',
-  }];
+function mockExactSingletonDefault(_db, { clubId = 1, organizationId = 1 } = {}) {
+  const tenantFoundation = require('../../src/services/tenant-foundation.service');
+  const originalLoader = tenantFoundation.loadTenantFoundationSnapshot;
+  tenantFoundation.loadTenantFoundationSnapshot = async () => ({
+    accesses: [],
+    accounts: [{ id: 900001, role: 'owner', staffId: null, status: 'active' }],
+    clubs: [{
+      id: clubId,
+      name: 'Setly test default',
+      organizationId,
+      slug: DEFAULT_CLUB_SLUG,
+      status: 'active',
+      timezone: 'Europe/Moscow',
+    }],
+    memberships: [{
+      accountId: 900001,
+      id: 900001,
+      organizationId,
+      role: 'owner',
+      staffId: null,
+      status: 'active',
+    }],
+    organizations: [{
+      id: organizationId,
+      name: 'Setly test default',
+      slug: DEFAULT_ORGANIZATION_SLUG,
+      status: 'active',
+    }],
+    staffIdentitySchema: 'ready',
+    staffs: [],
+  });
   return () => {
-    db.Club.findAll = originalClubFindAll;
-    db.Organization.findAll = originalOrganizationFindAll;
+    tenantFoundation.loadTenantFoundationSnapshot = originalLoader;
   };
 }
 
