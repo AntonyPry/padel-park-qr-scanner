@@ -36,11 +36,14 @@ The installation manifest has five mandatory, unique artifact labels: `database`
 Create and verify the installation-wide manifest after the dump and storage snapshot are complete:
 
 The attachment detector `--output` parent must already exist and be writable,
-and the target filename must be new. The CLI atomically creates a regular
-mode-`0600` JSON file, refuses existing/symlink/special targets, retains the same
-JSON on stdout and exits `2` when detector counts are unsafe. It validates and
-reserves the destination before DB authentication or apply/rollback; a failed
-authentication/migration removes the invocation-owned reservation.
+and the target filename must be new. Before DB authentication or apply/rollback,
+the CLI exclusively reserves a regular mode-`0600` destination. It then durably
+publishes JSON through the held no-follow file descriptor and verifies the path
+identity before and after `fsync`; it never uses an unconditional pathname
+replacement. Existing/symlink/special targets are refused, a foreign replacement
+is never modified or removed, the same JSON remains on stdout, and unsafe detector
+counts exit `2`. A failed authentication/migration/publication removes only the
+invocation-owned reservation.
 
 ```bash
 npm run tenant:files-workers:attachments -- --output=/secure/backup/attachments.json

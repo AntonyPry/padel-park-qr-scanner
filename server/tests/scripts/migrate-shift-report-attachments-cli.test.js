@@ -112,7 +112,7 @@ afterEach(async () => {
     fsp.rm(root, { force: true, recursive: true })));
 });
 
-test('documented package command atomically writes a parseable attachment manifest', async () => {
+test('documented package command durably writes a parseable attachment manifest', async () => {
   const root = await makeRoot();
   const outputPath = path.join(root, 'attachments.json');
   const expected = manifest();
@@ -126,7 +126,7 @@ test('documented package command atomically writes a parseable attachment manife
   assert.deepEqual(
     (await fsp.readdir(root)).sort(),
     ['attachments.json'],
-    'atomic writer must not leave a temporary file',
+    'durable writer must not leave a temporary file',
   );
 });
 
@@ -251,23 +251,49 @@ test('owned reservation is cleaned after auth or migration failure', async () =>
   assert.deepEqual(await temporaryArtifacts(root), []);
 });
 
-test('publication refuses a replaced reservation without overwriting foreign state', async () => {
+test('owned reservation is cleaned after publication failure', async () => {
+  const root = await makeRoot();
+  const outputPath = path.join(root, 'publication-failure.json');
+  await assert.rejects(runAttachmentCli({
+    argv: ['--apply', `--output=${outputPath}`],
+    async migrate() {
+      return manifest();
+    },
+    async beforeReservedWrite() {
+      throw new Error('publication failed');
+    },
+    sequelize: { async authenticate() {} },
+    stdout: { write() {} },
+  }), /publication failed/);
+  assert.equal(fs.existsSync(outputPath), false);
+  assert.deepEqual(await temporaryArtifacts(root), []);
+});
+
+test('last-mile replacement cannot redirect reserved publication onto foreign state', async () => {
   const root = await makeRoot();
   const outputPath = path.join(root, 'race.json');
   let migrateCalled = false;
+  let foreignIdentity;
   await assert.rejects(runAttachmentCli({
     argv: ['--apply', `--output=${outputPath}`],
     async migrate() {
       migrateCalled = true;
+      return manifest();
+    },
+    async beforeReservedWrite() {
       await fsp.unlink(outputPath);
       await fsp.writeFile(outputPath, 'foreign-state', { encoding: 'utf8', mode: 0o600 });
-      return manifest();
+      foreignIdentity = await fsp.lstat(outputPath);
     },
     sequelize: { async authenticate() {} },
     stdout: { write() {} },
   }), (error) => error.code === 'ATTACHMENT_CLI_OUTPUT_RESERVATION_CHANGED');
   assert.equal(migrateCalled, true);
   assert.equal(await fsp.readFile(outputPath, 'utf8'), 'foreign-state');
+  const finalIdentity = await fsp.lstat(outputPath);
+  assert.equal(finalIdentity.dev, foreignIdentity.dev);
+  assert.equal(finalIdentity.ino, foreignIdentity.ino);
+  assert.deepEqual(await fsp.readdir(root), ['race.json']);
   assert.deepEqual(await temporaryArtifacts(root), []);
 });
 

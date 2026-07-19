@@ -489,12 +489,15 @@ npm run tenant:files-workers:attachments -- \
 ```
 
 Каждый `--output` attachment detector указывает на новый файл в уже
-существующем writable real directory. CLI пишет JSON атомарно, не перезаписывает
-existing file и отказывается от symlink/special target; тот же manifest остаётся
-в stdout. Destination проверяется и резервируется до DB authentication и до
-apply/rollback mutation; при controlled failure собственная reservation
-удаляется. Exit code `2` означает unsafe detector counts и блокирует следующий
-шаг, даже если evidence file был успешно сохранён.
+существующем writable real directory. CLI до DB authentication и apply/rollback
+mutation эксклюзивно резервирует regular mode-`0600` destination, затем durable
+пишет JSON через удерживаемый no-follow file descriptor и проверяет path identity
+до и после `fsync`; unconditional pathname replacement не используется.
+Existing/symlink/special target отклоняется, а чужая замена path никогда не
+изменяется и не удаляется. Тот же manifest остаётся в stdout; при controlled
+failure удаляется только собственная reservation. Exit code `2` означает unsafe
+detector counts и блокирует следующий шаг, даже если evidence file был успешно
+сохранён.
 
 `rollout-post.json` обязан показать `preservation.ok=true`, unchanged business
 PK/counts/historical column values, exact one default Organization/Club и

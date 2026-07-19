@@ -249,36 +249,52 @@ async function reserveOutputDestination(outputPath) {
   }
 }
 
-async function publishReservedManifest(reservation, manifest) {
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
-  const temporaryPath = temporaryOutputPath(reservation, 'manifest');
-  let handle;
-  try {
-    const flags = fs.constants.O_CREAT |
-      fs.constants.O_EXCL |
-      fs.constants.O_WRONLY |
-      (fs.constants.O_NOFOLLOW || 0);
-    handle = await fsp.open(temporaryPath, flags, 0o600);
-    await handle.writeFile(serialized, 'utf8');
-    await handle.sync();
-    await handle.close();
-    handle = null;
-
-    await assertParentUnchanged(reservation);
-    await assertReservationOwned(reservation);
-    await fsp.rename(temporaryPath, reservation.absolutePath);
-    reservation.published = true;
-    await syncDirectory(reservation.parentPath);
-    return reservation.absolutePath;
-  } finally {
-    await handle?.close().catch(() => {});
-    await fsp.unlink(temporaryPath).catch((error) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+async function writeAllAtStart(handle, content) {
+  const buffer = Buffer.from(content, 'utf8');
+  let offset = 0;
+  while (offset < buffer.length) {
+    const { bytesWritten } = await handle.write(
+      buffer,
+      offset,
+      buffer.length - offset,
+      offset,
+    );
+    if (bytesWritten === 0) {
+      throw cliError(
+        'Attachment manifest publication made no write progress',
+        'ATTACHMENT_CLI_OUTPUT_WRITE_FAILED',
+      );
+    }
+    offset += bytesWritten;
   }
+  await handle.truncate(buffer.length);
 }
 
-async function atomicWriteManifest(outputPath, manifest) {
+async function publishReservedManifest(reservation, manifest, {
+  beforeReservedWrite,
+} = {}) {
+  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+
+  await assertParentUnchanged(reservation);
+  await assertReservationOwned(reservation);
+  await beforeReservedWrite?.();
+
+  // Publication is bound to the held reservation inode. A pathname replacement
+  // can make this invocation fail ownership checks, but it can never redirect
+  // these writes onto or overwrite the foreign replacement.
+  await reservation.handle.chmod(0o600);
+  await writeAllAtStart(reservation.handle, serialized);
+  await reservation.handle.sync();
+
+  await assertParentUnchanged(reservation);
+  await assertReservationOwned(reservation);
+  await syncDirectory(reservation.parentPath);
+  await assertReservationOwned(reservation);
+  reservation.published = true;
+  return reservation.absolutePath;
+}
+
+async function durableWriteManifest(outputPath, manifest) {
   const reservation = await reserveOutputDestination(outputPath);
   try {
     return await publishReservedManifest(reservation, manifest);
@@ -299,6 +315,7 @@ async function main({
   migrate = migrateShiftReportAttachments,
   sequelize = db.sequelize,
   stdout = process.stdout,
+  beforeReservedWrite,
 } = {}) {
   const options = parseArgs(argv);
   const reservation = options.output
@@ -310,7 +327,9 @@ async function main({
       apply: options.apply,
       rollback: options.rollback,
     });
-    if (reservation) await publishReservedManifest(reservation, manifest);
+    if (reservation) {
+      await publishReservedManifest(reservation, manifest, { beforeReservedWrite });
+    }
     stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
     return isUnsafeManifest(manifest) ? 2 : 0;
   } finally {
@@ -335,7 +354,7 @@ if (require.main === module) {
 module.exports = {
   ATTACHMENT_CLI_OPTIONS,
   assertOutputDestination,
-  atomicWriteManifest,
+  durableWriteManifest,
   isUnsafeManifest,
   main,
   parseArgs,
