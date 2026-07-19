@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const { endpointContracts, getOpenApiDocument } = require('../../src/contracts/openapi');
 const {
   GLOBAL_ENDPOINT_IDS,
+  INSTALLATION_PUBLIC_ENDPOINT_IDS,
   PROVIDER_INGRESS_ENDPOINT_IDS,
   WORKER_ENDPOINT_IDS,
   auditEndpointScopeDeclarations,
@@ -41,6 +42,7 @@ test('all OpenAPI endpoints have an audited tenant scope declaration', () => {
     assert.equal(
       Boolean(endpoint.public),
       (GLOBAL_ENDPOINT_IDS.has(endpoint.id) && !authenticatedGlobal) ||
+        INSTALLATION_PUBLIC_ENDPOINT_IDS.has(endpoint.id) ||
         PROVIDER_INGRESS_ENDPOINT_IDS.has(endpoint.id) ||
         WORKER_ENDPOINT_IDS.has(endpoint.id),
       endpoint.id,

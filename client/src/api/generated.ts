@@ -9,6 +9,9 @@ export const apiEndpoints = {
   "auth.login": { method: "POST", path: "/auth/login", responseType: "json", tenantScope: "global" },
   "auth.me": { method: "GET", path: "/auth/me", responseType: "json", tenantScope: "global" },
   "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
+  "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.session": { method: "POST", path: "/installation/provisioning/session", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.snapshot": { method: "GET", path: "/installation/provisioning/snapshot", responseType: "json", tenantScope: "installation" },
   "webhooks.evotor": { method: "POST", path: "/webhooks/evotor", responseType: "json", tenantScope: "provider_ingress" },
   "webhooks.evotorConnection": { method: "POST", path: "/webhooks/evotor/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "access.search": { method: "GET", path: "/search", responseType: "json", tenantScope: "club" },
@@ -289,7 +292,7 @@ export const apiEndpoints = {
 } as const;
 
 export type ApiEndpointId = keyof typeof apiEndpoints;
-export type TenantScope = 'global' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
+export type TenantScope = 'global' | 'installation' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
 export type TenantHeadersForScope<TScope extends TenantScope> =
   TScope extends 'club'
     ? { 'X-Organization-Id': number | string; 'X-Club-Id': number | string }
@@ -337,6 +340,27 @@ export type AuthMembershipsResponse = {
     membershipId: number;
     organizationId: number;
   } | null;
+};
+export type InstallationProvisioningStatusResponse = {
+  enabled: boolean;
+};
+export type InstallationProvisioningSessionBody = {
+  password: string;
+  username: string;
+};
+export type InstallationProvisioningSessionResponse = {
+  token: string;
+};
+export type InstallationProvisioningSnapshotResponse = {
+  foundation: {
+    state: "initialized";
+  };
+  organizations: Array<{
+    clubCount: number;
+    id: number;
+    name: string;
+    ownerCount: number;
+  }>;
 };
 export type WebhooksEvotorConnectionParams = {
   connectionPublicId: string;
@@ -2473,6 +2497,9 @@ export interface ApiEndpointRequestMap {
   "auth.login": ApiEndpointRequest<undefined, undefined, AuthLoginBody>;
   "auth.me": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.session": ApiEndpointRequest<undefined, undefined, InstallationProvisioningSessionBody>;
+  "installationProvisioning.snapshot": ApiEndpointRequest<undefined, undefined, undefined>;
   "webhooks.evotor": ApiEndpointRequest<undefined, undefined, undefined>;
   "webhooks.evotorConnection": ApiEndpointRequest<WebhooksEvotorConnectionParams, undefined, undefined>;
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
@@ -2760,6 +2787,9 @@ export interface ApiEndpointResponseMap {
   "auth.login": unknown;
   "auth.me": unknown;
   "auth.memberships": AuthMembershipsResponse;
+  "installationProvisioning.status": InstallationProvisioningStatusResponse;
+  "installationProvisioning.session": InstallationProvisioningSessionResponse;
+  "installationProvisioning.snapshot": InstallationProvisioningSnapshotResponse;
   "webhooks.evotor": unknown;
   "webhooks.evotorConnection": unknown;
   "access.search": unknown;

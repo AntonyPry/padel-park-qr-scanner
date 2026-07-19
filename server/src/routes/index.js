@@ -50,6 +50,7 @@ const trainingMethodologyRoutes = require('./training-methodology');
 const telephonyRoutes = require('./telephony');
 const telephonyTranscriptionWorkerRoutes = require('./telephony-transcription-worker');
 const onboardingRoutes = require('./onboarding');
+const installationProvisioningRoutes = require('./installation-provisioning');
 
 router.use(attachRouteDeclaration);
 
@@ -108,6 +109,7 @@ router.get('/openapi.json', globalEndpoint, (_req, res) => {
 });
 
 router.use('/auth', authRoutes);
+router.use('/installation/provisioning', installationProvisioningRoutes);
 router.use(realtimeMutations());
 router.use(telephonyTranscriptionWorkerRoutes);
 

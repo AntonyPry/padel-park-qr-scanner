@@ -1225,6 +1225,33 @@ const apiSchemas = {
         .nullable(),
     }),
   },
+  installationProvisioning: {
+    session: {
+      body: z
+        .object({
+          password: z.string().min(1, 'Пароль обязателен'),
+          username: z.string().trim().min(1, 'Логин обязателен'),
+        })
+        .strict(),
+      response: z.object({
+        token: z.string().min(1),
+      }),
+    },
+    snapshotResponse: z.object({
+      foundation: z.object({
+        state: z.literal('initialized'),
+      }),
+      organizations: z.array(
+        z.object({
+          clubCount: z.number().int().nonnegative(),
+          id: z.number().int().positive(),
+          name: z.string(),
+          ownerCount: z.number().int().nonnegative(),
+        }),
+      ),
+    }),
+    statusResponse: z.object({ enabled: z.boolean() }),
+  },
   callTasks: {
     attempt: {
       body: z

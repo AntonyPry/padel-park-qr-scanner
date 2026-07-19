@@ -5,6 +5,7 @@ const crypto = require('crypto');
 const TENANT_SCOPES = Object.freeze({
   CLUB: 'club',
   GLOBAL: 'global',
+  INSTALLATION: 'installation',
   MEMBERSHIP: 'membership',
   ORGANIZATION: 'organization',
 });
@@ -22,6 +23,16 @@ const GLOBAL_ENDPOINT_IDS = new Set([
   'auth.login',
   'auth.me',
   'auth.memberships',
+]);
+
+const INSTALLATION_ENDPOINT_IDS = new Set([
+  'installationProvisioning.status',
+  'installationProvisioning.session',
+  'installationProvisioning.snapshot',
+]);
+const INSTALLATION_PUBLIC_ENDPOINT_IDS = new Set([
+  'installationProvisioning.status',
+  'installationProvisioning.session',
 ]);
 
 const PROVIDER_INGRESS_ENDPOINT_IDS = new Set([
@@ -172,10 +183,11 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '669189de4b6d59b4525d1e00ef24b446b5924857a36958ef6019e8160a32e7f6';
+  'fd27cd9f448e146f823317a98f9db3c13e37531842ef80caf113cb63871f69f9';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;
+  if (INSTALLATION_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.INSTALLATION;
   if (PROVIDER_INGRESS_ENDPOINT_IDS.has(endpointId)) {
     return ENDPOINT_CLASSIFICATIONS.PROVIDER_INGRESS;
   }
@@ -243,6 +255,8 @@ module.exports = {
   ENDPOINT_CLASSIFICATIONS,
   EXPECTED_ROUTE_SCOPE_DIGEST,
   GLOBAL_ENDPOINT_IDS,
+  INSTALLATION_ENDPOINT_IDS,
+  INSTALLATION_PUBLIC_ENDPOINT_IDS,
   PROVIDER_INGRESS_ENDPOINT_IDS,
   TENANT_SCOPES,
   WORKER_ENDPOINT_IDS,

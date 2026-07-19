@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toast';
 import { PrepaymentsPageShell } from '@/components/prepayments-page-shell';
@@ -47,6 +47,9 @@ const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const TrainerPage = lazy(() => import('./pages/TrainerPage'));
 const MethodologyPage = lazy(() => import('./pages/MethodologyPage'));
 const MethodologyAnalyticsPage = lazy(() => import('./pages/MethodologyAnalyticsPage'));
+const InstallationProvisioningPage = lazy(
+  () => import('./pages/InstallationProvisioningPage'),
+);
 
 function PageLoader() {
   return (
@@ -56,14 +59,20 @@ function PageLoader() {
   );
 }
 
-function App() {
+function ApplicationContent() {
+  const location = useLocation();
+
+  if (location.pathname === '/installation/provisioning') {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <InstallationProvisioningPage />
+      </Suspense>
+    );
+  }
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <BrowserRouter>
-          <AuthProvider>
-            <TooltipProvider delayDuration={0}>
-              <AuthGate>
+    <AuthProvider>
+      <AuthGate>
                 <RealtimeProvider>
                 <TrainingModeProvider>
                 <OnboardingQuestRouteObserver />
@@ -333,10 +342,20 @@ function App() {
                 </Suspense>
                 </TrainingModeProvider>
                 </RealtimeProvider>
-              </AuthGate>
-              <Toaster />
-            </TooltipProvider>
-          </AuthProvider>
+      </AuthGate>
+    </AuthProvider>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <BrowserRouter>
+          <TooltipProvider delayDuration={0}>
+            <ApplicationContent />
+            <Toaster />
+          </TooltipProvider>
         </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>

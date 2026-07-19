@@ -20,7 +20,7 @@ interface EndpointContract {
   successStatus?: number;
   summary: string;
   tags: string[];
-  tenantScope?: 'global' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
+  tenantScope?: 'global' | 'installation' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
 }
 
 const responseOk = z.object({}).passthrough();
@@ -55,6 +55,9 @@ const rawEndpointContracts: EndpointContract[] = [
   { ...apiSchemas.auth.login, id: 'auth.login', method: 'post', path: '/auth/login', public: true, summary: 'Login', tags: ['Auth'] },
   { id: 'auth.me', method: 'get', path: '/auth/me', summary: 'Current account', tags: ['Auth'] },
   { id: 'auth.memberships', method: 'get', path: '/auth/me/memberships', response: apiSchemas.auth.membershipsResponse, summary: 'Current account tenant memberships', tags: ['Auth'] },
+  { id: 'installationProvisioning.status', method: 'get', path: '/installation/provisioning/status', public: true, response: apiSchemas.installationProvisioning.statusResponse, summary: 'Installation provisioning status', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.session, id: 'installationProvisioning.session', method: 'post', path: '/installation/provisioning/session', public: true, summary: 'Create installation operator session', tags: ['Installation Provisioning'] },
+  { id: 'installationProvisioning.snapshot', method: 'get', path: '/installation/provisioning/snapshot', response: apiSchemas.installationProvisioning.snapshotResponse, summary: 'Read installation tenant graph', tags: ['Installation Provisioning'] },
   { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
   { id: 'webhooks.evotorConnection', method: 'post', params: integrationConnectionParams, path: '/webhooks/evotor/{connectionPublicId}', public: true, summary: 'Receive Evotor webhook through an integration connection', tags: ['Integrations'] },
 

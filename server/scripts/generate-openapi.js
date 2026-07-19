@@ -178,7 +178,7 @@ function generateClientTypes() {
     '} as const;',
     '',
     'export type ApiEndpointId = keyof typeof apiEndpoints;',
-    "export type TenantScope = 'global' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';",
+    "export type TenantScope = 'global' | 'installation' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';",
     'export type TenantHeadersForScope<TScope extends TenantScope> =',
     "  TScope extends 'club'",
     "    ? { 'X-Organization-Id': number | string; 'X-Club-Id': number | string }",
