@@ -33,6 +33,17 @@ function assertMetadataPayload(payload) {
 
 async function updateAccountMetadata(accountId, payload, options = {}) {
   assertMetadataPayload(payload);
+  if (options.transaction) {
+    const locked = await db.Account.findByPk(accountId, {
+      lock: options.transaction.LOCK.UPDATE,
+      transaction: options.transaction,
+    });
+    if (!locked) {
+      throw metadataError('Пользователь не найден', 404, 'ACCOUNT_NOT_FOUND');
+    }
+    await locked.update(payload, { transaction: options.transaction });
+    return locked;
+  }
   await assertTenantFoundationInitialized();
   const account = await db.sequelize.transaction(async (transaction) => {
     const locked = await db.Account.findByPk(accountId, {

@@ -10,9 +10,11 @@ function requireInstallationOperator(req, res, next) {
     if (scheme !== 'Bearer' || !token) {
       return sendError(res, { statusCode: 401 }, 'Требуется вход оператора');
     }
-    if (!installationOperatorAuth.verifySession(token)) {
+    const operator = installationOperatorAuth.verifySession(token);
+    if (!operator) {
       return sendError(res, { statusCode: 401 }, 'Сессия оператора недействительна');
     }
+    req.installationOperator = operator;
     next();
   } catch (error) {
     return sendError(res, error, 'Не удалось проверить оператора');

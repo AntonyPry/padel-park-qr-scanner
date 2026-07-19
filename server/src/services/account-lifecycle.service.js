@@ -444,6 +444,61 @@ async function bootstrapInitialOwner(
   return accountId;
 }
 
+async function createProvisionedOwner(
+  { email, name, organizationId, passwordHash, phone },
+  { transaction } = {},
+) {
+  if (!transaction) {
+    throw lifecycleError(
+      'Provisioned owner creation requires the provisioning transaction',
+      500,
+      'PROVISIONING_TRANSACTION_REQUIRED',
+    );
+  }
+  const organization = await db.Organization.findByPk(organizationId, {
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+  });
+  if (!organization || organization.status !== 'active') {
+    throw lifecycleError(
+      'Организация для владельца недоступна',
+      404,
+      'PROVISIONING_ORGANIZATION_NOT_FOUND',
+    );
+  }
+  const staff = await db.Staff.create(
+    {
+      name,
+      organizationId: organization.id,
+      phone: phone || null,
+      role: 'Владелец',
+      status: 'active',
+    },
+    { transaction },
+  );
+  const account = await db.Account.create(
+    {
+      email,
+      passwordHash,
+      role: 'owner',
+      staffId: staff.id,
+      status: 'active',
+    },
+    { transaction },
+  );
+  const membership = await db.Membership.create(
+    {
+      accountId: account.id,
+      organizationId: organization.id,
+      role: 'owner',
+      staffId: staff.id,
+      status: 'active',
+    },
+    { transaction },
+  );
+  return { account, membership, staff };
+}
+
 module.exports = {
   _private: {
     assertStaffLinkAvailable,
@@ -454,6 +509,7 @@ module.exports = {
   },
   bootstrapInitialOwner,
   createAccount,
+  createProvisionedOwner,
   permanentDeleteAccount,
   updateAccount,
 };

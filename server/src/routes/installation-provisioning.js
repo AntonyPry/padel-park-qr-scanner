@@ -30,5 +30,31 @@ router.get(
   requireInstallationOperator,
   controller.snapshot,
 );
+router.post(
+  '/organizations',
+  installationEndpoint,
+  requireInstallationOperator,
+  validate(apiSchemas.installationProvisioning.create),
+  controller.create,
+);
+router.post(
+  '/organizations/:organizationId/activation/reissue',
+  installationEndpoint,
+  requireInstallationOperator,
+  validate(apiSchemas.installationProvisioning.reissue),
+  controller.reissue,
+);
+router.post(
+  '/activation/status',
+  installationEndpoint,
+  validate(apiSchemas.installationProvisioning.activationStatus),
+  controller.activationStatus,
+);
+router.post(
+  '/activation/consume',
+  installationEndpoint,
+  validate(apiSchemas.installationProvisioning.activate),
+  controller.activate,
+);
 
 module.exports = router;

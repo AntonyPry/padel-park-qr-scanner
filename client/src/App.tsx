@@ -50,6 +50,7 @@ const MethodologyAnalyticsPage = lazy(() => import('./pages/MethodologyAnalytics
 const InstallationProvisioningPage = lazy(
   () => import('./pages/InstallationProvisioningPage'),
 );
+const OwnerActivationPage = lazy(() => import('./pages/OwnerActivationPage'));
 
 function PageLoader() {
   return (
@@ -66,6 +67,14 @@ function ApplicationContent() {
     return (
       <Suspense fallback={<PageLoader />}>
         <InstallationProvisioningPage />
+      </Suspense>
+    );
+  }
+
+  if (location.pathname === '/activate-owner') {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <OwnerActivationPage />
       </Suspense>
     );
   }

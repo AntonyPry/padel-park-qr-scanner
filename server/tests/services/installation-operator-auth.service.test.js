@@ -48,7 +48,9 @@ test('installation operator sessions are separately enabled, signed and expiring
         username: 'setly-operator',
       });
       assert.match(session.token, /^[^.]+\.[^.]+\.[^.]+$/u);
-      assert.equal(auth.verifySession(session.token), true);
+      assert.deepEqual(auth.verifySession(session.token), {
+        username: 'setly-operator',
+      });
       assert.equal(auth.verifySession(`${session.token}tampered`), null);
     },
   );

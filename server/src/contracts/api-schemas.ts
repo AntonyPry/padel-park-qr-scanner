@@ -1226,6 +1226,115 @@ const apiSchemas = {
     }),
   },
   installationProvisioning: {
+    activate: {
+      body: z
+        .object({
+          password: z
+            .string()
+            .min(10, 'Пароль должен быть не короче 10 символов')
+            .max(200, 'Пароль слишком длинный'),
+          token: z.string().trim().regex(/^[A-Za-z0-9_-]{43}$/u, 'Ссылка активации некорректна'),
+        })
+        .strict(),
+      response: z.object({
+        auditLogId: z.number().int().positive(),
+        email: z.string().email(),
+        success: z.literal(true),
+      }),
+    },
+    activationStatus: {
+      body: z.object({
+        token: z.string().trim().regex(/^[A-Za-z0-9_-]{43}$/u, 'Ссылка активации некорректна'),
+      }).strict(),
+      response: z
+        .object({
+          expiresAt: dateTime.optional(),
+          organization: z
+            .object({ id: z.number().int().positive(), name: z.string(), slug: z.string() })
+            .optional(),
+          owner: z.object({ email: z.string().email(), name: z.string() }).optional(),
+          state: z.enum(['pending', 'consumed', 'expired', 'invalidated', 'invalid']),
+        })
+        .strict(),
+    },
+    create: {
+      body: z
+        .object({
+          clubs: z
+            .array(
+              z
+                .object({
+                  name: nameString,
+                  slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, 'Slug клуба указан некорректно'),
+                  timezone: z.string().trim().regex(/^[A-Za-z_]+(?:\/[A-Za-z0-9_+-]+)+$/u, 'Часовой пояс указан некорректно'),
+                })
+                .strict(),
+            )
+            .min(1, 'Добавьте хотя бы один клуб')
+            .max(20, 'За одну операцию можно создать до 20 клубов')
+            .superRefine((
+              clubs: Array<{ slug: string }>,
+              context: {
+                addIssue(issue: {
+                  code: string;
+                  message: string;
+                  path: Array<string | number>;
+                }): void;
+              },
+            ) => {
+              const seen = new Set<string>();
+              clubs.forEach((club: { slug: string }, index: number) => {
+                if (seen.has(club.slug)) {
+                  context.addIssue({
+                    code: z.ZodIssueCode.custom,
+                    message: 'Slug клубов не должны повторяться',
+                    path: [index, 'slug'],
+                  });
+                }
+                seen.add(club.slug);
+              });
+            }),
+          idempotencyKey: z.string().uuid('Ключ повторной отправки указан некорректно'),
+          organization: z
+            .object({
+              name: nameString,
+              slug: z.string().trim().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u, 'Slug организации указан некорректно'),
+            })
+            .strict(),
+          owner: z
+            .object({
+              email: z.string().trim().email('Некорректный email'),
+              name: nameString,
+              phone: z.string().trim().min(5, 'Телефон обязателен').max(40, 'Телефон слишком длинный'),
+            })
+            .strict(),
+        })
+        .strict(),
+      response: z.object({
+        activation: z.object({
+          expiresAt: dateTime,
+          link: z.string().url().nullable(),
+          state: z.enum(['pending', 'consumed', 'expired', 'invalidated']),
+        }),
+        audit: z.object({ action: z.string(), createdAt: dateTime, id: z.number().int().positive() }),
+        clubs: z.array(z.object({ id: z.number().int().positive(), name: z.string(), slug: z.string(), timezone: z.string() })),
+        idempotency: z.object({ operationId: z.number().int().positive(), replayed: z.boolean() }),
+        organization: z.object({ id: z.number().int().positive(), name: z.string(), slug: z.string() }),
+        owner: z.object({ accountId: z.number().int().positive(), email: z.string().email(), name: z.string() }),
+      }),
+    },
+    organizationParams: z.object({ organizationId: id }),
+    reissue: {
+      params: z.object({ organizationId: id }),
+      response: z.object({
+        activation: z.object({
+          expiresAt: dateTime,
+          link: z.string().url(),
+          state: z.literal('pending'),
+        }),
+        audit: z.object({ action: z.string(), createdAt: dateTime, id: z.number().int().positive() }),
+      }),
+    },
     session: {
       body: z
         .object({
@@ -1238,15 +1347,26 @@ const apiSchemas = {
       }),
     },
     snapshotResponse: z.object({
+      audits: z.array(z.object({
+        action: z.string(),
+        createdAt: dateTime,
+        id: z.number().int().positive(),
+        organizationId: z.number().int().positive(),
+        statusCode: z.number().int(),
+        summary: z.string().nullable(),
+      })),
       foundation: z.object({
         state: z.literal('initialized'),
       }),
       organizations: z.array(
         z.object({
           clubCount: z.number().int().nonnegative(),
+          activationState: z.enum(['pending', 'consumed', 'expired', 'invalidated']).nullable(),
+          createdAt: dateTime,
           id: z.number().int().positive(),
           name: z.string(),
           ownerCount: z.number().int().nonnegative(),
+          slug: z.string(),
         }),
       ),
     }),

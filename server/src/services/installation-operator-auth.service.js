@@ -93,7 +93,7 @@ function verifySession(token) {
     ) {
       return null;
     }
-    return true;
+    return Object.freeze({ username: payload.username });
   } catch {
     return null;
   }

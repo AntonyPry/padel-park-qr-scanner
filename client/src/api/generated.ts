@@ -12,6 +12,10 @@ export const apiEndpoints = {
   "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.session": { method: "POST", path: "/installation/provisioning/session", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.snapshot": { method: "GET", path: "/installation/provisioning/snapshot", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.create": { method: "POST", path: "/installation/provisioning/organizations", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.reissue": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/activation/reissue", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.activationStatus": { method: "POST", path: "/installation/provisioning/activation/status", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.activate": { method: "POST", path: "/installation/provisioning/activation/consume", responseType: "json", tenantScope: "installation" },
   "webhooks.evotor": { method: "POST", path: "/webhooks/evotor", responseType: "json", tenantScope: "provider_ingress" },
   "webhooks.evotorConnection": { method: "POST", path: "/webhooks/evotor/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "access.search": { method: "GET", path: "/search", responseType: "json", tenantScope: "club" },
@@ -351,16 +355,41 @@ export type InstallationProvisioningSessionBody = {
 export type InstallationProvisioningSessionResponse = {
   token: string;
 };
-export type InstallationProvisioningSnapshotResponse = {
-  foundation: {
-    state: "initialized";
-  };
-  organizations: Array<{
-    clubCount: number;
-    id: number;
+export type InstallationProvisioningSnapshotResponse = Record<string, unknown>;
+export type InstallationProvisioningCreateBody = {
+  clubs: Array<{
     name: string;
-    ownerCount: number;
+    slug: string;
+    timezone: string;
   }>;
+  idempotencyKey: string;
+  organization: {
+    name: string;
+    slug: string;
+  };
+  owner: {
+    email: string;
+    name: string;
+    phone: string;
+  };
+};
+export type InstallationProvisioningCreateResponse = Record<string, unknown>;
+export type InstallationProvisioningReissueParams = {
+  organizationId: number | string;
+};
+export type InstallationProvisioningReissueResponse = Record<string, unknown>;
+export type InstallationProvisioningActivationStatusBody = {
+  token: string;
+};
+export type InstallationProvisioningActivationStatusResponse = Record<string, unknown>;
+export type InstallationProvisioningActivateBody = {
+  password: string;
+  token: string;
+};
+export type InstallationProvisioningActivateResponse = {
+  auditLogId: number;
+  email: string;
+  success: true;
 };
 export type WebhooksEvotorConnectionParams = {
   connectionPublicId: string;
@@ -2500,6 +2529,10 @@ export interface ApiEndpointRequestMap {
   "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.session": ApiEndpointRequest<undefined, undefined, InstallationProvisioningSessionBody>;
   "installationProvisioning.snapshot": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.create": ApiEndpointRequest<undefined, undefined, InstallationProvisioningCreateBody>;
+  "installationProvisioning.reissue": ApiEndpointRequest<InstallationProvisioningReissueParams, undefined, undefined>;
+  "installationProvisioning.activationStatus": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivationStatusBody>;
+  "installationProvisioning.activate": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivateBody>;
   "webhooks.evotor": ApiEndpointRequest<undefined, undefined, undefined>;
   "webhooks.evotorConnection": ApiEndpointRequest<WebhooksEvotorConnectionParams, undefined, undefined>;
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
@@ -2790,6 +2823,10 @@ export interface ApiEndpointResponseMap {
   "installationProvisioning.status": InstallationProvisioningStatusResponse;
   "installationProvisioning.session": InstallationProvisioningSessionResponse;
   "installationProvisioning.snapshot": InstallationProvisioningSnapshotResponse;
+  "installationProvisioning.create": InstallationProvisioningCreateResponse;
+  "installationProvisioning.reissue": InstallationProvisioningReissueResponse;
+  "installationProvisioning.activationStatus": InstallationProvisioningActivationStatusResponse;
+  "installationProvisioning.activate": InstallationProvisioningActivateResponse;
   "webhooks.evotor": unknown;
   "webhooks.evotorConnection": unknown;
   "access.search": unknown;

@@ -194,6 +194,29 @@ async function record(entry) {
   }
 }
 
+async function recordInstallation(entry, transaction) {
+  if (!transaction) {
+    throw appError(
+      'Installation audit requires the provisioning transaction',
+      500,
+    );
+  }
+  if (!Number.isSafeInteger(Number(entry.organizationId))) {
+    throw appError('Installation audit requires Organization scope', 500);
+  }
+  return createRecord(
+    {
+      ...entry,
+      account: null,
+      accountId: null,
+      role: null,
+      tenantScope: 'installation',
+    },
+    null,
+    transaction,
+  );
+}
+
 async function createRecord(entry, context, transaction) {
     const { entityType, entityId } = entry.entityType
       ? entry
@@ -202,7 +225,14 @@ async function createRecord(entry, context, transaction) {
       entry.action || inferAction(entry.method, entry.path, entry.statusCode);
 
     return db.AuditLog.create({
-      ...(context ? auditTenantValues(context) : {}),
+      ...(context
+        ? auditTenantValues(context)
+        : Number.isSafeInteger(Number(entry.organizationId))
+          ? {
+              clubId: entry.clubId || null,
+              organizationId: Number(entry.organizationId),
+            }
+          : {}),
       accountId: entry.account?.id || entry.accountId || null,
       role: entry.account?.role || entry.role || null,
       action,
@@ -346,4 +376,5 @@ module.exports = {
   assertCanView,
   list,
   record,
+  recordInstallation,
 };
