@@ -491,7 +491,9 @@ npm run tenant:files-workers:attachments -- \
 Каждый `--output` attachment detector указывает на новый файл в уже
 существующем writable real directory. CLI пишет JSON атомарно, не перезаписывает
 existing file и отказывается от symlink/special target; тот же manifest остаётся
-в stdout. Exit code `2` означает unsafe detector counts и блокирует следующий
+в stdout. Destination проверяется и резервируется до DB authentication и до
+apply/rollback mutation; при controlled failure собственная reservation
+удаляется. Exit code `2` означает unsafe detector counts и блокирует следующий
 шаг, даже если evidence file был успешно сохранён.
 
 `rollout-post.json` обязан показать `preservation.ok=true`, unchanged business

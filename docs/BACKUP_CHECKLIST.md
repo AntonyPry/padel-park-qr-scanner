@@ -38,7 +38,9 @@ Create and verify the installation-wide manifest after the dump and storage snap
 The attachment detector `--output` parent must already exist and be writable,
 and the target filename must be new. The CLI atomically creates a regular
 mode-`0600` JSON file, refuses existing/symlink/special targets, retains the same
-JSON on stdout and exits `2` when detector counts are unsafe.
+JSON on stdout and exits `2` when detector counts are unsafe. It validates and
+reserves the destination before DB authentication or apply/rollback; a failed
+authentication/migration removes the invocation-owned reservation.
 
 ```bash
 npm run tenant:files-workers:attachments -- --output=/secure/backup/attachments.json

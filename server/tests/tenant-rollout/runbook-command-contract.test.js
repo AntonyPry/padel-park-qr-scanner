@@ -17,35 +17,51 @@ const {
   ROLLOUT_CLI_OPTIONS,
   parseArgs: parseRolloutArgs,
 } = require('../../scripts/tenant-production-rollout');
+const {
+  FINAL_RC_CLI_OPTIONS,
+  parseArgs: parseFinalRcArgs,
+} = require('../../scripts/run-final-tenant-rc');
 
 const projectRoot = path.resolve(__dirname, '../../..');
-const runbookPath = path.join(
-  projectRoot,
-  'docs/MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md',
-);
-const runbook = fs.readFileSync(runbookPath, 'utf8');
+const documents = Object.freeze([
+  {
+    markdown: fs.readFileSync(path.join(
+      projectRoot,
+      'docs/MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md',
+    ), 'utf8'),
+    name: 'production rollout',
+  },
+  {
+    markdown: fs.readFileSync(path.join(projectRoot, 'docs/BACKUP_CHECKLIST.md'), 'utf8'),
+    name: 'backup checklist',
+  },
+]);
+const runbook = documents[0].markdown;
 const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'server/package.json')));
 
 const contracts = Object.freeze({
   'tenant:backup:manifest': new Set(BACKUP_MANIFEST_CLI_OPTIONS),
   'tenant:files-workers:attachments': new Set(ATTACHMENT_CLI_OPTIONS),
   'tenant:providers:bootstrap': new Set(),
+  'tenant:rc:targeted': new Set(FINAL_RC_CLI_OPTIONS),
   'tenant:rollout:gate': new Set(ROLLOUT_CLI_OPTIONS),
 });
 const packageTargets = Object.freeze({
   'tenant:backup:manifest': 'node scripts/tenant-backup-manifest.js',
   'tenant:files-workers:attachments': 'node scripts/migrate-shift-report-attachments.js',
   'tenant:providers:bootstrap': 'node scripts/bootstrap-provider-connections.js',
+  'tenant:rc:targeted': 'node scripts/run-final-tenant-rc.js',
   'tenant:rollout:gate': 'node scripts/tenant-production-rollout.js',
 });
 const parsers = Object.freeze({
   'tenant:backup:manifest': parseBackupArgs,
   'tenant:files-workers:attachments': parseAttachmentArgs,
+  'tenant:rc:targeted': parseFinalRcArgs,
   'tenant:rollout:gate': parseRolloutArgs,
 });
 const booleanOptions = new Set(['apply', 'rollback', 'verify']);
 
-function documentedNpmCommands(markdown) {
+function documentedNpmCommands(markdown, source) {
   const lines = markdown.split('\n');
   const commands = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -60,14 +76,22 @@ function documentedNpmCommands(markdown) {
       command,
       options: [...command.matchAll(/--([a-z][a-z0-9-]*)/g)].map((entry) => entry[1]),
       script: match[1],
+      source,
     });
   }
   return commands;
 }
 
 test('every Feature 10.3 npm command maps to a real strict CLI option contract', () => {
-  const commands = documentedNpmCommands(runbook);
-  assert.ok(commands.length >= 10, 'expected all rollout npm commands to be inventoried');
+  const commands = documents.flatMap((document) =>
+    documentedNpmCommands(document.markdown, document.name));
+  assert.ok(commands.length >= 15, 'expected rollout and backup npm commands to be inventoried');
+  for (const document of documents) {
+    assert.ok(
+      commands.some((command) => command.source === document.name),
+      `No npm commands inventoried for ${document.name}`,
+    );
+  }
   for (const invocation of commands) {
     assert.ok(
       Object.prototype.hasOwnProperty.call(contracts, invocation.script),
@@ -100,7 +124,11 @@ test('every Feature 10.3 npm command maps to a real strict CLI option contract',
 
   assert.throws(() => parseAttachmentArgs(['--unsupported-runbook-option']), /Unsupported/);
   assert.throws(() => parseBackupArgs(['--unsupported-runbook-option']), /Unsupported/);
+  assert.throws(() => parseFinalRcArgs(['--unsupported-runbook-option']), /Unsupported/);
   assert.throws(() => parseRolloutArgs(['--unsupported-runbook-option']), /Unsupported/);
+  assert.throws(() => parseBackupArgs(['--verify', '--verify']), /Duplicate/);
+  assert.throws(() => parseFinalRcArgs(['--output=/tmp/one', '--output=/tmp/two']), /Duplicate/);
+  assert.throws(() => parseRolloutArgs(['--phase=stage', '--phase=stage']), /Duplicate/);
 });
 
 test('runbook requires discovered PM2 names and retains storage/loopback safety gates', () => {
@@ -116,10 +144,17 @@ test('runbook requires discovered PM2 names and retains storage/loopback safety 
 });
 
 test('every Feature 10.3 bash block is syntactically executable', () => {
-  const blocks = [...runbook.matchAll(/```bash\n([\s\S]*?)```/g)].map((match) => match[1]);
-  assert.ok(blocks.length >= 5, 'expected rollout bash blocks');
-  blocks.forEach((block, index) => {
-    const result = spawnSync('bash', ['-n'], { encoding: 'utf8', input: block });
-    assert.equal(result.status, 0, `bash block ${index + 1}: ${result.stderr}`);
-  });
+  for (const document of documents) {
+    const blocks = [...document.markdown.matchAll(/```bash\n([\s\S]*?)```/g)]
+      .map((match) => match[1].replace(/<[^>\n]+>/g, 'contract-placeholder'));
+    assert.ok(blocks.length >= 1, `expected bash blocks in ${document.name}`);
+    blocks.forEach((block, index) => {
+      const result = spawnSync('bash', ['-n'], { encoding: 'utf8', input: block });
+      assert.equal(
+        result.status,
+        0,
+        `${document.name} bash block ${index + 1}: ${result.stderr}`,
+      );
+    });
+  }
 });

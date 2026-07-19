@@ -80,6 +80,30 @@ function refuseExistingOutput(targetPath, stat) {
   );
 }
 
+function sameFileIdentity(left, right) {
+  return Boolean(left && right) &&
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.uid === right.uid &&
+    left.gid === right.gid;
+}
+
+function temporaryOutputPath(destination, kind) {
+  return path.join(
+    destination.parentPath,
+    `.${path.basename(destination.absolutePath)}.${process.pid}.${crypto.randomUUID()}.${kind}`,
+  );
+}
+
+async function syncDirectory(directoryPath) {
+  const handle = await fsp.open(directoryPath, 'r');
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 async function assertOutputDestination(outputPath) {
   const absolutePath = path.resolve(outputPath);
   const parentPath = path.dirname(absolutePath);
@@ -109,13 +133,125 @@ async function assertOutputDestination(outputPath) {
   return { absolutePath, parentPath, parentStat };
 }
 
-async function atomicWriteManifest(outputPath, manifest) {
+async function assertParentUnchanged(reservation) {
+  const currentParent = await fsp.lstat(reservation.parentPath);
+  if (
+    currentParent.isSymbolicLink() ||
+    !currentParent.isDirectory() ||
+    !sameFileIdentity(currentParent, reservation.parentStat)
+  ) {
+    throw cliError(
+      'Attachment manifest parent changed during output publication',
+      'ATTACHMENT_CLI_OUTPUT_PARENT_CHANGED',
+    );
+  }
+  try {
+    await fsp.access(reservation.parentPath, fs.constants.W_OK | fs.constants.X_OK);
+  } catch {
+    throw cliError(
+      `Attachment manifest parent is no longer writable: ${reservation.parentPath}`,
+      'ATTACHMENT_CLI_OUTPUT_PARENT_NOT_WRITABLE',
+    );
+  }
+  return currentParent;
+}
+
+async function assertReservationOwned(reservation) {
+  const [currentTarget, heldReservation] = await Promise.all([
+    lstatIfExists(reservation.absolutePath),
+    reservation.handle.stat(),
+  ]);
+  if (
+    !currentTarget ||
+    currentTarget.isSymbolicLink() ||
+    !currentTarget.isFile() ||
+    !sameFileIdentity(currentTarget, heldReservation) ||
+    !sameFileIdentity(currentTarget, reservation.reservationStat)
+  ) {
+    throw cliError(
+      'Attachment manifest output reservation changed before publication',
+      'ATTACHMENT_CLI_OUTPUT_RESERVATION_CHANGED',
+    );
+  }
+  return currentTarget;
+}
+
+async function releaseOutputReservation(reservation) {
+  if (!reservation) return;
+  try {
+    if (!reservation.published) {
+      const [currentTarget, heldReservation] = await Promise.all([
+        lstatIfExists(reservation.absolutePath),
+        reservation.handle.stat(),
+      ]);
+      if (sameFileIdentity(currentTarget, heldReservation)) {
+        await fsp.unlink(reservation.absolutePath);
+        await syncDirectory(reservation.parentPath).catch(() => {});
+      }
+    }
+  } finally {
+    await reservation.handle.close().catch(() => {});
+  }
+}
+
+async function reserveOutputDestination(outputPath) {
   const destination = await assertOutputDestination(outputPath);
+  const token = crypto.randomUUID();
+  const temporaryPath = temporaryOutputPath(destination, 'reservation');
+  let handle;
+  let linked = false;
+  try {
+    const flags = fs.constants.O_CREAT |
+      fs.constants.O_EXCL |
+      fs.constants.O_WRONLY |
+      (fs.constants.O_NOFOLLOW || 0);
+    handle = await fsp.open(temporaryPath, flags, 0o600);
+    await handle.writeFile(`${JSON.stringify({
+      pid: process.pid,
+      schema: 'setly.attachment-manifest-output-reservation',
+      token,
+    })}\n`, 'utf8');
+    await handle.sync();
+    await assertParentUnchanged(destination);
+    try {
+      await fsp.link(temporaryPath, destination.absolutePath);
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const targetStat = await fsp.lstat(destination.absolutePath);
+      refuseExistingOutput(destination.absolutePath, targetStat);
+    }
+    linked = true;
+    await fsp.unlink(temporaryPath);
+    const reservation = {
+      ...destination,
+      handle,
+      published: false,
+      reservationStat: await handle.stat(),
+      token,
+    };
+    await assertReservationOwned(reservation);
+    await syncDirectory(destination.parentPath);
+    return reservation;
+  } catch (error) {
+    if (linked && handle) {
+      const currentTarget = await lstatIfExists(destination.absolutePath);
+      const heldReservation = await handle.stat().catch(() => null);
+      if (sameFileIdentity(currentTarget, heldReservation)) {
+        await fsp.unlink(destination.absolutePath).catch(() => {});
+      }
+    }
+    await handle?.close().catch(() => {});
+    throw error;
+  } finally {
+    await fsp.unlink(temporaryPath).catch((error) => {
+      if (error.code !== 'ENOENT') throw error;
+    });
+  }
+}
+
+async function publishReservedManifest(reservation, manifest) {
   const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
-  const temporaryPath = path.join(
-    destination.parentPath,
-    `.${path.basename(destination.absolutePath)}.${process.pid}.${crypto.randomUUID()}.tmp`,
-  );
+  const temporaryPath = temporaryOutputPath(reservation, 'manifest');
   let handle;
   try {
     const flags = fs.constants.O_CREAT |
@@ -128,37 +264,26 @@ async function atomicWriteManifest(outputPath, manifest) {
     await handle.close();
     handle = null;
 
-    const currentParent = await fsp.lstat(destination.parentPath);
-    if (
-      currentParent.isSymbolicLink() ||
-      !currentParent.isDirectory() ||
-      currentParent.dev !== destination.parentStat.dev ||
-      currentParent.ino !== destination.parentStat.ino
-    ) {
-      throw cliError(
-        'Attachment manifest parent changed during atomic write',
-        'ATTACHMENT_CLI_OUTPUT_PARENT_CHANGED',
-      );
-    }
-    try {
-      await fsp.link(temporaryPath, destination.absolutePath);
-    } catch (error) {
-      if (error.code !== 'EEXIST') throw error;
-      const targetStat = await fsp.lstat(destination.absolutePath);
-      refuseExistingOutput(destination.absolutePath, targetStat);
-    }
-    const directoryHandle = await fsp.open(destination.parentPath, 'r');
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
-    }
-    return destination.absolutePath;
+    await assertParentUnchanged(reservation);
+    await assertReservationOwned(reservation);
+    await fsp.rename(temporaryPath, reservation.absolutePath);
+    reservation.published = true;
+    await syncDirectory(reservation.parentPath);
+    return reservation.absolutePath;
   } finally {
     await handle?.close().catch(() => {});
     await fsp.unlink(temporaryPath).catch((error) => {
       if (error.code !== 'ENOENT') throw error;
     });
+  }
+}
+
+async function atomicWriteManifest(outputPath, manifest) {
+  const reservation = await reserveOutputDestination(outputPath);
+  try {
+    return await publishReservedManifest(reservation, manifest);
+  } finally {
+    await releaseOutputReservation(reservation);
   }
 }
 
@@ -176,14 +301,21 @@ async function main({
   stdout = process.stdout,
 } = {}) {
   const options = parseArgs(argv);
-  await sequelize.authenticate();
-  const manifest = await migrate({
-    apply: options.apply,
-    rollback: options.rollback,
-  });
-  if (options.output) await atomicWriteManifest(options.output, manifest);
-  stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
-  return isUnsafeManifest(manifest) ? 2 : 0;
+  const reservation = options.output
+    ? await reserveOutputDestination(options.output)
+    : null;
+  try {
+    await sequelize.authenticate();
+    const manifest = await migrate({
+      apply: options.apply,
+      rollback: options.rollback,
+    });
+    if (reservation) await publishReservedManifest(reservation, manifest);
+    stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
+    return isUnsafeManifest(manifest) ? 2 : 0;
+  } finally {
+    await releaseOutputReservation(reservation);
+  }
 }
 
 if (require.main === module) {
@@ -207,4 +339,7 @@ module.exports = {
   isUnsafeManifest,
   main,
   parseArgs,
+  publishReservedManifest,
+  releaseOutputReservation,
+  reserveOutputDestination,
 };

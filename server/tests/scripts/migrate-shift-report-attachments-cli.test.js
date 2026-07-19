@@ -45,6 +45,45 @@ async function makeRoot() {
   return root;
 }
 
+async function temporaryArtifacts(root) {
+  const names = [];
+  async function visit(directory) {
+    for (const entry of await fsp.readdir(directory, { withFileTypes: true })) {
+      const entryPath = path.join(directory, entry.name);
+      if (entry.name.includes('.reservation') || entry.name.includes('.manifest')) {
+        names.push(path.relative(root, entryPath));
+      }
+      if (entry.isDirectory()) await visit(entryPath);
+    }
+  }
+  await visit(root);
+  return names.sort();
+}
+
+async function assertFailsBeforeAuthAndMigration(argv, root) {
+  let authenticated = false;
+  let migrateCalled = false;
+  const mutationSentinel = path.join(root, 'migration-side-effect');
+  await assert.rejects(runAttachmentCli({
+    argv,
+    async migrate() {
+      migrateCalled = true;
+      await fsp.writeFile(mutationSentinel, 'mutated', 'utf8');
+      return manifest();
+    },
+    sequelize: {
+      async authenticate() {
+        authenticated = true;
+      },
+    },
+    stdout: { write() {} },
+  }));
+  assert.equal(authenticated, false, `DB authentication occurred for ${argv.join(' ')}`);
+  assert.equal(migrateCalled, false, `migration occurred for ${argv.join(' ')}`);
+  assert.equal(fs.existsSync(mutationSentinel), false);
+  assert.deepEqual(await temporaryArtifacts(root), []);
+}
+
 function runDocumentedCommand(outputPath, detectorManifest) {
   const executable = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const existingNodeOptions = String(process.env.NODE_OPTIONS || '').trim();
@@ -136,6 +175,100 @@ test('attachment output refuses missing parents, symlinks and non-regular target
   await fsp.chmod(readOnlyParent, 0o700);
   assert.equal(readOnlyResult.status, 1);
   assert.match(readOnlyResult.stderr, /ATTACHMENT_CLI_OUTPUT_PARENT_NOT_WRITABLE/);
+});
+
+test('apply and rollback reject every invalid destination before auth or mutation', async () => {
+  const root = await makeRoot();
+  const sentinelPath = path.join(root, 'existing.json');
+  await fsp.writeFile(sentinelPath, 'sentinel', 'utf8');
+  const symlinkPath = path.join(root, 'symlink.json');
+  await fsp.symlink(sentinelPath, symlinkPath);
+  const directoryTarget = path.join(root, 'directory-target');
+  await fsp.mkdir(directoryTarget);
+  const fifoTarget = path.join(root, 'special-target.fifo');
+  const fifo = spawnSync('mkfifo', [fifoTarget], { encoding: 'utf8' });
+  assert.equal(fifo.status, 0, fifo.stderr);
+  const realParent = path.join(root, 'real-parent');
+  await fsp.mkdir(realParent);
+  const symlinkParent = path.join(root, 'symlink-parent');
+  await fsp.symlink(realParent, symlinkParent, 'dir');
+  const fileParent = path.join(root, 'file-parent');
+  await fsp.writeFile(fileParent, 'not-a-directory', 'utf8');
+  const readOnlyParent = path.join(root, 'read-only-direct');
+  await fsp.mkdir(readOnlyParent, { mode: 0o500 });
+
+  const cases = [
+    ['--apply', `--output=${sentinelPath}`],
+    ['--rollback', `--output=${symlinkPath}`],
+    ['--apply', `--output=${directoryTarget}`],
+    ['--rollback', `--output=${fifoTarget}`],
+    ['--apply', `--output=${path.join(root, 'missing', 'attachments.json')}`],
+    ['--rollback', `--output=${path.join(symlinkParent, 'attachments.json')}`],
+    ['--apply', `--output=${path.join(fileParent, 'attachments.json')}`],
+    ['--rollback', `--output=${path.join(readOnlyParent, 'attachments.json')}`],
+    ['--apply', '--output'],
+    ['--rollback', '--unknown=value'],
+    ['--apply', '--output=/tmp/one.json', '--output=/tmp/two.json'],
+  ];
+  try {
+    for (const argv of cases) await assertFailsBeforeAuthAndMigration(argv, root);
+  } finally {
+    await fsp.chmod(readOnlyParent, 0o700);
+  }
+  assert.equal(await fsp.readFile(sentinelPath, 'utf8'), 'sentinel');
+});
+
+test('owned reservation is cleaned after auth or migration failure', async () => {
+  const root = await makeRoot();
+  const authOutput = path.join(root, 'auth-failure.json');
+  let authMigrateCalled = false;
+  await assert.rejects(runAttachmentCli({
+    argv: ['--apply', `--output=${authOutput}`],
+    async migrate() {
+      authMigrateCalled = true;
+      return manifest();
+    },
+    sequelize: {
+      async authenticate() {
+        throw new Error('authentication failed');
+      },
+    },
+    stdout: { write() {} },
+  }), /authentication failed/);
+  assert.equal(authMigrateCalled, false);
+  assert.equal(fs.existsSync(authOutput), false);
+
+  const migrationOutput = path.join(root, 'migration-failure.json');
+  await assert.rejects(runAttachmentCli({
+    argv: ['--rollback', `--output=${migrationOutput}`],
+    async migrate() {
+      throw new Error('migration failed');
+    },
+    sequelize: { async authenticate() {} },
+    stdout: { write() {} },
+  }), /migration failed/);
+  assert.equal(fs.existsSync(migrationOutput), false);
+  assert.deepEqual(await temporaryArtifacts(root), []);
+});
+
+test('publication refuses a replaced reservation without overwriting foreign state', async () => {
+  const root = await makeRoot();
+  const outputPath = path.join(root, 'race.json');
+  let migrateCalled = false;
+  await assert.rejects(runAttachmentCli({
+    argv: ['--apply', `--output=${outputPath}`],
+    async migrate() {
+      migrateCalled = true;
+      await fsp.unlink(outputPath);
+      await fsp.writeFile(outputPath, 'foreign-state', { encoding: 'utf8', mode: 0o600 });
+      return manifest();
+    },
+    sequelize: { async authenticate() {} },
+    stdout: { write() {} },
+  }), (error) => error.code === 'ATTACHMENT_CLI_OUTPUT_RESERVATION_CHANGED');
+  assert.equal(migrateCalled, true);
+  assert.equal(await fsp.readFile(outputPath, 'utf8'), 'foreign-state');
+  assert.deepEqual(await temporaryArtifacts(root), []);
 });
 
 test('attachment CLI rejects unsupported, duplicate and ambiguous arguments', () => {

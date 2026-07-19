@@ -20,13 +20,20 @@ const REMOTE_OPT_IN = 'TENANT_RC_ALLOW_REMOTE_DISPOSABLE_DB';
 const REMOTE_HOST_PROOF = 'TENANT_RC_REMOTE_DISPOSABLE_HOST';
 const REMOTE_PURPOSE_PROOF = 'TENANT_RC_REMOTE_DISPOSABLE_PURPOSE';
 const REMOTE_PURPOSE_VALUE = 'setly-feature9-disposable-only';
+const FINAL_RC_CLI_OPTIONS = Object.freeze(['full', 'output']);
 
 function parseArgs(argv) {
   const options = { full: false, output: null };
+  const seen = new Set();
   for (const value of argv) {
-    if (value === '--full') options.full = true;
-    else if (value.startsWith('--output=')) options.output = value.slice('--output='.length);
+    let key;
+    if (value === '--full') key = 'full';
+    else if (value.startsWith('--output=')) key = 'output';
     else throw new Error(`Unsupported Feature 9 RC argument: ${value}`);
+    if (seen.has(key)) throw new Error(`Duplicate Feature 9 RC argument: --${key}`);
+    seen.add(key);
+    if (key === 'full') options.full = true;
+    else options.output = value.slice('--output='.length);
   }
   return options;
 }
@@ -321,6 +328,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  FINAL_RC_CLI_OPTIONS,
   REMOTE_HOST_PROOF,
   REMOTE_OPT_IN,
   REMOTE_PURPOSE_PROOF,
