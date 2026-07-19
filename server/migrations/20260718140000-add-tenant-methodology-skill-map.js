@@ -13,6 +13,7 @@ const COLUMNS = Object.freeze([
 ]);
 
 const INDEX_VISIBILITY_SUPPORT = new WeakMap();
+const LOWER_CASE_TABLE_NAMES = new WeakMap();
 
 const INDEXES = Object.freeze({
   training_skills_org_id_unique: {
@@ -349,8 +350,31 @@ function value(row, key) {
   return row[key] ?? row[key.toLowerCase()] ?? null;
 }
 
-function sameIdentifier(left, right) {
-  return String(left || '').toLowerCase() === String(right || '').toLowerCase();
+function tableIdentifierEquals(left, right, lowerCaseTableNames) {
+  if (![0, 1, 2].includes(lowerCaseTableNames)) {
+    throw migrationError(`Unsupported lower_case_table_names value: ${lowerCaseTableNames}`);
+  }
+  const leftIdentifier = String(left || '');
+  const rightIdentifier = String(right || '');
+  return lowerCaseTableNames === 0
+    ? leftIdentifier === rightIdentifier
+    : leftIdentifier.toLowerCase() === rightIdentifier.toLowerCase();
+}
+
+async function getLowerCaseTableNames(queryInterface) {
+  if (LOWER_CASE_TABLE_NAMES.has(queryInterface)) {
+    return LOWER_CASE_TABLE_NAMES.get(queryInterface);
+  }
+  const rows = await selectRows(
+    queryInterface,
+    'SELECT @@lower_case_table_names AS lowerCaseTableNames',
+  );
+  const setting = Number(value(rows[0], 'lowerCaseTableNames'));
+  if (![0, 1, 2].includes(setting)) {
+    throw migrationError(`Unsupported lower_case_table_names value: ${setting}`);
+  }
+  LOWER_CASE_TABLE_NAMES.set(queryInterface, setting);
+  return setting;
 }
 
 async function getColumn(queryInterface, table, column) {
@@ -530,7 +554,7 @@ async function readArtifactRows(queryInterface, kind, item) {
     return getIndex(queryInterface, item.table, item.name);
   }
   if (kind === 'constraint') {
-    return selectRows(queryInterface, `
+    const rows = await selectRows(queryInterface, `
       SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME, k.ORDINAL_POSITION,
              k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
              r.UPDATE_RULE, r.DELETE_RULE
@@ -542,10 +566,21 @@ async function readArtifactRows(queryInterface, kind, item) {
         AND k.TABLE_NAME = :table AND k.CONSTRAINT_NAME = :name
       ORDER BY k.ORDINAL_POSITION
     `, item);
+    const lowerCaseTableNames = await getLowerCaseTableNames(queryInterface);
+    return rows.filter((row) => tableIdentifierEquals(
+      value(row, 'TABLE_NAME'),
+      item.table,
+      lowerCaseTableNames,
+    ));
   }
   if (kind === 'trigger') {
     const row = await getTrigger(queryInterface, item.name);
-    return row && sameIdentifier(value(row, 'EVENT_OBJECT_TABLE'), item.table)
+    const lowerCaseTableNames = await getLowerCaseTableNames(queryInterface);
+    return row && tableIdentifierEquals(
+      value(row, 'EVENT_OBJECT_TABLE'),
+      item.table,
+      lowerCaseTableNames,
+    )
       ? [row]
       : [];
   }
@@ -599,10 +634,10 @@ function columnIsCanonical(column) {
   );
 }
 
-function indexIsCanonical(rows, expected) {
+function indexIsCanonical(rows, expected, lowerCaseTableNames) {
   return rows.length === expected.columns.length &&
     rows.every((row, index) =>
-      sameIdentifier(row.TABLE_NAME, expected.table) &&
+      tableIdentifierEquals(row.TABLE_NAME, expected.table, lowerCaseTableNames) &&
       Number(row.NON_UNIQUE) === (expected.unique ? 0 : 1) &&
       Number(row.SEQ_IN_INDEX) === index + 1 &&
       row.COLUMN_NAME === expected.columns[index] &&
@@ -612,29 +647,37 @@ function indexIsCanonical(rows, expected) {
       row.IS_VISIBLE === 'YES');
 }
 
-function foreignKeyIsCanonical(row, expected) {
+function foreignKeyIsCanonical(row, expected, lowerCaseTableNames) {
   return Boolean(
     row &&
-      sameIdentifier(row.TABLE_NAME, expected.table) &&
+      tableIdentifierEquals(row.TABLE_NAME, expected.table, lowerCaseTableNames) &&
       row.COLUMN_NAME === expected.column &&
-      sameIdentifier(row.REFERENCED_TABLE_NAME, expected.referencedTable) &&
+      tableIdentifierEquals(
+        row.REFERENCED_TABLE_NAME,
+        expected.referencedTable,
+        lowerCaseTableNames,
+      ) &&
       row.REFERENCED_COLUMN_NAME === expected.referencedColumn &&
       row.UPDATE_RULE === expected.onUpdate &&
       row.DELETE_RULE === expected.onDelete,
   );
 }
 
-function triggerIsCanonical(row, expected) {
+function triggerIsCanonical(row, expected, lowerCaseTableNames) {
   return Boolean(
     row &&
-      sameIdentifier(row.EVENT_OBJECT_TABLE, expected.table) &&
+      tableIdentifierEquals(
+        row.EVENT_OBJECT_TABLE,
+        expected.table,
+        lowerCaseTableNames,
+      ) &&
       row.EVENT_MANIPULATION === expected.event &&
       row.ACTION_TIMING === 'BEFORE' &&
       normalizeSql(row.ACTION_STATEMENT) === normalizeSql(expected.body),
   );
 }
 
-async function legacyUniqueIsCanonical(queryInterface) {
+async function legacyUniqueIsCanonical(queryInterface, lowerCaseTableNames) {
   const rows = await getIndex(
     queryInterface,
     'TrainingSkills',
@@ -644,10 +687,11 @@ async function legacyUniqueIsCanonical(queryInterface) {
     columns: ['name'],
     table: 'TrainingSkills',
     unique: true,
-  });
+  }, lowerCaseTableNames);
 }
 
 async function classifyState(queryInterface) {
+  const lowerCaseTableNames = await getLowerCaseTableNames(queryInterface);
   const columnRows = await Promise.all(
     COLUMNS.map(([table, column]) => getColumn(queryInterface, table, column)),
   );
@@ -667,7 +711,7 @@ async function classifyState(queryInterface) {
     triggerRows.some(Boolean);
 
   if (!anyReserved) {
-    if (!(await legacyUniqueIsCanonical(queryInterface))) {
+    if (!(await legacyUniqueIsCanonical(queryInterface, lowerCaseTableNames))) {
       return { reasons: ['legacy TrainingSkills name unique is missing or non-canonical'], state: 'partial' };
     }
     return { reasons: [], state: 'legacy' };
@@ -678,15 +722,15 @@ async function classifyState(queryInterface) {
     if (!columnIsCanonical(column)) reasons.push(`column ${COLUMNS[index].join('.')} is not canonical`);
   });
   Object.entries(INDEXES).forEach(([name, expected], index) => {
-    if (!indexIsCanonical(indexRows[index], expected)) reasons.push(`index ${name} is not canonical`);
+    if (!indexIsCanonical(indexRows[index], expected, lowerCaseTableNames)) reasons.push(`index ${name} is not canonical`);
   });
   Object.entries(FOREIGN_KEYS).forEach(([name, expected], index) => {
-    if (!foreignKeyIsCanonical(fkRows[index], expected)) reasons.push(`foreign key ${name} is not canonical`);
+    if (!foreignKeyIsCanonical(fkRows[index], expected, lowerCaseTableNames)) reasons.push(`foreign key ${name} is not canonical`);
   });
   Object.entries(TRIGGERS).forEach(([name, expected], index) => {
-    if (!triggerIsCanonical(triggerRows[index], expected)) reasons.push(`trigger ${name} is not canonical`);
+    if (!triggerIsCanonical(triggerRows[index], expected, lowerCaseTableNames)) reasons.push(`trigger ${name} is not canonical`);
   });
-  if (await legacyUniqueIsCanonical(queryInterface)) {
+  if (await legacyUniqueIsCanonical(queryInterface, lowerCaseTableNames)) {
     reasons.push('legacy global skill-name unique still exists');
   }
   return { reasons, state: reasons.length === 0 ? 'ready' : 'partial' };
@@ -1020,10 +1064,14 @@ module.exports = {
     artifactSignature,
     classifyState,
     cleanupInvocation,
+    foreignKeyIsCanonical,
+    getLowerCaseTableNames,
     indexIsCanonical,
     normalizeSql,
     readArtifactRows,
     readSameNameConflicts,
     supportsIndexVisibility,
+    tableIdentifierEquals,
+    triggerIsCanonical,
   },
 };

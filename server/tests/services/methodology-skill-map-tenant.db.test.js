@@ -188,9 +188,13 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       table: 'TrainingSkills',
       unique: true,
     };
+    const lowerCaseTableNames = await migration.__testing.getLowerCaseTableNames(
+      queryInterface,
+    );
     assert.equal(migration.__testing.indexIsCanonical(
       [canonicalIndexRow],
       canonicalLegacyIndex,
+      lowerCaseTableNames,
     ), true);
     for (const lookalike of [
       { ...canonicalIndexRow, COLLATION: 'D' },
@@ -204,6 +208,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
       assert.equal(migration.__testing.indexIsCanonical(
         [lookalike],
         canonicalLegacyIndex,
+        lowerCaseTableNames,
       ), false);
     }
 
@@ -215,6 +220,7 @@ test('Feature 6.1 migration and two-Organization methodology isolation', async (
     assert.equal(migration.__testing.indexIsCanonical(
       productionLegacyRows,
       canonicalLegacyIndex,
+      lowerCaseTableNames,
     ), true, JSON.stringify(productionLegacyRows));
     assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'legacy');
     await migration.up(queryInterface, SequelizePackage);
