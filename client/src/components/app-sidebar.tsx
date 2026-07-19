@@ -293,12 +293,15 @@ function TenantSwitcher({
             <Building2 className="size-4" />
           </span>
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/55">
+            <span
+              className="block truncate text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/55"
+              title={activeMembership.organization.name}
+            >
               {activeMembership.organization.name}
             </span>
             <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm font-semibold text-sidebar-foreground">
               <MapPin className="size-3.5 shrink-0 text-primary/75" />
-              <span className="truncate">{activeClub.name}</span>
+              <span className="truncate" title={activeClub.name}>{activeClub.name}</span>
             </span>
           </span>
           <ChevronsUpDown className="size-4 shrink-0 text-sidebar-foreground/55 transition group-hover:text-sidebar-foreground" />
@@ -318,7 +321,9 @@ function TenantSwitcher({
             {index > 0 ? <DropdownMenuSeparator className="my-1.5" /> : null}
             <DropdownMenuLabel className="flex items-center gap-2 px-2.5 pb-1 pt-2 text-xs text-foreground">
               <Building2 className="size-3.5 text-muted-foreground" />
-              <span className="truncate">{membership.organization.name}</span>
+              <span className="truncate" title={membership.organization.name}>
+                {membership.organization.name}
+              </span>
             </DropdownMenuLabel>
             {membership.clubs.map((club) => {
               const active =
@@ -336,7 +341,9 @@ function TenantSwitcher({
                 >
                   <MapPin className="size-4 text-muted-foreground" />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{club.name}</span>
+                    <span className="block truncate font-medium" title={club.name}>
+                      {club.name}
+                    </span>
                     <span className="block truncate text-xs text-muted-foreground">
                       {getAccountRoleLabel(club.effectiveRole)}
                     </span>

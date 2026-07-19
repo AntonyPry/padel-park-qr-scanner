@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthGate } from '@/components/AuthGate';
@@ -72,6 +72,28 @@ function SessionProbe() {
       </button>
       <button type="button" onClick={() => void switchTenantContext(11, 13)}>
         switch-probe
+      </button>
+    </div>
+  );
+}
+
+function DraftProbe() {
+  const { switchTenantContext, tenantContext } = useAuth();
+  const [draft, setDraft] = useState('');
+
+  return (
+    <div>
+      <span>
+        draft-club:{tenantContext?.clubId} effective:{tenantContext?.effectiveRole}
+      </span>
+      <label htmlFor="tenant-draft">Черновик клиента</label>
+      <input
+        id="tenant-draft"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      <button type="button" onClick={() => void switchTenantContext(11, 13)}>
+        switch-draft-probe
       </button>
     </div>
   );
@@ -305,6 +327,157 @@ describe('AuthProvider tenant bootstrap', () => {
       membershipRole: 'manager',
       organizationId: 11,
     });
+  });
+
+  it('unmounts tenant drafts and applies a fresh downgraded role before remount', async () => {
+    setAuthToken('test-token');
+    let discoveryCalls = 0;
+    let releaseSwitchDiscovery!: () => void;
+    const switchDiscoveryGate = new Promise<void>((resolve) => {
+      releaseSwitchDiscovery = resolve;
+    });
+    const targetClub = {
+      effectiveRole: 'manager' as const,
+      id: 13,
+      name: 'Second club',
+      slug: 'second-club',
+      timezone: 'Europe/Moscow',
+    };
+    const initialDiscovery = {
+      ...discovery,
+      memberships: [
+        {
+          ...discovery.memberships[0],
+          clubs: [discovery.memberships[0].clubs[0], targetClub],
+        },
+      ],
+    };
+    const downgradedDiscovery = {
+      ...initialDiscovery,
+      memberships: [
+        {
+          ...initialDiscovery.memberships[0],
+          clubs: [
+            discovery.memberships[0].clubs[0],
+            { ...targetClub, effectiveRole: 'viewer' as const },
+          ],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/status')) {
+          return Response.json({
+            capabilities: { tenantCacheRealtime: true, tenantContext: true },
+            setupRequired: false,
+          });
+        }
+        if (url.endsWith('/api/auth/me')) return Response.json({ account });
+        if (url.endsWith('/api/auth/me/memberships')) {
+          discoveryCalls += 1;
+          if (discoveryCalls === 1) return Response.json(initialDiscovery);
+          await switchDiscoveryGate;
+          return Response.json(downgradedDiscovery);
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <DraftProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByText('draft-club:12 effective:manager'),
+    ).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Черновик клиента'), {
+      target: { value: 'Не должен перейти в другой клуб' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'switch-draft-probe' }));
+
+    expect(await screen.findByText('Переключаем клуб...')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Черновик клиента')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Не должен перейти/)).not.toBeInTheDocument();
+
+    releaseSwitchDiscovery();
+    expect(
+      await screen.findByText('draft-club:13 effective:viewer'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Черновик клиента')).toHaveValue('');
+    expect(discoveryCalls).toBe(2);
+    expect(getActiveTenantContext()).toMatchObject({
+      clubId: 13,
+      effectiveRole: 'viewer',
+      organizationId: 11,
+    });
+  });
+
+  it('fails closed when fresh discovery revokes the requested club', async () => {
+    setAuthToken('test-token');
+    let discoveryCalls = 0;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const targetClub = {
+      effectiveRole: 'trainer' as const,
+      id: 13,
+      name: 'Revoked club',
+      slug: 'revoked-club',
+      timezone: 'Europe/Moscow',
+    };
+    const initialDiscovery = {
+      ...discovery,
+      memberships: [
+        {
+          ...discovery.memberships[0],
+          clubs: [discovery.memberships[0].clubs[0], targetClub],
+        },
+      ],
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/auth/status')) {
+          return Response.json({
+            capabilities: { tenantCacheRealtime: true, tenantContext: true },
+            setupRequired: false,
+          });
+        }
+        if (url.endsWith('/api/auth/me')) return Response.json({ account });
+        if (url.endsWith('/api/auth/me/memberships')) {
+          discoveryCalls += 1;
+          return Response.json(discoveryCalls === 1 ? initialDiscovery : discovery);
+        }
+        throw new Error(`Unexpected request: ${url}`);
+      }),
+    );
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <SessionProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(
+      await screen.findByText('session:manager@padelpark.demo club:12'),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'switch-probe' }));
+
+    expect(
+      await screen.findByRole('heading', { name: 'Контекст клуба недоступен' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Выбранный клуб больше недоступен/)).toBeInTheDocument();
+    expect(screen.queryByText('session:manager@padelpark.demo club:12')).not.toBeInTheDocument();
+    expect(getActiveTenantContext()).toBeNull();
+    expect(discoveryCalls).toBe(2);
+    expect(consoleError).toHaveBeenCalledTimes(1);
   });
 
   it('keeps Account.role as identity while exposing separate membership and club roles', async () => {

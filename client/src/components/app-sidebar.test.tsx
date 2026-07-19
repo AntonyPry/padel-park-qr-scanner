@@ -285,11 +285,19 @@ describe('AppSidebar authorization', () => {
     });
     expect(trigger).toHaveTextContent('Setly Sports Group');
     expect(trigger).toHaveTextContent('Падел Парк Сокол');
+    expect(screen.getByTitle('Setly Sports Group')).toBeInTheDocument();
+    expect(screen.getByTitle('Падел Парк Сокол')).toBeInTheDocument();
 
     fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-    expect(await screen.findByText('Падел Парк на Набережной с длинным названием')).toBeInTheDocument();
+    const longClubName = await screen.findByText(
+      'Падел Парк на Набережной с длинным названием',
+    );
+    expect(longClubName).toHaveAttribute(
+      'title',
+      'Падел Парк на Набережной с длинным названием',
+    );
     expect(screen.queryByText('Все клубы')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByText('Падел Парк на Набережной с длинным названием'));
+    fireEvent.click(longClubName);
     expect(switchTenantContext).toHaveBeenCalledWith(11, 13);
   });
 });
