@@ -32,7 +32,7 @@ function payload(suffix, idempotencyKey = crypto.randomUUID()) {
     owner: {
       email: `owner-${suffix}@provisioning.test`,
       name: `Владелец ${suffix}`,
-      phone: '+7 999 111-22-33',
+      phone: '+79991112233',
     },
   };
 }
@@ -132,6 +132,8 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
         where: { accountId: created.owner.accountId, organizationId: created.organization.id },
       });
       assert.equal(membership.role, 'owner');
+      const ownerStaff = await db.Staff.findByPk(membership.staffId);
+      assert.equal(ownerStaff.phone, '+79991112233');
       assert.equal(await db.MembershipClubAccess.count({ where: { membershipId: membership.id } }), 0);
       const audit = await db.AuditLog.findByPk(created.audit.id);
       assert.equal(audit.action, 'installation.provisioning.create');
@@ -141,6 +143,15 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       assert.deepEqual(
         auditMetadata.clubSlugs,
         ['klub-alpha-tsentr', 'klub-alpha-sever'],
+      );
+      const snapshot = await provisioning.getInstallationSnapshot();
+      assert.equal(
+        snapshot.organizations.find((item) => item.id === created.organization.id).ownerState,
+        'pending_activation',
+      );
+      assert.equal(
+        snapshot.organizations.find((item) => item.id !== created.organization.id).ownerState,
+        'active',
       );
     });
 
@@ -224,6 +235,11 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       assert.equal(status.owner.email, created.owner.email);
       await provisioning.activateOwner(rawToken, 'OwnerSecure123!');
       assert.deepEqual(await provisioning.inspectActivation(rawToken), { state: 'consumed' });
+      const snapshot = await provisioning.getInstallationSnapshot();
+      assert.equal(
+        snapshot.organizations.find((item) => item.id === created.organization.id).ownerState,
+        'active',
+      );
       await assert.rejects(
         provisioning.activateOwner(rawToken, 'AnotherSecure123!'),
         (error) => error.code === 'OWNER_ACTIVATION_UNAVAILABLE',

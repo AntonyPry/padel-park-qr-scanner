@@ -1873,8 +1873,7 @@
                       },
                       "phone": {
                         "type": "string",
-                        "minLength": 5,
-                        "maxLength": 40
+                        "pattern": "^\\+7[3-9]\\d{9}$"
                       }
                     },
                     "required": [

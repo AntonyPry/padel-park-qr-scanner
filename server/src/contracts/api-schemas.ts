@@ -1293,7 +1293,7 @@ const apiSchemas = {
             .object({
               email: z.string().trim().email('Некорректный email'),
               name: nameString,
-              phone: z.string().trim().min(5, 'Телефон обязателен').max(40, 'Телефон слишком длинный'),
+              phone: z.string().regex(/^\+7[3-9]\d{9}$/u, 'Введите полный номер в формате +7 (999) 123-45-67'),
             })
             .strict(),
         })
@@ -1349,11 +1349,10 @@ const apiSchemas = {
       organizations: z.array(
         z.object({
           clubCount: z.number().int().nonnegative(),
-          activationState: z.enum(['pending', 'consumed', 'expired', 'invalidated']).nullable(),
           createdAt: dateTime,
           id: z.number().int().positive(),
           name: z.string(),
-          ownerCount: z.number().int().nonnegative(),
+          ownerState: z.enum(['active', 'inactive', 'missing', 'pending_activation']),
           slug: z.string(),
         }),
       ),

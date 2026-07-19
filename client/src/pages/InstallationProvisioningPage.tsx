@@ -27,6 +27,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { API_URL } from '@/config';
+import { formatRussianPhone, russianPhoneE164 } from '@/lib/russian-phone';
 import { cn } from '@/lib/utils';
 
 const TOKEN_KEY = 'setly_installation_operator_token';
@@ -34,6 +35,7 @@ const DEFAULT_TIMEZONE = 'Europe/Moscow';
 
 type ClubDraft = { name: string; timezone: string };
 type ActivationState = 'pending' | 'consumed' | 'expired' | 'invalidated' | null;
+type OwnerState = 'active' | 'inactive' | 'missing' | 'pending_activation';
 type InstallationSnapshot = {
   audits: Array<{
     action: string;
@@ -45,12 +47,11 @@ type InstallationSnapshot = {
   }>;
   foundation: { state: 'initialized' };
   organizations: Array<{
-    activationState: ActivationState;
     clubCount: number;
     createdAt: string;
     id: number;
     name: string;
-    ownerCount: number;
+    ownerState: OwnerState;
     slug: string;
   }>;
 };
@@ -168,12 +169,11 @@ function timezoneLabel(value: string) {
   return timezone ? `${timezone.city} (${currentOffset(timezone.value)})` : value;
 }
 
-function activationLabel(state: ActivationState) {
-  if (state === 'pending') return 'Ожидает активации';
-  if (state === 'consumed') return 'Активирован';
-  if (state === 'expired') return 'Срок ссылки истёк';
-  if (state === 'invalidated') return 'Нужна новая ссылка';
-  return 'Не выдавалась';
+function ownerStateLabel(state: OwnerState) {
+  if (state === 'active') return 'Владелец активен';
+  if (state === 'pending_activation') return 'Ожидает активации владельца';
+  if (state === 'inactive') return 'Владелец неактивен';
+  return 'Владелец не назначен';
 }
 
 function maskedActivationLink(link: string) {
@@ -313,6 +313,7 @@ export default function InstallationProvisioningPage() {
   const [loading, setLoading] = useState(true);
   const [pageError, setPageError] = useState('');
   const [formError, setFormError] = useState<OperatorError | null>(null);
+  const [ownerPhoneError, setOwnerPhoneError] = useState('');
   const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [copyDone, setCopyDone] = useState(false);
@@ -365,6 +366,7 @@ export default function InstallationProvisioningPage() {
     setIdempotencyKey(crypto.randomUUID());
     setCopyDone(false);
     setFormError(null);
+    setOwnerPhoneError('');
   }
 
   function openCreate() {
@@ -384,7 +386,12 @@ export default function InstallationProvisioningPage() {
     setFormError(null);
     try {
       const response = await installationFetch('/organizations', {
-        body: JSON.stringify({ clubs, idempotencyKey, organization, owner }),
+        body: JSON.stringify({
+          clubs,
+          idempotencyKey,
+          organization,
+          owner: { ...owner, phone: russianPhoneE164(owner.phone) },
+        }),
         method: 'POST',
       });
       if (!response.ok) throw createErrorMessage(await readError(response, 'Не удалось создать организацию'));
@@ -458,9 +465,9 @@ export default function InstallationProvisioningPage() {
                 <div className="hidden grid-cols-[minmax(0,1fr)_120px_150px_150px] gap-4 border-b bg-muted/30 px-5 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground md:grid"><span>Организация</span><span>Клубы</span><span>Владелец</span><span>Создана</span></div>
                 {snapshot.organizations.map((item) => (
                   <div className="grid gap-3 border-b px-5 py-4 last:border-b-0 md:grid-cols-[minmax(0,1fr)_120px_150px_150px] md:items-center" key={item.id}>
-                    <div className="min-w-0"><p className="truncate font-medium">{item.name}</p><p className={cn('mt-1 text-xs font-medium', item.activationState === 'consumed' ? 'text-emerald-700 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300')}>{activationLabel(item.activationState)}</p></div>
+                    <div className="min-w-0"><p className="truncate font-medium">{item.name}</p></div>
                     <div><span className="text-xs text-muted-foreground md:hidden">Клубы · </span><span className="text-sm">{item.clubCount}</span></div>
-                    <div><span className="text-xs text-muted-foreground md:hidden">Владелец · </span><span className="text-sm">{item.ownerCount > 0 ? 'Назначен' : 'Не назначен'}</span></div>
+                    <div><span className={cn('text-sm', item.ownerState === 'active' && 'text-emerald-700 dark:text-emerald-300', item.ownerState === 'pending_activation' && 'text-amber-700 dark:text-amber-300')}>{ownerStateLabel(item.ownerState)}</span></div>
                     <div><span className="text-xs text-muted-foreground md:hidden">Создана · </span><span className="text-sm text-muted-foreground">{formatDate(item.createdAt)}</span></div>
                   </div>
                 ))}
@@ -503,12 +510,12 @@ export default function InstallationProvisioningPage() {
 
                   {step === 1 ? <div className="space-y-4">{clubs.map((club, index) => <Card key={index} className="rounded-2xl"><CardHeader className="flex-row items-center justify-between space-y-0"><CardTitle className="text-base">Клуб {index + 1}</CardTitle><Button size="icon" variant="ghost" aria-label={`Удалить клуб ${index + 1}`} disabled={clubs.length === 1} onClick={() => { setFormError(null); setClubs(clubs.filter((_, itemIndex) => itemIndex !== index)); }}><Trash2 className="size-4" /></Button></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor={`club-name-${index}`}>Название клуба</Label><Input id={`club-name-${index}`} value={club.name} onChange={(event) => { setFormError(null); setClubs(clubs.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item)); }} placeholder="Введите название" /></div><div className="space-y-2"><Label>Город и часовой пояс</Label><TimezoneSelect value={club.timezone} onChange={(timezone) => { setFormError(null); setClubs(clubs.map((item, itemIndex) => itemIndex === index ? { ...item, timezone } : item)); }} /></div></CardContent></Card>)}<Button variant="outline" onClick={() => { setFormError(null); setClubs([...clubs, { name: '', timezone: DEFAULT_TIMEZONE }]); }}><Plus className="mr-2 size-4" />Добавить клуб</Button></div> : null}
 
-                  {step === 2 ? <Card className="rounded-2xl"><CardHeader><CardTitle className="text-lg">Первый владелец</CardTitle><p className="text-sm text-muted-foreground">Владелец получит доступ ко всем клубам. Пароль он задаст по ссылке активации.</p></CardHeader><CardContent className="grid gap-5 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="owner-name">Имя</Label><Input id="owner-name" value={owner.name} onChange={(event) => { setFormError(null); setOwner({ ...owner, name: event.target.value }); }} /></div><div className="space-y-2"><Label htmlFor="owner-phone">Телефон</Label><Input id="owner-phone" type="tel" value={owner.phone} onChange={(event) => { setFormError(null); setOwner({ ...owner, phone: event.target.value }); }} /></div><div className="space-y-2 sm:col-span-2"><Label htmlFor="owner-email">Email</Label><Input id="owner-email" type="email" value={owner.email} onChange={(event) => { setFormError(null); setOwner({ ...owner, email: event.target.value }); }} /></div></CardContent></Card> : null}
+                  {step === 2 ? <Card className="rounded-2xl"><CardHeader><CardTitle className="text-lg">Первый владелец</CardTitle></CardHeader><CardContent className="grid gap-5 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="owner-name">Имя</Label><Input id="owner-name" value={owner.name} onChange={(event) => { setFormError(null); setOwner({ ...owner, name: event.target.value }); }} /></div><div className="space-y-2"><Label htmlFor="owner-phone">Телефон</Label><Input id="owner-phone" aria-describedby={ownerPhoneError ? 'owner-phone-error' : undefined} aria-invalid={Boolean(ownerPhoneError)} autoComplete="tel" inputMode="tel" maxLength={18} placeholder="+7 (___) ___-__-__" type="tel" value={owner.phone} onChange={(event) => { setFormError(null); setOwnerPhoneError(''); setOwner({ ...owner, phone: formatRussianPhone(event.target.value) }); }} onPaste={(event) => { event.preventDefault(); setFormError(null); setOwnerPhoneError(''); setOwner({ ...owner, phone: formatRussianPhone(event.clipboardData.getData('text')) }); }} />{ownerPhoneError ? <p className="text-xs text-destructive" id="owner-phone-error">{ownerPhoneError}</p> : null}</div><div className="space-y-2 sm:col-span-2"><Label htmlFor="owner-email">Email</Label><Input id="owner-email" type="email" value={owner.email} onChange={(event) => { setFormError(null); setOwner({ ...owner, email: event.target.value }); }} /></div></CardContent></Card> : null}
 
                   {step === 3 ? <div className="space-y-4"><Card className="rounded-2xl"><CardHeader><CardTitle className="text-lg">Проверьте структуру организации</CardTitle></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Организация</p><p className="mt-1 font-medium">{organization.name}</p></div><ChevronRight className="mx-auto hidden size-4 text-muted-foreground sm:block" /><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Клубы</p><p className="mt-1 font-medium">{clubs.length}</p><div className="mt-1 space-y-1">{clubs.map((club, index) => <p className="text-xs text-muted-foreground" key={`${club.name}-${index}`}>{club.name} · {timezoneLabel(club.timezone)}</p>)}</div></div><ChevronRight className="mx-auto hidden size-4 text-muted-foreground sm:block" /><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Владелец</p><p className="mt-1 truncate font-medium">{owner.name}</p><p className="truncate text-xs text-muted-foreground">{owner.email}</p></div></div><p className="text-sm text-muted-foreground">После создания передайте владельцу ссылку для задания пароля.</p></CardContent></Card><Button className="w-full sm:w-auto" disabled={submitting} onClick={createOrganization}>{submitting ? 'Создаём…' : 'Создать организацию'}</Button></div> : null}
 
                   {formError ? <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"><p className="font-medium">{formError.title}</p><p className="mt-1 text-xs opacity-80">{formError.description}</p></div> : null}
-                  <div className="mt-8 flex items-center justify-between border-t pt-5"><Button variant="outline" disabled={step === 0 || submitting} onClick={() => setStep((current) => Math.max(0, current - 1))}><ArrowLeft className="mr-2 size-4" />Назад</Button>{step < steps.length - 1 ? <Button disabled={!canContinue} onClick={() => setStep((current) => Math.min(steps.length - 1, current + 1))}>Продолжить<ArrowRight className="ml-2 size-4" /></Button> : null}</div>
+                  <div className="mt-8 flex items-center justify-between border-t pt-5"><Button variant="outline" disabled={step === 0 || submitting} onClick={() => setStep((current) => Math.max(0, current - 1))}><ArrowLeft className="mr-2 size-4" />Назад</Button>{step < steps.length - 1 ? <Button disabled={!canContinue} onClick={() => { if (step === 2 && !russianPhoneE164(owner.phone)) { setOwnerPhoneError('Введите полный номер в формате +7 (999) 123-45-67'); return; } setStep((current) => Math.min(steps.length - 1, current + 1)); }}>Продолжить<ArrowRight className="ml-2 size-4" /></Button> : null}</div>
                 </>
               )}
             </div></section>

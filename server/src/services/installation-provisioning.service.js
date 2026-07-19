@@ -101,9 +101,17 @@ function stablePayload(payload) {
     owner: {
       email: payload.owner.email.trim().toLowerCase(),
       name: payload.owner.name.trim(),
-      phone: String(payload.owner.phone || '').trim(),
+      phone: canonicalRussianPhone(payload.owner.phone),
     },
   });
+}
+
+function canonicalRussianPhone(value) {
+  const digits = String(value || '').replace(/\D/gu, '');
+  const national = digits.length > 10 && /^[78]/u.test(digits)
+    ? digits.slice(1, 11)
+    : digits.slice(0, 10);
+  return /^[3-9]\d{9}$/u.test(national) ? `+7${national}` : String(value || '').trim();
 }
 
 function activationBaseUrl() {
@@ -398,10 +406,11 @@ async function getInstallationSnapshot() {
     include: [
       { attributes: ['id'], model: db.Club, required: false },
       {
-        attributes: ['id'],
+        attributes: ['id', 'status'],
+        include: [{ attributes: ['id', 'status'], model: db.Account }],
         model: db.Membership,
         required: false,
-        where: { role: 'owner', status: 'active' },
+        where: { role: 'owner' },
       },
     ],
     order: [['id', 'ASC'], [db.Club, 'id', 'ASC']],
@@ -425,15 +434,20 @@ async function getInstallationSnapshot() {
     foundation: { state: classification.state },
     organizations: organizations.map((organization) => {
       const operation = operationByOrganization.get(Number(organization.id));
+      const ownerMemberships = organization.Memberships || [];
+      const hasActiveOwner = ownerMemberships.some(
+        (membership) => membership.status === 'active' && membership.Account?.status === 'active',
+      );
+      const hasPendingActivation = operation && activationState(operation.activationToken) === 'pending';
+      const ownerState = hasActiveOwner
+        ? (hasPendingActivation ? 'pending_activation' : 'active')
+        : (ownerMemberships.length > 0 ? 'inactive' : 'missing');
       return {
-        activationState: operation
-          ? activationState(operation.activationToken)
-          : null,
         clubCount: (organization.Clubs || []).length,
         createdAt: organization.createdAt,
         id: organization.id,
         name: organization.name,
-        ownerCount: (organization.Memberships || []).length,
+        ownerState,
         slug: organization.slug,
       };
     }),
