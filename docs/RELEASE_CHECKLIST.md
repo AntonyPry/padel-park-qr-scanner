@@ -14,10 +14,16 @@
 - Включать capabilities только dependency prefix с full-stop между stages. Рекомендуемые smoke checkpoints: `cache-realtime`, `provider-integrations`, `bookings-courts`, `shifts-reports`, `enforcement`.
 - Runtime rollback — только к предыдущему green flag prefix с сохранением additive schema/backfill. Schema down и selective tenant restore не являются штатным rollback.
 - Второй production tenant остаётся запрещён до final stage, permanent SaaS QA и отдельного production authorization.
-- В отдельно разрешённый production day проверить FirstVDS authoritative NS,
-  A/no-conflicting-AAAA-or-CNAME, dedicated `ops.setly.tech` Nginx/TLS и
-  Host/CORS/direct-route contract; REG.RU DNS/NS не менять, `/activate-owner`
-  оставить только на `setly.tech`.
+- DNS `ops.setly.tech A 155.212.163.43` TTL `3600` уже явно создан в FirstVDS и
+  подтверждён Google Public DNS; в отдельно разрешённый production day только
+  повторно проверить authoritative NS, A и отсутствие conflicting AAAA/CNAME,
+  не менять REG.RU/FirstVDS DNS или NS delegation.
+- Текущий live baseline не готов к operator go-live: HTTP `ops.setly.tech`
+  отдаёт ordinary CRM default SPA с Nginx `200`, а нормальная HTTPS-проверка
+  падает из-за отсутствия `ops.setly.tech` в certificate SAN. До smoke
+  установить dedicated Nginx vhost, исключить CRM fallback, выпустить/проверить
+  TLS certificate и только затем подтвердить Host/CORS/session/direct-route
+  contract; `/activate-owner` оставить только на `setly.tech`.
 
 ### Final SaaS pre-main RC gate
 

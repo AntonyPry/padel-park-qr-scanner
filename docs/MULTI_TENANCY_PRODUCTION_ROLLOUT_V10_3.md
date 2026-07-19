@@ -120,11 +120,23 @@ production env здесь не изменяются.
 ### 0. DNS, operator host и TLS preflight
 
 На 19 июля 2026 года authoritative NS — `ns1.firstvds.ru` и
-`ns2.firstvds.ru`; `setly.tech`, `www.setly.tech`, `ops.setly.tech` и wildcard
-ведут на `155.212.163.43`. FirstVDS, а не REG.RU, является активным редактором
-DNS-зоны. NS delegation не менять. Wildcard уже обеспечивает basic resolution,
-поэтому DNS mutation не является prerequisite. Рекомендуемая явная запись в
-FirstVDS: `A`, host `ops`, value `155.212.163.43`, TTL `3600`.
+`ns2.firstvds.ru`; `setly.tech` и `www.setly.tech` ведут на
+`155.212.163.43`. Для `ops.setly.tech` уже создана явная FirstVDS запись `A
+155.212.163.43` с TTL `3600`, её публичный ответ подтверждён через Google Public
+DNS. Wildcard для остальных subdomain также остаётся активным. FirstVDS, а не
+REG.RU, является активным редактором DNS-зоны. DNS work завершён: NS delegation
+и DNS records в рамках этого rollout не менять.
+
+Зафиксированный live baseline до production change:
+
+- `http://ops.setly.tech` возвращает Nginx `200`, но ошибочно обслуживает
+  обычный CRM default SPA;
+- normal TLS verification для `https://ops.setly.tech` не проходит, потому что
+  текущий certificate SAN не содержит `ops.setly.tech`.
+
+Это два явных go-live blocker: разрешение DNS само по себе не означает
+готовность operator host. До установки отдельного vhost и выпуска корректного
+сертификата operator surface не считается production-ready.
 
 Перед production change сохранить вывод:
 
@@ -138,7 +150,8 @@ dig +short CNAME ops.setly.tech
 ```
 
 Gate: NS и три A совпадают с указанными значениями, а для `ops` нет
-конфликтующих AAAA/CNAME. Не выполнять DNS-операции в REG.RU.
+конфликтующих AAAA/CNAME. Это повторная проверка уже завершённого DNS, а не шаг
+создания записи. Не выполнять DNS-операции в REG.RU или FirstVDS.
 
 На FirstVDS Ubuntu server отдельным production change установить dedicated
 vhost из `deploy/nginx/ops.setly.tech.conf` и обновлённый product vhost. До
@@ -159,6 +172,10 @@ sudo certbot --nginx -d ops.setly.tech
 sudo nginx -t
 sudo systemctl reload nginx
 ```
+
+После первого reload HTTP host больше не должен попадать в ordinary CRM default
+server. Только затем выпускать/подключать сертификат с SAN `ops.setly.tech` и
+переходить к host/session/API/security smoke ниже.
 
 В существующий Certbot-managed `setly.tech` vhost через `sudoedit` перенести
 только deny locations из `deploy/nginx/setly.tech.conf`. Не копировать HTTP

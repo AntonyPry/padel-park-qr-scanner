@@ -10,18 +10,22 @@ Verified public DNS on July 19, 2026:
 - `setly.tech A 155.212.163.43`
 - `www.setly.tech A 155.212.163.43`
 - authoritative NS: `ns1.firstvds.ru`, `ns2.firstvds.ru`
-- `ops.setly.tech` and random subdomains resolve to `155.212.163.43` through
-  the existing wildcard record.
+- explicit FirstVDS record `ops.setly.tech A 155.212.163.43`, TTL `3600`;
+  Google Public DNS resolves it to the expected address;
+- random subdomains still resolve to `155.212.163.43` through the existing
+  wildcard record.
 
 FirstVDS is the active DNS zone owner while these NS are authoritative. Do not
-edit REG.RU DNS records or change NS delegation. No DNS mutation is required for
-basic `ops.setly.tech` resolution. For explicit production ownership, add in the
-FirstVDS DNS panel an `A` record with host `ops`, value `155.212.163.43`, TTL
-`3600`; it overrides the wildcard for this hostname.
+edit REG.RU DNS records or change NS delegation. DNS work for `ops.setly.tech`
+is complete; production day only re-verifies NS, A and the absence of
+conflicting AAAA/CNAME records.
 
-The wildcard DNS record does not automatically create a wildcard TLS
-certificate. Use a separate Nginx vhost and preferably a separate certificate
-for `ops.setly.tech`.
+Current public baseline on July 19, 2026 is intentionally **not** a ready state:
+`http://ops.setly.tech` returns Nginx `200` and silently serves the ordinary CRM
+default SPA, while normal verification of `https://ops.setly.tech` fails because
+the installed certificate SAN does not include `ops.setly.tech`. The next
+separately authorized production change must install the dedicated Nginx vhost,
+stop the default CRM fallback and issue a certificate containing this hostname.
 
 ## Nginx
 
@@ -131,3 +135,7 @@ deployment. Issue the operator certificate through the existing contour with
 `certbot renew --dry-run`. Keep the old IP available only as an emergency
 diagnostic endpoint; normal users use `https://setly.tech`, and authorized
 installation operators use `https://ops.setly.tech`.
+
+Do not treat DNS resolution alone as operator-host readiness. Readiness requires
+that the current ordinary-CRM HTTP fallback is gone and normal TLS verification
+succeeds with `ops.setly.tech` present in the certificate SAN.
