@@ -262,13 +262,48 @@ function value(row, key) {
 }
 
 function normalizeSql(sql) {
-  return String(sql || '')
+  const literals = [];
+  const input = String(sql || '');
+  let syntax = '';
+  for (let index = 0; index < input.length;) {
+    const quote = input[index];
+    if (quote !== "'" && quote !== '"') {
+      syntax += quote;
+      index += 1;
+      continue;
+    }
+
+    const start = index;
+    index += 1;
+    while (index < input.length) {
+      if (input[index] === '\\' && index + 1 < input.length) {
+        index += 2;
+        continue;
+      }
+      if (input[index] !== quote) {
+        index += 1;
+        continue;
+      }
+      if (input[index + 1] === quote) {
+        index += 2;
+        continue;
+      }
+      index += 1;
+      break;
+    }
+    const placeholder = `\u0001${literals.length}\u0002`;
+    literals.push(input.slice(start, index));
+    syntax += placeholder;
+  }
+
+  return syntax
     .replace(/`/gu, '')
     .replace(/\s+/gu, ' ')
     .replace(/\s*([(),;])\s*/gu, '$1')
     .replace(/\s*(<=>|<>|!=|<=|>=|=|<|>)\s*/gu, '$1')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/\u0001(\d+)\u0002/gu, (placeholder, index) => literals[Number(index)]);
 }
 
 async function tableRows(queryInterface, table) {

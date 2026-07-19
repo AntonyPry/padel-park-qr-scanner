@@ -122,6 +122,32 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     const queryInterface = schema.getQueryInterface();
     await FEATURE_MIGRATION.down(queryInterface);
     await t.test('migration failure/ownership/lookalike matrix is restart-safe', async () => {
+      const { normalizeSql } = FEATURE_MIGRATION.__testing;
+      assert.equal(
+        normalizeSql("BEGIN IF `M`.`role` = 'owner' THEN SET @X = 1; END IF; END"),
+        normalizeSql(" begin  if m.role='owner' then set @x=1 ; end if ; end "),
+      );
+      assert.notEqual(
+        normalizeSql("m.role = 'owner'"),
+        normalizeSql("M.ROLE='OWNER'"),
+      );
+      assert.notEqual(
+        normalizeSql("SET MESSAGE_TEXT = 'Owner activation history is immutable'"),
+        normalizeSql("set message_text='Owner  Activation History is immutable'"),
+      );
+      assert.notEqual(
+        normalizeSql('SET @role = "owner"'),
+        normalizeSql('set @ROLE="OWNER"'),
+      );
+      assert.equal(
+        normalizeSql("SET @message = 'Owner''s link'"),
+        normalizeSql(" set @MESSAGE='Owner''s link' "),
+      );
+      assert.notEqual(
+        normalizeSql("SET @message = 'Owner''s link'"),
+        normalizeSql("SET @message = 'OWNER''s link'"),
+      );
+
       const tablesAfterDown = new Set(
         (await queryInterface.showAllTables()).map((table) =>
           typeof table === 'string' ? table : table.tableName,
@@ -185,6 +211,85 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       const readyFingerprint = await provisioningSchemaFingerprint(schema);
       await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
       assert.equal(await provisioningSchemaFingerprint(schema), readyFingerprint);
+
+      const roleLiteralTrigger = FEATURE_MIGRATION.__testing.TRIGGERS.find(
+        (item) => item.name === 'trg_owner_activation_tokens_bi',
+      );
+      const trackedRoleTriggerRows = await FEATURE_MIGRATION.__testing.readArtifact(
+        queryInterface,
+        'trigger',
+        roleLiteralTrigger,
+      );
+      const triggerOwnershipPlan = {
+        foreignKey: [],
+        index: [],
+        table: [],
+        trigger: [{
+          ...roleLiteralTrigger,
+          signature: FEATURE_MIGRATION.__testing.artifactSignature(
+            'trigger',
+            trackedRoleTriggerRows,
+          ),
+        }],
+      };
+      const changedRoleBody = roleLiteralTrigger.body.replace(
+        "m.role = 'owner'",
+        "m.role = 'OWNER'",
+      );
+      assert.notEqual(changedRoleBody, roleLiteralTrigger.body);
+      await schema.query(`DROP TRIGGER \`${roleLiteralTrigger.name}\``);
+      await schema.query(
+        `CREATE TRIGGER \`${roleLiteralTrigger.name}\` BEFORE ${roleLiteralTrigger.event} ` +
+        `ON \`${roleLiteralTrigger.table}\` FOR EACH ROW ${changedRoleBody}`,
+      );
+      assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'partial');
+      const changedRoleBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), changedRoleBefore);
+      await assert.rejects(
+        FEATURE_MIGRATION.__testing.preflightCleanupInvocation(
+          queryInterface,
+          triggerOwnershipPlan,
+        ),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_CLEANUP_OWNERSHIP_LOST',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), changedRoleBefore);
+      await schema.query(`DROP TRIGGER \`${roleLiteralTrigger.name}\``);
+      await schema.query(
+        `CREATE TRIGGER \`${roleLiteralTrigger.name}\` BEFORE ${roleLiteralTrigger.event} ` +
+        `ON \`${roleLiteralTrigger.table}\` FOR EACH ROW ${roleLiteralTrigger.body}`,
+      );
+      assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'ready');
+
+      const messageLiteralTrigger = FEATURE_MIGRATION.__testing.TRIGGERS.find(
+        (item) => item.name === 'trg_owner_activation_tokens_bd',
+      );
+      const changedMessageBody = messageLiteralTrigger.body.replace(
+        'Owner activation history is immutable',
+        'Owner  Activation History is immutable',
+      );
+      assert.notEqual(changedMessageBody, messageLiteralTrigger.body);
+      await schema.query(`DROP TRIGGER \`${messageLiteralTrigger.name}\``);
+      await schema.query(
+        `CREATE TRIGGER \`${messageLiteralTrigger.name}\` BEFORE ${messageLiteralTrigger.event} ` +
+        `ON \`${messageLiteralTrigger.table}\` FOR EACH ROW ${changedMessageBody}`,
+      );
+      assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'partial');
+      const changedMessageBefore = await provisioningSchemaFingerprint(schema);
+      await assert.rejects(
+        FEATURE_MIGRATION.up(queryInterface, SequelizePackage),
+        (error) => error.code === 'INSTALLATION_PROVISIONING_REPAIR_REQUIRED',
+      );
+      assert.equal(await provisioningSchemaFingerprint(schema), changedMessageBefore);
+      await schema.query(`DROP TRIGGER \`${messageLiteralTrigger.name}\``);
+      await schema.query(
+        `CREATE TRIGGER \`${messageLiteralTrigger.name}\` BEFORE ${messageLiteralTrigger.event} ` +
+        `ON \`${messageLiteralTrigger.table}\` FOR EACH ROW ${messageLiteralTrigger.body}`,
+      );
+      assert.equal((await FEATURE_MIGRATION.__testing.classifyState(queryInterface)).state, 'ready');
 
       await queryInterface.removeIndex(
         'InstallationProvisioningOperations',
