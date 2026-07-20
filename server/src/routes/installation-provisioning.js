@@ -30,6 +30,13 @@ router.get(
   requireInstallationOperator,
   controller.snapshot,
 );
+router.get(
+  '/organizations/:organizationId',
+  installationEndpoint,
+  requireInstallationOperator,
+  validate(apiSchemas.installationProvisioning.organization),
+  controller.organization,
+);
 router.post(
   '/organizations',
   installationEndpoint,

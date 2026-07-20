@@ -12,6 +12,7 @@ export const apiEndpoints = {
   "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.session": { method: "POST", path: "/installation/provisioning/session", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.snapshot": { method: "GET", path: "/installation/provisioning/snapshot", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.organization": { method: "GET", path: "/installation/provisioning/organizations/{organizationId}", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.create": { method: "POST", path: "/installation/provisioning/organizations", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.reissue": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/activation/reissue", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.activationStatus": { method: "POST", path: "/installation/provisioning/activation/status", responseType: "json", tenantScope: "installation" },
@@ -357,6 +358,10 @@ export type InstallationProvisioningSessionResponse = {
   token: string;
 };
 export type InstallationProvisioningSnapshotResponse = Record<string, unknown>;
+export type InstallationProvisioningOrganizationParams = {
+  organizationId: number | string;
+};
+export type InstallationProvisioningOrganizationResponse = Record<string, unknown>;
 export type InstallationProvisioningCreateBody = {
   clubs: Array<{
     name: string;
@@ -2532,6 +2537,7 @@ export interface ApiEndpointRequestMap {
   "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.session": ApiEndpointRequest<undefined, undefined, InstallationProvisioningSessionBody>;
   "installationProvisioning.snapshot": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.organization": ApiEndpointRequest<InstallationProvisioningOrganizationParams, undefined, undefined>;
   "installationProvisioning.create": ApiEndpointRequest<undefined, undefined, InstallationProvisioningCreateBody>;
   "installationProvisioning.reissue": ApiEndpointRequest<InstallationProvisioningReissueParams, undefined, undefined>;
   "installationProvisioning.activationStatus": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivationStatusBody>;
@@ -2827,6 +2833,7 @@ export interface ApiEndpointResponseMap {
   "installationProvisioning.status": InstallationProvisioningStatusResponse;
   "installationProvisioning.session": InstallationProvisioningSessionResponse;
   "installationProvisioning.snapshot": InstallationProvisioningSnapshotResponse;
+  "installationProvisioning.organization": InstallationProvisioningOrganizationResponse;
   "installationProvisioning.create": InstallationProvisioningCreateResponse;
   "installationProvisioning.reissue": InstallationProvisioningReissueResponse;
   "installationProvisioning.activationStatus": InstallationProvisioningActivationStatusResponse;

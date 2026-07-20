@@ -65,7 +65,8 @@ function ApplicationContent() {
 
   if (
     location.pathname === '/installation' ||
-    location.pathname === '/installation/provisioning'
+    location.pathname === '/installation/provisioning' ||
+    location.pathname.startsWith('/installation/organizations/')
   ) {
     return (
       <Suspense fallback={<PageLoader />}>

@@ -63,6 +63,7 @@ test('installation provisioning routes remain isolated behind operator authority
 
     for (const request of [
       ['/installation/provisioning/snapshot', { method: 'GET' }],
+      ['/installation/provisioning/organizations/1', { method: 'GET' }],
       ['/installation/provisioning/organizations', {
         body: JSON.stringify({}),
         headers: { 'Content-Type': 'application/json' },

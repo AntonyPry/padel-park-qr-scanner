@@ -29,6 +29,7 @@ const INSTALLATION_ENDPOINT_IDS = new Set([
   'installationProvisioning.status',
   'installationProvisioning.session',
   'installationProvisioning.snapshot',
+  'installationProvisioning.organization',
   'installationProvisioning.create',
   'installationProvisioning.reissue',
   'installationProvisioning.activationStatus',
@@ -190,7 +191,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '3f952369867762f7e05c8c05fbcaa3786cd079cb39bb6287f58719b91c41ff48';
+  '5baf3e3e41d43082a614e64790ef9bcec2113fe060af4079862cfee270dec976';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

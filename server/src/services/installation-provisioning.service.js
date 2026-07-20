@@ -466,7 +466,7 @@ async function getInstallationSnapshot() {
   assertEnabledFoundation();
   const classification = await assertTenantFoundationInitialized({ strict: true });
   const organizations = await db.Organization.findAll({
-    attributes: ['id', 'name', 'slug', 'createdAt'],
+    attributes: ['id', 'name', 'slug', 'status', 'createdAt'],
     include: [
       { attributes: ['id'], model: db.Club, required: false },
       {
@@ -513,8 +513,148 @@ async function getInstallationSnapshot() {
         name: organization.name,
         ownerState,
         slug: organization.slug,
+        status: organization.status,
       };
     }),
+  };
+}
+
+const INSTALLATION_INTEGRATION_PROVIDERS = Object.freeze([
+  'beeline',
+  'evotor',
+  'telegram',
+  'vk',
+]);
+
+function safeOperatorMetadataText(value, maxLength = 180) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized && normalized.length <= maxLength ? normalized : null;
+}
+
+function safeOperatorCallbackUrl(value) {
+  const candidate = safeOperatorMetadataText(value, 500);
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    if (
+      url.protocol !== 'https:' ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password ||
+      !/^\/api\/webhooks\/evotor\/ic_[a-f0-9]{32}$/u.test(url.pathname)
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function safeOperatorIdentity(provider, value) {
+  const candidate = safeOperatorMetadataText(value, 120);
+  if (!candidate) return null;
+  const patterns = {
+    beeline: /^ВАТС [\p{L}\p{N} .·«»—_+()-]+$/u,
+    evotor: /^Webhook [\p{L}\p{N} .·«»—_+()-]+$/u,
+    telegram: /^@[A-Za-z0-9_]{5,32}$/u,
+    vk: /^VK · [\p{L}\p{N} .·«»—_+()-]+$/u,
+  };
+  return patterns[provider]?.test(candidate) ? candidate : null;
+}
+
+function safeOperatorDateTime(value) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+async function getInstallationOrganization(organizationId) {
+  assertEnabledFoundation();
+  await assertTenantFoundationInitialized({ strict: true });
+  const id = Number(organizationId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw provisioningError(
+      'Организация не найдена',
+      404,
+      'INSTALLATION_ORGANIZATION_NOT_FOUND',
+    );
+  }
+
+  const organization = await db.Organization.findByPk(id, {
+    attributes: ['id', 'name', 'status', 'createdAt'],
+    include: [{
+      attributes: ['id', 'name', 'timezone', 'status'],
+      model: db.Club,
+      required: false,
+    }],
+    order: [[db.Club, 'id', 'ASC']],
+  });
+  if (!organization) {
+    throw provisioningError(
+      'Организация не найдена',
+      404,
+      'INSTALLATION_ORGANIZATION_NOT_FOUND',
+    );
+  }
+
+  const connections = await db.IntegrationConnection.unscoped().findAll({
+    attributes: ['clubId', 'metadata', 'provider', 'status', 'secretUpdatedAt'],
+    order: [['clubId', 'ASC'], ['provider', 'ASC'], ['id', 'ASC']],
+    where: { organizationId: id },
+  });
+  const connectionBySlot = new Map();
+  for (const connection of connections) {
+    const slot = `${Number(connection.clubId)}:${connection.provider}`;
+    if (!connectionBySlot.has(slot)) connectionBySlot.set(slot, connection);
+  }
+
+  return {
+    clubs: (organization.Clubs || []).map((club) => ({
+      id: club.id,
+      integrations: INSTALLATION_INTEGRATION_PROVIDERS.map((provider) => {
+        const connection = connectionBySlot.get(`${Number(club.id)}:${provider}`);
+        const storedMetadata = connection?.metadata;
+        let metadata = {};
+        try {
+          metadata = typeof storedMetadata === 'string'
+            ? JSON.parse(storedMetadata)
+            : (storedMetadata || {});
+        } catch {
+          metadata = {};
+        }
+        const validationStatus = [
+          'verified',
+          'pending_event',
+          'failed',
+          'not_tested',
+        ].includes(metadata.validationStatus)
+          ? metadata.validationStatus
+          : 'not_tested';
+        return {
+          configured: Boolean(connection),
+          lastActivityAt: safeOperatorDateTime(metadata.lastActivityAt),
+          lastValidatedAt: safeOperatorDateTime(metadata.lastValidatedAt),
+          provider,
+          safeCallbackUrl: provider === 'evotor'
+            ? safeOperatorCallbackUrl(metadata.safeCallbackUrl)
+            : null,
+          safeIdentity: safeOperatorIdentity(provider, metadata.safeIdentity),
+          secretUpdatedAt: connection?.secretUpdatedAt || null,
+          status: connection?.status || 'not_configured',
+          validationStatus,
+        };
+      }),
+      name: club.name,
+      status: club.status,
+      timezone: club.timezone,
+    })),
+    createdAt: organization.createdAt,
+    id: organization.id,
+    name: organization.name,
+    status: organization.status,
   };
 }
 
@@ -675,6 +815,7 @@ module.exports = {
     stablePayload,
   },
   activateOwner,
+  getInstallationOrganization,
   getInstallationSnapshot,
   inspectActivation,
   provisionOrganization,

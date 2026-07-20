@@ -1312,6 +1312,32 @@ const apiSchemas = {
       }),
     },
     organizationParams: z.object({ organizationId: id }),
+    organization: {
+      params: z.object({ organizationId: id }),
+      response: z.object({
+        clubs: z.array(z.object({
+          id: z.number().int().positive(),
+          integrations: z.array(z.object({
+            configured: z.boolean(),
+            lastActivityAt: dateTime.nullable(),
+            lastValidatedAt: dateTime.nullable(),
+            provider: z.enum(['beeline', 'evotor', 'telegram', 'vk']),
+            safeCallbackUrl: z.string().url().nullable(),
+            safeIdentity: z.string().nullable(),
+            secretUpdatedAt: dateTime.nullable(),
+            status: z.enum(['active', 'disabled', 'revoked', 'not_configured']),
+            validationStatus: z.enum(['verified', 'pending_event', 'failed', 'not_tested']),
+          })),
+          name: z.string(),
+          status: z.enum(['active', 'inactive', 'archived']),
+          timezone: z.string(),
+        })),
+        createdAt: dateTime,
+        id: z.number().int().positive(),
+        name: z.string(),
+        status: z.enum(['active', 'inactive', 'archived']),
+      }),
+    },
     reissue: {
       params: z.object({ organizationId: id }),
       response: z.object({
@@ -1354,6 +1380,7 @@ const apiSchemas = {
           name: z.string(),
           ownerState: z.enum(['active', 'inactive', 'missing', 'pending_activation']),
           slug: z.string(),
+          status: z.enum(['active', 'inactive', 'archived']),
         }),
       ),
     }),

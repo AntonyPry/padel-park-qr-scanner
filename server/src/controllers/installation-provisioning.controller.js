@@ -25,6 +25,18 @@ class InstallationProvisioningController {
     }
   }
 
+  async organization(req, res) {
+    try {
+      res.json(
+        await installationProvisioning.getInstallationOrganization(
+          req.params.organizationId,
+        ),
+      );
+    } catch (error) {
+      sendError(res, error, 'Не удалось загрузить организацию');
+    }
+  }
+
   async create(req, res) {
     try {
       const result = await installationProvisioning.provisionOrganization(
