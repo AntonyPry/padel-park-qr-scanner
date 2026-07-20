@@ -40,7 +40,34 @@ Feature branch: `codex/multi-tenant-providers-v4-3`.
 
 Unknown, disabled, revoked, provider-mismatched, secret-mismatched и legacy URL без connection ID отклоняются fail-closed. Business payload не записывается и не разбирается. `ProviderIngressDiagnostic` хранит только provider, controlled reason code и SHA-256 fingerprints public ID/request; body, header value, tenant attribution и secrets отсутствуют.
 
-Legacy routes сохраняются для flag-off rollout. При flag-on отсутствие canonical connection URL является ошибкой конфигурации, а не fallback к env/default tenant.
+Feature 10.3 заменяет Beeline rollout transport: legacy bare route теперь всегда
+fail-closed, а flag-off rollback использует тот же connection-attributed
+canonical route, а не env/default-tenant fallback. Evotor legacy flag-off
+поведение этим уточнением не меняется.
+
+### Feature 10.3 Beeline capability amendment
+
+Для production Beeline без provider-supported custom header canonical route —
+`POST /api/integrations/beeline/events/:connectionPublicId/:callbackToken`.
+`publicId` задаёт identity, но не аутентифицирует. Отдельный random 256-bit
+capability timing-safe проверяется до body parser и любой DB write. Он хранится
+только в AES-256-GCM secret bundle; config содержит лишь
+`webhookAuthMode=capability_uri` и callback base URL. Shared header route
+сохраняется только для connection, явно созданной в
+`shared_secret_header` mode.
+
+Caller-controlled `skipSecret` удалён. HTTP ingress всегда требует canonical
+auth; manual statistics sync использует private service boundary после
+аутентифицированного outbound provider request и не экспортирует обход в
+controller/routes. Bare route и query secrets запрещены.
+
+Capability route работает при provider flag off/on. Только во время global
+full-stop отдельный Feature 10.3 cutover env может пропустить именно этот route
+после успешной authentication; остальные API и bare/header callbacks остаются
+закрыты. Bootstrap принимает complete Beeline base/token/callback configuration
+без webhook secret как capability mode, генерирует token внутри общей provider
+transaction и атомарно reconciles historical calls/raw events/subscriptions.
+Rerun переиспользует exact connection и secret ciphertext без rotation.
 
 ## Idempotency, attribution and locks
 
@@ -96,13 +123,17 @@ Rollout sequence:
 
 1. DB backup; deploy migration with provider flag off;
 2. set protected master key/key version on server;
-3. остановить provider ingress/loops на короткое rollout-окно и run `npm run tenant:providers:bootstrap` in `server`: после secret preflight команда в одной DB transaction создаёт/находит exact-default connections, связывает legacy rows только для Beeline/Evotor и не печатает secrets; Telegram/VK не передаются в legacy reconciliation, а exact existing rows переиспользуются без rotation/config/metadata/status mutation;
-4. configure provider callbacks with returned opaque public IDs and verify secret headers;
-5. до включения flag повторно run bootstrap/reconciliation после drain, затем provider audit и flag-off webhook smoke; новые flag-off Beeline/Evotor rows уже имеют default organization/club, но до reconciliation сохраняют legacy connection namespace;
+3. до full-stop выполнить root-aware provider preflight, затем в maintenance run `npm run tenant:providers:bootstrap`: одна DB transaction создаёт/находит exact-default connections, связывает legacy rows только для Beeline/Evotor и не печатает secrets; Telegram/VK не передаются в legacy reconciliation, а exact existing rows переиспользуются без rotation/config/metadata/status mutation;
+4. для Beeline выполнить maintenance-only capability callback cutover из Feature 10.3 runbook; Evotor продолжает использовать opaque public ID и explicit secret header;
+5. до включения flag повторно run bootstrap, provider audit и canonical flag-off webhook smoke; все новые Beeline events уже connection-attributed, bare Beeline route остаётся закрытым;
 6. enable Features 3 → 4.1 → 4.2 → 4.3 server flags;
 7. verify canonical Beeline/Evotor ingress, Beeline renewal and one Telegram/VK instance.
 
-Runtime rollback: disable only `TENANT_PROVIDER_INTEGRATIONS_ENABLED`; legacy env routes/default behavior remain available. Do not remove connection rows, attribution columns or encrypted data. A leaked/invalid connection is revoked in DB and its provider credential is rotated before re-enable.
+Runtime rollback: disable only `TENANT_PROVIDER_INTEGRATIONS_ENABLED`; canonical
+Beeline capability route и connection attribution остаются доступны. Legacy
+bare Beeline route не восстанавливается. Не удалять connection rows, attribution
+columns или encrypted data. При утечке capability production остаётся под
+full-stop до controlled provider URI replacement/credential rotation.
 
 ## Hard boundary and deferred work
 

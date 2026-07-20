@@ -183,6 +183,7 @@ export const apiEndpoints = {
   "telephony.reprocessRawEvent": { method: "POST", path: "/telephony/raw-events/{id}/reprocess", responseType: "json", tenantScope: "club" },
   "telephony.beelineWebhook": { method: "POST", path: "/integrations/beeline/events", responseType: "json", tenantScope: "provider_ingress" },
   "telephony.beelineConnectionWebhook": { method: "POST", path: "/integrations/beeline/events/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
+  "telephony.beelineCapabilityWebhook": { method: "POST", path: "/integrations/beeline/events/{connectionPublicId}/{callbackToken}", responseType: "json", tenantScope: "provider_ingress" },
   "clients.list": { method: "GET", path: "/clients", responseType: "json", tenantScope: "organization" },
   "clients.lookup": { method: "GET", path: "/clients/lookup", responseType: "json", tenantScope: "organization" },
   "clients.duplicates": { method: "GET", path: "/clients/duplicates", responseType: "json", tenantScope: "organization" },
@@ -1601,6 +1602,10 @@ export type TelephonyReprocessRawEventParams = {
 export type TelephonyBeelineConnectionWebhookParams = {
   connectionPublicId: string;
 };
+export type TelephonyBeelineCapabilityWebhookParams = {
+  connectionPublicId: string;
+  callbackToken: string;
+};
 export type ClientsListQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
@@ -2698,6 +2703,7 @@ export interface ApiEndpointRequestMap {
   "telephony.reprocessRawEvent": ApiEndpointRequest<TelephonyReprocessRawEventParams, undefined, undefined>;
   "telephony.beelineWebhook": ApiEndpointRequest<undefined, undefined, undefined>;
   "telephony.beelineConnectionWebhook": ApiEndpointRequest<TelephonyBeelineConnectionWebhookParams, undefined, undefined>;
+  "telephony.beelineCapabilityWebhook": ApiEndpointRequest<TelephonyBeelineCapabilityWebhookParams, undefined, undefined>;
   "clients.list": ApiEndpointRequest<undefined, ClientsListQuery, undefined>;
   "clients.lookup": ApiEndpointRequest<undefined, ClientsLookupQuery, undefined>;
   "clients.duplicates": ApiEndpointRequest<undefined, undefined, undefined>;
@@ -2992,6 +2998,7 @@ export interface ApiEndpointResponseMap {
   "telephony.reprocessRawEvent": unknown;
   "telephony.beelineWebhook": unknown;
   "telephony.beelineConnectionWebhook": unknown;
+  "telephony.beelineCapabilityWebhook": unknown;
   "clients.list": unknown;
   "clients.lookup": unknown;
   "clients.duplicates": unknown;

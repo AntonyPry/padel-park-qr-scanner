@@ -1,11 +1,15 @@
 'use strict';
 
 const {
+  resolveIngressConnection,
+} = require('../provider-integrations/connection-service');
+const {
   isTenantProviderIntegrationsEnabled,
 } = require('../tenant-context/capabilities');
 const {
-  resolveIngressConnection,
-} = require('../provider-integrations/connection-service');
+  assertCapabilityConnection,
+  assertSharedHeaderConnection,
+} = require('../provider-integrations/beeline-callback');
 const {
   recordRejectedIngress,
 } = require('../provider-integrations/diagnostics');
@@ -13,6 +17,9 @@ const {
   assertIngressSecret,
   assertLegacyDownstreamReady,
 } = require('../provider-integrations/runtime');
+const {
+  createAuthenticatedIngressContext,
+} = require('../provider-integrations/ingress-context');
 const {
   requireExactSingletonDefault,
 } = require('../tenant-enforcement/legacy-singleton');
@@ -36,7 +43,7 @@ function rejectResponse(res, error) {
 
 function connectionFirstIngress(provider, getSecret) {
   return async function resolveConnectionBeforeBody(req, res, next) {
-    if (!isTenantProviderIntegrationsEnabled()) {
+    if (provider !== 'beeline' && !isTenantProviderIntegrationsEnabled()) {
       try {
         await requireExactSingletonDefault();
         return next();
@@ -53,7 +60,11 @@ function connectionFirstIngress(provider, getSecret) {
         sourceIp: req.ip,
       });
       try {
-        assertIngressSecret(connection, getSecret(req));
+        if (provider === 'beeline') {
+          assertSharedHeaderConnection(connection, getSecret(req));
+        } else {
+          assertIngressSecret(connection, getSecret(req));
+        }
       } catch (error) {
         await recordRejectedIngress({
           provider,
@@ -66,6 +77,7 @@ function connectionFirstIngress(provider, getSecret) {
       }
       await assertLegacyDownstreamReady(connection);
       req.providerConnection = connection;
+      req.providerIngressContext = createAuthenticatedIngressContext(connection);
       return next();
     } catch (error) {
       return rejectResponse(res, error);
@@ -73,8 +85,44 @@ function connectionFirstIngress(provider, getSecret) {
   };
 }
 
+async function beelineCapabilityIngress(req, res, next) {
+  const publicId = req.params.connectionPublicId;
+  try {
+    const connection = await resolveIngressConnection({
+      provider: 'beeline',
+      publicId,
+      requestId: req.headers['x-request-id'],
+      sourceIp: req.ip,
+    });
+    try {
+      assertCapabilityConnection(connection, req.params.callbackToken);
+    } catch (error) {
+      await recordRejectedIngress({
+        provider: 'beeline',
+        publicId,
+        reasonCode: 'CONNECTION_CAPABILITY_MISMATCH',
+        requestId: req.headers['x-request-id'],
+        sourceIp: req.ip,
+      });
+      throw error;
+    }
+    await assertLegacyDownstreamReady(connection);
+    req.providerConnection = connection;
+    req.providerIngressContext = createAuthenticatedIngressContext(connection);
+    return next();
+  } catch (error) {
+    return rejectResponse(res, error);
+  }
+}
+
+function rejectLegacyBeelineIngress(_req, res) {
+  return res.status(404).send('Rejected');
+}
+
 module.exports = {
+  beelineCapabilityIngress,
   beelineConnectionFirstIngress: connectionFirstIngress('beeline', beelineSecret),
   connectionFirstIngress,
   evotorConnectionFirstIngress: connectionFirstIngress('evotor', evotorSecret),
+  rejectLegacyBeelineIngress,
 };

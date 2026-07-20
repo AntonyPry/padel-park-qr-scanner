@@ -56,6 +56,7 @@
     "tenant:visit-scanner-writes:audit": "node scripts/audit-visit-scanner-writes.js",
     "tenant:files-workers:attachments": "node scripts/migrate-shift-report-attachments.js",
     "tenant:providers:bootstrap": "node scripts/bootstrap-provider-connections.js",
+    "tenant:providers:beeline:cutover": "node scripts/cutover-beeline-callback.js",
     "tenant:foundation:assert": "node scripts/tenant-foundation-check.js",
     "tenant:routes:audit": "node scripts/audit-tenant-route-scopes.js",
     "tenant:enforcement:audit": "node scripts/audit-final-tenant-enforcement.js",

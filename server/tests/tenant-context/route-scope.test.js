@@ -54,6 +54,7 @@ test('public provider and worker endpoints are strict explicit exceptions', () =
   assert.deepEqual(
     [...PROVIDER_INGRESS_ENDPOINT_IDS].sort(),
     [
+      'telephony.beelineCapabilityWebhook',
       'telephony.beelineConnectionWebhook',
       'telephony.beelineWebhook',
       'webhooks.evotor',

@@ -12,6 +12,7 @@
 - Восстановить raw capture в отдельную пустую installation; применить migrations/provider bootstrap, проверить manifest/attachments и получить green `--phase=restore-rehearsal` для того же baseline.
 - На production после migrations получить green `--phase=post-migrations`: business table counts/primary-key/historical-value digests unchanged, exact default Organization/Club, all migrations up, strict integrity zero findings.
 - Включать capabilities только dependency prefix с full-stop между stages. Рекомендуемые smoke checkpoints: `cache-realtime`, `provider-integrations`, `bookings-courts`, `shifts-reports`, `enforcement`.
+- Для первого Beeline tenant cutover не открывать новый release с legacy bare callback: под full-stop выполнить capability bootstrap/reconciliation, dry-run и explicit provider URI `--apply`, controlled attributed call, затем убрать узкое cutover exception вместе с maintenance. Abort до URI switch может вернуть old app/flags-off; после switch recovery остаётся только на capability-aware release под full-stop.
 - Runtime rollback — только к предыдущему green flag prefix с сохранением additive schema/backfill. Schema down и selective tenant restore не являются штатным rollback.
 - Второй production tenant остаётся запрещён до final stage, permanent SaaS QA и отдельного production authorization.
 - DNS `ops.setly.tech A 155.212.163.43` TTL `3600` уже явно создан в FirstVDS и

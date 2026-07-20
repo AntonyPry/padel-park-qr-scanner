@@ -36,7 +36,17 @@ function definition(provider) {
       ? { webhookSecret: `${provider}-webhook-secret` }
       : { botToken: `${provider}-bot-secret` };
   return {
-    config: {},
+    config: provider === 'beeline'
+      ? {
+          apiBaseUrl: 'https://provider.test',
+          apiTimeoutMs: 15000,
+          callbackUrl: `https://setly.tech/api/integrations/beeline/events/ic_${provider.charCodeAt(0).toString(16).padStart(2, '0').repeat(16)}`,
+          subscriptionAutoRenewEnabled: false,
+          subscriptionExpiresSeconds: 3600,
+          subscriptionRenewBeforeSeconds: 600,
+          webhookAuthMode: 'shared_secret_header',
+        }
+      : {},
     provider,
     publicId: `ic_${provider.charCodeAt(0).toString(16).padStart(2, '0').repeat(16)}`,
     required: Object.values(secrets),
@@ -107,6 +117,7 @@ function fakeDatabase(initialRows = []) {
 function dependencies(database, { failCreateProvider, failReconcileProvider } = {}) {
   const reconciled = [];
   const created = [];
+  const createdPayloads = [];
   return {
     create: async (payload, { transaction }) => {
       if (payload.provider === failCreateProvider) throw new Error('forced create failure');
@@ -117,10 +128,13 @@ function dependencies(database, { failCreateProvider, failReconcileProvider } = 
       });
       transaction.rows.push(row);
       created.push(payload.provider);
+      createdPayloads.push(payload);
       return row;
     },
     created,
+    createdPayloads,
     models: database.models,
+    inspectRoots: async () => ({ beeline: 0, evotor: 0 }),
     reconcile: async (snapshot, { transaction }) => {
       reconciled.push(snapshot.provider);
       transaction.attribution.push(snapshot.provider);
@@ -157,6 +171,37 @@ test('bootstrap reconciles only beeline/evotor and never emits configured secret
   ]) assert.equal(output.includes(secret), false);
 });
 
+test('bootstrap creates capability-mode Beeline without persisting or emitting its token', async () => {
+  configureSecrets();
+  const database = fakeDatabase();
+  const deps = dependencies(database);
+  const definition = {
+    config: {
+      apiBaseUrl: 'https://provider.test',
+      apiTimeoutMs: 15000,
+      callbackBaseUrl: 'https://setly.tech/api/integrations/beeline/events',
+      subscriptionAutoRenewEnabled: false,
+      subscriptionExpiresSeconds: 3600,
+      subscriptionRenewBeforeSeconds: 600,
+      webhookAuthMode: 'capability_uri',
+    },
+    generateCallbackToken: true,
+    provider: 'beeline',
+    publicId: 'ic_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    required: ['https://provider.test', 'api-secret', 'https://setly.tech/callback'],
+    secrets: { apiToken: 'api-secret' },
+  };
+  const results = await bootstrapProviderConnections({
+    ...deps,
+    definitions: [definition],
+  });
+  const created = deps.createdPayloads[0];
+  assert.match(created.secrets.callbackToken, /^[a-f0-9]{64}$/u);
+  assert.equal(JSON.stringify(created.config).includes(created.secrets.callbackToken), false);
+  assert.equal(JSON.stringify(created.metadata).includes(created.secrets.callbackToken), false);
+  assert.equal(JSON.stringify(results).includes(created.secrets.callbackToken), false);
+});
+
 test('bootstrap rolls back connections and reconciliation as one configured batch', async () => {
   configureSecrets();
   for (const failure of [
@@ -175,6 +220,37 @@ test('bootstrap rolls back connections and reconciliation as one configured batc
     assert.deepEqual(database.snapshot().rows, []);
     assert.deepEqual(database.snapshot().attribution, []);
   }
+
+  const capabilityDatabase = fakeDatabase();
+  const capabilityDeps = dependencies(capabilityDatabase, {
+    failCreateProvider: 'telegram',
+  });
+  const capability = {
+    config: {
+      apiBaseUrl: 'https://provider.test',
+      apiTimeoutMs: 15000,
+      callbackBaseUrl: 'https://setly.tech/api/integrations/beeline/events',
+      subscriptionAutoRenewEnabled: false,
+      subscriptionExpiresSeconds: 3600,
+      subscriptionRenewBeforeSeconds: 600,
+      webhookAuthMode: 'capability_uri',
+    },
+    generateCallbackToken: true,
+    provider: 'beeline',
+    publicId: `ic_${'b'.repeat(32)}`,
+    required: ['https://provider.test', 'api-secret', 'https://setly.tech/callback'],
+    secrets: { apiToken: 'api-secret' },
+  };
+  await assert.rejects(
+    bootstrapProviderConnections({
+      ...capabilityDeps,
+      definitions: [capability, definition('evotor'), definition('telegram')],
+    }),
+    /forced create failure/u,
+  );
+  assert.match(capabilityDeps.createdPayloads[0].secrets.callbackToken, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(capabilityDatabase.snapshot().rows, []);
+  assert.deepEqual(capabilityDatabase.snapshot().attribution, []);
 });
 
 test('bootstrap reuses an exact parent-like telegram partial row without mutation', async () => {
@@ -217,10 +293,42 @@ test('bootstrap secret preflight fails before opening a transaction', async () =
   assert.deepEqual(database.snapshot().rows, []);
 });
 
+test('unsafe Beeline callback configuration and historical roots fail before mutation', async () => {
+  configureSecrets();
+  const invalidDatabase = fakeDatabase();
+  const invalid = definition('beeline');
+  invalid.config = {
+    ...invalid.config,
+    callbackUrl: 'http://setly.tech/api/integrations/beeline/events',
+  };
+  await assert.rejects(
+    bootstrapProviderConnections({
+      ...dependencies(invalidDatabase),
+      definitions: [invalid],
+    }),
+    (error) => error.code === 'PROVIDER_CONFIGURATION_INCOMPLETE',
+  );
+  assert.equal(invalidDatabase.snapshot().transactionCalls, 0);
+
+  const rootsDatabase = fakeDatabase();
+  const deps = dependencies(rootsDatabase);
+  deps.inspectRoots = async () => ({ beeline: 11583, evotor: 0 });
+  await assert.rejects(
+    bootstrapProviderConnections({
+      ...deps,
+      definitions: [],
+    }),
+    (error) =>
+      error.code === 'PROVIDER_HISTORICAL_ROOT_CONFIGURATION_INVALID' &&
+      error.rootCount === 11583,
+  );
+  assert.equal(rootsDatabase.snapshot().transactionCalls, 0);
+});
+
 test('provider secret preflight CLI validates configuration without printing the key', () => {
   const masterKey = Buffer.alloc(32, 72).toString('base64');
   const script = path.resolve(__dirname, '../../scripts/preflight-provider-secrets.js');
-  const valid = spawnSync(process.execPath, [script], {
+  const valid = spawnSync(process.execPath, [script, '--secrets-only'], {
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -230,12 +338,13 @@ test('provider secret preflight CLI validates configuration without printing the
   });
   assert.equal(valid.status, 0, valid.stderr);
   assert.equal(`${valid.stdout}\n${valid.stderr}`.includes(masterKey), false);
-  assert.deepEqual(JSON.parse(valid.stdout.trim().split('\n').at(-1)), {
-    keyVersion: 'v1',
-    status: 'ok',
-  });
+  const validOutput = JSON.parse(valid.stdout.trim().split('\n').at(-1));
+  assert.equal(validOutput.keyVersion, 'v1');
+  assert.equal(validOutput.status, 'ok');
+  assert.equal(validOutput.rootCounts, null);
+  assert.equal(Array.isArray(validOutput.providers), true);
 
-  const invalid = spawnSync(process.execPath, [script], {
+  const invalid = spawnSync(process.execPath, [script, '--secrets-only'], {
     encoding: 'utf8',
     env: {
       ...process.env,

@@ -11,12 +11,10 @@ class TelephonyController {
       res.status(200).json(
         await telephonyService.receiveBeelineEvent({
           body: req.body,
-          connection: req.providerConnection || null,
           headers: req.headers,
+          ingressContext: req.providerIngressContext,
           ip: req.ip,
-          publicId: req.params.connectionPublicId,
           query: req.query,
-          skipSecret: Boolean(req.providerConnection),
         }),
       );
     } catch (error) {

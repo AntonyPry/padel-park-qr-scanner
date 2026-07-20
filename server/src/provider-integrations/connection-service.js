@@ -251,6 +251,15 @@ async function resolveTenantConnection({
   return contextWithSecrets(rows[0]);
 }
 
+async function resolveOptionalTenantConnection(options) {
+  try {
+    return await resolveTenantConnection(options);
+  } catch (error) {
+    if (error?.code === 'PROVIDER_CONNECTION_REQUIRED') return null;
+    throw error;
+  }
+}
+
 async function resolveConnectionForTenantById({ connectionId, provider, tenant }) {
   const organizationId = Number(tenant?.organizationId);
   const clubId = Number(tenant?.clubId);
@@ -306,6 +315,7 @@ module.exports = {
   normalizeSafeObject,
   resolveConnectionForTenantById,
   resolveIngressConnection,
+  resolveOptionalTenantConnection,
   resolveTenantConnection,
   serializeConnection,
   updateConnectionConfiguration,

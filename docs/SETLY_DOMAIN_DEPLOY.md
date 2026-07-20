@@ -39,7 +39,10 @@ it serves the generated `/assets/` bundle plus only `/favicon.ico`,
 `/apple-touch-icon.png` at the root. It does not expose other root files,
 ordinary CRM, Socket.IO or `/activate-owner`. The product vhost denies
 `/installation` and operator API paths while keeping public owner activation
-available.
+available. Its access log uses `$uri` (not `$request_uri`) and maps every
+canonical Beeline capability path to the constant
+`/api/integrations/beeline/events/[redacted]`; callback capabilities and query
+strings must never reach Nginx access logs.
 
 For a fresh installation, install both bootstrap files only during a separately
 authorized production change:
@@ -55,7 +58,8 @@ systemctl reload nginx
 
 For an existing Certbot-managed production vhost, do not reinstall
 `deploy/nginx/setly.tech.conf`. Back up the installed file and merge only its
-new `/installation` and operator-API deny locations. Install
+new `/installation`/operator-API deny locations plus the top-level
+`map`/`log_format` and server `access_log ... setly_redacted` directives. Install
 `ops.setly.tech.conf` as a new vhost, then run `nginx -t` before reload.
 
 Certbot modifies the installed runtime file when it enables TLS. Do not copy the HTTP bootstrap file over `/etc/nginx/sites-available/setly.tech` after certificate issuance. After the first successful HTTPS setup, capture a sanitized final TLS configuration in infrastructure code without certificate private keys or other secrets.
@@ -63,6 +67,15 @@ Certbot modifies the installed runtime file when it enables TLS. Do not copy the
 The installed file contains:
 
 ```nginx
+map $uri $setly_safe_request_uri {
+    default $uri;
+    ~^/api/integrations/beeline/events/ic_[0-9a-f]+/[^/?]+ /api/integrations/beeline/events/[redacted];
+}
+
+log_format setly_redacted '$remote_addr - $remote_user [$time_local] '
+                          '"$request_method $setly_safe_request_uri $server_protocol" '
+                          '$status $body_bytes_sent "$http_user_agent"';
+
 server {
     listen 80;
     listen [::]:80;
@@ -71,6 +84,7 @@ server {
     root /opt/padel-park-qr-scanner/client/dist;
     index index.html;
     client_max_body_size 64m;
+    access_log /var/log/nginx/access.log setly_redacted;
 
     location = /installation { return 404; }
     location ^~ /installation/ { return 404; }
@@ -128,7 +142,13 @@ The Node process must listen on `127.0.0.1:3000`; do not expose its port through
 the public firewall, because direct backend access would bypass Nginx host/path
 separation.
 
-After changing `BEELINE_CALLBACK_URL`, restart the server and update the XSI subscription from the Beeline integration modal so the provider starts sending events to HTTPS.
+`BEELINE_CALLBACK_URL` is a non-secret base only. The server appends the opaque
+connection identity and encrypted 256-bit callback capability in memory. Do not
+paste or persist the resulting URL in env, docs, shell history or logs. During a
+separately authorized full-stop use
+`npm run tenant:providers:beeline:cutover -- --dry-run`, then the explicit
+`--apply` command from the Feature 10.3 runbook; do not update the XSI callback
+from a browser modal or restore the unauthenticated bare URL.
 
 ## Verification
 

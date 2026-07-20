@@ -26,25 +26,43 @@ function auditTenantProviderIntegrations() {
   ]);
   requireText('src/app.js', [
     /webhooks\/evotor\/:connectionPublicId/u,
-    /integrations\/beeline\/events\/:connectionPublicId/u,
+    /integrations\/beeline\/events\/:connectionPublicId\/:callbackToken/u,
+    /beelineCapabilityIngress[\s\S]*beelineCapabilityCutoverGate[\s\S]*express\.text/u,
   ]);
   requireText('src/middleware/provider-ingress.js', [
     /resolveIngressConnection/u,
-    /assertIngressSecret/u,
+    /assertCapabilityConnection/u,
+    /assertSharedHeaderConnection/u,
     /assertLegacyDownstreamReady/u,
     /req\.providerConnection = connection/u,
+    /createAuthenticatedIngressContext/u,
   ]);
   requireText('src/controllers/webhook.controller.js', [
     /parseEvotorBody/u,
     /withProviderConnectionLock/u,
   ]);
   requireText('src/services/telephony.service.js', [
-    /resolveIngressConnection/u,
     /buildProviderIdempotencyKey/u,
+    /requireAuthenticatedIngressContext/u,
+    /ingestTrustedStatisticsRow/u,
     /maintainAllEventSubscriptions/u,
     /withProviderConnectionLock/u,
     /syncStatistics[\s\S]*withProviderConnectionLock/u,
     /syncRecordings[\s\S]*withProviderConnectionLock/u,
+  ]);
+  const telephonySource = read('src/services/telephony.service.js');
+  if (/skipSecret/u.test(telephonySource)) {
+    failures.push('src/services/telephony.service.js still exposes caller-controlled skipSecret');
+  }
+  requireText('src/provider-integrations/beeline-callback.js', [
+    /randomBytes\(32\)/u,
+    /secretMatches/u,
+    /CAPABILITY_PATH_PATTERN/u,
+    /redactCapabilityValue/u,
+  ]);
+  requireText('src/provider-integrations/ingress-context.js', [
+    /WeakSet/u,
+    /requireAuthenticatedIngressContext/u,
   ]);
   requireText('src/provider-integrations/credential-keys.js', [
     /apiKey|apikey/u,

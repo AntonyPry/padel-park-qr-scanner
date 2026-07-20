@@ -3,13 +3,16 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  BEELINE_CAPABILITY_CUTOVER_ENV,
   ROLLOUT_MAINTENANCE_ENV,
   TENANT_ROLLOUT_STAGES,
   digestJson,
   evaluateCapabilityStage,
+  validateBeelineCapabilityCutoverConfiguration,
   validateRolloutMaintenanceConfiguration,
 } = require('../../src/tenant-rollout/contract');
 const {
+  beelineCapabilityCutoverGate,
   rolloutMaintenanceGate,
 } = require('../../src/middleware/rollout-maintenance');
 const {
@@ -187,6 +190,33 @@ test('maintenance configuration fails closed on ambiguous values', () => {
     }),
     (error) => error.code === 'ROLLOUT_MAINTENANCE_CONFIGURATION_INVALID',
   );
+});
+
+test('Beeline capability maintenance exception is explicit and full-stop-only', () => {
+  assert.equal(validateBeelineCapabilityCutoverConfiguration({}).enabled, false);
+  assert.equal(validateBeelineCapabilityCutoverConfiguration({
+    [BEELINE_CAPABILITY_CUTOVER_ENV]: 'false',
+  }).enabled, false);
+  assert.throws(
+    () => validateBeelineCapabilityCutoverConfiguration({
+      [BEELINE_CAPABILITY_CUTOVER_ENV]: 'true',
+    }),
+    (error) => error.code === 'BEELINE_CAPABILITY_CUTOVER_CONFIGURATION_INVALID',
+  );
+  const previousMaintenance = process.env[ROLLOUT_MAINTENANCE_ENV];
+  const previousCutover = process.env[BEELINE_CAPABILITY_CUTOVER_ENV];
+  process.env[ROLLOUT_MAINTENANCE_ENV] = 'full-stop';
+  process.env[BEELINE_CAPABILITY_CUTOVER_ENV] = 'true';
+  try {
+    let nextCalled = false;
+    beelineCapabilityCutoverGate({}, {}, () => { nextCalled = true; });
+    assert.equal(nextCalled, true);
+  } finally {
+    if (previousMaintenance === undefined) delete process.env[ROLLOUT_MAINTENANCE_ENV];
+    else process.env[ROLLOUT_MAINTENANCE_ENV] = previousMaintenance;
+    if (previousCutover === undefined) delete process.env[BEELINE_CAPABILITY_CUTOVER_ENV];
+    else process.env[BEELINE_CAPABILITY_CUTOVER_ENV] = previousCutover;
+  }
 });
 
 test('preservation evidence proves business row identity and ignores control backfill', () => {

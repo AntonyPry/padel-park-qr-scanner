@@ -27,7 +27,8 @@ const PROVIDER_PURPOSE = Object.freeze({
 });
 
 const PROVIDER_REQUIRED_SECRETS = Object.freeze({
-  beeline: Object.freeze(['apiToken', 'webhookSecret']),
+  // Callback authentication is mode-specific: callbackToken or webhookSecret.
+  beeline: Object.freeze(['apiToken']),
   evotor: Object.freeze(['webhookSecret']),
   telegram: Object.freeze(['botToken']),
   vk: Object.freeze(['botToken']),

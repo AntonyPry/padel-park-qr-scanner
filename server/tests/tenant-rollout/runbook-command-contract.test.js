@@ -21,6 +21,9 @@ const {
   FINAL_RC_CLI_OPTIONS,
   parseArgs: parseFinalRcArgs,
 } = require('../../scripts/run-final-tenant-rc');
+const {
+  parseArgs: parseBeelineCutoverArgs,
+} = require('../../scripts/cutover-beeline-callback');
 
 const projectRoot = path.resolve(__dirname, '../../..');
 const documents = Object.freeze([
@@ -42,6 +45,7 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(projectRoot, 'server/pa
 const contracts = Object.freeze({
   'tenant:backup:manifest': new Set(BACKUP_MANIFEST_CLI_OPTIONS),
   'tenant:files-workers:attachments': new Set(ATTACHMENT_CLI_OPTIONS),
+  'tenant:providers:beeline:cutover': new Set(['apply', 'dry-run']),
   'tenant:providers:bootstrap': new Set(),
   'tenant:providers:preflight': new Set(),
   'tenant:rc:targeted': new Set(FINAL_RC_CLI_OPTIONS),
@@ -50,6 +54,7 @@ const contracts = Object.freeze({
 const packageTargets = Object.freeze({
   'tenant:backup:manifest': 'node scripts/tenant-backup-manifest.js',
   'tenant:files-workers:attachments': 'node scripts/migrate-shift-report-attachments.js',
+  'tenant:providers:beeline:cutover': 'node scripts/cutover-beeline-callback.js',
   'tenant:providers:bootstrap': 'node scripts/bootstrap-provider-connections.js',
   'tenant:providers:preflight': 'node scripts/preflight-provider-secrets.js',
   'tenant:rc:targeted': 'node scripts/run-final-tenant-rc.js',
@@ -58,10 +63,11 @@ const packageTargets = Object.freeze({
 const parsers = Object.freeze({
   'tenant:backup:manifest': parseBackupArgs,
   'tenant:files-workers:attachments': parseAttachmentArgs,
+  'tenant:providers:beeline:cutover': parseBeelineCutoverArgs,
   'tenant:rc:targeted': parseFinalRcArgs,
   'tenant:rollout:gate': parseRolloutArgs,
 });
-const booleanOptions = new Set(['apply', 'rollback', 'verify']);
+const booleanOptions = new Set(['apply', 'dry-run', 'rollback', 'verify']);
 
 function documentedNpmCommands(markdown, source) {
   const lines = markdown.split('\n');
@@ -128,6 +134,7 @@ test('every Feature 10.3 npm command maps to a real strict CLI option contract',
   assert.throws(() => parseBackupArgs(['--unsupported-runbook-option']), /Unsupported/);
   assert.throws(() => parseFinalRcArgs(['--unsupported-runbook-option']), /Unsupported/);
   assert.throws(() => parseRolloutArgs(['--unsupported-runbook-option']), /Unsupported/);
+  assert.throws(() => parseBeelineCutoverArgs(['--unsupported-runbook-option']), /required/);
   assert.throws(() => parseBackupArgs(['--verify', '--verify']), /Duplicate/);
   assert.throws(() => parseFinalRcArgs(['--output=/tmp/one', '--output=/tmp/two']), /Duplicate/);
   assert.throws(() => parseRolloutArgs(['--phase=stage', '--phase=stage']), /Duplicate/);
@@ -160,6 +167,18 @@ test('provider secret preflight is documented before maintenance and migrations'
   assert.match(envExample, /^INTEGRATION_SECRETS_MASTER_KEY=$/mu);
   assert.match(envExample, /^INTEGRATION_SECRETS_KEY_VERSION=v1$/mu);
   assert.doesNotMatch(runbook, /INTEGRATION_SECRETS_MASTER_KEY=[A-Za-z0-9+/]/u);
+});
+
+test('Beeline cutover is maintenance-only with explicit pre-switch abort and post-switch recovery', () => {
+  assert.match(runbook, /11,583/u);
+  assert.match(runbook, /Нулевой downtime не заявляется/u);
+  assert.match(runbook, /последний простой abort point/u);
+  assert.match(runbook, /После URI switch rollback к old release/u);
+  assert.match(runbook, /SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED=true/u);
+  assert.match(runbook, /tenant:providers:beeline:cutover -- --dry-run/u);
+  assert.match(runbook, /tenant:providers:beeline:cutover -- --apply/u);
+  assert.match(runbook, /Bare route.*всегда отвечает `404`/su);
+  assert.doesNotMatch(runbook, /BEELINE_WEBHOOK_SECRET=[^\s`]+/u);
 });
 
 test('every Feature 10.3 bash block is syntactically executable', () => {

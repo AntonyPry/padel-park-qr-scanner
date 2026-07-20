@@ -126,3 +126,13 @@ test('operator and product hosts preserve their deny-by-default boundary', () =>
   assert.match(productConfig, /location \/ \{\s*try_files \$uri \$uri\/ \/index\.html;/);
   assert.doesNotMatch(productConfig, /location = \/activate-owner\s*\{\s*return 404;/);
 });
+
+test('product host redacts every Beeline capability URI from access logs', () => {
+  assert.match(productConfig, /map \$uri \$setly_safe_request_uri/u);
+  assert.ok(productConfig.includes('~^/api/integrations/beeline/events/ic_[0-9a-f]+/[^/?]+'));
+  assert.ok(productConfig.includes('/api/integrations/beeline/events/[redacted]'));
+  assert.match(productConfig, /log_format setly_redacted/u);
+  assert.match(productConfig, /access_log \/var\/log\/nginx\/access\.log setly_redacted;/u);
+  assert.doesNotMatch(productConfig, /log_format setly_redacted[^;]*\$request(?:\s|'|$)/u);
+  assert.doesNotMatch(productConfig, /log_format setly_redacted[^;]*\$request_uri/u);
+});

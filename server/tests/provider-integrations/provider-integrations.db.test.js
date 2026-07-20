@@ -35,10 +35,24 @@ function runProviderBootstrapPackage() {
   });
 }
 
+function runBeelineCutoverPackage(mode) {
+  return spawnSync('npm', ['run', 'tenant:providers:beeline:cutover', '--', mode], {
+    cwd: SERVER_ROOT,
+    encoding: 'utf8',
+    env: process.env,
+  });
+}
+
 function parseProviderBootstrapOutput(stdout) {
   const jsonStart = stdout.indexOf('{\n  "connections"');
   assert.ok(jsonStart >= 0, stdout);
   return JSON.parse(stdout.slice(jsonStart));
+}
+
+async function bulkCreateInBatches(Model, rows, size = 500) {
+  for (let offset = 0; offset < rows.length; offset += size) {
+    await Model.bulkCreate(rows.slice(offset, offset + size));
+  }
 }
 
 async function migrateFresh(database) {
@@ -132,6 +146,9 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     BEELINE_CALLBACK_URL: process.env.BEELINE_CALLBACK_URL,
     BOT_TOKEN: process.env.BOT_TOKEN,
     NODE_ENV: process.env.NODE_ENV,
+    SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED:
+      process.env.SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED,
+    SETLY_ROLLOUT_MAINTENANCE_MODE: process.env.SETLY_ROLLOUT_MAINTENANCE_MODE,
     TENANT_CACHE_REALTIME_ENABLED: process.env.TENANT_CACHE_REALTIME_ENABLED,
     TENANT_CONTEXT_ENABLED: process.env.TENANT_CONTEXT_ENABLED,
     TENANT_FILES_WORKERS_ENABLED: process.env.TENANT_FILES_WORKERS_ENABLED,
@@ -157,6 +174,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
   let schemaSequelize;
   let db;
   let apiServer;
+  let providerServer;
   try {
     schemaSequelize = await migrateFresh(database);
     db = require('../../models');
@@ -172,6 +190,9 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       buildProviderIdempotencyKey,
       buildProviderNamespace,
     } = require('../../src/provider-integrations/idempotency');
+    const {
+      generateCallbackToken,
+    } = require('../../src/provider-integrations/beeline-callback');
     const {
       withProviderConnectionLock,
     } = require('../../src/provider-integrations/locks');
@@ -295,9 +316,128 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       delete process.env.BOT_TOKEN;
     });
 
+    await t.test('capability bootstrap atomically reconciles the production-shaped 11,583 Beeline roots and is stable', async () => {
+      const suffix = `production-shape-${process.pid}-${Date.now()}`;
+      const tenant = {
+        clubId: Number(defaultClub.id),
+        organizationId: Number(defaultOrganization.id),
+      };
+      const legacyNamespace = buildProviderNamespace(null);
+      await bulkCreateInBatches(
+        db.TelephonyCall,
+        Array.from({ length: 1467 }, (_, index) => ({
+          ...tenant,
+          externalCallId: `${suffix}-call-${index}`,
+          provider: 'beeline',
+          providerNamespace: legacyNamespace,
+        })),
+      );
+      await bulkCreateInBatches(
+        db.TelephonyRawEvent,
+        Array.from({ length: 8607 }, (_, index) => {
+          const externalEventId = `${suffix}-event-${index}`;
+          return {
+            ...tenant,
+            eventType: 'production-shaped-history',
+            externalEventId,
+            idempotencyKey: buildProviderIdempotencyKey(null, externalEventId),
+            payload: {},
+            provider: 'beeline',
+          };
+        }),
+      );
+      await bulkCreateInBatches(
+        db.TelephonySubscription,
+        Array.from({ length: 1509 }, (_, index) => ({
+          ...tenant,
+          callbackUrl: 'https://setly.tech/api/integrations/beeline/events',
+          provider: 'beeline',
+          providerNamespace: legacyNamespace,
+          status: index < 1358 ? 'active' : 'failed',
+          subscriptionId: `${suffix}-subscription-${index}`,
+        })),
+      );
+
+      process.env.BEELINE_API_BASE_URL = 'https://provider.bootstrap.test';
+      process.env.BEELINE_API_TOKEN = 'production-shape-api-token';
+      process.env.BEELINE_CALLBACK_URL =
+        'https://setly.tech/api/integrations/beeline/events';
+      delete process.env.BEELINE_WEBHOOK_SECRET;
+      delete process.env.EVOTOR_WEBHOOK_SECRET;
+      delete process.env.BOT_TOKEN;
+      delete process.env.VK_TOKEN;
+
+      const command = runProviderBootstrapPackage();
+      assert.equal(command.status, 0, `${command.stdout}\n${command.stderr}`);
+      const output = parseProviderBootstrapOutput(command.stdout);
+      const beeline = output.connections.find((item) => item.provider === 'beeline');
+      assert.deepEqual(beeline.reconciliation, {
+        rawEvents: 8607,
+        subscriptions: 1509,
+        telephonyCalls: 1467,
+      });
+      const connection = await db.IntegrationConnection.unscoped().findOne({
+        where: { connectionKey: 'default', provider: 'beeline', ...tenant },
+      });
+      const decrypted = contextWithSecrets(connection);
+      assert.equal(decrypted.config.webhookAuthMode, 'capability_uri');
+      assert.match(decrypted.secrets.callbackToken, /^[a-f0-9]{64}$/u);
+      const callbackToken = decrypted.secrets.callbackToken;
+      assert.equal(`${command.stdout}\n${command.stderr}`.includes(callbackToken), false);
+      assert.equal(JSON.stringify(connection.config).includes(callbackToken), false);
+      assert.equal(JSON.stringify(connection.metadata).includes(callbackToken), false);
+      const dryRun = runBeelineCutoverPackage('--dry-run');
+      assert.equal(dryRun.status, 0, `${dryRun.stdout}\n${dryRun.stderr}`);
+      assert.equal(`${dryRun.stdout}\n${dryRun.stderr}`.includes(callbackToken), false);
+      assert.match(dryRun.stdout, /beeline\/events\/\[redacted\]/u);
+      const [[remaining]] = await db.sequelize.query(
+        `SELECT
+           (SELECT COUNT(*) FROM TelephonyCalls WHERE externalCallId LIKE :prefix AND integrationConnectionId IS NULL) AS calls,
+           (SELECT COUNT(*) FROM TelephonyRawEvents WHERE externalEventId LIKE :prefix AND integrationConnectionId IS NULL) AS rawEvents,
+           (SELECT COUNT(*) FROM TelephonySubscriptions WHERE subscriptionId LIKE :prefix AND integrationConnectionId IS NULL) AS subscriptions`,
+        { replacements: { prefix: `${suffix}%` } },
+      );
+      assert.deepEqual(
+        Object.fromEntries(Object.entries(remaining).map(([key, value]) => [key, Number(value)])),
+        { calls: 0, rawEvents: 0, subscriptions: 0 },
+      );
+      const [beforeRestart] = await db.sequelize.query(
+        `SELECT publicId, config, metadata, secretCiphertext, secretKeyVersion,
+                secretUpdatedAt, createdAt, updatedAt
+         FROM IntegrationConnections WHERE id=:id`,
+        { replacements: { id: connection.id } },
+      );
+      const restart = runProviderBootstrapPackage();
+      assert.equal(restart.status, 0, `${restart.stdout}\n${restart.stderr}`);
+      const [afterRestart] = await db.sequelize.query(
+        `SELECT publicId, config, metadata, secretCiphertext, secretKeyVersion,
+                secretUpdatedAt, createdAt, updatedAt
+         FROM IntegrationConnections WHERE id=:id`,
+        { replacements: { id: connection.id } },
+      );
+      assert.deepEqual(afterRestart, beforeRestart);
+      assert.equal(`${restart.stdout}\n${restart.stderr}`.includes(callbackToken), false);
+
+      await db.TelephonyRawEvent.destroy({ where: {
+        externalEventId: { [SequelizePackage.Op.like]: `${suffix}%` },
+      } });
+      await db.TelephonyCall.destroy({ where: {
+        externalCallId: { [SequelizePackage.Op.like]: `${suffix}%` },
+      } });
+      await db.TelephonySubscription.destroy({ where: {
+        subscriptionId: { [SequelizePackage.Op.like]: `${suffix}%` },
+      } });
+      await connection.destroy();
+      delete process.env.BEELINE_API_BASE_URL;
+      delete process.env.BEELINE_API_TOKEN;
+      delete process.env.BEELINE_CALLBACK_URL;
+      process.env.BEELINE_WEBHOOK_SECRET = 'legacy-beeline-smoke-secret';
+      process.env.EVOTOR_WEBHOOK_SECRET = 'legacy-evotor-smoke-secret';
+    });
+
     let defaultBeelineConnectionRow;
     let defaultEvotorConnectionRow;
-    await t.test('HTTP ingress resolves connection and secret before parsing body; flag-off stays legacy', async () => {
+    await t.test('HTTP ingress authenticates capability/header modes before parsing and rejects legacy Beeline', async () => {
       const tenant = {
         clubId: Number(defaultClub.id),
         organizationId: Number(defaultOrganization.id),
@@ -317,6 +457,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
           apiBaseUrl: 'https://provider.example',
           callbackUrl: `https://crm.example/api/integrations/beeline/events/${beelinePublicId}`,
           subscriptionAutoRenewEnabled: false,
+          webhookAuthMode: 'shared_secret_header',
         },
         connectionKey: 'default',
         provider: 'beeline',
@@ -332,11 +473,40 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
           apiBaseUrl: 'https://provider.example',
           callbackUrl: `https://crm.example/api/integrations/beeline/events/${parallelBeelinePublicId}`,
           subscriptionAutoRenewEnabled: false,
+          webhookAuthMode: 'shared_secret_header',
         },
         connectionKey: 'http-smoke-parallel',
         provider: 'beeline',
         publicId: parallelBeelinePublicId,
         secrets: { apiToken: 'beeline-api-parallel', webhookSecret: 'beeline-http-parallel' },
+      });
+      const capabilityToken = generateCallbackToken();
+      const capabilityPublicId = generatePublicId();
+      let providerPutPayload = null;
+      providerServer = await listen(async (request, response) => {
+        const chunks = [];
+        for await (const chunk of request) chunks.push(chunk);
+        providerPutPayload = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        response.setHeader('content-type', 'application/json');
+        response.end(JSON.stringify({
+          callbackUrl: providerPutPayload.url,
+          status: 'active',
+          subscriptionId: 'capability-provider-put',
+        }));
+      });
+      const capabilityBeeline = await createConnection({
+        ...tenant,
+        config: {
+          apiBaseUrl: `http://127.0.0.1:${providerServer.address().port}`,
+          callbackBaseUrl: 'https://crm.example/api/integrations/beeline/events',
+          subscriptionPath: '/subscription',
+          subscriptionAutoRenewEnabled: false,
+          webhookAuthMode: 'capability_uri',
+        },
+        connectionKey: 'capability-http-smoke',
+        provider: 'beeline',
+        publicId: capabilityPublicId,
+        secrets: { apiToken: 'beeline-capability-api', callbackToken: capabilityToken },
       });
 
       const createApp = require('../../src/app');
@@ -373,6 +543,71 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
         },
       );
       assert.equal(beelineAccepted.status, 200);
+
+      const beforeDeniedCapability = await db.TelephonyRawEvent.count();
+      for (const url of [
+        `${baseUrl}/integrations/beeline/events/${capabilityPublicId}`,
+        `${baseUrl}/integrations/beeline/events/${capabilityPublicId}/${'0'.repeat(64)}`,
+        `${baseUrl}/integrations/beeline/events?callbackToken=${capabilityToken}`,
+      ]) {
+        const denied = await fetch(url, {
+          body: 'not-json-and-must-never-reach-business-parser',
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        });
+        assert.equal(denied.status, 404);
+      }
+      assert.equal(await db.TelephonyRawEvent.count(), beforeDeniedCapability);
+      const capabilityAccepted = await fetch(
+        `${baseUrl}/integrations/beeline/events/${capabilityPublicId}/${capabilityToken}?echo=${capabilityToken}`,
+        {
+          body: JSON.stringify({
+            callbackEcho:
+              `https://crm.example/api/integrations/beeline/events/${capabilityPublicId}/${capabilityToken}`,
+            eventId: 'http-beeline-capability-on',
+            eventType: 'subscription-heartbeat',
+          }),
+          headers: {
+            'content-type': 'application/json',
+            'x-provider-debug': capabilityToken,
+          },
+          method: 'POST',
+        },
+      );
+      assert.equal(capabilityAccepted.status, 200);
+      const capabilityRaw = await db.TelephonyRawEvent.findOne({
+        where: { externalEventId: 'http-beeline-capability-on' },
+      });
+      assert.equal(
+        Number(capabilityRaw.integrationConnectionId),
+        Number(capabilityBeeline.id),
+      );
+      assert.equal(JSON.stringify({
+        headers: capabilityRaw.headers,
+        payload: capabilityRaw.payload,
+        query: capabilityRaw.query,
+      }).includes(capabilityToken), false);
+      const subscriptionResult = await telephonyService.subscribeToEvents(
+        {},
+        tenant,
+        contextWithSecrets(capabilityBeeline),
+      );
+      assert.equal(providerPutPayload.url.includes(capabilityToken), true);
+      assert.equal(JSON.stringify(subscriptionResult).includes(capabilityToken), false);
+      const persistedCapabilitySubscription = await db.TelephonySubscription.findOne({
+        where: { subscriptionId: 'capability-provider-put' },
+      });
+      for (const surface of [
+        persistedCapabilitySubscription.callbackUrl,
+        persistedCapabilitySubscription.lastRequest,
+        persistedCapabilitySubscription.lastResponse,
+      ]) assert.equal(JSON.stringify(surface).includes(capabilityToken), false);
+      assert.match(
+        persistedCapabilitySubscription.callbackUrl,
+        /beeline\/events\/\[redacted\]$/u,
+      );
+      await closeServer(providerServer);
+      providerServer = null;
 
       await db.sequelize.query(
         `CREATE TRIGGER provider_test_raw_insert_delay
@@ -414,6 +649,9 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       await db.sequelize.query('DROP TRIGGER provider_test_raw_insert_delay');
 
       delete process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED;
+      const flagOffConfig = await telephonyService.getConfig();
+      assert.equal(flagOffConfig.connectionConfigured, true);
+      assert.equal(JSON.stringify(flagOffConfig).includes(capabilityToken), false);
       process.env.EVOTOR_WEBHOOK_LOG_RAW = 'true';
       const evotorLogs = [];
       const originalConsoleLog = console.log;
@@ -440,6 +678,58 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       assert.equal(legacyEvotor.status, 200);
       assert.equal(evotorLogs.join('\n').includes('evotor-api-key-value'), false);
       assert.equal(evotorLogs.join('\n').includes('evotor-private-key-value'), false);
+      const capabilityOff = await fetch(
+        `${baseUrl}/integrations/beeline/events/${capabilityPublicId}/${capabilityToken}`,
+        {
+          body: JSON.stringify({
+            eventId: 'http-beeline-capability-off',
+            eventType: 'subscription-heartbeat',
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        },
+      );
+      assert.equal(capabilityOff.status, 200);
+      const capabilityOffRaw = await db.TelephonyRawEvent.findOne({
+        where: { externalEventId: 'http-beeline-capability-off' },
+      });
+      assert.equal(
+        Number(capabilityOffRaw.integrationConnectionId),
+        Number(capabilityBeeline.id),
+      );
+
+      process.env.SETLY_ROLLOUT_MAINTENANCE_MODE = 'full-stop';
+      delete process.env.SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED;
+      const blockedDuringMaintenance = await fetch(
+        `${baseUrl}/integrations/beeline/events/${capabilityPublicId}/${capabilityToken}`,
+        {
+          body: 'authenticated-but-maintenance-exception-is-disabled',
+          method: 'POST',
+        },
+      );
+      assert.equal(blockedDuringMaintenance.status, 503);
+      const bareDuringMaintenance = await fetch(
+        `${baseUrl}/integrations/beeline/events`,
+        { body: 'bare-route-must-not-use-the-exception', method: 'POST' },
+      );
+      assert.equal(bareDuringMaintenance.status, 404);
+      process.env.SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED = 'true';
+      const allowedDuringMaintenance = await fetch(
+        `${baseUrl}/integrations/beeline/events/${capabilityPublicId}/${capabilityToken}`,
+        {
+          body: JSON.stringify({
+            eventId: 'http-beeline-capability-maintenance',
+            eventType: 'subscription-heartbeat',
+          }),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+        },
+      );
+      assert.equal(allowedDuringMaintenance.status, 200);
+      delete process.env.SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED;
+      delete process.env.SETLY_ROLLOUT_MAINTENANCE_MODE;
+
+      const rawCountBeforeLegacyBeeline = await db.TelephonyRawEvent.count();
       const legacyBeeline = await fetch(
         `${baseUrl}/integrations/beeline/events?access-key=query-access-value&signingKey=query-sign-value`,
         {
@@ -460,13 +750,27 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
         },
         method: 'POST',
       });
-      assert.equal(legacyBeeline.status, 200);
+      assert.equal(legacyBeeline.status, 404);
+      assert.equal(await db.TelephonyRawEvent.count(), rawCountBeforeLegacyBeeline);
 
-      const legacyRaw = await db.TelephonyRawEvent.findOne({
-        where: { externalEventId: 'http-beeline-legacy' },
+      const legacyRaw = await db.TelephonyRawEvent.create({
+        ...tenant,
+        eventType: 'call.completed',
+        externalEventId: 'http-beeline-legacy',
+        idempotencyKey: buildProviderIdempotencyKey(null, 'http-beeline-legacy'),
+        payload: {
+          callId: 'http-beeline-legacy-call',
+          eventType: 'call.completed',
+          phone: '+79990000000',
+          startDate: '2026-07-15T10:00:00.000Z',
+        },
+        provider: 'beeline',
       });
-      const legacyCall = await db.TelephonyCall.findOne({
-        where: { externalCallId: 'http-beeline-legacy-call' },
+      const legacyCall = await db.TelephonyCall.create({
+        ...tenant,
+        externalCallId: 'http-beeline-legacy-call',
+        provider: 'beeline',
+        providerNamespace: buildProviderNamespace(null),
       });
       const legacyReceipt = await db.Receipt.unscoped().findOne({
         where: { evotorId: 'http-evotor-legacy' },
@@ -474,25 +778,18 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       assert.ok(legacyRaw);
       assert.ok(legacyCall);
       assert.ok(legacyReceipt);
-      for (const row of [legacyRaw, legacyCall, legacyReceipt]) {
+      for (const row of [legacyRaw, legacyCall]) {
         assert.equal(Number(row.organizationId), tenant.organizationId);
         assert.equal(Number(row.clubId), tenant.clubId);
-        assert.equal(row.integrationConnectionId, null);
+        assert.equal(row.integrationConnectionId ?? null, null);
       }
-      const storedIngress = JSON.stringify({
-        headers: legacyRaw.headers,
-        payload: legacyRaw.payload,
-        query: legacyRaw.query,
-      });
-      for (const secretValue of [
-        'header-api-key-value',
-        'payload-api-key-value',
-        'payload-client-secret-value',
-        'payload-private-key-value',
-        'query-access-value',
-        'query-sign-value',
-      ]) assert.equal(storedIngress.includes(secretValue), false);
-
+      const [[legacyReceiptAttribution]] = await db.sequelize.query(
+        'SELECT organizationId, clubId, integrationConnectionId FROM Receipts WHERE id=:id',
+        { replacements: { id: legacyReceipt.id } },
+      );
+      assert.equal(Number(legacyReceiptAttribution.organizationId), tenant.organizationId);
+      assert.equal(Number(legacyReceiptAttribution.clubId), tenant.clubId);
+      assert.equal(legacyReceiptAttribution.integrationConnectionId, null);
       const legacySubscription = await db.TelephonySubscription.create({
         ...tenant,
         callbackUrl: 'https://crm.example/api/integrations/beeline/events',
@@ -552,6 +849,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
               apiBaseUrl: 'https://provider.example',
               callbackUrl: `https://crm.example/api/integrations/beeline/events/${publicId}`,
               subscriptionAutoRenewEnabled: true,
+              webhookAuthMode: 'shared_secret_header',
             }
           : {},
         connectionKey,
@@ -886,6 +1184,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       delete process.env.BEELINE_API_BASE_URL;
       delete process.env.BEELINE_API_TOKEN;
       delete process.env.BEELINE_CALLBACK_URL;
+      delete process.env.BEELINE_WEBHOOK_SECRET;
       process.env.EVOTOR_WEBHOOK_SECRET = commandSecrets[0];
       process.env.BOT_TOKEN = commandSecrets[1];
       process.env.VK_TOKEN = commandSecrets[2];
@@ -1297,6 +1596,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     assert.equal(Number(defaultClub.organizationId), Number(defaultOrganization.id));
   } finally {
     await closeServer(apiServer).catch(() => {});
+    await closeServer(providerServer).catch(() => {});
     if (db) await db.sequelize.close().catch(() => {});
     if (schemaSequelize) await schemaSequelize.close().catch(() => {});
     await admin.query(`DROP DATABASE IF EXISTS \`${database}\``).catch(() => {});

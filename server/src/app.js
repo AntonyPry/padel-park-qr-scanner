@@ -6,8 +6,10 @@ const { requestTiming } = require('./middleware/performance');
 const telephonyController = require('./controllers/telephony.controller');
 const webhookController = require('./controllers/webhook.controller');
 const {
+  beelineCapabilityIngress,
   beelineConnectionFirstIngress,
   evotorConnectionFirstIngress,
+  rejectLegacyBeelineIngress,
 } = require('./middleware/provider-ingress');
 const {
   tenantFoundationGate,
@@ -27,15 +29,18 @@ const {
   ONBOARDING_PROGRESSED_TASKS_HEADER,
 } = require('./middleware/onboarding-quest');
 const {
+  beelineCapabilityCutoverGate,
   rolloutMaintenanceGate,
 } = require('./middleware/rollout-maintenance');
 const {
+  validateBeelineCapabilityCutoverConfiguration,
   validateRolloutMaintenanceConfiguration,
 } = require('./tenant-rollout/contract');
 
 function createApp({ onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
   validateRolloutMaintenanceConfiguration();
+  validateBeelineCapabilityCutoverConfiguration();
   const app = express();
 
   app.set('onTenantInitialized', onTenantInitialized);
@@ -46,12 +51,25 @@ function createApp({ onTenantInitialized } = {}) {
     ],
   }));
   app.use(requestTiming);
-  app.use('/api', rolloutMaintenanceGate);
-  app.use('/api', tenantFoundationGate);
   const providerIngress = [
     attachRouteDeclaration,
     requireRouteClassification(ENDPOINT_CLASSIFICATIONS.PROVIDER_INGRESS),
   ];
+  app.post(
+    '/api/integrations/beeline/events/:connectionPublicId/:callbackToken',
+    ...providerIngress,
+    beelineCapabilityIngress,
+    beelineCapabilityCutoverGate,
+    express.text({ limit: '64kb', type: '*/*' }),
+    telephonyController.receiveBeelineEvent,
+  );
+  app.post(
+    '/api/integrations/beeline/events',
+    ...providerIngress,
+    rejectLegacyBeelineIngress,
+  );
+  app.use('/api', rolloutMaintenanceGate);
+  app.use('/api', tenantFoundationGate);
   app.post(
     '/api/webhooks/evotor/:connectionPublicId',
     ...providerIngress,
@@ -70,14 +88,7 @@ function createApp({ onTenantInitialized } = {}) {
     '/api/integrations/beeline/events/:connectionPublicId',
     ...providerIngress,
     beelineConnectionFirstIngress,
-    express.text({ limit: '6mb', type: '*/*' }),
-    telephonyController.receiveBeelineEvent,
-  );
-  app.post(
-    '/api/integrations/beeline/events',
-    ...providerIngress,
-    beelineConnectionFirstIngress,
-    express.text({ limit: '6mb', type: '*/*' }),
+    express.text({ limit: '64kb', type: '*/*' }),
     telephonyController.receiveBeelineEvent,
   );
   app.use(express.json({ limit: '6mb' }));

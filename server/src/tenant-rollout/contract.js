@@ -4,6 +4,7 @@ const crypto = require('node:crypto');
 
 const ROLLOUT_MAINTENANCE_ENV = 'SETLY_ROLLOUT_MAINTENANCE_MODE';
 const ROLLOUT_MAINTENANCE_MODE = 'full-stop';
+const BEELINE_CAPABILITY_CUTOVER_ENV = 'SETLY_BEELINE_CAPABILITY_CUTOVER_ENABLED';
 
 const TENANT_ROLLOUT_STAGES = Object.freeze([
   Object.freeze({ id: 'context', env: 'TENANT_CONTEXT_ENABLED' }),
@@ -51,6 +52,28 @@ function validateRolloutMaintenanceConfiguration(env = process.env) {
   error.code = 'ROLLOUT_MAINTENANCE_CONFIGURATION_INVALID';
   error.statusCode = 503;
   throw error;
+}
+
+function validateBeelineCapabilityCutoverConfiguration(env = process.env) {
+  const raw = env[BEELINE_CAPABILITY_CUTOVER_ENV];
+  const enabled = raw === undefined || String(raw).trim() === ''
+    ? false
+    : parseExplicitBoolean(raw);
+  if (enabled === null) {
+    const error = new Error(`${BEELINE_CAPABILITY_CUTOVER_ENV} must be an explicit boolean`);
+    error.code = 'BEELINE_CAPABILITY_CUTOVER_CONFIGURATION_INVALID';
+    error.statusCode = 503;
+    throw error;
+  }
+  if (enabled && !isRolloutMaintenanceActive(env)) {
+    const error = new Error(
+      `${BEELINE_CAPABILITY_CUTOVER_ENV} is allowed only during full-stop maintenance`,
+    );
+    error.code = 'BEELINE_CAPABILITY_CUTOVER_CONFIGURATION_INVALID';
+    error.statusCode = 503;
+    throw error;
+  }
+  return Object.freeze({ enabled });
 }
 
 function resolveRolloutStage(stageId) {
@@ -103,6 +126,7 @@ function digestJson(value) {
 }
 
 module.exports = {
+  BEELINE_CAPABILITY_CUTOVER_ENV,
   ROLLOUT_MAINTENANCE_ENV,
   ROLLOUT_MAINTENANCE_MODE,
   TENANT_ROLLOUT_STAGES,
@@ -112,4 +136,5 @@ module.exports = {
   parseExplicitBoolean,
   resolveRolloutStage,
   validateRolloutMaintenanceConfiguration,
+  validateBeelineCapabilityCutoverConfiguration,
 };

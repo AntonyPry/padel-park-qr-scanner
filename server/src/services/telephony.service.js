@@ -23,12 +23,9 @@ const {
 const {
   listActiveConnections,
   resolveConnectionForTenantById,
-  resolveIngressConnection,
+  resolveOptionalTenantConnection,
   resolveTenantConnection,
 } = require('../provider-integrations/connection-service');
-const {
-  recordRejectedIngress,
-} = require('../provider-integrations/diagnostics');
 const {
   buildProviderIdempotencyKey,
   buildProviderNamespace,
@@ -37,10 +34,17 @@ const {
   withProviderConnectionLock,
 } = require('../provider-integrations/locks');
 const {
-  assertIngressSecret,
   assertLegacyDownstreamReady,
   requireConnectionSecret,
 } = require('../provider-integrations/runtime');
+const {
+  BEELINE_WEBHOOK_AUTH_MODES,
+  buildCapabilityCallbackUrl,
+  redactCapabilityValue,
+} = require('../provider-integrations/beeline-callback');
+const {
+  requireAuthenticatedIngressContext,
+} = require('../provider-integrations/ingress-context');
 const {
   redactProviderCredentials,
   redactProviderValue,
@@ -59,6 +63,7 @@ const {
   assertBackgroundComponentCanRun,
 } = require('../files-workers/background-run-context');
 const {
+  getExactDefaultTenant,
   normalizeTenantIds,
   resolveTrustedTenantAttribution,
   tenantRoutingMetadata,
@@ -215,9 +220,16 @@ async function resolveBeelineWriteContext(connection = null) {
 }
 
 async function resolveBeelineTenantConnection(tenant, supplied = null) {
-  if (!isTenantProviderIntegrationsEnabled()) return null;
   if (supplied) return supplied;
-  return resolveTenantConnection({ provider: 'beeline', tenant });
+  if (!isTenantProviderIntegrationsEnabled()) {
+    const targetTenant = tenant || await getExactDefaultTenant();
+    return resolveOptionalTenantConnection({
+      connectionKey: 'default',
+      provider: 'beeline',
+      tenant: targetTenant,
+    });
+  }
+  return resolveTenantConnection({ connectionKey: 'default', provider: 'beeline', tenant });
 }
 
 function getSubscriptionExpiresSeconds(connection = null) {
@@ -504,10 +516,14 @@ function parseIncomingBeelinePayload(body, headers = {}) {
 async function getConfig(tenant = null) {
   const connection = await resolveBeelineTenantConnection(tenant);
   if (connection) {
+    const capabilityMode = connection.config.webhookAuthMode ===
+      BEELINE_WEBHOOK_AUTH_MODES.CAPABILITY_URI;
     return {
       apiBaseUrl: connection.config.apiBaseUrl || null,
       apiTokenConfigured: Boolean(connection.secrets.apiToken),
-      callbackUrl: connection.config.callbackUrl || null,
+      callbackUrl: capabilityMode
+        ? redactCapabilityValue(buildCapabilityCallbackUrl(connection))
+        : connection.config.callbackUrl || null,
       connectionConfigured: true,
       connectionPublicId: connection.publicId,
       latestSubscription: await getLatestSubscription({ connection }),
@@ -516,8 +532,10 @@ async function getConfig(tenant = null) {
       subscriptionAutoRenewEnabled: isSubscriptionAutoRenewEnabled(connection),
       subscriptionRenewBeforeSeconds: getSubscriptionRenewBeforeSeconds(connection),
       subscriptionPath: connection.config.subscriptionPath || '/subscription',
-      webhookSecretRequired: true,
-      webhookSecretConfigured: Boolean(connection.secrets.webhookSecret),
+      webhookSecretRequired: !capabilityMode,
+      webhookSecretConfigured: capabilityMode
+        ? false
+        : Boolean(connection.secrets.webhookSecret),
     };
   }
   return {
@@ -533,34 +551,6 @@ async function getConfig(tenant = null) {
     webhookSecretRequired: isWebhookSecretRequired(),
     webhookSecretConfigured: Boolean(normalizeText(process.env.BEELINE_WEBHOOK_SECRET)),
   };
-}
-
-function assertWebhookAllowed(headers = {}, query = {}, connection = null) {
-  if (connection) {
-    const provided =
-      normalizeText(headers['x-beeline-webhook-secret']) ||
-      normalizeText(headers['x-webhook-secret']) ||
-      normalizeText(headers['x-integration-secret']);
-    assertIngressSecret(connection, provided);
-    return;
-  }
-  const secret = normalizeText(process.env.BEELINE_WEBHOOK_SECRET);
-  if (!secret) {
-    if (isWebhookSecretRequired()) {
-      throw appError('BEELINE_WEBHOOK_SECRET не настроен', 503);
-    }
-    return;
-  }
-
-  const provided =
-    normalizeText(headers['x-beeline-webhook-secret']) ||
-    normalizeText(headers['x-webhook-secret']) ||
-    normalizeText(headers['x-integration-secret']) ||
-    normalizeText(query.secret);
-
-  if (provided !== secret) {
-    throw appError('Некорректный секрет webhooks Билайна', 401);
-  }
 }
 
 function getByPath(source, path) {
@@ -1569,6 +1559,7 @@ async function persistBeelineEvent({
 
   for (const item of items) {
     const payload = asObject(item);
+    const callbackToken = connection?.secrets?.callbackToken || null;
     const normalized = normalizePayload(payload);
     const externalEventId = normalized.externalEventId || `delivery:${crypto.randomUUID()}`;
     const idempotencyKey = buildProviderIdempotencyKey(writeContext, externalEventId);
@@ -1581,13 +1572,15 @@ async function persistBeelineEvent({
       deliveryCount: 1,
       eventType: normalized.eventType || 'beeline.event',
       externalEventId: normalized.externalEventId,
-      headers: sanitizeHeaders(headers),
+      headers: redactCapabilityValue(sanitizeHeaders(headers), callbackToken),
       // Phone and email are downstream call-matching data; only provider
       // credentials are stripped before the immutable raw event is stored.
-      payload: redactProviderCredentials(payload),
+      payload: redactProviderCredentials(
+        redactCapabilityValue(payload, callbackToken),
+      ),
       processingStatus: 'new',
       provider: 'beeline',
-      query: sanitizeQuery(query),
+      query: redactCapabilityValue(sanitizeQuery(query), callbackToken),
       receivedAt: new Date(),
       lastReceivedAt: new Date(),
       sourceIp: ip || null,
@@ -1626,46 +1619,30 @@ async function persistBeelineEvent({
 
 async function receiveBeelineEvent({
   body,
-  connection = null,
   headers,
+  ingressContext,
   ip,
   query,
-  publicId,
-  skipSecret = false,
 }) {
-  if (isTenantProviderIntegrationsEnabled()) {
-    let resolved = connection;
-    if (!resolved) {
-      resolved = await resolveIngressConnection({
-        provider: 'beeline',
-        publicId,
-        requestId: headers?.['x-request-id'],
-        sourceIp: ip,
-      });
-      try {
-        assertWebhookAllowed(headers, query, resolved);
-      } catch (error) {
-        await recordRejectedIngress({
-          provider: 'beeline',
-          publicId,
-          reasonCode: 'CONNECTION_SECRET_MISMATCH',
-          requestId: headers?.['x-request-id'],
-          sourceIp: ip,
-        });
-        throw error;
-      }
-    }
-    await assertLegacyDownstreamReady(resolved);
-    return withProviderConnectionLock(resolved, () => persistBeelineEvent({
+  const connection = requireAuthenticatedIngressContext(ingressContext, 'beeline');
+  await assertLegacyDownstreamReady(connection);
+  return withProviderConnectionLock(connection, () => persistBeelineEvent({
       body,
-      connection: resolved,
+      connection,
       headers,
       ip,
       query,
     }));
-  }
-  if (!skipSecret) assertWebhookAllowed(headers, query, connection);
-  return persistBeelineEvent({ body, connection, headers, ip, query });
+}
+
+async function ingestTrustedStatisticsRow(row, connection = null) {
+  return persistBeelineEvent({
+    body: { ...row, eventType: 'statistics' },
+    connection,
+    headers: {},
+    ip: null,
+    query: { source: 'manual-sync' },
+  });
 }
 
 async function processRawEvent(rawEvent, transaction = undefined) {
@@ -2685,17 +2662,7 @@ async function syncStatisticsForConnection(
     const rows = unwrapApiList(response.data);
 
     for (const row of rows) {
-      await receiveBeelineEvent({
-        body: {
-          ...row,
-          eventType: 'statistics',
-        },
-        headers: {},
-        ip: null,
-        connection,
-        query: { source: 'manual-sync' },
-        skipSecret: true,
-      });
+      await ingestTrustedStatisticsRow(row, connection);
       imported += 1;
     }
 
@@ -3222,12 +3189,21 @@ function normalizeSubscriptionType(value) {
 }
 
 function buildSubscriptionRequestPayload(data = {}, connection = null) {
-  const callbackUrl = normalizeText(data.url) || normalizeText(connectionConfig(
-    connection,
-    'callbackUrl',
-    'BEELINE_CALLBACK_URL',
-    null,
-  ));
+  const capabilityMode = connection?.config?.webhookAuthMode ===
+    BEELINE_WEBHOOK_AUTH_MODES.CAPABILITY_URI;
+  if (capabilityMode && normalizeText(data.url)) {
+    const error = appError('Capability callback URL is server-owned', 400);
+    error.code = 'BEELINE_CALLBACK_OVERRIDE_FORBIDDEN';
+    throw error;
+  }
+  const callbackUrl = capabilityMode
+    ? buildCapabilityCallbackUrl(connection)
+    : normalizeText(data.url) || normalizeText(connectionConfig(
+      connection,
+      'callbackUrl',
+      'BEELINE_CALLBACK_URL',
+      null,
+    ));
   if (!callbackUrl) throw appError('BEELINE_CALLBACK_URL не настроен', 409);
   if (connection && !callbackUrl.includes(`/${connection.publicId}`)) {
     const error = appError('Provider connection is not configured', 409);
@@ -3258,7 +3234,8 @@ function subscriptionMatchesDesired(subscription, desired) {
   if (!subscription) return false;
 
   return (
-    normalizeText(subscription.callbackUrl) === normalizeText(desired.url) &&
+    normalizeText(subscription.callbackUrl) ===
+      normalizeText(redactCapabilityValue(desired.url)) &&
     normalizeText(subscription.pattern) === normalizeText(desired.pattern) &&
     normalizeSubscriptionType(subscription.subscriptionType) ===
       normalizeSubscriptionType(desired.subscriptionType)
@@ -4093,11 +4070,19 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
     '/subscription',
   ));
   const requestPayload = buildSubscriptionRequestPayload(data, connection);
-  const callbackUrl = requestPayload.url;
+  const callbackToken = connection?.secrets?.callbackToken || null;
+  const callbackUrl = redactCapabilityValue(requestPayload.url, callbackToken);
+  const persistedRequestPayload = redactProviderValue(
+    redactCapabilityValue(requestPayload, callbackToken),
+  );
   const attribution = connectionAttribution(writeContext);
 
   if (connection) {
-    requireConnectionSecret(connection, 'webhookSecret');
+    if (connection.config.webhookAuthMode === BEELINE_WEBHOOK_AUTH_MODES.CAPABILITY_URI) {
+      requireConnectionSecret(connection, 'callbackToken');
+    } else {
+      requireConnectionSecret(connection, 'webhookSecret');
+    }
   } else if (isWebhookSecretRequired() && !normalizeText(process.env.BEELINE_WEBHOOK_SECRET)) {
     throw appError('BEELINE_WEBHOOK_SECRET не настроен для XSI callback', 409);
   }
@@ -4126,8 +4111,8 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
           callbackUrl,
           lastCheckedAt: new Date(),
           lastError: null,
-          lastRequest: requestPayload,
-          lastResponse: redactProviderValue(response.data),
+          lastRequest: persistedRequestPayload,
+          lastResponse: redactProviderValue(redactCapabilityValue(response.data, callbackToken)),
           provider: 'beeline',
         })
       : await db.TelephonySubscription.create({
@@ -4135,8 +4120,8 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
           ...attribution,
           callbackUrl,
           lastCheckedAt: new Date(),
-          lastRequest: requestPayload,
-          lastResponse: redactProviderValue(response.data),
+          lastRequest: persistedRequestPayload,
+          lastResponse: redactProviderValue(redactCapabilityValue(response.data, callbackToken)),
           provider: 'beeline',
         });
 
@@ -4151,8 +4136,10 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
       expiresSeconds: requestPayload.expires,
       lastCheckedAt: new Date(),
       lastError: message,
-      lastRequest: requestPayload,
-      lastResponse: redactProviderValue(error.response?.data || null),
+      lastRequest: persistedRequestPayload,
+      lastResponse: redactProviderValue(
+        redactCapabilityValue(error.response?.data || null, callbackToken),
+      ),
       pattern: normalizeText(requestPayload.pattern),
       provider: 'beeline',
       status: 'failed',
@@ -4164,6 +4151,7 @@ async function subscribeToEvents(data = {}, tenant = null, suppliedConnection = 
 
 async function checkEventSubscription(tenant = null, suppliedConnection = null) {
   const connection = await resolveBeelineTenantConnection(tenant, suppliedConnection);
+  const callbackToken = connection?.secrets?.callbackToken || null;
   const writeContext = await resolveBeelineWriteContext(connection);
   const client = getBeelineClient(connection);
   const subscriptionPath = normalizeText(connectionConfig(
@@ -4172,12 +4160,15 @@ async function checkEventSubscription(tenant = null, suppliedConnection = null) 
     'BEELINE_SUBSCRIPTION_PATH',
     '/subscription',
   ));
-  const callbackUrl = normalizeText(connectionConfig(
-    connection,
-    'callbackUrl',
-    'BEELINE_CALLBACK_URL',
-    '',
-  ));
+  const callbackUrl = connection?.config?.webhookAuthMode ===
+    BEELINE_WEBHOOK_AUTH_MODES.CAPABILITY_URI
+    ? redactCapabilityValue(buildCapabilityCallbackUrl(connection))
+    : normalizeText(connectionConfig(
+      connection,
+      'callbackUrl',
+      'BEELINE_CALLBACK_URL',
+      '',
+    ));
   const latest = await getLatestSubscription({ connection, preferActive: true });
   const attribution = connectionAttribution(writeContext);
 
@@ -4219,7 +4210,7 @@ async function checkEventSubscription(tenant = null, suppliedConnection = null) 
           callbackUrl: existing.callbackUrl || callbackUrl || latest?.callbackUrl,
           lastCheckedAt: new Date(),
           lastError: null,
-          lastResponse: redactProviderValue(response.data),
+          lastResponse: redactProviderValue(redactCapabilityValue(response.data, callbackToken)),
           provider: 'beeline',
         })
       : await db.TelephonySubscription.create({
@@ -4227,7 +4218,7 @@ async function checkEventSubscription(tenant = null, suppliedConnection = null) 
           ...attribution,
           callbackUrl: callbackUrl || latest?.callbackUrl || 'unknown',
           lastCheckedAt: new Date(),
-          lastResponse: redactProviderValue(response.data),
+          lastResponse: redactProviderValue(redactCapabilityValue(response.data, callbackToken)),
           provider: 'beeline',
         });
 
@@ -4242,7 +4233,9 @@ async function checkEventSubscription(tenant = null, suppliedConnection = null) 
         await row.update({
           lastCheckedAt: new Date(),
           lastError: message,
-          lastResponse: redactProviderValue(error.response?.data || null),
+          lastResponse: redactProviderValue(
+            redactCapabilityValue(error.response?.data || null, callbackToken),
+          ),
           status: 'failed',
         });
       }
@@ -4312,10 +4305,10 @@ async function maintainEventSubscription({ force = false, connection = null } = 
 async function maintainAllEventSubscriptions({ force = false } = {}) {
   await assertTenantFoundationInitialized();
   assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.TELEPHONY_SUBSCRIPTION);
-  if (!isTenantProviderIntegrationsEnabled()) {
+  const connections = await listActiveConnections({ provider: 'beeline' });
+  if (!isTenantProviderIntegrationsEnabled() && connections.length === 0) {
     return { processed: 1, results: [await maintainEventSubscription({ force })] };
   }
-  const connections = await listActiveConnections({ provider: 'beeline' });
   const settled = await runIsolatedProviderConnections(
     connections,
     (connection) => maintainEventSubscription({ connection, force }),
