@@ -96,7 +96,7 @@ Rollout sequence:
 
 1. DB backup; deploy migration with provider flag off;
 2. set protected master key/key version on server;
-3. остановить provider ingress/loops на короткое rollout-окно и run `npm run tenant:providers:bootstrap` in `server`: команда создаёт/находит exact-default connections, затем детерминированно связывает flag-off rows с default connection, не печатая secrets;
+3. остановить provider ingress/loops на короткое rollout-окно и run `npm run tenant:providers:bootstrap` in `server`: после secret preflight команда в одной DB transaction создаёт/находит exact-default connections, связывает legacy rows только для Beeline/Evotor и не печатает secrets; Telegram/VK не передаются в legacy reconciliation, а exact existing rows переиспользуются без rotation/config/metadata/status mutation;
 4. configure provider callbacks with returned opaque public IDs and verify secret headers;
 5. до включения flag повторно run bootstrap/reconciliation после drain, затем provider audit и flag-off webhook smoke; новые flag-off Beeline/Evotor rows уже имеют default organization/club, но до reconciliation сохраняют legacy connection namespace;
 6. enable Features 3 → 4.1 → 4.2 → 4.3 server flags;

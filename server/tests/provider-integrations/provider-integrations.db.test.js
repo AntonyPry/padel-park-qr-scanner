@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
@@ -24,6 +25,20 @@ const {
 function databaseName() {
   return process.env.TENANT_PROVIDER_TEST_DB_NAME ||
     `setly_tenant_provider_${process.pid}_${Date.now()}`;
+}
+
+function runProviderBootstrapPackage() {
+  return spawnSync('npm', ['run', 'tenant:providers:bootstrap'], {
+    cwd: SERVER_ROOT,
+    encoding: 'utf8',
+    env: process.env,
+  });
+}
+
+function parseProviderBootstrapOutput(stdout) {
+  const jsonStart = stdout.indexOf('{\n  "connections"');
+  assert.ok(jsonStart >= 0, stdout);
+  return JSON.parse(stdout.slice(jsonStart));
 }
 
 async function migrateFresh(database) {
@@ -111,11 +126,17 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     EVOTOR_WEBHOOK_LOG_RAW: process.env.EVOTOR_WEBHOOK_LOG_RAW,
     EVOTOR_WEBHOOK_SECRET: process.env.EVOTOR_WEBHOOK_SECRET,
     INTEGRATION_SECRETS_MASTER_KEY: process.env.INTEGRATION_SECRETS_MASTER_KEY,
+    INTEGRATION_SECRETS_KEY_VERSION: process.env.INTEGRATION_SECRETS_KEY_VERSION,
+    BEELINE_API_BASE_URL: process.env.BEELINE_API_BASE_URL,
+    BEELINE_API_TOKEN: process.env.BEELINE_API_TOKEN,
+    BEELINE_CALLBACK_URL: process.env.BEELINE_CALLBACK_URL,
+    BOT_TOKEN: process.env.BOT_TOKEN,
     NODE_ENV: process.env.NODE_ENV,
     TENANT_CACHE_REALTIME_ENABLED: process.env.TENANT_CACHE_REALTIME_ENABLED,
     TENANT_CONTEXT_ENABLED: process.env.TENANT_CONTEXT_ENABLED,
     TENANT_FILES_WORKERS_ENABLED: process.env.TENANT_FILES_WORKERS_ENABLED,
     TENANT_PROVIDER_INTEGRATIONS_ENABLED: process.env.TENANT_PROVIDER_INTEGRATIONS_ENABLED,
+    VK_TOKEN: process.env.VK_TOKEN,
   };
   for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) {
     if (!Object.hasOwn(previous, name)) previous[name] = process.env[name];
@@ -123,7 +144,8 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
   previous.TENANT_ENFORCEMENT_ENABLED = process.env.TENANT_ENFORCEMENT_ENABLED;
   process.env.DB_NAME = database;
   process.env.NODE_ENV = 'test';
-  process.env.INTEGRATION_SECRETS_MASTER_KEY = Buffer.alloc(32, 11).toString('base64');
+    process.env.INTEGRATION_SECRETS_MASTER_KEY = Buffer.alloc(32, 11).toString('base64');
+    process.env.INTEGRATION_SECRETS_KEY_VERSION = 'v1';
   process.env.TENANT_CONTEXT_ENABLED = 'true';
   process.env.TENANT_CACHE_REALTIME_ENABLED = 'true';
   process.env.TENANT_FILES_WORKERS_ENABLED = 'true';
@@ -227,6 +249,51 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     );
     tenantFoundation.invalidateTenantFoundationGateCache();
     assert.equal((await tenantFoundation.assertTenantFoundationInitialized()).state, 'initialized');
+
+    await t.test('exact package bootstrap creates configured provider set on empty singleton', async () => {
+      const commandSecrets = [
+        'empty-bootstrap-beeline-api',
+        'empty-bootstrap-beeline-webhook',
+        'empty-bootstrap-evotor',
+        'empty-bootstrap-telegram',
+      ];
+      process.env.BEELINE_API_BASE_URL = 'https://provider.bootstrap.test';
+      process.env.BEELINE_API_TOKEN = commandSecrets[0];
+      process.env.BEELINE_CALLBACK_URL = 'https://setly.test/api/integrations/beeline/events';
+      process.env.BEELINE_WEBHOOK_SECRET = commandSecrets[1];
+      process.env.EVOTOR_WEBHOOK_SECRET = commandSecrets[2];
+      process.env.BOT_TOKEN = commandSecrets[3];
+      delete process.env.VK_TOKEN;
+
+      const command = runProviderBootstrapPackage();
+      assert.equal(command.status, 0, `${command.stdout}\n${command.stderr}`);
+      const output = parseProviderBootstrapOutput(command.stdout);
+      const actions = Object.fromEntries(output.connections.map((item) => [
+        item.provider,
+        item.action,
+      ]));
+      assert.deepEqual(actions, {
+        beeline: 'created',
+        evotor: 'created',
+        telegram: 'created',
+        vk: 'skipped',
+      });
+      assert.deepEqual(
+        output.connections.find((item) => item.provider === 'telegram').reconciliation,
+        {},
+      );
+      assert.equal(await db.IntegrationConnection.count(), 3);
+      for (const secret of commandSecrets) {
+        assert.equal(`${command.stdout}\n${command.stderr}`.includes(secret), false);
+      }
+
+      await db.sequelize.query('DELETE FROM IntegrationConnections');
+      assert.equal(await db.IntegrationConnection.count(), 0);
+      delete process.env.BEELINE_API_BASE_URL;
+      delete process.env.BEELINE_API_TOKEN;
+      delete process.env.BEELINE_CALLBACK_URL;
+      delete process.env.BOT_TOKEN;
+    });
 
     let defaultBeelineConnectionRow;
     let defaultEvotorConnectionRow;
@@ -808,6 +875,131 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
         await reconcileLegacyProviderRows(defaultBeeline),
         { rawEvents: 0, subscriptions: 0, telephonyCalls: 0 },
       );
+    });
+
+    await t.test('exact package bootstrap is atomic and resumes a parent-like partial state', async () => {
+      const commandSecrets = [
+        'exact-package-evotor-secret',
+        'exact-package-telegram-secret',
+        'exact-package-vk-secret',
+      ];
+      delete process.env.BEELINE_API_BASE_URL;
+      delete process.env.BEELINE_API_TOKEN;
+      delete process.env.BEELINE_CALLBACK_URL;
+      process.env.EVOTOR_WEBHOOK_SECRET = commandSecrets[0];
+      process.env.BOT_TOKEN = commandSecrets[1];
+      process.env.VK_TOKEN = commandSecrets[2];
+
+      const evotorId = `bootstrap-atomic-${process.pid}-${Date.now()}`;
+      const rollbackReceipt = await db.Receipt.unscoped().create({
+        ...defaultTenant,
+        dateTime: new Date(),
+        evotorId,
+        idempotencyKey: buildProviderIdempotencyKey(null, evotorId),
+      });
+      const triggerName = 'trg_test_provider_bootstrap_fail';
+      await db.sequelize.query(`DROP TRIGGER IF EXISTS ${triggerName}`);
+      await db.sequelize.query(`
+        CREATE TRIGGER ${triggerName}
+        BEFORE INSERT ON IntegrationConnections
+        FOR EACH ROW
+        BEGIN
+          IF NEW.provider = 'vk' THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'forced bootstrap batch failure';
+          END IF;
+        END
+      `);
+
+      try {
+        const failed = runProviderBootstrapPackage();
+        assert.notEqual(failed.status, 0, failed.stdout);
+        for (const secret of commandSecrets) {
+          assert.equal(`${failed.stdout}\n${failed.stderr}`.includes(secret), false);
+        }
+        await rollbackReceipt.reload();
+        assert.equal(rollbackReceipt.integrationConnectionId, null);
+        assert.equal(await db.IntegrationConnection.count({
+          where: { provider: { [SequelizePackage.Op.in]: ['telegram', 'vk'] } },
+        }), 0);
+      } finally {
+        await db.sequelize.query(`DROP TRIGGER IF EXISTS ${triggerName}`);
+      }
+
+      const parentLikeTelegram = await createConnection({
+        ...defaultTenant,
+        metadata: { retained: true, source: 'legacy_env_bootstrap' },
+        provider: 'telegram',
+        publicId: generatePublicId(),
+        secrets: { botToken: commandSecrets[1] },
+      });
+      const [parentLikeBefore] = await db.sequelize.query(`
+        SELECT id, publicId, organizationId, clubId, provider, purpose,
+               connectionKey, status, config, metadata, secretCiphertext,
+               secretKeyVersion, secretUpdatedAt, createdAt, updatedAt
+        FROM IntegrationConnections
+        WHERE id=:id
+      `, { replacements: { id: parentLikeTelegram.id } });
+      const parentLikeFingerprint = JSON.stringify(parentLikeBefore[0]);
+
+      const succeeded = runProviderBootstrapPackage();
+      assert.equal(succeeded.status, 0, `${succeeded.stdout}\n${succeeded.stderr}`);
+      for (const secret of commandSecrets) {
+        assert.equal(`${succeeded.stdout}\n${succeeded.stderr}`.includes(secret), false);
+      }
+      const output = parseProviderBootstrapOutput(succeeded.stdout);
+      const actions = Object.fromEntries(output.connections.map((item) => [
+        item.provider,
+        item.action,
+      ]));
+      assert.equal(actions.beeline, 'skipped');
+      assert.equal(actions.evotor, 'exists');
+      assert.equal(actions.telegram, 'exists');
+      assert.equal(actions.vk, 'created');
+      assert.deepEqual(
+        output.connections.find((item) => item.provider === 'telegram').reconciliation,
+        {},
+      );
+      assert.deepEqual(
+        output.connections.find((item) => item.provider === 'vk').reconciliation,
+        {},
+      );
+      await rollbackReceipt.reload();
+      assert.equal(
+        Number(rollbackReceipt.integrationConnectionId),
+        Number(defaultEvotorConnectionRow.id),
+      );
+      const [parentLikeAfter] = await db.sequelize.query(`
+        SELECT id, publicId, organizationId, clubId, provider, purpose,
+               connectionKey, status, config, metadata, secretCiphertext,
+               secretKeyVersion, secretUpdatedAt, createdAt, updatedAt
+        FROM IntegrationConnections
+        WHERE id=:id
+      `, { replacements: { id: parentLikeTelegram.id } });
+      assert.equal(JSON.stringify(parentLikeAfter[0]), parentLikeFingerprint);
+
+      const [beforeRestart] = await db.sequelize.query(`
+        SELECT id, publicId, provider, purpose, connectionKey, status,
+               config, metadata, secretCiphertext, secretKeyVersion,
+               secretUpdatedAt, createdAt, updatedAt
+        FROM IntegrationConnections
+        WHERE provider IN ('telegram', 'vk')
+        ORDER BY provider
+      `);
+      assert.equal(beforeRestart.length, 2);
+      const restart = runProviderBootstrapPackage();
+      assert.equal(restart.status, 0, `${restart.stdout}\n${restart.stderr}`);
+      const [afterRestart] = await db.sequelize.query(`
+        SELECT id, publicId, provider, purpose, connectionKey, status,
+               config, metadata, secretCiphertext, secretKeyVersion,
+               secretUpdatedAt, createdAt, updatedAt
+        FROM IntegrationConnections
+        WHERE provider IN ('telegram', 'vk')
+        ORDER BY provider
+      `);
+      assert.deepEqual(afterRestart, beforeRestart);
+      for (const secret of commandSecrets) {
+        assert.equal(`${restart.stdout}\n${restart.stderr}`.includes(secret), false);
+      }
     });
 
     const [organizationInsert] = await db.sequelize.query(

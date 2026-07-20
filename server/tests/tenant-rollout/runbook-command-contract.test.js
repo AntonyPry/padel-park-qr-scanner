@@ -43,6 +43,7 @@ const contracts = Object.freeze({
   'tenant:backup:manifest': new Set(BACKUP_MANIFEST_CLI_OPTIONS),
   'tenant:files-workers:attachments': new Set(ATTACHMENT_CLI_OPTIONS),
   'tenant:providers:bootstrap': new Set(),
+  'tenant:providers:preflight': new Set(),
   'tenant:rc:targeted': new Set(FINAL_RC_CLI_OPTIONS),
   'tenant:rollout:gate': new Set(ROLLOUT_CLI_OPTIONS),
 });
@@ -50,6 +51,7 @@ const packageTargets = Object.freeze({
   'tenant:backup:manifest': 'node scripts/tenant-backup-manifest.js',
   'tenant:files-workers:attachments': 'node scripts/migrate-shift-report-attachments.js',
   'tenant:providers:bootstrap': 'node scripts/bootstrap-provider-connections.js',
+  'tenant:providers:preflight': 'node scripts/preflight-provider-secrets.js',
   'tenant:rc:targeted': 'node scripts/run-final-tenant-rc.js',
   'tenant:rollout:gate': 'node scripts/tenant-production-rollout.js',
 });
@@ -141,6 +143,23 @@ test('runbook requires discovered PM2 names and retains storage/loopback safety 
   assert.match(runbook, /только loopback listener/);
   assert.match(runbook, /--expect-empty=/);
   assert.match(runbook, /missing source root/s);
+});
+
+test('provider secret preflight is documented before maintenance and migrations', () => {
+  const firstPreflight = runbook.indexOf('npm run tenant:providers:preflight');
+  assert.ok(firstPreflight >= 0, 'provider secret preflight is missing');
+  assert.ok(
+    firstPreflight < runbook.indexOf('pm2 stop "$SETLY_TRANSCRIPTION_PM2_APP"'),
+    'provider secret preflight must run before process stop',
+  );
+  assert.ok(
+    firstPreflight < runbook.indexOf('npx sequelize-cli db:migrate --env production'),
+    'provider secret preflight must run before migrations',
+  );
+  const envExample = fs.readFileSync(path.join(projectRoot, 'server/.env.example'), 'utf8');
+  assert.match(envExample, /^INTEGRATION_SECRETS_MASTER_KEY=$/mu);
+  assert.match(envExample, /^INTEGRATION_SECRETS_KEY_VERSION=v1$/mu);
+  assert.doesNotMatch(runbook, /INTEGRATION_SECRETS_MASTER_KEY=[A-Za-z0-9+/]/u);
 });
 
 test('every Feature 10.3 bash block is syntactically executable', () => {

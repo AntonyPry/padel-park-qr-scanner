@@ -287,6 +287,20 @@ certificate files не удалять в аварийном порядке.
 
 ### 1. Freeze и consistent raw capture
 
+До включения full-stop, остановки process и любых migrations выполнить
+fail-fast provider-secret preflight из exact release checkout. Команда проверяет
+наличие persistent installation master key, его canonical 32-byte base64 форму
+и явный непустой key version, но не печатает ключ. Этот же ключ обязателен при
+deploy/restart/restore; его запрещено регенерировать после появления encrypted
+connections, сохранять в git/logs/manifests или включать в non-secret backup
+identity output.
+
+```bash
+cd /opt/padel-park-qr-scanner/server
+npm run tenant:providers:preflight
+cd ..
+```
+
 В protected env выставить full-stop, `BOTS_ENABLED=false`,
 `BACKGROUND_RUNNERS_ENABLED=false`, `INSTALLATION_PROVISIONING_ENABLED=false`
 и все 16 tenant flags в `false`. На live preflight 19 июля 2026 года имена
@@ -417,6 +431,7 @@ fi
 install -d -m 0700 "$SETLY_REHEARSAL_ROOT"
 
 cd /opt/padel-park-qr-scanner/server
+npm run tenant:providers:preflight
 npx sequelize-cli db:migrate --env production
 npm run tenant:providers:bootstrap
 npm run tenant:files-workers:attachments -- \
@@ -461,6 +476,7 @@ if [[ -n "$SETLY_EXPECT_EMPTY_LABELS" ]]; then
 fi
 
 cd /opt/padel-park-qr-scanner/server
+npm run tenant:providers:preflight
 npx sequelize-cli db:migrate --env production
 npm run tenant:providers:bootstrap
 npm run tenant:files-workers:attachments -- \

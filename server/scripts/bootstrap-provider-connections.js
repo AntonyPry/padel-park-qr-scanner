@@ -10,8 +10,13 @@ const {
   serializeConnection,
 } = require('../src/provider-integrations/connection-service');
 const {
+  canReconcileLegacyProviderRows,
   reconcileLegacyProviderRows,
 } = require('../src/provider-integrations/rollout');
+const {
+  assertIntegrationSecretConfiguration,
+  normalizeSecretBundle,
+} = require('../src/provider-integrations/secrets');
 const {
   getExactDefaultTenant,
 } = require('../src/files-workers/tenant-context');
@@ -90,56 +95,89 @@ function providerDefinitions() {
   ];
 }
 
-async function main() {
-  await db.sequelize.authenticate();
-  const tenant = await getExactDefaultTenant();
-  const results = [];
-  for (const definition of providerDefinitions()) {
-    if (definition.required.some((value) => !text(value))) {
-      results.push({ action: 'skipped', provider: definition.provider, reason: 'not_configured' });
-      continue;
-    }
-    const existing = await db.IntegrationConnection.findOne({
-      where: {
-        ...tenant,
-        connectionKey: 'default',
-        provider: definition.provider,
-      },
-    });
-    if (existing) {
-      const reconciliation = await reconcileLegacyProviderRows(serializeConnection(existing));
-      results.push({
-        action: 'exists',
-        provider: definition.provider,
-        publicId: existing.publicId,
-        reconciliation,
-      });
-      continue;
-    }
-    const row = await createConnection({
-      ...tenant,
-      config: definition.config,
-      metadata: { source: 'legacy_env_bootstrap' },
-      provider: definition.provider,
-      publicId: definition.publicId,
-      secrets: definition.secrets,
-    });
-    const reconciliation = await reconcileLegacyProviderRows(serializeConnection(row));
-    results.push({
-      action: 'created',
-      provider: definition.provider,
-      publicId: row.publicId,
-      reconciliation,
-    });
-  }
-  console.log(JSON.stringify({ connections: results }, null, 2));
+function definitionIsConfigured(definition) {
+  return definition.required.every((value) => text(value));
 }
 
-main()
-  .catch((error) => {
-    console.error('Provider connection bootstrap failed:', error.code || 'PROVIDER_BOOTSTRAP_FAILED');
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await db.sequelize.close();
+function preflightProviderDefinitions(definitions) {
+  assertIntegrationSecretConfiguration({ requireExplicitVersion: true });
+  for (const definition of definitions) {
+    if (definitionIsConfigured(definition)) normalizeSecretBundle(definition.secrets);
+  }
+  return definitions;
+}
+
+async function bootstrapProviderConnections({
+  create = createConnection,
+  definitions = providerDefinitions(),
+  models = db,
+  reconcile = reconcileLegacyProviderRows,
+  reconcileAllowed = canReconcileLegacyProviderRows,
+  resolveTenant = getExactDefaultTenant,
+} = {}) {
+  preflightProviderDefinitions(definitions);
+  const tenant = await resolveTenant();
+  return models.sequelize.transaction(async (transaction) => {
+    const results = [];
+    for (const definition of definitions) {
+      if (!definitionIsConfigured(definition)) {
+        results.push({
+          action: 'skipped',
+          provider: definition.provider,
+          reason: 'not_configured',
+        });
+        continue;
+      }
+      const existing = await models.IntegrationConnection.findOne({
+        transaction,
+        where: {
+          ...tenant,
+          connectionKey: 'default',
+          provider: definition.provider,
+        },
+      });
+      const row = existing || await create({
+        ...tenant,
+        config: definition.config,
+        metadata: { source: 'legacy_env_bootstrap' },
+        provider: definition.provider,
+        publicId: definition.publicId,
+        secrets: definition.secrets,
+      }, { transaction });
+      const reconciliation = reconcileAllowed(definition.provider)
+        ? await reconcile(serializeConnection(row), { transaction })
+        : {};
+      results.push({
+        action: existing ? 'exists' : 'created',
+        provider: definition.provider,
+        publicId: row.publicId,
+        reconciliation,
+      });
+    }
+    return results;
   });
+}
+
+async function main() {
+  await db.sequelize.authenticate();
+  const connections = await bootstrapProviderConnections();
+  console.log(JSON.stringify({ connections }, null, 2));
+}
+
+if (require.main === module) {
+  main()
+    .catch((error) => {
+      console.error('Provider connection bootstrap failed:', error.code || 'PROVIDER_BOOTSTRAP_FAILED');
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await db.sequelize.close();
+    });
+}
+
+module.exports = {
+  bootstrapProviderConnections,
+  definitionIsConfigured,
+  preflightProviderDefinitions,
+  providerDefinitions,
+};

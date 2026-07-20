@@ -29,6 +29,18 @@ function getMasterKey() {
   return key;
 }
 
+function assertIntegrationSecretConfiguration({ requireExplicitVersion = false } = {}) {
+  getMasterKey();
+  const keyVersion = String(process.env.INTEGRATION_SECRETS_KEY_VERSION || '').trim();
+  if (
+    (requireExplicitVersion && !keyVersion) ||
+    (keyVersion && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$/u.test(keyVersion))
+  ) {
+    throw integrationSecretError();
+  }
+  return Object.freeze({ keyVersion: keyVersion || 'v1' });
+}
+
 function normalizeSecretBundle(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw integrationSecretError('INTEGRATION_SECRET_PAYLOAD_INVALID');
@@ -108,6 +120,7 @@ function decryptSecretBundle(serialized, identity) {
 }
 
 module.exports = {
+  assertIntegrationSecretConfiguration,
   decryptSecretBundle,
   encryptSecretBundle,
   integrationSecretError,

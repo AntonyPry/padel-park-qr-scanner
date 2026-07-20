@@ -13,6 +13,10 @@ const { PROVIDER_PURPOSE } = require('./constants');
 const RECONCILABLE_PROVIDERS = Object.freeze(['beeline', 'evotor']);
 const legacyProviderContexts = new WeakSet();
 
+function canReconcileLegacyProviderRows(provider) {
+  return RECONCILABLE_PROVIDERS.includes(provider);
+}
+
 async function resolveLegacyProviderContext(provider) {
   const tenant = await resolveTrustedTenantAttribution();
   const context = Object.freeze({
@@ -104,7 +108,7 @@ async function loadAuthoritativeReconciliationConnection(snapshot, transaction) 
   });
   assertSnapshotMatchesAuthoritativeConnection(snapshot, authoritative);
   if (
-    !RECONCILABLE_PROVIDERS.includes(authoritative.provider) ||
+    !canReconcileLegacyProviderRows(authoritative.provider) ||
     PROVIDER_PURPOSE[authoritative.provider] !== authoritative.purpose ||
     authoritative.connectionKey !== 'default'
   ) {
@@ -233,13 +237,13 @@ async function reconcileEvotor(connection, transaction) {
   };
 }
 
-async function reconcileLegacyProviderRows(connection) {
+async function reconcileLegacyProviderRows(connection, { transaction } = {}) {
   assertReconciliationConnection(connection);
   const defaultTenant = await resolveTrustedTenantAttribution();
-  return db.sequelize.transaction(async (transaction) => {
+  const reconcile = async (activeTransaction) => {
     const authoritative = await loadAuthoritativeReconciliationConnection(
       connection,
-      transaction,
+      activeTransaction,
     );
     if (
       authoritative.organizationId !== defaultTenant.organizationId ||
@@ -251,16 +255,20 @@ async function reconcileLegacyProviderRows(connection) {
       );
     }
     if (authoritative.provider === 'beeline') {
-      return reconcileBeeline(authoritative, transaction);
+      return reconcileBeeline(authoritative, activeTransaction);
     }
     if (authoritative.provider === 'evotor') {
-      return reconcileEvotor(authoritative, transaction);
+      return reconcileEvotor(authoritative, activeTransaction);
     }
     return {};
-  });
+  };
+  return transaction
+    ? reconcile(transaction)
+    : db.sequelize.transaction(reconcile);
 }
 
 module.exports = {
+  canReconcileLegacyProviderRows,
   isLegacyProviderContext,
   reconcileLegacyProviderRows,
   resolveLegacyProviderContext,

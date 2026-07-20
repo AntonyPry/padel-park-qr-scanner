@@ -130,7 +130,7 @@ async function createConnection({
   purpose = PROVIDER_PURPOSE[provider],
   secrets,
   status = 'active',
-}) {
+}, { transaction } = {}) {
   validateProviderPurpose(provider, purpose);
   if (!PUBLIC_ID_PATTERN.test(publicId) || !CONNECTION_KEY_PATTERN.test(connectionKey)) {
     throw connectionError('INTEGRATION_CONNECTION_ID_INVALID', 400, 'Integration identity is invalid');
@@ -140,6 +140,7 @@ async function createConnection({
   }
   const tenant = await db.Club.findOne({
     attributes: ['id', 'organizationId'],
+    transaction,
     where: { id: clubId, organizationId },
   });
   if (!tenant) throw connectionError('INTEGRATION_CONNECTION_TENANT_INVALID', 400);
@@ -157,7 +158,7 @@ async function createConnection({
     secretKeyVersion: String(process.env.INTEGRATION_SECRETS_KEY_VERSION || 'v1'),
     secretUpdatedAt: new Date(),
     status,
-  });
+  }, { transaction });
 }
 
 async function updateConnectionConfiguration(row, { config, metadata, secrets, status } = {}) {

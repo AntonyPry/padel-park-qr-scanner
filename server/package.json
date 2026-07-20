@@ -51,6 +51,7 @@
     "tenant:client-reference-writes:audit": "node scripts/audit-client-reference-writes.js",
     "tenant:files-workers:audit": "node scripts/audit-tenant-files-workers.js",
     "tenant:providers:audit": "node scripts/audit-tenant-provider-integrations.js",
+    "tenant:providers:preflight": "node scripts/preflight-provider-secrets.js",
     "tenant:staff-membership-writes:audit": "node scripts/audit-staff-membership-writes.js",
     "tenant:visit-scanner-writes:audit": "node scripts/audit-visit-scanner-writes.js",
     "tenant:files-workers:attachments": "node scripts/migrate-shift-report-attachments.js",
