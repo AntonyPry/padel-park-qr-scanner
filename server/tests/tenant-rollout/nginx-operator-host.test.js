@@ -127,12 +127,36 @@ test('operator and product hosts preserve their deny-by-default boundary', () =>
   assert.doesNotMatch(productConfig, /location = \/activate-owner\s*\{\s*return 404;/);
 });
 
-test('product host redacts every Beeline capability URI from access logs', () => {
+test('product host isolates every sensitive Beeline ingress from access and error logs', () => {
   assert.match(productConfig, /map \$uri \$setly_safe_request_uri/u);
-  assert.ok(productConfig.includes('~^/api/integrations/beeline/events/ic_[0-9a-f]+/[^/?]+'));
+  assert.ok(productConfig.includes('~*^/api/integrations/beeline/events(?:/|$)'));
   assert.ok(productConfig.includes('/api/integrations/beeline/events/[redacted]'));
   assert.match(productConfig, /log_format setly_redacted/u);
   assert.match(productConfig, /access_log \/var\/log\/nginx\/access\.log setly_redacted;/u);
   assert.doesNotMatch(productConfig, /log_format setly_redacted[^;]*\$request(?:\s|'|$)/u);
   assert.doesNotMatch(productConfig, /log_format setly_redacted[^;]*\$request_uri/u);
+
+  const sensitiveLocation = productConfig.match(
+    /location ~\* \^\/api\/integrations\/beeline\/events\(\?:\/\|\$\) \{([^}]*)\}/s,
+  );
+  assert.ok(sensitiveLocation, 'dedicated sensitive Beeline ingress location must exist');
+  assert.match(sensitiveLocation[1], /error_log \/dev\/null crit;/u);
+
+  const genericApiLocation = productConfig.match(/location \/api\/ \{([^}]*)\}/s);
+  assert.ok(genericApiLocation, 'ordinary API proxy location must exist');
+  assert.doesNotMatch(genericApiLocation[1], /error_log/u);
+
+  const preservedProxyDirectives = [
+    'proxy_pass http://127.0.0.1:3000;',
+    'proxy_http_version 1.1;',
+    'proxy_set_header Host $host;',
+    'proxy_set_header X-Real-IP $remote_addr;',
+    'proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;',
+    'proxy_set_header X-Forwarded-Proto $scheme;',
+    'proxy_read_timeout 300s;',
+  ];
+  for (const directive of preservedProxyDirectives) {
+    assert.ok(sensitiveLocation[1].includes(directive), directive);
+    assert.ok(genericApiLocation[1].includes(directive), directive);
+  }
 });

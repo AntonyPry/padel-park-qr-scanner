@@ -184,11 +184,18 @@ server. Только затем выпускать/подключать серт
 переходить к host/session/API/security smoke ниже.
 
 В существующий Certbot-managed `setly.tech` vhost через `sudoedit` перенести
-deny locations, top-level `map`/`log_format` и server
-`access_log ... setly_redacted` из `deploy/nginx/setly.tech.conf`. Map работает
-по `$uri`, а Beeline capability path пишет только constant sanitized path;
-`$request`, `$request_uri` и query string не должны попадать в этот log format.
-Не копировать HTTP bootstrap-файл поверх установленного TLS-конфига.
+deny locations, dedicated sensitive Beeline ingress location, top-level
+`map`/`log_format` и server `access_log ... setly_redacted` из
+`deploy/nginx/setly.tech.conf`. Map работает по `$uri` и для всего namespace
+`/api/integrations/beeline/events` (canonical capability, shared-header/publicId,
+bare legacy и attacker/query variants) пишет только constant sanitized path;
+`$request`, `$request_uri`, publicId, capability и query string не должны
+попадать в этот log format. Sensitive location отдельно задаёт
+`error_log /dev/null crit`: стандартный Nginx error log нельзя отформатировать,
+и при upstream failure он иначе раскрывает request/upstream URI. Обычный
+`location /api/` должен сохранить normal error logging; запрещено переносить
+suppression на весь server/API. Не копировать HTTP bootstrap-файл поверх
+установленного TLS-конфига.
 
 Контракт vhost:
 
@@ -557,8 +564,10 @@ production-shaped baseline это `1,467 + 8,607 + 1,509 = 11,583` roots.
 metadata, status и timestamps byte-for-byte. Capability запрещено сохранять в
 config/metadata, `TelephonySubscriptions.callbackUrl/lastRequest/lastResponse`,
 shell history, stdout/stderr, evidence, application или Nginx logs. В Nginx
-используется sanitized path без query string и constant
-`/api/integrations/beeline/events/[redacted]` для capability route.
+используется sanitized access path без query string и constant
+`/api/integrations/beeline/events/[redacted]` для всех Beeline ingress variants,
+а route-scoped error log подавлен; generic `/api/` error logging остаётся
+включённым.
 
 До provider URI switch существует последний простой abort point:
 

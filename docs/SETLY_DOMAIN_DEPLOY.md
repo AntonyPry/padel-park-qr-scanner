@@ -39,10 +39,16 @@ it serves the generated `/assets/` bundle plus only `/favicon.ico`,
 `/apple-touch-icon.png` at the root. It does not expose other root files,
 ordinary CRM, Socket.IO or `/activate-owner`. The product vhost denies
 `/installation` and operator API paths while keeping public owner activation
-available. Its access log uses `$uri` (not `$request_uri`) and maps every
-canonical Beeline capability path to the constant
-`/api/integrations/beeline/events/[redacted]`; callback capabilities and query
-strings must never reach Nginx access logs.
+available. Its access log uses `$uri` (not `$request_uri`) and maps the complete
+Beeline ingress namespace (canonical capability, shared-header/publicId, bare
+legacy and rejected attacker variants) to the constant
+`/api/integrations/beeline/events/[redacted]`; callback identities,
+capabilities and query strings must never reach Nginx access logs. The same
+namespace has a dedicated proxy location with route-scoped
+`error_log /dev/null crit`, because the standard Nginx error format can include
+the full request and upstream URI and cannot be redacted. Ordinary `/api/`
+requests continue to use the normal error log; suppression must not be moved to
+the server or generic API location.
 
 For a fresh installation, install both bootstrap files only during a separately
 authorized production change:
@@ -58,9 +64,10 @@ systemctl reload nginx
 
 For an existing Certbot-managed production vhost, do not reinstall
 `deploy/nginx/setly.tech.conf`. Back up the installed file and merge only its
-new `/installation`/operator-API deny locations plus the top-level
-`map`/`log_format` and server `access_log ... setly_redacted` directives. Install
-`ops.setly.tech.conf` as a new vhost, then run `nginx -t` before reload.
+new `/installation`/operator-API deny locations, dedicated sensitive Beeline
+ingress location, plus the top-level `map`/`log_format` and server
+`access_log ... setly_redacted` directives. Install `ops.setly.tech.conf` as a
+new vhost, then run `nginx -t` before reload.
 
 Certbot modifies the installed runtime file when it enables TLS. Do not copy the HTTP bootstrap file over `/etc/nginx/sites-available/setly.tech` after certificate issuance. After the first successful HTTPS setup, capture a sanitized final TLS configuration in infrastructure code without certificate private keys or other secrets.
 
@@ -69,7 +76,7 @@ The installed file contains:
 ```nginx
 map $uri $setly_safe_request_uri {
     default $uri;
-    ~^/api/integrations/beeline/events/ic_[0-9a-f]+/[^/?]+ /api/integrations/beeline/events/[redacted];
+    ~*^/api/integrations/beeline/events(?:/|$) /api/integrations/beeline/events/[redacted];
 }
 
 log_format setly_redacted '$remote_addr - $remote_user [$time_local] '
@@ -90,6 +97,17 @@ server {
     location ^~ /installation/ { return 404; }
     location ~ ^/api/installation/provisioning/(status|session|snapshot|organizations(?:/|$)) {
         return 404;
+    }
+
+    location ~* ^/api/integrations/beeline/events(?:/|$) {
+        error_log /dev/null crit;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
     }
 
     location /api/ {
