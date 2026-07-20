@@ -103,19 +103,19 @@ type OperatorError = { description: string; title: string };
 
 const providerCopy: Record<IntegrationProvider, { description: string; label: string }> = {
   beeline: {
-    description: 'Телефония, события звонков и продление подписки для этого клуба.',
+    description: 'Телефония и события звонков',
     label: 'Билайн',
   },
   evotor: {
-    description: 'Приём чеков через отдельный webhook этого клуба.',
+    description: 'Приём чеков',
     label: 'Эвотор',
   },
   telegram: {
-    description: 'Отдельный Telegram-бот и регистрация клиентов этого клуба.',
+    description: 'Бот регистрации клиентов',
     label: 'Telegram',
   },
   vk: {
-    description: 'Отдельный бот сообщества VK для клиентов этого клуба.',
+    description: 'Бот сообщества',
     label: 'VK',
   },
 };
@@ -138,18 +138,18 @@ function integrationStatus(state: IntegrationState) {
 }
 
 function validationDescription(state: IntegrationState) {
-  if (!state.configured) return 'Добавьте данные подключения, когда клуб будет готов.';
+  if (!state.configured) return null;
   if (state.provider === 'evotor' && state.validationStatus === 'pending_event') {
-    return 'Локальная настройка готова. Связь подтвердится после первого события Эвотора.';
+    return 'Ожидается первое событие Эвотора.';
   }
   if (state.validationStatus === 'verified' && state.lastValidatedAt) {
     return `Последняя проверка: ${formatDate(state.lastValidatedAt)}`;
   }
   if (state.validationStatus === 'failed') {
-    return 'Последняя проверка не прошла. Откройте настройки и проверьте новые данные.';
+    return 'Последняя проверка не прошла. Проверьте настройки подключения.';
   }
-  if (state.status === 'disabled') return 'Интеграция сохранена, но сейчас не принимает события.';
-  return 'Данные подключения сохранены. Проверка ещё не запускалась.';
+  if (state.status === 'disabled') return 'Новые события не принимаются.';
+  return 'Проверка ещё не запускалась.';
 }
 
 const timezones = [
@@ -385,13 +385,12 @@ function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
         <section className="hidden space-y-5 lg:block">
           <div className="flex items-center gap-3"><img src="/setly-mark.png?v=20260714" alt="" className="size-12 rounded-xl border shadow-sm" /><span className="text-xl font-semibold text-primary">Setly</span></div>
           <h1 className="max-w-xl text-4xl font-semibold tracking-tight">Управление организациями</h1>
-          <p className="max-w-lg leading-7 text-muted-foreground">Рабочее место внутреннего оператора Setly.</p>
         </section>
         <Card className="mx-auto w-full max-w-md rounded-2xl shadow-lg shadow-foreground/5">
           <CardHeader className="space-y-4">
             <div className="flex items-center gap-3 lg:hidden"><img src="/setly-mark.png?v=20260714" alt="" className="size-10 rounded-xl border" /><span className="font-semibold text-primary">Setly</span></div>
             <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><KeyRound className="size-5" /></div>
-            <div><CardTitle>Вход оператора</CardTitle><p className="mt-2 text-sm text-muted-foreground">Войдите, чтобы управлять организациями.</p></div>
+            <CardTitle>Вход оператора</CardTitle>
           </CardHeader>
           <CardContent><form autoComplete="off" className="space-y-4" onSubmit={submit}>
             <div className="space-y-2"><Label htmlFor="operator-username">Логин</Label><Input id="operator-username" autoComplete="off" name="installationOperatorUsername" value={credentials.username} onChange={(event) => setCredentials({ ...credentials, username: event.target.value })} required /></div>
@@ -436,22 +435,16 @@ function ConnectionFormPreview({
       <CardHeader className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-primary">Предпросмотр формы</p>
-            <CardTitle className="mt-1 text-xl">{title} · {copy.label}</CardTitle>
+            <CardTitle className="text-xl">{title} · {copy.label}</CardTitle>
           </div>
           <Button onClick={onClose} type="button" variant="ghost">Закрыть</Button>
         </div>
-        <p className="max-w-2xl text-sm text-muted-foreground">
-          {state.configured
-            ? 'Сохранённые секретные данные не отображаются. Пустое секретное поле не меняет действующее подключение.'
-            : 'Введите данные только для выбранного клуба. После сохранения секретные значения больше не отображаются.'}
-        </p>
       </CardHeader>
       <CardContent>
         <form className="grid gap-5 sm:grid-cols-2" onSubmit={(event) => event.preventDefault()}>
           {state.configured ? (
             <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 text-sm sm:col-span-2 sm:grid-cols-3">
-              <div><p className="text-xs text-muted-foreground">Подключение</p><p className="mt-1 font-medium">{state.safeIdentity || 'Настроено для этого клуба'}</p></div>
+              <div><p className="text-xs text-muted-foreground">Подключение</p><p className="mt-1 font-medium">{state.safeIdentity || 'Настроено'}</p></div>
               <div><p className="text-xs text-muted-foreground">Последняя проверка</p><p className="mt-1 font-medium">{state.lastValidatedAt ? formatDate(state.lastValidatedAt) : 'Ещё не запускалась'}</p></div>
               <div><p className="text-xs text-muted-foreground">Последнее событие</p><p className="mt-1 font-medium">{state.lastActivityAt ? formatDate(state.lastActivityAt) : 'Событий пока нет'}</p></div>
             </div>
@@ -459,7 +452,7 @@ function ConnectionFormPreview({
           {showSettingsFields && provider === 'beeline' ? (
             <>
               <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-beeline-api">Адрес API Билайна</Label><Input defaultValue="https://cloudpbx.beeline.ru/apis/portal" id="preview-beeline-api" type="url" /></div>
-              <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-beeline-callback-base">Базовый адрес callback</Label><Input defaultValue="https://api.setly.tech/api/integrations/beeline/events" id="preview-beeline-callback-base" type="url" /><p className="text-xs text-muted-foreground">Закрытая часть callback создаётся Setly и никогда не показывается.</p></div>
+              <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-beeline-callback-base">Базовый адрес callback</Label><Input defaultValue="https://api.setly.tech/api/integrations/beeline/events" id="preview-beeline-callback-base" type="url" /></div>
               <div className="space-y-2"><Label htmlFor="preview-beeline-records">Путь к записям</Label><Input defaultValue="/records" id="preview-beeline-records" /></div>
               <div className="space-y-2"><Label htmlFor="preview-beeline-statistics">Путь к статистике</Label><Input defaultValue="/statistics" id="preview-beeline-statistics" /></div>
               <div className="space-y-2"><Label htmlFor="preview-beeline-subscription">Путь к подписке</Label><Input defaultValue="/subscription" id="preview-beeline-subscription" /></div>
@@ -473,33 +466,26 @@ function ConnectionFormPreview({
           ) : null}
           {showSettingsFields && provider === 'evotor' ? (
             <div className="rounded-xl border bg-muted/25 p-4 text-sm sm:col-span-2">
-              <p className="text-xs text-muted-foreground">Callback этого клуба</p>
+              <p className="text-xs text-muted-foreground">Callback URL</p>
               <p className="mt-1 break-all font-mono text-xs">{state.safeCallbackUrl || 'Адрес появится после создания подключения'}</p>
-              <p className="mt-3 text-muted-foreground">Проверка подтвердит настройки Setly. Реальная связь подтвердится только после правильно атрибутированного события Эвотора.</p>
-            </div>
-          ) : null}
-          {showSettingsFields && (provider === 'telegram' || provider === 'vk') ? (
-            <div className="rounded-xl border bg-muted/25 p-4 text-sm text-muted-foreground sm:col-span-2">
-              {state.safeIdentity ? `Проверенная учётная запись: ${state.safeIdentity}.` : 'Безопасное имя бота или сообщества появится после проверки.'} Секретное значение для проверки не возвращается в браузер.
+              <p className="mt-3 text-muted-foreground">Проверка конфигурации — локальная. Подключение подтвердится после первого события Эвотора.</p>
             </div>
           ) : null}
           {showSecretFields ? (
             <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor={`preview-${provider}-secret`}>{secretLabel}</Label>
+              <Label htmlFor={`preview-${provider}-secret`}>{secretLabel} · только запись</Label>
               <Input autoComplete="new-password" id={`preview-${provider}-secret`} placeholder={mode === 'rotate' ? 'Введите новое значение' : 'Введите значение'} type="password" />
-              <p className="text-xs text-muted-foreground">После сохранения значение снова будет скрыто.</p>
             </div>
           ) : null}
           {showSecretFields && provider === 'telegram' ? (
-            <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-telegram-proxy">Новый прокси, если нужен</Label><Input autoComplete="new-password" id="preview-telegram-proxy" placeholder="Оставьте пустым, если прокси не меняется" type="password" /><p className="text-xs text-muted-foreground">Прокси используется текущим runner и хранится как закрытое значение.</p></div>
+            <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-telegram-proxy">Прокси · только запись</Label><Input autoComplete="new-password" id="preview-telegram-proxy" placeholder="Оставьте пустым, если прокси не меняется" type="password" /></div>
           ) : null}
-          {provider === 'beeline' ? <div className="rounded-xl border bg-muted/25 p-4 text-sm text-muted-foreground sm:col-span-2">Статус подписки и безопасное продление выполняются только для этого подключения. Callback capability не показывается и не редактируется.</div> : null}
           {mode === 'rotate' && !showRotationConfirmation ? (
-            <div className="flex flex-wrap items-center gap-3 sm:col-span-2"><Button onClick={() => setShowRotationConfirmation(true)} type="button">Перейти к подтверждению</Button><p className="text-xs text-muted-foreground">Текущее подключение продолжает работать до успешной проверки новых данных.</p></div>
+            <div className="sm:col-span-2"><Button onClick={() => setShowRotationConfirmation(true)} type="button">Продолжить</Button></div>
           ) : mode === 'rotate' && showRotationConfirmation ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 sm:col-span-2"><p className="font-medium">Подтвердите замену учётных данных</p><p className="mt-2 text-sm text-muted-foreground">Setly сначала проверит новые данные. При ошибке действующее подключение и runner останутся без изменений.</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled type="submit">Проверить и заменить</Button><Button onClick={() => setShowRotationConfirmation(false)} type="button" variant="ghost">Назад</Button></div><p className="mt-3 text-xs text-muted-foreground">Подтверждение станет доступно после утверждения структуры.</p></div>
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 sm:col-span-2"><p className="font-medium">Подтвердите замену учётных данных</p><p className="mt-2 text-sm text-muted-foreground">Новые данные будут проверены до замены. При ошибке текущее подключение продолжит работать.</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled type="submit">Проверить и заменить</Button><Button onClick={() => setShowRotationConfirmation(false)} type="button" variant="ghost">Назад</Button></div></div>
           ) : mode !== 'rotate' ? (
-            <div className="flex flex-wrap gap-2 sm:col-span-2"><Button disabled type="submit">{mode === 'edit' ? 'Проверить и сохранить' : 'Проверить и подключить'}</Button><p className="self-center text-xs text-muted-foreground">Действие станет доступно после утверждения структуры.</p></div>
+            <div className="sm:col-span-2"><Button disabled type="submit">{mode === 'edit' ? 'Проверить и сохранить' : 'Проверить и подключить'}</Button></div>
           ) : null}
         </form>
       </CardContent>
@@ -524,8 +510,8 @@ function LifecycleImpactPreview({
     : `Восстановить ${noun}?`;
   const description = isActive
     ? isOrganization
-      ? 'Организация и её клубы исчезнут из выбора в CRM. Интеграции перестанут принимать новые события, а история и сохранённые данные останутся на месте.'
-      : 'Клуб исчезнет из выбора в CRM. Его интеграции перестанут принимать новые события, а история и сохранённые данные останутся на месте.'
+      ? 'Архивирование не удаляет клубы, историю, файлы и подключения организации. Организация и её клубы исчезнут из CRM, интеграции перестанут принимать новые события.'
+      : 'Архивирование не удаляет историю, файлы и подключения клуба. Клуб исчезнет из CRM, интеграции перестанут принимать новые события.'
     : isOrganization
       ? 'Перед восстановлением Setly проверит владельца, клубы и доступы. Организация вернётся в CRM только когда вся структура готова к работе.'
       : 'Перед восстановлением Setly проверит организацию и доступы. Клуб вернётся в CRM только когда вся структура готова к работе.';
@@ -544,7 +530,6 @@ function LifecycleImpactPreview({
             </Button>
             <Button onClick={onClose} type="button" variant="ghost">Отмена</Button>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">Подтверждение станет доступно после утверждения структуры.</p>
         </div>
       </div>
     </div>
@@ -563,18 +548,13 @@ function OrganizationSettingsPreview({ organization }: { organization: Installat
           <div className="space-y-2">
             <Label htmlFor="organization-settings-name">Название организации</Label>
             <Input defaultValue={organization.name} id="organization-settings-name" />
-            <p className="text-xs text-muted-foreground">Новое название будет видно владельцам и сотрудникам Setly.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <Button disabled type="button">Сохранить изменения</Button>
-            <span className="text-xs text-muted-foreground">Сохранение станет доступно после утверждения структуры.</span>
-          </div>
+          <Button disabled type="button">Сохранить изменения</Button>
         </CardContent>
       </Card>
       <Card className="rounded-2xl">
         <CardHeader><div className="flex items-center justify-between gap-3"><CardTitle className="text-lg">Состояние</CardTitle><TenantStatusBadge status={organization.status} /></div></CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm leading-6 text-muted-foreground">Архивирование не удаляет клубы, историю, файлы и подключения организации.</p>
+        <CardContent>
           <Button onClick={() => setShowImpact(true)} type="button" variant={isActive ? 'destructive' : 'outline'}>
             {isActive ? <Archive className="mr-2 size-4" /> : <ArchiveRestore className="mr-2 size-4" />}
             {isActive ? 'Архивировать организацию' : 'Восстановить организацию'}
@@ -603,18 +583,13 @@ function ClubSettingsPreview({ club }: { club: InstallationOrganization['clubs']
           <div className="space-y-2">
             <Label>Город и часовой пояс</Label>
             <TimezoneSelect onChange={setTimezone} value={timezone} />
-            <p className="text-xs text-muted-foreground">Setly сохранит канонический часовой пояс города.</p>
           </div>
-          <div className="flex flex-wrap items-center gap-3 sm:col-span-2">
-            <Button disabled type="button">Сохранить изменения</Button>
-            <span className="text-xs text-muted-foreground">Сохранение станет доступно после утверждения структуры.</span>
-          </div>
+          <Button className="sm:col-span-2 sm:w-fit" disabled type="button">Сохранить изменения</Button>
         </CardContent>
       </Card>
       <Card className="rounded-2xl">
         <CardHeader><div className="flex items-center justify-between gap-3"><CardTitle className="text-lg">Состояние</CardTitle><TenantStatusBadge status={club.status} /></div></CardHeader>
-        <CardContent className="space-y-4">
-          <p className="text-sm leading-6 text-muted-foreground">Архивирование не удаляет историю, файлы и подключения этого клуба.</p>
+        <CardContent>
           <Button onClick={() => setShowImpact(true)} type="button" variant={isActive ? 'destructive' : 'outline'}>
             {isActive ? <Archive className="mr-2 size-4" /> : <ArchiveRestore className="mr-2 size-4" />}
             {isActive ? 'Архивировать клуб' : 'Восстановить клуб'}
@@ -840,7 +815,7 @@ export default function InstallationProvisioningPage() {
                   </nav>
                   <div className="mt-6 flex flex-col items-start gap-3 sm:flex-row sm:gap-4">
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Settings2 className="size-6" /></div>
-                    <div className="min-w-0"><p className="text-sm text-muted-foreground">Организация</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Настройки · {organizationDetail.name}</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Измените видимое название или состояние организации.</p></div>
+                    <div className="min-w-0"><p className="text-sm text-muted-foreground">Организация</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Настройки · {organizationDetail.name}</h1></div>
                   </div>
                   <OrganizationSettingsPreview key={organizationDetail.id} organization={organizationDetail} />
                 </>
@@ -855,7 +830,7 @@ export default function InstallationProvisioningPage() {
                   </nav>
                   <div className="mt-6 flex flex-col items-start gap-3 sm:flex-row sm:gap-4">
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Settings2 className="size-6" /></div>
-                    <div className="min-w-0"><p className="break-words text-sm text-muted-foreground">{organizationDetail.name}</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Настройки · {selectedClub.name}</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Название, город, часовой пояс и состояние точного клуба.</p></div>
+                    <div className="min-w-0"><p className="break-words text-sm text-muted-foreground">{organizationDetail.name}</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Настройки · {selectedClub.name}</h1></div>
                   </div>
                   <ClubSettingsPreview club={selectedClub} key={selectedClub.id} />
                 </>
@@ -870,7 +845,7 @@ export default function InstallationProvisioningPage() {
                   </nav>
                   <div className="mt-6 flex flex-col items-start gap-3 sm:flex-row sm:gap-4">
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Cable className="size-6" /></div>
-                    <div className="min-w-0"><p className="break-words text-sm text-muted-foreground">{organizationDetail.name}</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Интеграции · {selectedClub.name}</h1><p className="mt-2 max-w-3xl text-sm text-muted-foreground">Подключения относятся только к выбранному клубу. Перейдите в другой клуб, чтобы настроить его отдельно.</p></div>
+                    <div className="min-w-0"><p className="break-words text-sm text-muted-foreground">{organizationDetail.name}</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Интеграции · {selectedClub.name}</h1></div>
                   </div>
                   {pageError ? <div className="mt-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{pageError}</div> : null}
                   <div className="mt-7 grid gap-4 md:grid-cols-2">
@@ -883,7 +858,7 @@ export default function InstallationProvisioningPage() {
                             <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between"><div className="flex min-w-0 items-center gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground"><ProviderIcon provider={integration.provider} /></span><div className="min-w-0"><CardTitle className="text-lg">{copy.label}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{copy.description}</p></div></div><span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-medium', status.tone)}>{status.label}</span></div>
                           </CardHeader>
                           <CardContent className="space-y-4">
-                            <p className="min-h-10 text-sm text-muted-foreground">{validationDescription(integration)}</p>
+                            {validationDescription(integration) ? <p className="text-sm text-muted-foreground">{validationDescription(integration)}</p> : null}
                             {integration.safeIdentity ? <div className="rounded-xl border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Подключено</p><p className="mt-1 text-sm font-medium">{integration.safeIdentity}</p></div> : null}
                             {integration.lastActivityAt ? <p className="text-xs text-muted-foreground">Последнее успешное событие {formatDate(integration.lastActivityAt)}</p> : null}
                             {integration.secretUpdatedAt ? <p className="text-xs text-muted-foreground">Данные обновлены {formatDate(integration.secretUpdatedAt)}</p> : null}
@@ -904,7 +879,7 @@ export default function InstallationProvisioningPage() {
                 <>
                   <Button className="-ml-3" onClick={() => navigate('/installation')} type="button" variant="ghost"><ArrowLeft className="mr-2 size-4" />К организациям</Button>
                   <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><p className="text-sm text-muted-foreground">Организация</p><TenantStatusBadge status={organizationDetail.status} /></div><h1 className="mt-1 max-w-4xl break-words text-2xl font-semibold tracking-tight sm:text-3xl">{organizationDetail.name}</h1><p className="mt-2 text-sm text-muted-foreground">Выберите точный клуб: его настройки и интеграции находятся рядом.</p></div>
+                    <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><p className="text-sm text-muted-foreground">Организация</p><TenantStatusBadge status={organizationDetail.status} /></div><h1 className="mt-1 max-w-4xl break-words text-2xl font-semibold tracking-tight sm:text-3xl">{organizationDetail.name}</h1></div>
                     <Button className="shrink-0" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/settings`)} type="button" variant="outline"><Settings2 className="mr-2 size-4" />Настройки организации</Button>
                   </div>
                   {pageError ? <div className="mt-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{pageError}</div> : null}
@@ -978,7 +953,7 @@ export default function InstallationProvisioningPage() {
 
                   {step === 2 ? <Card className="rounded-2xl"><CardHeader><CardTitle className="text-lg">Первый владелец</CardTitle></CardHeader><CardContent className="grid gap-5 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="owner-name">Имя</Label><Input id="owner-name" value={owner.name} onChange={(event) => { setFormError(null); setOwner({ ...owner, name: event.target.value }); }} /></div><div className="space-y-2"><Label htmlFor="owner-phone">Телефон</Label><Input id="owner-phone" aria-describedby={ownerPhoneError ? 'owner-phone-error' : undefined} aria-invalid={Boolean(ownerPhoneError)} autoComplete="tel" inputMode="tel" maxLength={18} placeholder="+7 (___) ___-__-__" type="tel" value={owner.phone} onChange={(event) => { setFormError(null); setOwnerPhoneError(''); setOwner({ ...owner, phone: formatRussianPhone(event.target.value) }); }} onPaste={(event) => { event.preventDefault(); setFormError(null); setOwnerPhoneError(''); setOwner({ ...owner, phone: formatRussianPhone(event.clipboardData.getData('text')) }); }} />{ownerPhoneError ? <p className="text-xs text-destructive" id="owner-phone-error">{ownerPhoneError}</p> : null}</div><div className="space-y-2 sm:col-span-2"><Label htmlFor="owner-email">Email</Label><Input id="owner-email" type="email" value={owner.email} onChange={(event) => { setFormError(null); setOwner({ ...owner, email: event.target.value }); }} /></div></CardContent></Card> : null}
 
-                  {step === 3 ? <div className="space-y-4"><Card className="rounded-2xl"><CardHeader><CardTitle className="text-lg">Проверьте структуру организации</CardTitle></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Организация</p><p className="mt-1 font-medium">{organization.name}</p></div><ChevronRight className="mx-auto hidden size-4 text-muted-foreground sm:block" /><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Клубы</p><p className="mt-1 font-medium">{clubs.length}</p><div className="mt-1 space-y-1">{clubs.map((club, index) => <p className="text-xs text-muted-foreground" key={`${club.name}-${index}`}>{club.name} · {timezoneLabel(club.timezone)}</p>)}</div></div><ChevronRight className="mx-auto hidden size-4 text-muted-foreground sm:block" /><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Владелец</p><p className="mt-1 truncate font-medium">{owner.name}</p><p className="truncate text-xs text-muted-foreground">{owner.email}</p></div></div><p className="text-sm text-muted-foreground">После создания передайте владельцу ссылку для задания пароля.</p></CardContent></Card><Button className="w-full sm:w-auto" disabled={submitting} onClick={createOrganization}>{submitting ? 'Создаём…' : 'Создать организацию'}</Button></div> : null}
+                  {step === 3 ? <div className="space-y-4"><Card className="rounded-2xl"><CardHeader><CardTitle className="text-lg">Проверьте данные организации</CardTitle></CardHeader><CardContent className="space-y-5"><div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr_auto_1fr] sm:items-center"><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Организация</p><p className="mt-1 font-medium">{organization.name}</p></div><ChevronRight className="mx-auto hidden size-4 text-muted-foreground sm:block" /><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Клубы</p><p className="mt-1 font-medium">{clubs.length}</p><div className="mt-1 space-y-1">{clubs.map((club, index) => <p className="text-xs text-muted-foreground" key={`${club.name}-${index}`}>{club.name} · {timezoneLabel(club.timezone)}</p>)}</div></div><ChevronRight className="mx-auto hidden size-4 text-muted-foreground sm:block" /><div className="rounded-xl border bg-muted/20 p-4"><p className="text-xs text-muted-foreground">Владелец</p><p className="mt-1 truncate font-medium">{owner.name}</p><p className="truncate text-xs text-muted-foreground">{owner.email}</p></div></div><p className="text-sm text-muted-foreground">После создания передайте владельцу ссылку для задания пароля.</p></CardContent></Card><Button className="w-full sm:w-auto" disabled={submitting} onClick={createOrganization}>{submitting ? 'Создаём…' : 'Создать организацию'}</Button></div> : null}
 
                   {formError ? <div className="mt-4 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"><p className="font-medium">{formError.title}</p><p className="mt-1 text-xs opacity-80">{formError.description}</p></div> : null}
                   <div className="mt-8 flex items-center justify-between border-t pt-5"><Button variant="outline" disabled={step === 0 || submitting} onClick={() => setStep((current) => Math.max(0, current - 1))}><ArrowLeft className="mr-2 size-4" />Назад</Button>{step < steps.length - 1 ? <Button disabled={!canContinue} onClick={() => { if (step === 2 && !russianPhoneE164(owner.phone)) { setOwnerPhoneError('Введите полный номер в формате +7 (999) 123-45-67'); return; } setStep((current) => Math.min(steps.length - 1, current + 1)); }}>Продолжить<ArrowRight className="ml-2 size-4" /></Button> : null}</div>

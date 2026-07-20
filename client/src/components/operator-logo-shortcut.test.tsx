@@ -88,4 +88,15 @@ describe('OperatorLogoShortcut', () => {
 
     expect(navigate).toHaveBeenCalledTimes(1);
   });
+
+  it('looks non-interactive on hover', () => {
+    render(<OperatorLogoShortcut navigate={vi.fn()} />);
+    const logo = screen.getByRole('button', { name: 'Setly' });
+
+    expect(window.getComputedStyle(logo).cursor).toBe('default');
+    expect(logo).not.toHaveAttribute('title');
+    expect(logo.className).not.toMatch(
+      /hover:|cursor-pointer|transition|animate|scale|opacity|underline/u,
+    );
+  });
 });

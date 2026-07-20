@@ -45,8 +45,9 @@ export function OperatorLogoShortcut({
   return (
     <button
       aria-label="Setly"
-      className="mb-2 flex items-center gap-3 rounded-xl text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      className="mb-2 flex cursor-default items-center gap-3 border-0 bg-transparent p-0 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
       onClick={activate}
+      style={{ cursor: 'default' }}
       type="button"
     >
       <img
