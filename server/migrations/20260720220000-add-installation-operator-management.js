@@ -31,7 +31,7 @@ const TABLE_COLUMNS = Object.freeze({
     ['organizationId', 'int', false, null, ''],
     ['clubId', 'int', true, null, ''],
     ['action', 'varchar(96)', false, 96, ''],
-    ['response', 'longtext', false, 4294967295, ''],
+    ['response', 'json', false, null, ''],
     ['auditLogId', 'int', false, null, ''],
     ['createdAt', 'datetime', false, null, ''],
     ['updatedAt', 'datetime', false, null, ''],
@@ -430,19 +430,31 @@ async function track(queryInterface, plan, kind, item) {
   }
 }
 
+function columnTypeAndLengthMatches(row, type, length) {
+  const actualType = String(value(row, 'COLUMN_TYPE') || '').toLowerCase();
+  const actualLength = value(row, 'CHARACTER_MAXIMUM_LENGTH');
+  if (type === 'json') {
+    return (actualType === 'json' && actualLength === null) ||
+      (actualType === 'longtext' && Number(actualLength) === 4294967295);
+  }
+  const typeMatches = type === 'int'
+    ? /^int(?:\(\d+\))?$/u.test(actualType)
+    : actualType === type;
+  const lengthMatches = length === null
+    ? actualLength === null
+    : Number(actualLength) === length;
+  return typeMatches && lengthMatches;
+}
+
 function columnReasons(table, rawRows, expected) {
   if (rawRows.length !== expected.length) return [`table ${table} column count differs`];
   const reasons = [];
   expected.forEach(([name, type, nullable, length, extra], index) => {
     const row = rawRows[index];
-    const actualType = String(value(row, 'COLUMN_TYPE') || '').toLowerCase();
-    const typeMatches = type === 'int' ? /^int(?:\(\d+\))?$/u.test(actualType) : actualType === type;
     if (
-      value(row, 'COLUMN_NAME') !== name || !typeMatches ||
+      value(row, 'COLUMN_NAME') !== name ||
+      !columnTypeAndLengthMatches(row, type, length) ||
       (String(value(row, 'IS_NULLABLE')).toUpperCase() === 'YES') !== nullable ||
-      (length === null
-        ? value(row, 'CHARACTER_MAXIMUM_LENGTH') !== null
-        : Number(value(row, 'CHARACTER_MAXIMUM_LENGTH')) !== length) ||
       String(value(row, 'EXTRA') || '').toLowerCase() !== extra ||
       ![null, 'NULL'].includes(value(row, 'COLUMN_DEFAULT'))
     ) reasons.push(`column ${table}.${name} differs`);
@@ -905,6 +917,7 @@ module.exports = {
     artifactSignature,
     classifyState,
     cleanupInvocation,
+    columnTypeAndLengthMatches,
     foreignKeyIsCanonical,
     getLowerCaseTableNames,
     indexIsCanonical,
