@@ -29,6 +29,13 @@ function getMasterKey() {
   return key;
 }
 
+function getIntegrationFingerprintKey() {
+  return crypto
+    .createHmac('sha256', getMasterKey())
+    .update('setly:integration-fingerprint:v1')
+    .digest();
+}
+
 function assertIntegrationSecretConfiguration({ requireExplicitVersion = false } = {}) {
   getMasterKey();
   const keyVersion = String(process.env.INTEGRATION_SECRETS_KEY_VERSION || '').trim();
@@ -123,6 +130,7 @@ module.exports = {
   assertIntegrationSecretConfiguration,
   decryptSecretBundle,
   encryptSecretBundle,
+  getIntegrationFingerprintKey,
   integrationSecretError,
   normalizeSecretBundle,
 };

@@ -12,6 +12,11 @@ const {
   classifyTenantFoundation,
 } = require('../src/services/tenant-foundation.service');
 const {
+  credentialFingerprint,
+  currentFingerprintKeyVersion,
+  PRIMARY_SECRET_KEY,
+} = require('../src/provider-integrations/fingerprints');
+const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
 } = require('../src/tenant-foundation/constants');
@@ -41,13 +46,13 @@ function providerConfig(provider) {
     apiTimeoutMs: 10000,
     callbackBaseUrl: 'https://api.setly.tech/api/integrations/beeline/events',
     recordsPath: '/records',
-    statisticsPath: '/statistics',
+    statisticsPath: '/v2/statistics',
     subscriptionAutoRenewEnabled: true,
     subscriptionExpiresSeconds: 86400,
     subscriptionPath: '/subscription',
     subscriptionPattern: 'CALL.*',
     subscriptionRenewBeforeSeconds: 3600,
-    subscriptionType: 'CALL_EVENTS',
+    subscriptionType: 'BASIC_CALL',
     webhookAuthMode: 'capability_uri',
   };
 }
@@ -78,6 +83,7 @@ async function addConnection(club, provider, {
   withProxy = false,
 } = {}) {
   const publicId = generatePublicId();
+  const secrets = providerSecrets(provider, { withProxy });
   const metadata = {
     ...(activityHoursAgo === null ? {} : { lastActivityAt: previewDate(activityHoursAgo) }),
     ...(identity ? { safeIdentity: identity } : {}),
@@ -86,15 +92,18 @@ async function addConnection(club, provider, {
       : {}),
     ...(validationHoursAgo === null ? {} : { lastValidatedAt: previewDate(validationHoursAgo) }),
     validationStatus,
+    ...(provider === 'telegram' ? { proxyConfigured: Boolean(secrets.proxyUrl) } : {}),
   };
   await createConnection({
     clubId: club.id,
     config: providerConfig(provider),
+    credentialFingerprint: credentialFingerprint(provider, secrets[PRIMARY_SECRET_KEY[provider]]),
+    fingerprintKeyVersion: currentFingerprintKeyVersion(),
     metadata,
     organizationId: club.organizationId,
     provider,
     publicId,
-    secrets: providerSecrets(provider, { withProxy }),
+    secrets,
     status,
   });
 }
@@ -112,6 +121,9 @@ async function seed() {
       db.IntegrationConnection.unscoped().count(),
       db.Organization.count(),
     ]);
+    if (clubs !== 5 || connections !== 13 || organizations !== 2) {
+      throw new Error('Preview fixture is partial; reset the isolated database before retrying');
+    }
     console.log(JSON.stringify({ clubs, connections, organizations, reused: true }));
     return;
   }

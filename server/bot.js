@@ -24,11 +24,8 @@ const {
   isTenantProviderIntegrationsEnabled,
 } = require('./src/tenant-context/capabilities');
 const {
-  listActiveConnections,
-} = require('./src/provider-integrations/connection-service');
-const {
-  assertLegacyDownstreamReady,
-} = require('./src/provider-integrations/runtime');
+  BotRunnerRegistry,
+} = require('./src/provider-integrations/bot-runner-registry');
 const {
   isRolloutMaintenanceActive,
 } = require('./src/tenant-rollout/contract');
@@ -36,7 +33,13 @@ const {
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
 
-const app = createApp({ onTenantInitialized: startBackgroundComponents });
+const botRunnerRegistry = new BotRunnerRegistry();
+const app = createApp({
+  onIntegrationConnectionChanged: (scope) => isFeatureEnabled('BOTS_ENABLED')
+    ? botRunnerRegistry.reconcile(scope)
+    : Promise.resolve({ action: 'bots_disabled' }),
+  onTenantInitialized: startBackgroundComponents,
+});
 const server = http.createServer(app);
 const io = createSocketServer(server);
 
@@ -149,32 +152,9 @@ function startTelephonySubscriptionRunner() {
 async function startTelegramBot() {
   if (startTelegramBot.started) return;
   if (isTenantProviderIntegrationsEnabled()) {
-    const connections = await listActiveConnections({ provider: 'telegram' });
-    const instances = [];
-    if (connections.length > 1) {
-      console.error('TELEGRAM_CONNECTION_START_FAILED', 'multiple-connections-until-client-wave');
-      startTelegramBot.instances = instances;
-      startTelegramBot.started = true;
-      return;
-    }
-    for (const connection of connections) {
-      try {
-        await assertLegacyDownstreamReady(connection);
-        const telegramBot = createTelegramBot({
-          connection,
-          proxyUrl: connection.secrets.proxyUrl,
-          token: connection.secrets.botToken,
-        });
-        if (!telegramBot) throw new Error('connection token missing');
-        telegramBot.start();
-        instances.push(telegramBot);
-      } catch {
-        console.error('TELEGRAM_CONNECTION_START_FAILED', connection.publicId);
-      }
-    }
-    startTelegramBot.instances = instances;
+    const results = await botRunnerRegistry.startProvider('telegram');
     startTelegramBot.started = true;
-    console.log(`✈️ Telegram connections запущено: ${instances.length}.`);
+    console.log(`✈️ Telegram connections запущено: ${results.filter((item) => item.status === 'started').length}.`);
     return;
   }
   const telegramBot = createTelegramBot();
@@ -191,31 +171,9 @@ async function startTelegramBot() {
 async function startVkBot() {
   if (startVkBot.started) return;
   if (isTenantProviderIntegrationsEnabled()) {
-    const connections = await listActiveConnections({ provider: 'vk' });
-    const instances = [];
-    if (connections.length > 1) {
-      console.error('VK_CONNECTION_START_FAILED', 'multiple-connections-until-client-wave');
-      startVkBot.instances = instances;
-      startVkBot.started = true;
-      return;
-    }
-    for (const connection of connections) {
-      try {
-        await assertLegacyDownstreamReady(connection);
-        const vkBot = createVkBot({
-          connection,
-          token: connection.secrets.botToken,
-        });
-        if (!vkBot) throw new Error('connection token missing');
-        await vkBot.start();
-        instances.push(vkBot);
-      } catch {
-        console.error('VK_CONNECTION_START_FAILED', connection.publicId);
-      }
-    }
-    startVkBot.instances = instances;
+    const results = await botRunnerRegistry.startProvider('vk');
     startVkBot.started = true;
-    console.log(`🟦 VK connections запущено: ${instances.length}.`);
+    console.log(`🟦 VK connections запущено: ${results.filter((item) => item.status === 'started').length}.`);
     return;
   }
   const vkBot = createVkBot();

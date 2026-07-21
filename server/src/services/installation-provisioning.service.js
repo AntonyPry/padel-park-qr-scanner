@@ -466,7 +466,7 @@ async function getInstallationSnapshot() {
   assertEnabledFoundation();
   const classification = await assertTenantFoundationInitialized({ strict: true });
   const organizations = await db.Organization.findAll({
-    attributes: ['id', 'name', 'slug', 'status', 'createdAt'],
+    attributes: ['id', 'name', 'slug', 'status', 'createdAt', 'updatedAt'],
     include: [
       { attributes: ['id'], model: db.Club, required: false },
       {
@@ -514,6 +514,7 @@ async function getInstallationSnapshot() {
         ownerState,
         slug: organization.slug,
         status: organization.status,
+        updatedAt: organization.updatedAt,
       };
     }),
   };

@@ -1,4 +1,5 @@
 import path from 'path';
+import { fileURLToPath } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { loadEnv } from 'vite';
 import { defineConfig } from 'vitest/config';
@@ -9,6 +10,7 @@ function parsePort(value: string | undefined, fallback: number) {
 }
 
 export default defineConfig(({ mode }) => {
+  const projectDirectory = fileURLToPath(new URL('.', import.meta.url));
   const env = loadEnv(mode, process.cwd(), '');
   const devPort = parsePort(env.VITE_DEV_PORT, 5173);
   const previewPort = parsePort(env.VITE_PREVIEW_PORT, 4173);
@@ -22,7 +24,7 @@ export default defineConfig(({ mode }) => {
     },
     resolve: {
       alias: {
-        '@': path.resolve(__dirname, './src'),
+        '@': path.resolve(projectDirectory, './src'),
       },
     },
     server: {

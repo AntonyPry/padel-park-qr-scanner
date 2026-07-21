@@ -130,6 +130,9 @@ async function createConnection({
   purpose = PROVIDER_PURPOSE[provider],
   secrets,
   status = 'active',
+  credentialFingerprint = null,
+  fingerprintKeyVersion = null,
+  providerIdentityFingerprint = null,
 }, { transaction } = {}) {
   validateProviderPurpose(provider, purpose);
   if (!PUBLIC_ID_PATTERN.test(publicId) || !CONNECTION_KEY_PATTERN.test(connectionKey)) {
@@ -149,9 +152,12 @@ async function createConnection({
     clubId,
     config: normalizeSafeObject(config, 'config'),
     connectionKey,
+    credentialFingerprint,
+    fingerprintKeyVersion,
     metadata: normalizeSafeObject(metadata, 'metadata'),
     organizationId,
     provider,
+    providerIdentityFingerprint,
     publicId,
     purpose,
     secretCiphertext,
@@ -161,14 +167,35 @@ async function createConnection({
   }, { transaction });
 }
 
-async function updateConnectionConfiguration(row, { config, metadata, secrets, status } = {}) {
+async function updateConnectionConfiguration(
+  row,
+  {
+    config,
+    credentialFingerprint,
+    fingerprintKeyVersion,
+    metadata,
+    providerIdentityFingerprint,
+    secrets,
+    status,
+  } = {},
+  { transaction } = {},
+) {
   const raw = row?.toJSON ? row.toJSON() : row;
   if (!raw?.id || !raw.publicId || !raw.provider) {
     throw connectionError('INTEGRATION_CONNECTION_ID_INVALID', 400, 'Integration identity is invalid');
   }
   const updates = {};
   if (config !== undefined) updates.config = normalizeSafeObject(config, 'config');
+  if (credentialFingerprint !== undefined) {
+    updates.credentialFingerprint = credentialFingerprint;
+  }
+  if (fingerprintKeyVersion !== undefined) {
+    updates.fingerprintKeyVersion = fingerprintKeyVersion;
+  }
   if (metadata !== undefined) updates.metadata = normalizeSafeObject(metadata, 'metadata');
+  if (providerIdentityFingerprint !== undefined) {
+    updates.providerIdentityFingerprint = providerIdentityFingerprint;
+  }
   if (status !== undefined) {
     if (!INTEGRATION_CONNECTION_STATUSES.includes(status)) {
       throw connectionError('INTEGRATION_CONNECTION_STATUS_INVALID', 400, 'Integration status is invalid');
@@ -183,7 +210,7 @@ async function updateConnectionConfiguration(row, { config, metadata, secrets, s
     updates.secretKeyVersion = String(process.env.INTEGRATION_SECRETS_KEY_VERSION || 'v1');
     updates.secretUpdatedAt = new Date();
   }
-  return row.update(updates);
+  return row.update(updates, { transaction });
 }
 
 async function rejectIngress(reasonCode, diagnostic = {}) {

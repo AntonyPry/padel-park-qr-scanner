@@ -3,14 +3,14 @@
 const installationOperatorAuth = require('../services/installation-operator-auth.service');
 const { sendError } = require('../utils/api-error');
 
-function requireInstallationOperator(req, res, next) {
+async function requireInstallationOperator(req, res, next) {
   try {
     const authorization = String(req.headers.authorization || '');
     const [scheme, token] = authorization.split(/\s+/, 2);
     if (scheme !== 'Bearer' || !token) {
       return sendError(res, { statusCode: 401 }, 'Требуется вход оператора');
     }
-    const operator = installationOperatorAuth.verifySession(token);
+    const operator = await installationOperatorAuth.verifySession(token);
     if (!operator) {
       return sendError(res, { statusCode: 401 }, 'Сессия оператора недействительна');
     }
@@ -21,4 +21,26 @@ function requireInstallationOperator(req, res, next) {
   }
 }
 
-module.exports = { requireInstallationOperator };
+function requireInstallationManagement(_req, res, next) {
+  try {
+    installationOperatorAuth.assertManagementEnabled();
+    next();
+  } catch (error) {
+    return sendError(res, error, 'Управление организациями и клубами недоступно');
+  }
+}
+
+function requireInstallationProvisioning(_req, res, next) {
+  try {
+    installationOperatorAuth.assertProvisioningEnabled();
+    next();
+  } catch (error) {
+    return sendError(res, error, 'Создание организаций недоступно');
+  }
+}
+
+module.exports = {
+  requireInstallationManagement,
+  requireInstallationOperator,
+  requireInstallationProvisioning,
+};

@@ -998,6 +998,75 @@ const trainingMethodologyExerciseUpdateBody = trainingMethodologyExerciseBody
   .partial()
   .passthrough();
 
+const installationIdempotencyKey = z.string().uuid('Ключ повторной отправки указан некорректно');
+const installationExpectedUpdatedAt = z.union([dateTimeString, z.null()]).optional();
+const installationMutationResult = z.object({
+  auditLogId: z.number().int().positive(),
+  idempotency: z.object({
+    operationId: z.number().int().positive(),
+    replayed: z.boolean(),
+  }),
+}).passthrough();
+const integrationProvider = z.enum(['beeline', 'evotor', 'telegram', 'vk']);
+const integrationStatus = z.enum(['active', 'disabled', 'revoked', 'not_configured']);
+const integrationValidationStatus = z.enum(['verified', 'pending_event', 'failed', 'not_tested']);
+const httpsUrl = z.string().trim().url('Укажите полный HTTPS-адрес').refine(
+  (value: string) => value.startsWith('https://'),
+  { message: 'Адрес должен начинаться с https://' },
+);
+const messengerProxyUrl = z.string().trim().url('Укажите полный адрес прокси').refine(
+  (value: string) => /^(?:https|socks4|socks5|socks5h):\/\//u.test(value),
+  { message: 'Поддерживаются HTTPS, SOCKS4 и SOCKS5 прокси' },
+).meta({ writeOnly: true });
+const providerPath = z.string().trim().regex(
+  /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/u,
+  'Путь должен начинаться с / и не содержать query-параметры',
+);
+const beelineSettings = z.object({
+  apiBaseUrl: httpsUrl,
+  apiTimeoutMs: z.number().int().min(1000).max(60000),
+  callbackBaseUrl: httpsUrl,
+  recordsPath: providerPath,
+  statisticsPath: providerPath,
+  subscriptionAutoRenewEnabled: z.boolean(),
+  subscriptionExpiresSeconds: z.number().int().min(300).max(86400),
+  subscriptionPath: providerPath,
+  subscriptionPattern: z.string().trim().max(500).nullable(),
+  subscriptionRenewBeforeSeconds: z.number().int().min(60).max(43200),
+  subscriptionType: z.enum(['BASIC_CALL', 'ADVANCED_CALL']),
+}).strict();
+const writeOnlyCredential = z.string().trim().min(1, 'Укажите учётные данные').max(8192)
+  .meta({ writeOnly: true });
+const integrationBaseMutation = {
+  expectedUpdatedAt: installationExpectedUpdatedAt,
+  idempotencyKey: installationIdempotencyKey,
+};
+const integrationActionBody = z.object({
+  expectedUpdatedAt: dateTimeString,
+  idempotencyKey: installationIdempotencyKey,
+}).strict();
+const integrationParams = z.object({
+  clubId: id,
+  organizationId: id,
+});
+const integrationStateResponse = z.object({
+  configured: z.boolean(),
+  lastActivityAt: dateTime.nullable(),
+  lastValidatedAt: dateTime.nullable(),
+  provider: integrationProvider,
+  proxyConfigured: z.boolean(),
+  safeCallbackUrl: z.string().nullable(),
+  safeIdentity: z.string().nullable(),
+  secretUpdatedAt: dateTime.nullable(),
+  settings: z.record(z.string(), z.unknown()),
+  status: integrationStatus,
+  updatedAt: dateTime.nullable(),
+  validationStatus: integrationValidationStatus,
+});
+const integrationMutationResponse = installationMutationResult.extend({
+  integration: integrationStateResponse,
+});
+
 const apiSchemas = {
   access: {
     correctKey: {
@@ -1312,6 +1381,101 @@ const apiSchemas = {
       }),
     },
     organizationParams: z.object({ organizationId: id }),
+    organizationUpdate: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        name: nameString,
+      }).strict(),
+      params: z.object({ organizationId: id }),
+      response: installationMutationResult,
+    },
+    organizationLifecycle: {
+      body: z.object({
+        confirmImpact: z.boolean().optional(),
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+      }).strict(),
+      params: z.object({ organizationId: id }),
+      response: installationMutationResult,
+    },
+    clubUpdate: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        name: nameString,
+        timezone: ianaTimezone,
+      }).strict(),
+      params: integrationParams,
+      response: installationMutationResult,
+    },
+    clubLifecycle: {
+      body: z.object({
+        confirmImpact: z.boolean().optional(),
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+      }).strict(),
+      params: integrationParams,
+      response: installationMutationResult,
+    },
+    integrationConfigureBeeline: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+        settings: beelineSettings,
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationConfigureEvotor: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationConfigureTelegram: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+        proxyUrl: z.union([messengerProxyUrl, z.null()]).optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationConfigureVk: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationRotate: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        credential: writeOnlyCredential,
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationRotateTelegram: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        credential: writeOnlyCredential,
+        proxyUrl: z.union([messengerProxyUrl, z.null()]).optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationAction: {
+      body: integrationActionBody,
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
     organization: {
       params: z.object({ organizationId: id }),
       response: z.object({
@@ -1322,20 +1486,25 @@ const apiSchemas = {
             lastActivityAt: dateTime.nullable(),
             lastValidatedAt: dateTime.nullable(),
             provider: z.enum(['beeline', 'evotor', 'telegram', 'vk']),
-            safeCallbackUrl: z.string().url().nullable(),
+            proxyConfigured: z.boolean(),
+            safeCallbackUrl: z.string().nullable(),
             safeIdentity: z.string().nullable(),
             secretUpdatedAt: dateTime.nullable(),
+            settings: z.record(z.string(), z.unknown()),
             status: z.enum(['active', 'disabled', 'revoked', 'not_configured']),
+            updatedAt: dateTime.nullable(),
             validationStatus: z.enum(['verified', 'pending_event', 'failed', 'not_tested']),
           })),
           name: z.string(),
           status: z.enum(['active', 'inactive', 'archived']),
           timezone: z.string(),
+          updatedAt: dateTime,
         })),
         createdAt: dateTime,
         id: z.number().int().positive(),
         name: z.string(),
         status: z.enum(['active', 'inactive', 'archived']),
+        updatedAt: dateTime,
       }),
     },
     reissue: {
@@ -1357,8 +1526,12 @@ const apiSchemas = {
         })
         .strict(),
       response: z.object({
+        expiresAt: dateTime,
         token: z.string().min(1),
       }),
+    },
+    sessionRevoke: {
+      response: z.object({ success: z.literal(true) }),
     },
     snapshotResponse: z.object({
       audits: z.array(z.object({
@@ -1381,10 +1554,15 @@ const apiSchemas = {
           ownerState: z.enum(['active', 'inactive', 'missing', 'pending_activation']),
           slug: z.string(),
           status: z.enum(['active', 'inactive', 'archived']),
+          updatedAt: dateTime,
         }),
       ),
     }),
-    statusResponse: z.object({ enabled: z.boolean() }),
+    statusResponse: z.object({
+      enabled: z.boolean(),
+      managementEnabled: z.boolean(),
+      provisioningEnabled: z.boolean(),
+    }),
   },
   callTasks: {
     attempt: {

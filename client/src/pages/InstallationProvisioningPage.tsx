@@ -51,11 +51,14 @@ type IntegrationState = {
   lastActivityAt: string | null;
   lastValidatedAt: string | null;
   provider: IntegrationProvider;
+  proxyConfigured: boolean;
   safeCallbackUrl: string | null;
   safeIdentity: string | null;
   secretUpdatedAt: string | null;
+  settings: Record<string, unknown>;
   status: 'active' | 'disabled' | 'revoked' | 'not_configured';
   validationStatus: 'verified' | 'pending_event' | 'failed' | 'not_tested';
+  updatedAt: string | null;
 };
 type InstallationOrganization = {
   clubs: Array<{
@@ -64,11 +67,13 @@ type InstallationOrganization = {
     name: string;
     status: 'active' | 'inactive' | 'archived';
     timezone: string;
+    updatedAt: string;
   }>;
   createdAt: string;
   id: number;
   name: string;
   status: 'active' | 'inactive' | 'archived';
+  updatedAt: string;
 };
 type InstallationSnapshot = {
   audits: Array<{
@@ -88,6 +93,7 @@ type InstallationSnapshot = {
     ownerState: OwnerState;
     slug: string;
     status: 'active' | 'inactive' | 'archived';
+    updatedAt: string;
   }>;
 };
 type ProvisioningResult = {
@@ -232,6 +238,20 @@ async function installationFetch(path: string, init: RequestInit = {}) {
   if (token) headers.set('Authorization', `Bearer ${token}`);
   if (init.body) headers.set('Content-Type', 'application/json');
   return fetch(`${API_URL}/api/installation/provisioning${path}`, { ...init, headers });
+}
+
+async function operatorMutation(path: string, body: Record<string, unknown>, method = 'POST') {
+  const response = await installationFetch(path, {
+    body: JSON.stringify({ ...body, idempotencyKey: crypto.randomUUID() }),
+    method,
+  });
+  if (response.status === 401) {
+    window.sessionStorage.removeItem(TOKEN_KEY);
+    window.location.assign('/installation');
+    throw new Error('Сессия оператора завершена. Войдите снова.');
+  }
+  if (!response.ok) throw new Error((await readError(response, 'Операция не выполнена')).message);
+  return response.json();
 }
 
 function formatDate(value: string) {
@@ -404,18 +424,57 @@ function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
   );
 }
 
-function ConnectionFormPreview({
+type BeelineFormSettings = {
+  apiBaseUrl: string;
+  apiTimeoutMs: number;
+  callbackBaseUrl: string;
+  recordsPath: string;
+  statisticsPath: string;
+  subscriptionAutoRenewEnabled: boolean;
+  subscriptionExpiresSeconds: number;
+  subscriptionPath: string;
+  subscriptionPattern: string | null;
+  subscriptionRenewBeforeSeconds: number;
+  subscriptionType: 'BASIC_CALL' | 'ADVANCED_CALL';
+};
+
+function beelineFormSettings(state: IntegrationState): BeelineFormSettings {
+  const value = state.settings;
+  return {
+    apiBaseUrl: String(value.apiBaseUrl || 'https://cloudpbx.beeline.ru/apis/portal'),
+    apiTimeoutMs: Number(value.apiTimeoutMs || 15000),
+    callbackBaseUrl: String(value.callbackBaseUrl || 'https://api.setly.tech/api/integrations/beeline/events'),
+    recordsPath: String(value.recordsPath || '/records'),
+    statisticsPath: String(value.statisticsPath || '/v2/statistics'),
+    subscriptionAutoRenewEnabled: value.subscriptionAutoRenewEnabled === true,
+    subscriptionExpiresSeconds: Number(value.subscriptionExpiresSeconds || 3600),
+    subscriptionPath: String(value.subscriptionPath || '/subscription'),
+    subscriptionPattern: typeof value.subscriptionPattern === 'string' ? value.subscriptionPattern : null,
+    subscriptionRenewBeforeSeconds: Number(value.subscriptionRenewBeforeSeconds || 1200),
+    subscriptionType: value.subscriptionType === 'ADVANCED_CALL' ? 'ADVANCED_CALL' : 'BASIC_CALL',
+  };
+}
+
+function ConnectionForm({
   mode,
   onClose,
+  onSave,
   provider,
   state,
 }: {
   mode: 'configure' | 'edit' | 'rotate';
   onClose: () => void;
+  onSave: (payload: Record<string, unknown>) => Promise<void>;
   provider: IntegrationProvider;
   state: IntegrationState;
 }) {
   const [showRotationConfirmation, setShowRotationConfirmation] = useState(false);
+  const [credential, setCredential] = useState('');
+  const [proxyUrl, setProxyUrl] = useState('');
+  const [removeProxy, setRemoveProxy] = useState(false);
+  const [settings, setSettings] = useState(() => beelineFormSettings(state));
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   const copy = providerCopy[provider];
   const secretLabel = provider === 'beeline'
     ? 'Токен API'
@@ -430,6 +489,28 @@ function ConnectionFormPreview({
       ? 'Настройки подключения'
       : 'Новое подключение';
 
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    try {
+      const payload: Record<string, unknown> = {};
+      if (credential) payload.credential = credential;
+      if (provider === 'beeline' && mode !== 'rotate') payload.settings = settings;
+      if (provider === 'telegram' && mode !== 'edit') {
+        if (removeProxy) payload.proxyUrl = null;
+        else if (proxyUrl) payload.proxyUrl = proxyUrl;
+      }
+      await onSave(payload);
+      setCredential('');
+      setProxyUrl('');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Не удалось сохранить подключение');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <Card className="mt-6 rounded-2xl border-primary/25" id="integration-form-preview">
       <CardHeader className="space-y-3">
@@ -441,7 +522,7 @@ function ConnectionFormPreview({
         </div>
       </CardHeader>
       <CardContent>
-        <form className="grid gap-5 sm:grid-cols-2" onSubmit={(event) => event.preventDefault()}>
+        <form className="grid gap-5 sm:grid-cols-2" onSubmit={submit}>
           {state.configured ? (
             <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 text-sm sm:col-span-2 sm:grid-cols-3">
               <div><p className="text-xs text-muted-foreground">Подключение</p><p className="mt-1 font-medium">{state.safeIdentity || 'Настроено'}</p></div>
@@ -451,17 +532,17 @@ function ConnectionFormPreview({
           ) : null}
           {showSettingsFields && provider === 'beeline' ? (
             <>
-              <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-beeline-api">Адрес API Билайна</Label><Input defaultValue="https://cloudpbx.beeline.ru/apis/portal" id="preview-beeline-api" type="url" /></div>
-              <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-beeline-callback-base">Базовый адрес callback</Label><Input defaultValue="https://api.setly.tech/api/integrations/beeline/events" id="preview-beeline-callback-base" type="url" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-records">Путь к записям</Label><Input defaultValue="/records" id="preview-beeline-records" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-statistics">Путь к статистике</Label><Input defaultValue="/statistics" id="preview-beeline-statistics" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-subscription">Путь к подписке</Label><Input defaultValue="/subscription" id="preview-beeline-subscription" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-pattern">Шаблон событий</Label><Input defaultValue="CALL.*" id="preview-beeline-pattern" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-type">Тип подписки</Label><Input defaultValue="CALL_EVENTS" id="preview-beeline-type" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-timeout">Таймаут API, мс</Label><Input defaultValue="10000" id="preview-beeline-timeout" inputMode="numeric" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-expiry">Срок подписки, сек.</Label><Input defaultValue="86400" id="preview-beeline-expiry" inputMode="numeric" /></div>
-              <div className="space-y-2"><Label htmlFor="preview-beeline-renew-before">Продлевать заранее, сек.</Label><Input defaultValue="3600" id="preview-beeline-renew-before" inputMode="numeric" /></div>
-              <label className="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm sm:col-span-2"><input defaultChecked type="checkbox" />Автоматически продлевать подписку</label>
+              <div className="space-y-2 sm:col-span-2"><Label htmlFor="beeline-api">Адрес API Билайна</Label><Input required value={settings.apiBaseUrl} onChange={(event) => setSettings({ ...settings, apiBaseUrl: event.target.value })} id="beeline-api" type="url" /></div>
+              <div className="space-y-2 sm:col-span-2"><Label htmlFor="beeline-callback-base">Базовый адрес callback</Label><Input required value={settings.callbackBaseUrl} onChange={(event) => setSettings({ ...settings, callbackBaseUrl: event.target.value })} id="beeline-callback-base" type="url" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-records">Путь к записям</Label><Input required value={settings.recordsPath} onChange={(event) => setSettings({ ...settings, recordsPath: event.target.value })} id="beeline-records" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-statistics">Путь к статистике</Label><Input required value={settings.statisticsPath} onChange={(event) => setSettings({ ...settings, statisticsPath: event.target.value })} id="beeline-statistics" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-subscription">Путь к подписке</Label><Input required value={settings.subscriptionPath} onChange={(event) => setSettings({ ...settings, subscriptionPath: event.target.value })} id="beeline-subscription" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-pattern">Шаблон событий</Label><Input value={settings.subscriptionPattern || ''} onChange={(event) => setSettings({ ...settings, subscriptionPattern: event.target.value || null })} id="beeline-pattern" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-type">Тип подписки</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" id="beeline-type" value={settings.subscriptionType} onChange={(event) => setSettings({ ...settings, subscriptionType: event.target.value as BeelineFormSettings['subscriptionType'] })}><option value="BASIC_CALL">BASIC_CALL</option><option value="ADVANCED_CALL">ADVANCED_CALL</option></select></div>
+              <div className="space-y-2"><Label htmlFor="beeline-timeout">Таймаут API, мс</Label><Input required value={settings.apiTimeoutMs} onChange={(event) => setSettings({ ...settings, apiTimeoutMs: Number(event.target.value) })} id="beeline-timeout" inputMode="numeric" type="number" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-expiry">Срок подписки, сек.</Label><Input required value={settings.subscriptionExpiresSeconds} onChange={(event) => setSettings({ ...settings, subscriptionExpiresSeconds: Number(event.target.value) })} id="beeline-expiry" inputMode="numeric" type="number" /></div>
+              <div className="space-y-2"><Label htmlFor="beeline-renew-before">Продлевать заранее, сек.</Label><Input required value={settings.subscriptionRenewBeforeSeconds} onChange={(event) => setSettings({ ...settings, subscriptionRenewBeforeSeconds: Number(event.target.value) })} id="beeline-renew-before" inputMode="numeric" type="number" /></div>
+              <label className="flex items-center gap-3 rounded-xl border px-4 py-3 text-sm sm:col-span-2"><input checked={settings.subscriptionAutoRenewEnabled} onChange={(event) => setSettings({ ...settings, subscriptionAutoRenewEnabled: event.target.checked })} type="checkbox" />Автоматически продлевать подписку</label>
             </>
           ) : null}
           {showSettingsFields && provider === 'evotor' ? (
@@ -473,19 +554,20 @@ function ConnectionFormPreview({
           ) : null}
           {showSecretFields ? (
             <div className="space-y-2 sm:col-span-2">
-              <Label htmlFor={`preview-${provider}-secret`}>{secretLabel} · только запись</Label>
-              <Input autoComplete="new-password" id={`preview-${provider}-secret`} placeholder={mode === 'rotate' ? 'Введите новое значение' : 'Введите значение'} type="password" />
+              <Label htmlFor={`${provider}-secret`}>{secretLabel} · только запись</Label>
+              <Input autoComplete="new-password" id={`${provider}-secret`} onChange={(event) => setCredential(event.target.value)} placeholder={mode === 'rotate' ? 'Введите новое значение' : 'Введите значение'} required type="password" value={credential} />
             </div>
           ) : null}
           {showSecretFields && provider === 'telegram' ? (
-            <div className="space-y-2 sm:col-span-2"><Label htmlFor="preview-telegram-proxy">Прокси · только запись</Label><Input autoComplete="new-password" id="preview-telegram-proxy" placeholder="Оставьте пустым, если прокси не меняется" type="password" /></div>
+            <div className="space-y-3 sm:col-span-2"><div className="space-y-2"><Label htmlFor="telegram-proxy">Прокси · только запись</Label><Input autoComplete="new-password" disabled={removeProxy} id="telegram-proxy" onChange={(event) => setProxyUrl(event.target.value)} placeholder="Оставьте пустым, если прокси не меняется" type="password" value={proxyUrl} /></div>{state.proxyConfigured ? <label className="flex items-center gap-3 text-sm"><input checked={removeProxy} onChange={(event) => setRemoveProxy(event.target.checked)} type="checkbox" />Удалить текущий прокси</label> : null}</div>
           ) : null}
+          {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:col-span-2">{error}</div> : null}
           {mode === 'rotate' && !showRotationConfirmation ? (
             <div className="sm:col-span-2"><Button onClick={() => setShowRotationConfirmation(true)} type="button">Продолжить</Button></div>
           ) : mode === 'rotate' && showRotationConfirmation ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 sm:col-span-2"><p className="font-medium">Подтвердите замену учётных данных</p><p className="mt-2 text-sm text-muted-foreground">Новые данные будут проверены до замены. При ошибке текущее подключение продолжит работать.</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled type="submit">Проверить и заменить</Button><Button onClick={() => setShowRotationConfirmation(false)} type="button" variant="ghost">Назад</Button></div></div>
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 sm:col-span-2"><p className="font-medium">Подтвердите замену учётных данных</p><p className="mt-2 text-sm text-muted-foreground">Новые данные будут проверены до замены. При ошибке текущее подключение продолжит работать.</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled={saving} type="submit">{saving ? 'Проверяем…' : 'Проверить и заменить'}</Button><Button disabled={saving} onClick={() => setShowRotationConfirmation(false)} type="button" variant="ghost">Назад</Button></div></div>
           ) : mode !== 'rotate' ? (
-            <div className="sm:col-span-2"><Button disabled type="submit">{mode === 'edit' ? 'Проверить и сохранить' : 'Проверить и подключить'}</Button></div>
+            <div className="sm:col-span-2"><Button disabled={saving} type="submit">{saving ? 'Проверяем…' : mode === 'edit' ? 'Проверить и сохранить' : 'Проверить и подключить'}</Button></div>
           ) : null}
         </form>
       </CardContent>
@@ -496,12 +578,16 @@ function ConnectionFormPreview({
 function LifecycleImpactPreview({
   entity,
   onClose,
+  onConfirm,
   status,
 }: {
   entity: 'club' | 'organization';
   onClose: () => void;
+  onConfirm: () => Promise<void>;
   status: 'active' | 'inactive' | 'archived';
 }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const isActive = status === 'active';
   const isOrganization = entity === 'organization';
   const noun = isOrganization ? 'организацию' : 'клуб';
@@ -516,6 +602,19 @@ function LifecycleImpactPreview({
       ? 'Перед восстановлением Setly проверит владельца, клубы и доступы. Организация вернётся в CRM только когда вся структура готова к работе.'
       : 'Перед восстановлением Setly проверит организацию и доступы. Клуб вернётся в CRM только когда вся структура готова к работе.';
 
+  async function confirm() {
+    setSaving(true);
+    setError('');
+    try {
+      await onConfirm();
+      onClose();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Операция не выполнена');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 sm:p-5" role="alert">
       <div className="flex items-start gap-3">
@@ -524,21 +623,45 @@ function LifecycleImpactPreview({
           <p className="font-medium">{title}</p>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button disabled type="button" variant={isActive ? 'destructive' : 'default'}>
+            <Button disabled={saving} onClick={confirm} type="button" variant={isActive ? 'destructive' : 'default'}>
               {isActive ? <Archive className="mr-2 size-4" /> : <ArchiveRestore className="mr-2 size-4" />}
-              {isActive ? 'Подтвердить архивирование' : 'Подтвердить восстановление'}
+              {saving ? 'Выполняем…' : isActive ? 'Подтвердить архивирование' : 'Подтвердить восстановление'}
             </Button>
-            <Button onClick={onClose} type="button" variant="ghost">Отмена</Button>
+            <Button disabled={saving} onClick={onClose} type="button" variant="ghost">Отмена</Button>
           </div>
+          {error ? <p className="mt-3 text-sm text-destructive">{error}</p> : null}
         </div>
       </div>
     </div>
   );
 }
 
-function OrganizationSettingsPreview({ organization }: { organization: InstallationOrganization }) {
+function OrganizationSettings({
+  onLifecycle,
+  onSave,
+  organization,
+}: {
+  onLifecycle: () => Promise<void>;
+  onSave: (name: string) => Promise<void>;
+  organization: InstallationOrganization;
+}) {
   const [showImpact, setShowImpact] = useState(false);
+  const [name, setName] = useState(organization.name);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const isActive = organization.status === 'active';
+
+  async function save() {
+    setSaving(true);
+    setError('');
+    try {
+      await onSave(name);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Не удалось сохранить организацию');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)]">
@@ -547,9 +670,10 @@ function OrganizationSettingsPreview({ organization }: { organization: Installat
         <CardContent className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="organization-settings-name">Название организации</Label>
-            <Input defaultValue={organization.name} id="organization-settings-name" />
+            <Input value={name} onChange={(event) => setName(event.target.value)} id="organization-settings-name" />
           </div>
-          <Button disabled type="button">Сохранить изменения</Button>
+          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          <Button disabled={saving || name.trim() === organization.name} onClick={save} type="button">{saving ? 'Сохраняем…' : 'Сохранить изменения'}</Button>
         </CardContent>
       </Card>
       <Card className="rounded-2xl">
@@ -561,15 +685,38 @@ function OrganizationSettingsPreview({ organization }: { organization: Installat
           </Button>
         </CardContent>
       </Card>
-      {showImpact ? <div className="lg:col-span-2"><LifecycleImpactPreview entity="organization" onClose={() => setShowImpact(false)} status={organization.status} /></div> : null}
+      {showImpact ? <div className="lg:col-span-2"><LifecycleImpactPreview entity="organization" onClose={() => setShowImpact(false)} onConfirm={onLifecycle} status={organization.status} /></div> : null}
     </div>
   );
 }
 
-function ClubSettingsPreview({ club }: { club: InstallationOrganization['clubs'][number] }) {
+function ClubSettings({
+  club,
+  onLifecycle,
+  onSave,
+}: {
+  club: InstallationOrganization['clubs'][number];
+  onLifecycle: () => Promise<void>;
+  onSave: (input: { name: string; timezone: string }) => Promise<void>;
+}) {
   const [timezone, setTimezone] = useState(club.timezone);
+  const [name, setName] = useState(club.name);
   const [showImpact, setShowImpact] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const isActive = club.status === 'active';
+
+  async function save() {
+    setSaving(true);
+    setError('');
+    try {
+      await onSave({ name, timezone });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Не удалось сохранить клуб');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(300px,0.65fr)]">
@@ -578,13 +725,14 @@ function ClubSettingsPreview({ club }: { club: InstallationOrganization['clubs']
         <CardContent className="grid gap-5 sm:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="club-settings-name">Название клуба</Label>
-            <Input defaultValue={club.name} id="club-settings-name" />
+            <Input value={name} onChange={(event) => setName(event.target.value)} id="club-settings-name" />
           </div>
           <div className="space-y-2">
             <Label>Город и часовой пояс</Label>
             <TimezoneSelect onChange={setTimezone} value={timezone} />
           </div>
-          <Button className="sm:col-span-2 sm:w-fit" disabled type="button">Сохранить изменения</Button>
+          {error ? <p className="text-sm text-destructive sm:col-span-2">{error}</p> : null}
+          <Button className="sm:col-span-2 sm:w-fit" disabled={saving || (name.trim() === club.name && timezone === club.timezone)} onClick={save} type="button">{saving ? 'Сохраняем…' : 'Сохранить изменения'}</Button>
         </CardContent>
       </Card>
       <Card className="rounded-2xl">
@@ -596,7 +744,7 @@ function ClubSettingsPreview({ club }: { club: InstallationOrganization['clubs']
           </Button>
         </CardContent>
       </Card>
-      {showImpact ? <div className="lg:col-span-2"><LifecycleImpactPreview entity="club" onClose={() => setShowImpact(false)} status={club.status} /></div> : null}
+      {showImpact ? <div className="lg:col-span-2"><LifecycleImpactPreview entity="club" onClose={() => setShowImpact(false)} onConfirm={onLifecycle} status={club.status} /></div> : null}
     </div>
   );
 }
@@ -613,6 +761,8 @@ export default function InstallationProvisioningPage() {
   const clubId = organizationRoute?.[3] ? Number(organizationRoute[3]) : null;
   const clubSection = organizationRoute?.[4] || null;
   const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [managementEnabled, setManagementEnabled] = useState(false);
+  const [provisioningEnabled, setProvisioningEnabled] = useState(false);
   const [snapshot, setSnapshot] = useState<InstallationSnapshot | null>(null);
   const [organizationDetail, setOrganizationDetail] = useState<InstallationOrganization | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -630,6 +780,7 @@ export default function InstallationProvisioningPage() {
   const [owner, setOwner] = useState(freshOwner);
   const [selectedProvider, setSelectedProvider] = useState<IntegrationProvider | null>(null);
   const [connectionFormMode, setConnectionFormMode] = useState<'configure' | 'edit' | 'rotate'>('configure');
+  const [integrationAction, setIntegrationAction] = useState('');
 
   async function loadSnapshot() {
     const response = await installationFetch('/snapshot');
@@ -669,8 +820,14 @@ export default function InstallationProvisioningPage() {
     void (async () => {
       try {
         const response = await installationFetch('/status');
-        const status = (await response.json()) as { enabled: boolean };
+        const status = (await response.json()) as {
+          enabled: boolean;
+          managementEnabled: boolean;
+          provisioningEnabled: boolean;
+        };
         setEnabled(status.enabled);
+        setManagementEnabled(status.managementEnabled);
+        setProvisioningEnabled(status.provisioningEnabled);
         if (status.enabled && window.sessionStorage.getItem(TOKEN_KEY)) await loadSnapshot();
       } catch (caught) {
         setPageError(caught instanceof Error ? caught.message : 'Не удалось открыть рабочее место оператора');
@@ -682,12 +839,12 @@ export default function InstallationProvisioningPage() {
 
   useEffect(() => {
     setSelectedProvider(null);
-    if (!snapshot || !organizationId) {
+    if (!snapshot || !organizationId || !managementEnabled) {
       setOrganizationDetail(null);
       return;
     }
     void loadOrganization(organizationId);
-  }, [location.pathname, organizationId, snapshot]);
+  }, [location.pathname, managementEnabled, organizationId, snapshot]);
 
   const canContinue = useMemo(() => {
     if (step === 0) return Boolean(organization.name.trim());
@@ -713,12 +870,101 @@ export default function InstallationProvisioningPage() {
     navigate('/installation/provisioning');
   }
 
-  function logout() {
+  async function logout() {
+    try {
+      if (window.sessionStorage.getItem(TOKEN_KEY)) {
+        await installationFetch('/session/revoke', { method: 'POST' });
+      }
+    } catch {
+      // Local session removal remains fail-closed when the network is unavailable.
+    }
     window.sessionStorage.removeItem(TOKEN_KEY);
     setSnapshot(null);
     setOrganizationDetail(null);
     resetForm();
     navigate('/installation', { replace: true });
+  }
+
+  async function refreshOrganization() {
+    if (!organizationId) return;
+    await Promise.all([loadOrganization(organizationId), loadSnapshot()]);
+  }
+
+  async function saveOrganizationName(name: string) {
+    if (!organizationDetail) return;
+    await operatorMutation(`/organizations/${organizationDetail.id}`, {
+      expectedUpdatedAt: organizationDetail.updatedAt,
+      name,
+    }, 'PUT');
+    await refreshOrganization();
+  }
+
+  async function changeOrganizationLifecycle() {
+    if (!organizationDetail) return;
+    const action = organizationDetail.status === 'active' ? 'archive' : 'reactivate';
+    await operatorMutation(`/organizations/${organizationDetail.id}/${action}`, {
+      confirmImpact: action === 'archive',
+      expectedUpdatedAt: organizationDetail.updatedAt,
+    });
+    await refreshOrganization();
+  }
+
+  async function saveClubSettings(input: { name: string; timezone: string }) {
+    if (!organizationDetail || !selectedClub) return;
+    await operatorMutation(
+      `/organizations/${organizationDetail.id}/clubs/${selectedClub.id}`,
+      { ...input, expectedUpdatedAt: selectedClub.updatedAt },
+      'PUT',
+    );
+    await refreshOrganization();
+  }
+
+  async function changeClubLifecycle() {
+    if (!organizationDetail || !selectedClub) return;
+    const action = selectedClub.status === 'active' ? 'archive' : 'reactivate';
+    await operatorMutation(
+      `/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/${action}`,
+      {
+        confirmImpact: action === 'archive',
+        expectedUpdatedAt: selectedClub.updatedAt,
+      },
+    );
+    await refreshOrganization();
+  }
+
+  async function saveIntegration(payload: Record<string, unknown>) {
+    if (!organizationDetail || !selectedClub || !selectedIntegration || !selectedProvider) return;
+    const path = `/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${selectedProvider}`;
+    await operatorMutation(
+      connectionFormMode === 'rotate' ? `${path}/credentials` : path,
+      {
+        ...payload,
+        expectedUpdatedAt: selectedIntegration.updatedAt,
+      },
+      connectionFormMode === 'rotate' ? 'POST' : 'PUT',
+    );
+    setSelectedProvider(null);
+    await refreshOrganization();
+  }
+
+  async function runIntegrationAction(provider: IntegrationProvider, action: string) {
+    if (!organizationDetail || !selectedClub) return;
+    const integration = selectedClub.integrations.find((item) => item.provider === provider);
+    if (!integration?.updatedAt) return;
+    const actionKey = `${provider}:${action}`;
+    setIntegrationAction(actionKey);
+    setPageError('');
+    try {
+      await operatorMutation(
+        `/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${provider}/${action}`,
+        { expectedUpdatedAt: integration.updatedAt },
+      );
+      await refreshOrganization();
+    } catch (caught) {
+      setPageError(caught instanceof Error ? caught.message : 'Операция не выполнена');
+    } finally {
+      setIntegrationAction('');
+    }
   }
 
   async function createOrganization() {
@@ -784,9 +1030,13 @@ export default function InstallationProvisioningPage() {
   const selectedClub = clubId
     ? organizationDetail?.clubs.find((club) => club.id === clubId) || null
     : null;
+  const integrationMutationsEnabled = Boolean(
+    selectedClub?.status === 'active' && organizationDetail?.status === 'active',
+  );
   const selectedIntegration = selectedProvider && selectedClub
     ? selectedClub.integrations.find((item) => item.provider === selectedProvider) || null
     : null;
+  const canShowCreateRoute = isCreateRoute && provisioningEnabled;
 
   return (
     <main className="min-h-screen bg-muted/35 p-3 sm:p-5 xl:p-7">
@@ -799,7 +1049,7 @@ export default function InstallationProvisioningPage() {
           <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end"><Button variant="ghost" onClick={() => navigate('/installation')}>Организации</Button><div className="flex items-center gap-2"><ThemeToggle /><Button variant="outline" onClick={logout}>Выйти</Button></div></div>
         </header>
 
-        {!isCreateRoute ? (
+        {!canShowCreateRoute ? (
           <section className="p-3 sm:p-7 lg:p-10">
             <div className="mx-auto max-w-6xl">
               {detailLoading ? (
@@ -817,7 +1067,7 @@ export default function InstallationProvisioningPage() {
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Settings2 className="size-6" /></div>
                     <div className="min-w-0"><p className="text-sm text-muted-foreground">Организация</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Настройки · {organizationDetail.name}</h1></div>
                   </div>
-                  <OrganizationSettingsPreview key={organizationDetail.id} organization={organizationDetail} />
+                  <OrganizationSettings key={`${organizationDetail.id}-${organizationDetail.updatedAt}`} onLifecycle={changeOrganizationLifecycle} onSave={saveOrganizationName} organization={organizationDetail} />
                 </>
               ) : selectedClub && organizationDetail && clubSection === 'settings' ? (
                 <>
@@ -832,7 +1082,7 @@ export default function InstallationProvisioningPage() {
                     <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><Settings2 className="size-6" /></div>
                     <div className="min-w-0"><p className="break-words text-sm text-muted-foreground">{organizationDetail.name}</p><h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">Настройки · {selectedClub.name}</h1></div>
                   </div>
-                  <ClubSettingsPreview club={selectedClub} key={selectedClub.id} />
+                  <ClubSettings club={selectedClub} key={`${selectedClub.id}-${selectedClub.updatedAt}`} onLifecycle={changeClubLifecycle} onSave={saveClubSettings} />
                 </>
               ) : selectedClub && organizationDetail && clubSection === 'integrations' ? (
                 <>
@@ -863,17 +1113,20 @@ export default function InstallationProvisioningPage() {
                             {integration.lastActivityAt ? <p className="text-xs text-muted-foreground">Последнее успешное событие {formatDate(integration.lastActivityAt)}</p> : null}
                             {integration.secretUpdatedAt ? <p className="text-xs text-muted-foreground">Данные обновлены {formatDate(integration.secretUpdatedAt)}</p> : null}
                             <div className="flex flex-wrap gap-2">
-                              <Button onClick={() => { setConnectionFormMode(integration.configured ? 'edit' : 'configure'); setSelectedProvider(integration.provider); }} type="button" variant={integration.configured ? 'outline' : 'default'}>{integration.configured ? 'Открыть настройки' : 'Настроить'}</Button>
-                              {integration.configured ? <Button onClick={() => { setConnectionFormMode('rotate'); setSelectedProvider(integration.provider); }} type="button" variant="ghost">Заменить данные</Button> : null}
-                              {integration.configured ? <Button disabled type="button" variant="ghost">{integration.status === 'active' ? 'Отключить' : 'Активировать'}</Button> : null}
-                              {integration.configured && integration.status !== 'revoked' ? <Button disabled type="button" variant="ghost">Отозвать</Button> : null}
+                              {integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled} onClick={() => { setConnectionFormMode(integration.configured ? 'edit' : 'configure'); setSelectedProvider(integration.provider); }} type="button" variant={integration.configured ? 'outline' : 'default'}>{integration.configured ? 'Открыть настройки' : 'Настроить'}</Button> : null}
+                              {integration.configured ? <Button disabled={!integrationMutationsEnabled} onClick={() => { setConnectionFormMode('rotate'); setSelectedProvider(integration.provider); }} type="button" variant="ghost">Заменить данные</Button> : null}
+                              {integration.configured && integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, integration.status === 'active' ? 'disable' : 'activate')} type="button" variant="ghost">{integrationAction === `${integration.provider}:${integration.status === 'active' ? 'disable' : 'activate'}` ? 'Выполняем…' : integration.status === 'active' ? 'Отключить' : 'Активировать'}</Button> : null}
+                              {integration.configured && integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, 'validate')} type="button" variant="ghost">Проверить</Button> : null}
+                              {integration.configured && ['telegram', 'vk'].includes(integration.provider) && integration.status === 'active' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, 'restart')} type="button" variant="ghost">Перезапустить</Button> : null}
+                              {integration.configured && integration.provider === 'beeline' && integration.status === 'active' ? <><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction('beeline', 'check')} type="button" variant="ghost">Проверить подписку</Button><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction('beeline', 'renew')} type="button" variant="ghost">Продлить подписку</Button><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction('beeline', 'cutover')} type="button" variant="ghost">Переключить callback</Button></> : null}
+                              {integration.configured && integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, 'revoke')} type="button" variant="ghost">Отозвать</Button> : null}
                             </div>
                           </CardContent>
                         </Card>
                       );
                     })}
                   </div>
-                  {selectedProvider && selectedIntegration ? <ConnectionFormPreview key={`${selectedProvider}-${connectionFormMode}`} mode={connectionFormMode} onClose={() => setSelectedProvider(null)} provider={selectedProvider} state={selectedIntegration} /> : null}
+                  {selectedProvider && selectedIntegration ? <ConnectionForm key={`${selectedProvider}-${connectionFormMode}-${selectedIntegration.updatedAt}`} mode={connectionFormMode} onClose={() => setSelectedProvider(null)} onSave={saveIntegration} provider={selectedProvider} state={selectedIntegration} /> : null}
                 </>
               ) : organizationId && organizationDetail ? (
                 <>
@@ -896,13 +1149,13 @@ export default function InstallationProvisioningPage() {
                 <>
                   <div className="flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
                     <div><p className="text-sm text-muted-foreground">{countLabel(snapshot.organizations.length, ['организация', 'организации', 'организаций'])} · {countLabel(totalClubs, ['клуб', 'клуба', 'клубов'])}</p><h1 className="mt-1 text-3xl font-semibold tracking-tight">Организации</h1></div>
-                    <Button size="lg" onClick={openCreate}><Plus className="mr-2 size-4" />Создать организацию</Button>
+                    {provisioningEnabled ? <Button size="lg" onClick={openCreate}><Plus className="mr-2 size-4" />Создать организацию</Button> : null}
                   </div>
                   {pageError ? <div className="mt-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{pageError}</div> : null}
                   <div className="mt-7 overflow-hidden rounded-2xl border">
                     <div className="hidden grid-cols-[minmax(0,1fr)_100px_120px_150px_140px] gap-4 border-b bg-muted/30 px-5 py-3 text-xs font-medium uppercase tracking-wide text-muted-foreground md:grid"><span>Организация</span><span>Состояние</span><span>Клубы</span><span>Владелец</span><span>Создана</span></div>
                     {snapshot.organizations.map((item) => (
-                      <button className="grid w-full gap-3 border-b px-5 py-4 text-left transition last:border-b-0 hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring md:grid-cols-[minmax(0,1fr)_100px_120px_150px_140px] md:items-center" key={item.id} onClick={() => navigate(`/installation/organizations/${item.id}`)} type="button">
+                      <button className="grid w-full gap-3 border-b px-5 py-4 text-left transition last:border-b-0 enabled:hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default md:grid-cols-[minmax(0,1fr)_100px_120px_150px_140px] md:items-center" disabled={!managementEnabled} key={item.id} onClick={() => navigate(`/installation/organizations/${item.id}`)} type="button">
                         <div className="min-w-0"><p className="break-words font-medium">{item.name}</p></div>
                         <div><TenantStatusBadge status={item.status} /></div>
                         <div><span className="text-xs text-muted-foreground md:hidden">Клубы · </span><span className="text-sm">{item.clubCount}</span></div>

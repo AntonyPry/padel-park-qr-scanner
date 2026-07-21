@@ -16,6 +16,7 @@ const clientsService = require('../../services/clients.service');
 const {
   assertLegacyDownstreamReady,
 } = require('../../provider-integrations/runtime');
+const { markConnectionActivity } = require('../../provider-integrations/activity');
 
 async function buildSourceKeyboard(tenant = null) {
   const keyboard = VkKeyboard.builder();
@@ -77,7 +78,9 @@ function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
   if (connection) {
     vk.updates.use(async (_ctx, next) => {
       await assertLegacyDownstreamReady(connection);
-      return next();
+      const result = await next();
+      await markConnectionActivity(connection);
+      return result;
     });
   }
 
@@ -265,6 +268,7 @@ function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
   return {
     bot: vk,
     start: () => vk.updates.start(),
+    stop: () => vk.updates.stop(),
   };
 }
 

@@ -37,13 +37,14 @@ const {
   validateRolloutMaintenanceConfiguration,
 } = require('./tenant-rollout/contract');
 
-function createApp({ onTenantInitialized } = {}) {
+function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
   validateRolloutMaintenanceConfiguration();
   validateBeelineCapabilityCutoverConfiguration();
   const app = express();
 
   app.set('onTenantInitialized', onTenantInitialized);
+  app.set('onIntegrationConnectionChanged', onIntegrationConnectionChanged);
   app.use(cors({
     exposedHeaders: [
       ONBOARDING_COMPLETED_TASKS_HEADER,

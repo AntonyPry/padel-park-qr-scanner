@@ -1,5 +1,6 @@
 // src/controllers/webhook.controller.js
 const evotorService = require('../services/evotor.service');
+const { markConnectionActivity } = require('../provider-integrations/activity');
 const {
   isTenantProviderIntegrationsEnabled,
 } = require('../tenant-context/capabilities');
@@ -151,6 +152,7 @@ class WebhookController {
           connection,
           () => evotorService.processReceipt(payload, { connection }),
         );
+        await markConnectionActivity(connection);
         if (result.alreadyProcessed) return res.status(200).send('Already processed');
         return res.status(200).send('OK');
       }

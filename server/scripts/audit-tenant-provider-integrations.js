@@ -21,7 +21,7 @@ function auditTenantProviderIntegrations() {
 
   requireText('models/IntegrationConnection.js', [
     /defaultScope/u,
-    /exclude: \['secretCiphertext', 'secretKeyVersion'\]/u,
+    /exclude:[\s\S]*'credentialFingerprint'[\s\S]*'fingerprintKeyVersion'[\s\S]*'providerIdentityFingerprint'[\s\S]*'secretCiphertext'[\s\S]*'secretKeyVersion'/u,
     /INTEGRATION_CONNECTION_IDENTITY_IMMUTABLE/u,
   ]);
   requireText('src/app.js', [

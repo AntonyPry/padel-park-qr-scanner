@@ -28,8 +28,44 @@ const GLOBAL_ENDPOINT_IDS = new Set([
 const INSTALLATION_ENDPOINT_IDS = new Set([
   'installationProvisioning.status',
   'installationProvisioning.session',
+  'installationProvisioning.sessionRevoke',
   'installationProvisioning.snapshot',
   'installationProvisioning.organization',
+  'installationProvisioning.organizationUpdate',
+  'installationProvisioning.organizationArchive',
+  'installationProvisioning.organizationReactivate',
+  'installationProvisioning.clubUpdate',
+  'installationProvisioning.clubArchive',
+  'installationProvisioning.clubReactivate',
+  'installationProvisioning.telegramConfigure',
+  'installationProvisioning.telegramRotate',
+  'installationProvisioning.telegramValidate',
+  'installationProvisioning.telegramActivate',
+  'installationProvisioning.telegramDisable',
+  'installationProvisioning.telegramRevoke',
+  'installationProvisioning.telegramRestart',
+  'installationProvisioning.vkConfigure',
+  'installationProvisioning.vkRotate',
+  'installationProvisioning.vkValidate',
+  'installationProvisioning.vkActivate',
+  'installationProvisioning.vkDisable',
+  'installationProvisioning.vkRevoke',
+  'installationProvisioning.vkRestart',
+  'installationProvisioning.evotorConfigure',
+  'installationProvisioning.evotorRotate',
+  'installationProvisioning.evotorValidate',
+  'installationProvisioning.evotorActivate',
+  'installationProvisioning.evotorDisable',
+  'installationProvisioning.evotorRevoke',
+  'installationProvisioning.beelineConfigure',
+  'installationProvisioning.beelineRotate',
+  'installationProvisioning.beelineValidate',
+  'installationProvisioning.beelineActivate',
+  'installationProvisioning.beelineDisable',
+  'installationProvisioning.beelineRevoke',
+  'installationProvisioning.beelineCheck',
+  'installationProvisioning.beelineRenew',
+  'installationProvisioning.beelineCutover',
   'installationProvisioning.create',
   'installationProvisioning.reissue',
   'installationProvisioning.activationStatus',
@@ -191,7 +227,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '5baf3e3e41d43082a614e64790ef9bcec2113fe060af4079862cfee270dec976';
+  '0f724ec24028f1b3307e6198f58690be1a3c070233a3cc71be578f808c79f19f';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

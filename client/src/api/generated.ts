@@ -11,8 +11,44 @@ export const apiEndpoints = {
   "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
   "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.session": { method: "POST", path: "/installation/provisioning/session", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.sessionRevoke": { method: "POST", path: "/installation/provisioning/session/revoke", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.snapshot": { method: "GET", path: "/installation/provisioning/snapshot", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.organization": { method: "GET", path: "/installation/provisioning/organizations/{organizationId}", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.organizationUpdate": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.organizationArchive": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/archive", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.organizationReactivate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/reactivate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.clubUpdate": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.clubArchive": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/archive", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.clubReactivate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/reactivate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramConfigure": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkConfigure": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.evotorConfigure": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineConfigure": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramRotate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram/credentials", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramValidate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram/validate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramActivate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram/activate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramDisable": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram/disable", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramRevoke": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram/revoke", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkRotate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk/credentials", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkValidate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk/validate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkActivate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk/activate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkDisable": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk/disable", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkRevoke": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk/revoke", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.evotorRotate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor/credentials", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.evotorValidate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor/validate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.evotorActivate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor/activate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.evotorDisable": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor/disable", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.evotorRevoke": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor/revoke", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineRotate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/credentials", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineValidate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/validate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineActivate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/activate", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineDisable": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/disable", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineRevoke": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/revoke", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.telegramRestart": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram/restart", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.vkRestart": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk/restart", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineCheck": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/check", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineRenew": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/renew", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.beelineCutover": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/cutover", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.create": { method: "POST", path: "/installation/provisioning/organizations", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.reissue": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/activation/reissue", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.activationStatus": { method: "POST", path: "/installation/provisioning/activation/status", responseType: "json", tenantScope: "installation" },
@@ -349,19 +385,406 @@ export type AuthMembershipsResponse = {
 };
 export type InstallationProvisioningStatusResponse = {
   enabled: boolean;
+  managementEnabled: boolean;
+  provisioningEnabled: boolean;
 };
 export type InstallationProvisioningSessionBody = {
   password: string;
   username: string;
 };
-export type InstallationProvisioningSessionResponse = {
-  token: string;
+export type InstallationProvisioningSessionResponse = Record<string, unknown>;
+export type InstallationProvisioningSessionRevokeResponse = {
+  success: true;
 };
 export type InstallationProvisioningSnapshotResponse = Record<string, unknown>;
 export type InstallationProvisioningOrganizationParams = {
   organizationId: number | string;
 };
 export type InstallationProvisioningOrganizationResponse = Record<string, unknown>;
+export type InstallationProvisioningOrganizationUpdateParams = {
+  organizationId: number | string;
+};
+export type InstallationProvisioningOrganizationUpdateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+  name: string;
+};
+export type InstallationProvisioningOrganizationUpdateResponse = {
+  auditLogId: number;
+  idempotency: {
+    operationId: number;
+    replayed: boolean;
+  };
+  [key: string]: unknown;
+};
+export type InstallationProvisioningOrganizationArchiveParams = {
+  organizationId: number | string;
+};
+export type InstallationProvisioningOrganizationArchiveBody = {
+  confirmImpact?: boolean;
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningOrganizationArchiveResponse = {
+  auditLogId: number;
+  idempotency: {
+    operationId: number;
+    replayed: boolean;
+  };
+  [key: string]: unknown;
+};
+export type InstallationProvisioningOrganizationReactivateParams = {
+  organizationId: number | string;
+};
+export type InstallationProvisioningOrganizationReactivateBody = {
+  confirmImpact?: boolean;
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningOrganizationReactivateResponse = {
+  auditLogId: number;
+  idempotency: {
+    operationId: number;
+    replayed: boolean;
+  };
+  [key: string]: unknown;
+};
+export type InstallationProvisioningClubUpdateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningClubUpdateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+  name: string;
+  timezone: string;
+};
+export type InstallationProvisioningClubUpdateResponse = {
+  auditLogId: number;
+  idempotency: {
+    operationId: number;
+    replayed: boolean;
+  };
+  [key: string]: unknown;
+};
+export type InstallationProvisioningClubArchiveParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningClubArchiveBody = {
+  confirmImpact?: boolean;
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningClubArchiveResponse = {
+  auditLogId: number;
+  idempotency: {
+    operationId: number;
+    replayed: boolean;
+  };
+  [key: string]: unknown;
+};
+export type InstallationProvisioningClubReactivateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningClubReactivateBody = {
+  confirmImpact?: boolean;
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningClubReactivateResponse = {
+  auditLogId: number;
+  idempotency: {
+    operationId: number;
+    replayed: boolean;
+  };
+  [key: string]: unknown;
+};
+export type InstallationProvisioningTelegramConfigureParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramConfigureBody = {
+  expectedUpdatedAt?: string | null;
+  idempotencyKey: string;
+  credential?: string;
+  proxyUrl?: string | null;
+};
+export type InstallationProvisioningTelegramConfigureResponse = Record<string, unknown>;
+export type InstallationProvisioningVkConfigureParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkConfigureBody = {
+  expectedUpdatedAt?: string | null;
+  idempotencyKey: string;
+  credential?: string;
+};
+export type InstallationProvisioningVkConfigureResponse = Record<string, unknown>;
+export type InstallationProvisioningEvotorConfigureParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningEvotorConfigureBody = {
+  expectedUpdatedAt?: string | null;
+  idempotencyKey: string;
+  credential?: string;
+};
+export type InstallationProvisioningEvotorConfigureResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineConfigureParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineConfigureBody = {
+  expectedUpdatedAt?: string | null;
+  idempotencyKey: string;
+  credential?: string;
+  settings: {
+    apiBaseUrl: string;
+    apiTimeoutMs: number;
+    callbackBaseUrl: string;
+    recordsPath: string;
+    statisticsPath: string;
+    subscriptionAutoRenewEnabled: boolean;
+    subscriptionExpiresSeconds: number;
+    subscriptionPath: string;
+    subscriptionPattern: string | null;
+    subscriptionRenewBeforeSeconds: number;
+    subscriptionType: "BASIC_CALL" | "ADVANCED_CALL";
+  };
+};
+export type InstallationProvisioningBeelineConfigureResponse = Record<string, unknown>;
+export type InstallationProvisioningTelegramRotateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramRotateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+  credential: string;
+  proxyUrl?: string | null;
+};
+export type InstallationProvisioningTelegramRotateResponse = Record<string, unknown>;
+export type InstallationProvisioningTelegramValidateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramValidateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningTelegramValidateResponse = Record<string, unknown>;
+export type InstallationProvisioningTelegramActivateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramActivateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningTelegramActivateResponse = Record<string, unknown>;
+export type InstallationProvisioningTelegramDisableParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramDisableBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningTelegramDisableResponse = Record<string, unknown>;
+export type InstallationProvisioningTelegramRevokeParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramRevokeBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningTelegramRevokeResponse = Record<string, unknown>;
+export type InstallationProvisioningVkRotateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkRotateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+  credential: string;
+};
+export type InstallationProvisioningVkRotateResponse = Record<string, unknown>;
+export type InstallationProvisioningVkValidateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkValidateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningVkValidateResponse = Record<string, unknown>;
+export type InstallationProvisioningVkActivateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkActivateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningVkActivateResponse = Record<string, unknown>;
+export type InstallationProvisioningVkDisableParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkDisableBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningVkDisableResponse = Record<string, unknown>;
+export type InstallationProvisioningVkRevokeParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkRevokeBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningVkRevokeResponse = Record<string, unknown>;
+export type InstallationProvisioningEvotorRotateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningEvotorRotateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+  credential: string;
+};
+export type InstallationProvisioningEvotorRotateResponse = Record<string, unknown>;
+export type InstallationProvisioningEvotorValidateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningEvotorValidateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningEvotorValidateResponse = Record<string, unknown>;
+export type InstallationProvisioningEvotorActivateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningEvotorActivateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningEvotorActivateResponse = Record<string, unknown>;
+export type InstallationProvisioningEvotorDisableParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningEvotorDisableBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningEvotorDisableResponse = Record<string, unknown>;
+export type InstallationProvisioningEvotorRevokeParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningEvotorRevokeBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningEvotorRevokeResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineRotateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineRotateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+  credential: string;
+};
+export type InstallationProvisioningBeelineRotateResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineValidateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineValidateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineValidateResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineActivateParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineActivateBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineActivateResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineDisableParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineDisableBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineDisableResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineRevokeParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineRevokeBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineRevokeResponse = Record<string, unknown>;
+export type InstallationProvisioningTelegramRestartParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningTelegramRestartBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningTelegramRestartResponse = Record<string, unknown>;
+export type InstallationProvisioningVkRestartParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningVkRestartBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningVkRestartResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineCheckParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineCheckBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineCheckResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineRenewParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineRenewBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineRenewResponse = Record<string, unknown>;
+export type InstallationProvisioningBeelineCutoverParams = {
+  clubId: number | string;
+  organizationId: number | string;
+};
+export type InstallationProvisioningBeelineCutoverBody = {
+  expectedUpdatedAt: string;
+  idempotencyKey: string;
+};
+export type InstallationProvisioningBeelineCutoverResponse = Record<string, unknown>;
 export type InstallationProvisioningCreateBody = {
   clubs: Array<{
     name: string;
@@ -2536,8 +2959,44 @@ export interface ApiEndpointRequestMap {
   "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.session": ApiEndpointRequest<undefined, undefined, InstallationProvisioningSessionBody>;
+  "installationProvisioning.sessionRevoke": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.snapshot": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.organization": ApiEndpointRequest<InstallationProvisioningOrganizationParams, undefined, undefined>;
+  "installationProvisioning.organizationUpdate": ApiEndpointRequest<InstallationProvisioningOrganizationUpdateParams, undefined, InstallationProvisioningOrganizationUpdateBody>;
+  "installationProvisioning.organizationArchive": ApiEndpointRequest<InstallationProvisioningOrganizationArchiveParams, undefined, InstallationProvisioningOrganizationArchiveBody>;
+  "installationProvisioning.organizationReactivate": ApiEndpointRequest<InstallationProvisioningOrganizationReactivateParams, undefined, InstallationProvisioningOrganizationReactivateBody>;
+  "installationProvisioning.clubUpdate": ApiEndpointRequest<InstallationProvisioningClubUpdateParams, undefined, InstallationProvisioningClubUpdateBody>;
+  "installationProvisioning.clubArchive": ApiEndpointRequest<InstallationProvisioningClubArchiveParams, undefined, InstallationProvisioningClubArchiveBody>;
+  "installationProvisioning.clubReactivate": ApiEndpointRequest<InstallationProvisioningClubReactivateParams, undefined, InstallationProvisioningClubReactivateBody>;
+  "installationProvisioning.telegramConfigure": ApiEndpointRequest<InstallationProvisioningTelegramConfigureParams, undefined, InstallationProvisioningTelegramConfigureBody>;
+  "installationProvisioning.vkConfigure": ApiEndpointRequest<InstallationProvisioningVkConfigureParams, undefined, InstallationProvisioningVkConfigureBody>;
+  "installationProvisioning.evotorConfigure": ApiEndpointRequest<InstallationProvisioningEvotorConfigureParams, undefined, InstallationProvisioningEvotorConfigureBody>;
+  "installationProvisioning.beelineConfigure": ApiEndpointRequest<InstallationProvisioningBeelineConfigureParams, undefined, InstallationProvisioningBeelineConfigureBody>;
+  "installationProvisioning.telegramRotate": ApiEndpointRequest<InstallationProvisioningTelegramRotateParams, undefined, InstallationProvisioningTelegramRotateBody>;
+  "installationProvisioning.telegramValidate": ApiEndpointRequest<InstallationProvisioningTelegramValidateParams, undefined, InstallationProvisioningTelegramValidateBody>;
+  "installationProvisioning.telegramActivate": ApiEndpointRequest<InstallationProvisioningTelegramActivateParams, undefined, InstallationProvisioningTelegramActivateBody>;
+  "installationProvisioning.telegramDisable": ApiEndpointRequest<InstallationProvisioningTelegramDisableParams, undefined, InstallationProvisioningTelegramDisableBody>;
+  "installationProvisioning.telegramRevoke": ApiEndpointRequest<InstallationProvisioningTelegramRevokeParams, undefined, InstallationProvisioningTelegramRevokeBody>;
+  "installationProvisioning.vkRotate": ApiEndpointRequest<InstallationProvisioningVkRotateParams, undefined, InstallationProvisioningVkRotateBody>;
+  "installationProvisioning.vkValidate": ApiEndpointRequest<InstallationProvisioningVkValidateParams, undefined, InstallationProvisioningVkValidateBody>;
+  "installationProvisioning.vkActivate": ApiEndpointRequest<InstallationProvisioningVkActivateParams, undefined, InstallationProvisioningVkActivateBody>;
+  "installationProvisioning.vkDisable": ApiEndpointRequest<InstallationProvisioningVkDisableParams, undefined, InstallationProvisioningVkDisableBody>;
+  "installationProvisioning.vkRevoke": ApiEndpointRequest<InstallationProvisioningVkRevokeParams, undefined, InstallationProvisioningVkRevokeBody>;
+  "installationProvisioning.evotorRotate": ApiEndpointRequest<InstallationProvisioningEvotorRotateParams, undefined, InstallationProvisioningEvotorRotateBody>;
+  "installationProvisioning.evotorValidate": ApiEndpointRequest<InstallationProvisioningEvotorValidateParams, undefined, InstallationProvisioningEvotorValidateBody>;
+  "installationProvisioning.evotorActivate": ApiEndpointRequest<InstallationProvisioningEvotorActivateParams, undefined, InstallationProvisioningEvotorActivateBody>;
+  "installationProvisioning.evotorDisable": ApiEndpointRequest<InstallationProvisioningEvotorDisableParams, undefined, InstallationProvisioningEvotorDisableBody>;
+  "installationProvisioning.evotorRevoke": ApiEndpointRequest<InstallationProvisioningEvotorRevokeParams, undefined, InstallationProvisioningEvotorRevokeBody>;
+  "installationProvisioning.beelineRotate": ApiEndpointRequest<InstallationProvisioningBeelineRotateParams, undefined, InstallationProvisioningBeelineRotateBody>;
+  "installationProvisioning.beelineValidate": ApiEndpointRequest<InstallationProvisioningBeelineValidateParams, undefined, InstallationProvisioningBeelineValidateBody>;
+  "installationProvisioning.beelineActivate": ApiEndpointRequest<InstallationProvisioningBeelineActivateParams, undefined, InstallationProvisioningBeelineActivateBody>;
+  "installationProvisioning.beelineDisable": ApiEndpointRequest<InstallationProvisioningBeelineDisableParams, undefined, InstallationProvisioningBeelineDisableBody>;
+  "installationProvisioning.beelineRevoke": ApiEndpointRequest<InstallationProvisioningBeelineRevokeParams, undefined, InstallationProvisioningBeelineRevokeBody>;
+  "installationProvisioning.telegramRestart": ApiEndpointRequest<InstallationProvisioningTelegramRestartParams, undefined, InstallationProvisioningTelegramRestartBody>;
+  "installationProvisioning.vkRestart": ApiEndpointRequest<InstallationProvisioningVkRestartParams, undefined, InstallationProvisioningVkRestartBody>;
+  "installationProvisioning.beelineCheck": ApiEndpointRequest<InstallationProvisioningBeelineCheckParams, undefined, InstallationProvisioningBeelineCheckBody>;
+  "installationProvisioning.beelineRenew": ApiEndpointRequest<InstallationProvisioningBeelineRenewParams, undefined, InstallationProvisioningBeelineRenewBody>;
+  "installationProvisioning.beelineCutover": ApiEndpointRequest<InstallationProvisioningBeelineCutoverParams, undefined, InstallationProvisioningBeelineCutoverBody>;
   "installationProvisioning.create": ApiEndpointRequest<undefined, undefined, InstallationProvisioningCreateBody>;
   "installationProvisioning.reissue": ApiEndpointRequest<InstallationProvisioningReissueParams, undefined, undefined>;
   "installationProvisioning.activationStatus": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivationStatusBody>;
@@ -2832,8 +3291,44 @@ export interface ApiEndpointResponseMap {
   "auth.memberships": AuthMembershipsResponse;
   "installationProvisioning.status": InstallationProvisioningStatusResponse;
   "installationProvisioning.session": InstallationProvisioningSessionResponse;
+  "installationProvisioning.sessionRevoke": InstallationProvisioningSessionRevokeResponse;
   "installationProvisioning.snapshot": InstallationProvisioningSnapshotResponse;
   "installationProvisioning.organization": InstallationProvisioningOrganizationResponse;
+  "installationProvisioning.organizationUpdate": InstallationProvisioningOrganizationUpdateResponse;
+  "installationProvisioning.organizationArchive": InstallationProvisioningOrganizationArchiveResponse;
+  "installationProvisioning.organizationReactivate": InstallationProvisioningOrganizationReactivateResponse;
+  "installationProvisioning.clubUpdate": InstallationProvisioningClubUpdateResponse;
+  "installationProvisioning.clubArchive": InstallationProvisioningClubArchiveResponse;
+  "installationProvisioning.clubReactivate": InstallationProvisioningClubReactivateResponse;
+  "installationProvisioning.telegramConfigure": InstallationProvisioningTelegramConfigureResponse;
+  "installationProvisioning.vkConfigure": InstallationProvisioningVkConfigureResponse;
+  "installationProvisioning.evotorConfigure": InstallationProvisioningEvotorConfigureResponse;
+  "installationProvisioning.beelineConfigure": InstallationProvisioningBeelineConfigureResponse;
+  "installationProvisioning.telegramRotate": InstallationProvisioningTelegramRotateResponse;
+  "installationProvisioning.telegramValidate": InstallationProvisioningTelegramValidateResponse;
+  "installationProvisioning.telegramActivate": InstallationProvisioningTelegramActivateResponse;
+  "installationProvisioning.telegramDisable": InstallationProvisioningTelegramDisableResponse;
+  "installationProvisioning.telegramRevoke": InstallationProvisioningTelegramRevokeResponse;
+  "installationProvisioning.vkRotate": InstallationProvisioningVkRotateResponse;
+  "installationProvisioning.vkValidate": InstallationProvisioningVkValidateResponse;
+  "installationProvisioning.vkActivate": InstallationProvisioningVkActivateResponse;
+  "installationProvisioning.vkDisable": InstallationProvisioningVkDisableResponse;
+  "installationProvisioning.vkRevoke": InstallationProvisioningVkRevokeResponse;
+  "installationProvisioning.evotorRotate": InstallationProvisioningEvotorRotateResponse;
+  "installationProvisioning.evotorValidate": InstallationProvisioningEvotorValidateResponse;
+  "installationProvisioning.evotorActivate": InstallationProvisioningEvotorActivateResponse;
+  "installationProvisioning.evotorDisable": InstallationProvisioningEvotorDisableResponse;
+  "installationProvisioning.evotorRevoke": InstallationProvisioningEvotorRevokeResponse;
+  "installationProvisioning.beelineRotate": InstallationProvisioningBeelineRotateResponse;
+  "installationProvisioning.beelineValidate": InstallationProvisioningBeelineValidateResponse;
+  "installationProvisioning.beelineActivate": InstallationProvisioningBeelineActivateResponse;
+  "installationProvisioning.beelineDisable": InstallationProvisioningBeelineDisableResponse;
+  "installationProvisioning.beelineRevoke": InstallationProvisioningBeelineRevokeResponse;
+  "installationProvisioning.telegramRestart": InstallationProvisioningTelegramRestartResponse;
+  "installationProvisioning.vkRestart": InstallationProvisioningVkRestartResponse;
+  "installationProvisioning.beelineCheck": InstallationProvisioningBeelineCheckResponse;
+  "installationProvisioning.beelineRenew": InstallationProvisioningBeelineRenewResponse;
+  "installationProvisioning.beelineCutover": InstallationProvisioningBeelineCutoverResponse;
   "installationProvisioning.create": InstallationProvisioningCreateResponse;
   "installationProvisioning.reissue": InstallationProvisioningReissueResponse;
   "installationProvisioning.activationStatus": InstallationProvisioningActivationStatusResponse;
