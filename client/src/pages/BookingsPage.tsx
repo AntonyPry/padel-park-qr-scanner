@@ -2173,7 +2173,7 @@ export default function BookingsPage() {
     booking: Booking,
   ) => {
     if (
-      !canEditBookings ||
+      !canEditBookingResources ||
       isScheduleClosed ||
       booking.status === 'canceled' ||
       event.button !== 0 ||
@@ -3021,7 +3021,6 @@ export default function BookingsPage() {
                         (getMinutesFromDayStart(booking.startsAt, dayStartMinutes) / stepMinutes) * SLOT_HEIGHT,
                       );
                       const height = getBookingCardHeight(booking.durationMinutes, stepMinutes);
-                      const canQuickEdit = canEditBookings && booking.status !== 'canceled';
                       const needsPayment = isBookingNeedsPayment(booking);
                       const participantCount = getBookingParticipantCount(booking);
                       const participantNames = getBookingParticipantNames(booking);
@@ -3032,8 +3031,10 @@ export default function BookingsPage() {
                           role="button"
                           tabIndex={0}
                           className={cn(
-                            'absolute left-1 right-1 z-20 overflow-hidden rounded-md border p-2 text-left text-xs shadow-sm transition-transform hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                            canEditBookings && booking.status !== 'canceled' && 'cursor-grab active:cursor-grabbing',
+                            'absolute left-1 right-1 z-20 overflow-hidden rounded-md border p-1 text-left text-xs shadow-sm transition-transform hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            canEditBookingResources && booking.status !== 'canceled'
+                              ? 'cursor-grab active:cursor-grabbing'
+                              : 'cursor-pointer',
                             draggingBookingId === booking.id && 'opacity-45',
                             getStatusClass(booking.status),
                           )}
@@ -3061,123 +3062,41 @@ export default function BookingsPage() {
                           }}
                           onPointerDown={(event) => handleBookingDragStart(event, booking)}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold">
-                              {formatTime(booking.startsAt)}-{formatTime(booking.endsAt)}
-                            </span>
-                            {canQuickEdit && height >= 64 ? (
-                              <div
-                                className="flex shrink-0 gap-0.5"
-                                onPointerDown={(event) => event.stopPropagation()}
-                              >
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                  title="Открыть бронь"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openEdit(booking);
-                                  }}
-                                >
-                                  <Pencil className="size-3" />
-                                </Button>
-                                {booking.status !== 'no_show' && (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Клиент не пришел"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void quickStatus(booking, 'no_show');
-                                    }}
-                                  >
-                                    <UserX className="size-3" />
-                                  </Button>
-                                )}
-                                {needsPayment && (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Отметить оплату"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      openPaymentDialog(booking);
-                                    }}
-                                  >
-                                    <Banknote className="size-3" />
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                  title="Отменить бронь"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void quickStatus(booking, 'canceled');
-                                  }}
-                                >
-                                  <XCircle className="size-3" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <span>{booking.bookingSeriesId ? 'Постоянка' : STATUS_LABELS[booking.status]}</span>
-                            )}
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {booking.isFirstBooking && (
-                              <span className="rounded-sm bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-50">
-                                Впервые
-                              </span>
-                            )}
-                            <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                              {BOOKING_TYPE_SHORT_LABELS[booking.bookingType] || 'Игра'}
-                            </span>
-                            {booking.trainingPlan && (
-                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                                {getTrainingPlanStatusLabel(booking.trainingPlan)}
-                              </span>
-                            )}
-                            {booking.bookingSeriesId && (
-                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                                Постоянка
-                              </span>
-                            )}
-                            {booking.bookingType === 'group_training' && (
-                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                                {participantCount} участн.
-                              </span>
-                            )}
-                            {needsPayment && (
-                              <span className="max-w-full truncate rounded-sm bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold">
-                                К оплате
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 truncate font-medium">{booking.clientName}</div>
-                          <div className="truncate opacity-80">
-                            {PAYMENT_STATUS_LABELS[booking.paymentStatus]} · {formatCurrency(booking.price)}
-                          </div>
-                          {height > 104 && booking.bookingType === 'group_training' && (
-                            <div className="mt-1 truncate opacity-75">
-                              {participantNames.join(', ')}
+                          <div className="flex h-full min-w-0 flex-col justify-center gap-0.5">
+                            <div className="truncate text-[11px] font-semibold leading-3">
+                              {booking.clientName}
                             </div>
-                          )}
-                          {height > 96 && booking.responsibleStaff && (
-                            <div className="mt-1 truncate opacity-75">
-                              {formatResponsibleStaff(booking.responsibleStaff)}
+                            <div className="flex flex-wrap gap-0.5 overflow-hidden">
+                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                {BOOKING_TYPE_SHORT_LABELS[booking.bookingType] || 'Игра'}
+                              </span>
+                              {needsPayment && (
+                                <span className="max-w-full truncate rounded-sm bg-amber-500/25 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  К оплате
+                                </span>
+                              )}
+                              {booking.isFirstBooking && (
+                                <span className="rounded-sm bg-emerald-500/20 px-1 py-0.5 text-[9px] font-semibold leading-3 text-emerald-50">
+                                  Впервые
+                                </span>
+                              )}
+                              {booking.trainingPlan && (
+                                <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  {getTrainingPlanStatusLabel(booking.trainingPlan)}
+                                </span>
+                              )}
+                              {booking.bookingSeriesId && (
+                                <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  Постоянка
+                                </span>
+                              )}
+                              {booking.bookingType === 'group_training' && (
+                                <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  {participantCount} участн.
+                                </span>
+                              )}
                             </div>
-                          )}
-                          {height > 86 && booking.comment && (
-                            <div className="mt-1 truncate opacity-70">{booking.comment}</div>
-                          )}
+                          </div>
                         </div>
                       );
                     })}
@@ -3765,6 +3684,17 @@ export default function BookingsPage() {
                       >
                         <UserX className="mr-2 size-4" />
                         Не пришел
+                      </Button>
+                    )}
+                    {isBookingNeedsPayment(editingBooking) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPaymentDialog(editingBooking)}
+                      >
+                        <Banknote className="mr-2 size-4" />
+                        Отметить оплату
                       </Button>
                     )}
                     <Button
