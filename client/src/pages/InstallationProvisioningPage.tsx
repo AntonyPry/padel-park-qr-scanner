@@ -618,6 +618,7 @@ function ConnectionForm({
       setCredential('');
       setProxyUrl('');
       setPendingPayload(null);
+      onClose();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось сохранить подключение');
       setPendingPayload(null);
@@ -1077,7 +1078,6 @@ export default function InstallationProvisioningPage() {
       },
       connectionFormMode === 'rotate' ? 'POST' : 'PUT',
     );
-    setConnectionFormMode(null);
     await refreshOrganization();
   }
 
