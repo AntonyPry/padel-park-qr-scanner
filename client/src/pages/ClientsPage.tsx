@@ -28,7 +28,6 @@ import {
   MessageSquareText,
   PackageCheck,
   Pencil,
-  Phone,
   PhoneCall,
   Plus,
   RotateCcw,
@@ -56,6 +55,7 @@ import {
   type ClientSkillMapItem,
   type ClientSkillMapPayload,
 } from '@/components/client-skill-map';
+import { ClientProfileOverview } from '@/components/client-profile-overview';
 import {
   TrainingNoteExerciseEditor,
   TrainingNoteExerciseList,
@@ -4456,176 +4456,67 @@ export default function ClientsPage() {
                 </div>
               ) : (
                 <>
-                  <div
-                    className={`grid grid-cols-1 gap-4 ${
-                      isOrganizationTrainer ? 'md:grid-cols-2' : 'md:grid-cols-3'
-                    }`}
-                  >
-                    {!isOrganizationTrainer && (
-                      <div className="min-w-0 rounded-md border p-4">
-                        <div className="text-xs text-muted-foreground">
-                          Телефон
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 font-medium">
-                          <Phone className="h-4 w-4 text-muted-foreground" />
-                          {details.client.phone}
-                        </div>
-                      </div>
-                    )}
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="text-xs text-muted-foreground">
-                        Визитов
-                      </div>
-                      <div className="mt-1 text-2xl font-bold">
-                        {details.client.stats.visitCount}
-                      </div>
-                    </div>
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="text-xs text-muted-foreground">
-                        Последний визит
-                      </div>
-                      <div className="mt-1 flex min-w-0 items-center gap-2 font-medium">
-                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        <span className="min-w-0 break-words">
-                          {formatDateTime(details.client.stats.lastVisitAt)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div className="font-medium">Данные клиента</div>
-                        {canEdit && (
-                          <div className="flex flex-wrap justify-end gap-2">
-                            {canCreateCallTask &&
-                              details.client.status !== 'archived' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={openCallTaskDialog}
-                                >
-                                  <MessageSquareText className="mr-2 h-4 w-4" />
-                                  Задача
-                                </Button>
-                              )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openEdit(details.client)}
-                            >
-                              <Pencil className="mr-2 h-4 w-4" /> Изменить
-                            </Button>
-                            {details.client.status === 'archived' ? (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    requestClientStatusUpdate(
-                                      details.client,
-                                      'active',
-                                    )
-                                  }
-                                >
-                                  <ArchiveRestore className="mr-2 h-4 w-4" />
-                                  Восстановить
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                  onClick={() =>
-                                    requestPermanentDelete(details.client)
-                                  }
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Удалить
-                                </Button>
-                              </>
-                            ) : (
+                  <ClientProfileOverview
+                    client={details.client}
+                    hidePhone={isOrganizationTrainer}
+                    showStatus={false}
+                    actions={
+                      canEdit ? (
+                        <>
+                          {canCreateCallTask &&
+                            details.client.status !== 'archived' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={openCallTaskDialog}
+                              >
+                                <MessageSquareText className="mr-2 h-4 w-4" />
+                                Задача
+                              </Button>
+                            )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEdit(details.client)}
+                          >
+                            <Pencil className="mr-2 h-4 w-4" /> Изменить
+                          </Button>
+                          {details.client.status === 'archived' ? (
+                            <>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
-                                  requestClientStatusUpdate(
-                                    details.client,
-                                    'archived',
-                                  )
+                                  requestClientStatusUpdate(details.client, 'active')
                                 }
                               >
-                                <Archive className="mr-2 h-4 w-4" />
-                                В архив
+                                <ArchiveRestore className="mr-2 h-4 w-4" />
+                                Восстановить
                               </Button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Источник
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {details.client.source}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Дата рождения
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {details.client.birthDate
-                              ? formatDate(details.client.birthDate)
-                              : '-'}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Первый визит
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {formatDateTime(
-                              details.client.stats.firstVisitAt,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Создан
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {formatDateTime(details.client.createdAt)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Внешние ID
-                          </span>
-                          <span className="min-w-0 break-all text-right text-xs">
-                            {[
-                              details.client.telegramId &&
-                                `TG: ${details.client.telegramId}`,
-                              details.client.vkId &&
-                                `VK: ${details.client.vkId}`,
-                              details.client.webId &&
-                                `WEB: ${details.client.webId}`,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ') || '-'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="mb-2 font-medium">Заметка</div>
-                      <div className="min-h-[112px] whitespace-pre-wrap text-sm text-muted-foreground">
-                        {details.client.note || 'Заметка пока не заполнена.'}
-                      </div>
-                    </div>
-                  </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                onClick={() => requestPermanentDelete(details.client)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Удалить
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                requestClientStatusUpdate(details.client, 'archived')
+                              }
+                            >
+                              <Archive className="mr-2 h-4 w-4" /> В архив
+                            </Button>
+                          )}
+                        </>
+                      ) : undefined
+                    }
+                  />
 
                   {canViewSubscriptions && (
                     <div className="rounded-md border">
