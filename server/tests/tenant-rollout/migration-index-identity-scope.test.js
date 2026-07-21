@@ -16,6 +16,7 @@ const ROLLOUT_MIGRATIONS = [
   '20260719220000-add-tenant-onboarding.js',
   '20260720100000-add-final-tenant-enforcement.js',
   '20260720120000-add-installation-provisioning.js',
+  '20260720220000-add-installation-operator-management.js',
 ];
 
 function statisticsQueries(source) {

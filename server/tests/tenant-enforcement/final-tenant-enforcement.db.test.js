@@ -13,6 +13,9 @@ const {
   seedTwoTenantFixture,
 } = require('../helpers/final-tenant-rc-fixture');
 const {
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
+const {
   FOREIGN_KEY_DEFINITIONS,
   INDEX_DEFINITIONS,
   TRIGGER_DEFINITIONS,
@@ -382,6 +385,7 @@ test('Feature 9 final enforcement, detector and two-Organization RC matrix', asy
 
     const fixture = await seedTwoTenantFixture(schema);
     for (const name of CAPABILITY_ENV) process.env[name] = 'true';
+    await assertFeature10_4IntegrationConnectionSchema(queryInterface);
     rootDb = require('../../models');
     const {
       classifyTenantFoundation,

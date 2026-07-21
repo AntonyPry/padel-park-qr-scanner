@@ -8,6 +8,9 @@ const {
   dropDisposableDatabase,
   migrateAll,
 } = require('../helpers/final-tenant-rc-fixture');
+const {
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
 
 const CAPABILITY_ENV = [
   'TENANT_CONTEXT_ENABLED',
@@ -54,6 +57,7 @@ test('Feature 9 exact singleton snapshot and mixed-provider legacy bridge matrix
   try {
     schema = connect(database);
     await migrateAll(schema);
+    await assertFeature10_4IntegrationConnectionSchema(schema.getQueryInterface());
     db = require('../../models');
     const authService = require('../../src/services/auth.service');
     await authService.bootstrapOwner({

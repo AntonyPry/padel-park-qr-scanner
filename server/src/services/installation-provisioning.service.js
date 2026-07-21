@@ -6,6 +6,7 @@ const authService = require('./auth.service');
 const accountLifecycle = require('./account-lifecycle.service');
 const accountMetadata = require('./account-metadata.service');
 const auditService = require('./audit.service');
+const installationOperatorAuth = require('./installation-operator-auth.service');
 const {
   assertTenantFoundationInitialized,
   invalidateTenantFoundationGateCache,
@@ -318,6 +319,10 @@ async function provisionOrganization(input, operator, options = {}) {
 
   try {
     result = await db.sequelize.transaction(async (transaction) => {
+      const lockedOperator = await installationOperatorAuth.lockSessionAuthority(
+        operator,
+        transaction,
+      );
       await assertTenantFoundationInitialized({ lock: true, transaction });
       const previous = await db.InstallationProvisioningOperation.findOne({
         lock: transaction.LOCK.UPDATE,
@@ -393,7 +398,7 @@ async function provisionOrganization(input, operator, options = {}) {
             clubIds: clubs.map((club) => club.id),
             clubSlugs: clubs.map((club) => club.slug),
             membershipId: membership.id,
-            operator: operator.username,
+            operator: lockedOperator.username,
             ownerAccountId: account.id,
           },
           organizationId: organization.id,
@@ -424,8 +429,13 @@ async function provisionOrganization(input, operator, options = {}) {
     });
   } catch (error) {
     if (error?.name === 'SequelizeUniqueConstraintError') {
-      const previous = await db.InstallationProvisioningOperation.findOne({
-        where: { idempotencyKeyHash },
+      const previous = await db.sequelize.transaction(async (transaction) => {
+        await installationOperatorAuth.lockSessionAuthority(operator, transaction);
+        return db.InstallationProvisioningOperation.findOne({
+          lock: transaction.LOCK.UPDATE,
+          transaction,
+          where: { idempotencyKeyHash },
+        });
       });
       if (previous) {
         if (previous.payloadHash !== payloadHash) {
@@ -435,7 +445,14 @@ async function provisionOrganization(input, operator, options = {}) {
             'IDEMPOTENCY_PAYLOAD_MISMATCH',
           );
         }
-        return loadOperationResult(previous, { replayed: true });
+        return db.sequelize.transaction(async (transaction) => {
+          await installationOperatorAuth.lockSessionAuthority(operator, transaction);
+          const lockedPrevious = await db.InstallationProvisioningOperation.findByPk(
+            previous.id,
+            { lock: transaction.LOCK.UPDATE, transaction },
+          );
+          return loadOperationResult(lockedPrevious, { replayed: true, transaction });
+        });
       }
       const uniquePaths = new Set(
         (error.errors || []).map((item) => item.path).filter(Boolean),
@@ -462,60 +479,219 @@ async function provisionOrganization(input, operator, options = {}) {
   return result;
 }
 
-async function getInstallationSnapshot() {
+async function getInstallationSnapshot(operator) {
   assertEnabledFoundation();
-  const classification = await assertTenantFoundationInitialized({ strict: true });
-  const organizations = await db.Organization.findAll({
-    attributes: ['id', 'name', 'slug', 'createdAt'],
-    include: [
-      { attributes: ['id'], model: db.Club, required: false },
-      {
-        attributes: ['id', 'status'],
-        include: [{ attributes: ['id', 'status'], model: db.Account }],
-        model: db.Membership,
-        required: false,
-        where: { role: 'owner' },
-      },
-    ],
-    order: [['id', 'ASC'], [db.Club, 'id', 'ASC']],
+  return db.sequelize.transaction(async (transaction) => {
+    await installationOperatorAuth.lockSessionAuthority(operator, transaction);
+    const classification = await assertTenantFoundationInitialized({
+      strict: true,
+      transaction,
+    });
+    const organizations = await db.Organization.findAll({
+      attributes: ['id', 'name', 'slug', 'status', 'createdAt', 'updatedAt'],
+      include: [
+        { attributes: ['id'], model: db.Club, required: false },
+        {
+          attributes: ['id', 'status'],
+          include: [{ attributes: ['id', 'status'], model: db.Account }],
+          model: db.Membership,
+          required: false,
+          where: { role: 'owner' },
+        },
+      ],
+      order: [['id', 'ASC'], [db.Club, 'id', 'ASC']],
+      transaction,
+    });
+    const operations = await db.InstallationProvisioningOperation.findAll({
+      include: [{ as: 'activationToken', model: db.OwnerActivationToken }],
+      order: [['createdAt', 'DESC']],
+      transaction,
+    });
+    const operationByOrganization = new Map(
+      operations.map((operation) => [Number(operation.organizationId), operation]),
+    );
+    const audits = await db.AuditLog.findAll({
+      attributes: ['id', 'organizationId', 'action', 'summary', 'statusCode', 'createdAt'],
+      limit: 20,
+      order: [['createdAt', 'DESC'], ['id', 'DESC']],
+      transaction,
+      where: { action: { [db.Sequelize.Op.like]: 'installation.%' } },
+    });
+
+    return {
+      audits: audits.map((audit) => audit.toJSON()),
+      foundation: { state: classification.state },
+      organizations: organizations.map((organization) => {
+        const operation = operationByOrganization.get(Number(organization.id));
+        const ownerMemberships = organization.Memberships || [];
+        const hasActiveOwner = ownerMemberships.some(
+          (membership) => membership.status === 'active' && membership.Account?.status === 'active',
+        );
+        const hasPendingActivation = operation && activationState(operation.activationToken) === 'pending';
+        const ownerState = hasActiveOwner
+          ? (hasPendingActivation ? 'pending_activation' : 'active')
+          : (ownerMemberships.length > 0 ? 'inactive' : 'missing');
+        return {
+          clubCount: (organization.Clubs || []).length,
+          createdAt: organization.createdAt,
+          id: organization.id,
+          name: organization.name,
+          ownerState,
+          slug: organization.slug,
+          status: organization.status,
+          updatedAt: organization.updatedAt,
+        };
+      }),
+    };
   });
-  const operations = await db.InstallationProvisioningOperation.findAll({
-    include: [{ as: 'activationToken', model: db.OwnerActivationToken }],
-    order: [['createdAt', 'DESC']],
+}
+
+const INSTALLATION_INTEGRATION_PROVIDERS = Object.freeze([
+  'beeline',
+  'evotor',
+  'telegram',
+  'vk',
+]);
+
+function safeOperatorMetadataText(value, maxLength = 180) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  return normalized && normalized.length <= maxLength ? normalized : null;
+}
+
+function safeOperatorCallbackUrl(value) {
+  const candidate = safeOperatorMetadataText(value, 500);
+  if (!candidate) return null;
+  try {
+    const url = new URL(candidate);
+    if (
+      url.protocol !== 'https:' ||
+      url.search ||
+      url.hash ||
+      url.username ||
+      url.password ||
+      !/^\/api\/webhooks\/evotor\/ic_[a-f0-9]{32}$/u.test(url.pathname)
+    ) {
+      return null;
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function safeOperatorIdentity(provider, value) {
+  const candidate = safeOperatorMetadataText(value, 120);
+  if (!candidate) return null;
+  const patterns = {
+    beeline: /^ВАТС [\p{L}\p{N} .·«»—_+()-]+$/u,
+    evotor: /^Webhook [\p{L}\p{N} .·«»—_+()-]+$/u,
+    telegram: /^@[A-Za-z0-9_]{5,32}$/u,
+    vk: /^VK · [\p{L}\p{N} .·«»—_+()-]+$/u,
+  };
+  return patterns[provider]?.test(candidate) ? candidate : null;
+}
+
+function safeOperatorDateTime(value) {
+  if (typeof value !== 'string') return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+async function loadInstallationOrganization(organizationId, transaction) {
+  assertEnabledFoundation();
+  await assertTenantFoundationInitialized({ strict: true, transaction });
+  const id = Number(organizationId);
+  if (!Number.isInteger(id) || id <= 0) {
+    throw provisioningError(
+      'Организация не найдена',
+      404,
+      'INSTALLATION_ORGANIZATION_NOT_FOUND',
+    );
+  }
+
+  const organization = await db.Organization.findByPk(id, {
+    attributes: ['id', 'name', 'status', 'createdAt'],
+    include: [{
+      attributes: ['id', 'name', 'timezone', 'status'],
+      model: db.Club,
+      required: false,
+    }],
+    order: [[db.Club, 'id', 'ASC']],
+    transaction,
   });
-  const operationByOrganization = new Map(
-    operations.map((operation) => [Number(operation.organizationId), operation]),
-  );
-  const audits = await db.AuditLog.findAll({
-    attributes: ['id', 'organizationId', 'action', 'summary', 'statusCode', 'createdAt'],
-    limit: 20,
-    order: [['createdAt', 'DESC'], ['id', 'DESC']],
-    where: { action: { [db.Sequelize.Op.like]: 'installation.%' } },
+  if (!organization) {
+    throw provisioningError(
+      'Организация не найдена',
+      404,
+      'INSTALLATION_ORGANIZATION_NOT_FOUND',
+    );
+  }
+
+  const connections = await db.IntegrationConnection.unscoped().findAll({
+    attributes: ['clubId', 'metadata', 'provider', 'status', 'secretUpdatedAt'],
+    order: [['clubId', 'ASC'], ['provider', 'ASC'], ['id', 'ASC']],
+    transaction,
+    where: { organizationId: id },
   });
+  const connectionBySlot = new Map();
+  for (const connection of connections) {
+    const slot = `${Number(connection.clubId)}:${connection.provider}`;
+    if (!connectionBySlot.has(slot)) connectionBySlot.set(slot, connection);
+  }
 
   return {
-    audits: audits.map((audit) => audit.toJSON()),
-    foundation: { state: classification.state },
-    organizations: organizations.map((organization) => {
-      const operation = operationByOrganization.get(Number(organization.id));
-      const ownerMemberships = organization.Memberships || [];
-      const hasActiveOwner = ownerMemberships.some(
-        (membership) => membership.status === 'active' && membership.Account?.status === 'active',
-      );
-      const hasPendingActivation = operation && activationState(operation.activationToken) === 'pending';
-      const ownerState = hasActiveOwner
-        ? (hasPendingActivation ? 'pending_activation' : 'active')
-        : (ownerMemberships.length > 0 ? 'inactive' : 'missing');
-      return {
-        clubCount: (organization.Clubs || []).length,
-        createdAt: organization.createdAt,
-        id: organization.id,
-        name: organization.name,
-        ownerState,
-        slug: organization.slug,
-      };
-    }),
+    clubs: (organization.Clubs || []).map((club) => ({
+      id: club.id,
+      integrations: INSTALLATION_INTEGRATION_PROVIDERS.map((provider) => {
+        const connection = connectionBySlot.get(`${Number(club.id)}:${provider}`);
+        const storedMetadata = connection?.metadata;
+        let metadata = {};
+        try {
+          metadata = typeof storedMetadata === 'string'
+            ? JSON.parse(storedMetadata)
+            : (storedMetadata || {});
+        } catch {
+          metadata = {};
+        }
+        const validationStatus = [
+          'verified',
+          'pending_event',
+          'failed',
+          'not_tested',
+        ].includes(metadata.validationStatus)
+          ? metadata.validationStatus
+          : 'not_tested';
+        return {
+          configured: Boolean(connection),
+          lastActivityAt: safeOperatorDateTime(metadata.lastActivityAt),
+          lastValidatedAt: safeOperatorDateTime(metadata.lastValidatedAt),
+          provider,
+          safeCallbackUrl: provider === 'evotor'
+            ? safeOperatorCallbackUrl(metadata.safeCallbackUrl)
+            : null,
+          safeIdentity: safeOperatorIdentity(provider, metadata.safeIdentity),
+          secretUpdatedAt: connection?.secretUpdatedAt || null,
+          status: connection?.status || 'not_configured',
+          validationStatus,
+        };
+      }),
+      name: club.name,
+      status: club.status,
+      timezone: club.timezone,
+    })),
+    createdAt: organization.createdAt,
+    id: organization.id,
+    name: organization.name,
+    status: organization.status,
   };
+}
+
+async function getInstallationOrganization(organizationId, operator) {
+  return db.sequelize.transaction(async (transaction) => {
+    await installationOperatorAuth.lockSessionAuthority(operator, transaction);
+    return loadInstallationOrganization(organizationId, transaction);
+  });
 }
 
 async function inspectActivation(rawToken) {
@@ -595,6 +771,10 @@ async function activateOwner(rawToken, password) {
 async function reissueActivation(organizationId, operator) {
   assertEnabledFoundation();
   return db.sequelize.transaction(async (transaction) => {
+    const lockedOperator = await installationOperatorAuth.lockSessionAuthority(
+      operator,
+      transaction,
+    );
     const operation = await db.InstallationProvisioningOperation.findOne({
       lock: transaction.LOCK.UPDATE,
       transaction,
@@ -645,7 +825,10 @@ async function reissueActivation(organizationId, operator) {
       {
         action: 'installation.owner_activation.reissue',
         entityId: organizationId,
-        metadata: { operator: operator.username, ownerAccountId: operation.ownerAccountId },
+        metadata: {
+          operator: lockedOperator.username,
+          ownerAccountId: operation.ownerAccountId,
+        },
         organizationId,
         path: `/api/installation/provisioning/organizations/${organizationId}/activation/reissue`,
         statusCode: 200,
@@ -675,6 +858,7 @@ module.exports = {
     stablePayload,
   },
   activateOwner,
+  getInstallationOrganization,
   getInstallationSnapshot,
   inspectActivation,
   provisionOrganization,

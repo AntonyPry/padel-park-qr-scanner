@@ -23,6 +23,7 @@ const clientsService = require('../../services/clients.service');
 const {
   assertLegacyDownstreamReady,
 } = require('../../provider-integrations/runtime');
+const { markConnectionActivity } = require('../../provider-integrations/activity');
 
 function createProxyAgent(proxyUrl) {
   if (!proxyUrl) return undefined;
@@ -64,7 +65,9 @@ function createTelegramBot({
   if (connection) {
     bot.use(async (_ctx, next) => {
       await assertLegacyDownstreamReady(connection);
-      return next();
+      const result = await next();
+      await markConnectionActivity(connection);
+      return result;
     });
   }
 
@@ -277,9 +280,17 @@ function createTelegramBot({
     ctx.conversation.enter('register'),
   );
 
+  let runner = null;
   return {
     bot,
-    start: () => runTg(bot),
+    start: () => {
+      if (!runner) runner = runTg(bot);
+      return runner;
+    },
+    stop: async () => {
+      if (runner?.stop) await runner.stop();
+      runner = null;
+    },
   };
 }
 

@@ -74,10 +74,30 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         type: DataTypes.DATE,
       },
+      credentialFingerprint: {
+        allowNull: true,
+        type: DataTypes.STRING(64),
+      },
+      providerIdentityFingerprint: {
+        allowNull: true,
+        type: DataTypes.STRING(64),
+      },
+      fingerprintKeyVersion: {
+        allowNull: true,
+        type: DataTypes.STRING(32),
+      },
     },
     {
       defaultScope: {
-        attributes: { exclude: ['secretCiphertext', 'secretKeyVersion'] },
+        attributes: {
+          exclude: [
+            'credentialFingerprint',
+            'fingerprintKeyVersion',
+            'providerIdentityFingerprint',
+            'secretCiphertext',
+            'secretKeyVersion',
+          ],
+        },
       },
       hooks: {
         beforeBulkUpdate(options) {

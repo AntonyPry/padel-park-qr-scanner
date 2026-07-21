@@ -11,11 +11,17 @@ const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
   applyAcceptedTenantMigrations,
 } = require('../helpers/accepted-tenant-schema');
+const {
+  INSTALLATION_MANAGEMENT_MIGRATION_FILE,
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260716160000-add-tenant-clients-references.js';
 const VISITS_MIGRATION_FILE = '20260716180000-add-tenant-visits-scanner.js';
+const BIRTH_DATE_MIGRATION_FILE =
+  '20260721100000-add-client-birth-date.js';
 const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
@@ -55,6 +61,21 @@ async function createSchema(database) {
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
   }
   return sequelize;
+}
+
+async function applyTrackedMigration(queryInterface, file) {
+  const [applied] = await queryInterface.sequelize.query(
+    'SELECT name FROM SequelizeMeta WHERE name=:name LIMIT 1',
+    {
+      replacements: { name: file },
+      type: SequelizePackage.QueryTypes.SELECT,
+    },
+  );
+  if (applied) return;
+
+  const migration = require(path.join(SERVER_ROOT, 'migrations', file));
+  await migration.up(queryInterface, SequelizePackage);
+  await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
 }
 
 function databaseErrorCode(error) {
@@ -453,7 +474,14 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: VISITS_MIGRATION_FILE }]);
     await applyAcceptedTenantMigrations(queryInterface, {
       afterFile: VISITS_MIGRATION_FILE,
+      throughFile: INSTALLATION_MANAGEMENT_MIGRATION_FILE,
     });
+    await applyTrackedMigration(queryInterface, BIRTH_DATE_MIGRATION_FILE);
+    assert.ok(
+      (await queryInterface.describeTable('Users')).birthDate,
+      'production-like schema must include Users.birthDate before current models load',
+    );
+    await assertFeature10_4IntegrationConnectionSchema(queryInterface);
     const tenantContextService = require('../../src/services/tenant-context.service');
     const defaultContext = await tenantContextService.resolveTenantContext({
       accountId: owner.id,

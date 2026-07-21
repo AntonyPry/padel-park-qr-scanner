@@ -30,6 +30,7 @@ const {
   buildProviderIdempotencyKey,
   buildProviderNamespace,
 } = require('../provider-integrations/idempotency');
+const { markConnectionActivity } = require('../provider-integrations/activity');
 const {
   withProviderConnectionLock,
 } = require('../provider-integrations/locks');
@@ -1626,13 +1627,15 @@ async function receiveBeelineEvent({
 }) {
   const connection = requireAuthenticatedIngressContext(ingressContext, 'beeline');
   await assertLegacyDownstreamReady(connection);
-  return withProviderConnectionLock(connection, () => persistBeelineEvent({
+  const result = await withProviderConnectionLock(connection, () => persistBeelineEvent({
       body,
       connection,
       headers,
       ip,
       query,
     }));
+  await markConnectionActivity(connection);
+  return result;
 }
 
 async function ingestTrustedStatisticsRow(row, connection = null) {
