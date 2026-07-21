@@ -19,6 +19,7 @@ const DERIVED_CLUB_LINK_TABLES = new Set([
   'CorporateLedgerEntries',
   'EvotorSaleSettings',
   'Finances',
+  'InstallationMutationOperations',
   'OnboardingEvents',
   'OnboardingProgresses',
   'OnboardingTrainingModes',
@@ -34,6 +35,7 @@ const OPTIONAL_ORGANIZATION_TABLES = new Set(['Finances']);
 const OPTIONAL_CLUB_TABLES = new Set([
   'AuditLogs',
   'Finances',
+  'InstallationMutationOperations',
   'OnboardingEvents',
   'OnboardingProgresses',
 ]);

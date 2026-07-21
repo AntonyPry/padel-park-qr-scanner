@@ -134,8 +134,21 @@ test('Feature 9 final enforcement, detector and two-Organization RC matrix', asy
       runUp,
     } = finalMigration.__testing;
     const {
+      DERIVED_CLUB_LINK_TABLES,
+      OPTIONAL_CLUB_TABLES,
       runTenantIntegrityDetector,
     } = require('../../src/tenant-enforcement/integrity-detector');
+
+    assert.equal(
+      DERIVED_CLUB_LINK_TABLES.has('InstallationMutationOperations'),
+      true,
+      'Organization-level installation mutations use their definition-checked Club authority trigger',
+    );
+    assert.equal(
+      OPTIONAL_CLUB_TABLES.has('InstallationMutationOperations'),
+      true,
+      'Organization-level installation mutations may intentionally omit clubId',
+    );
 
     assert.equal(
       (await classifyFinalEnforcementDefinition(schema)).state,
