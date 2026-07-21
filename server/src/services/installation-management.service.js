@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const db = require('../../models');
 const auditService = require('./audit.service');
+const installationOperatorAuth = require('./installation-operator-auth.service');
 const {
   assertTenantFoundationInitialized,
   invalidateTenantFoundationGateCache,
@@ -266,11 +267,15 @@ async function runMutation({
   operator,
   organizationId,
 }) {
-  await assertTenantFoundationInitialized({ strict: true });
   const idempotencyKeyHash = sha256(input.idempotencyKey);
   const hash = payloadHash(action, { clubId, organizationId }, input);
   try {
     return await db.sequelize.transaction(async (transaction) => {
+      const lockedOperator = await installationOperatorAuth.lockSessionAuthority(
+        operator,
+        transaction,
+      );
+      await assertTenantFoundationInitialized({ strict: true, transaction });
       const previous = await db.InstallationMutationOperation.findOne({
         lock: transaction.LOCK.UPDATE,
         transaction,
@@ -295,7 +300,7 @@ async function runMutation({
         ...result.audit,
         action,
         clubId,
-        operator,
+        operator: lockedOperator,
         organizationId,
       }, transaction);
       if (typeof result.finalize === 'function') await result.finalize();
@@ -319,20 +324,25 @@ async function runMutation({
     });
   } catch (error) {
     if (error?.name !== 'SequelizeUniqueConstraintError') throw error;
-    const previous = await db.InstallationMutationOperation.findOne({
-      where: { idempotencyKeyHash },
+    return db.sequelize.transaction(async (transaction) => {
+      await installationOperatorAuth.lockSessionAuthority(operator, transaction);
+      const previous = await db.InstallationMutationOperation.findOne({
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: { idempotencyKeyHash },
+      });
+      if (!previous || previous.payloadHash !== hash) {
+        throw managementError(
+          'Ключ повторной отправки уже использован с другими данными',
+          409,
+          'IDEMPOTENCY_PAYLOAD_MISMATCH',
+        );
+      }
+      return {
+        ...parseStoredJson(previous.response),
+        idempotency: { operationId: previous.id, replayed: true },
+      };
     });
-    if (!previous || previous.payloadHash !== hash) {
-      throw managementError(
-        'Ключ повторной отправки уже использован с другими данными',
-        409,
-        'IDEMPOTENCY_PAYLOAD_MISMATCH',
-      );
-    }
-    return {
-      ...parseStoredJson(previous.response),
-      idempotency: { operationId: previous.id, replayed: true },
-    };
   }
 }
 
@@ -701,6 +711,7 @@ async function configureIntegration(
   operator,
   operation = 'configure',
 ) {
+  await installationOperatorAuth.revalidateSessionAuthority(operator);
   const candidate = await prepareCandidate(
     organizationId,
     clubId,
@@ -835,6 +846,7 @@ async function runBeelineAction(organizationId, clubId, action, input, operator)
   if (!['check', 'renew', 'cutover'].includes(action)) {
     throw managementError('Действие Билайн недоступно', 400, 'INTEGRATION_ACTION_INVALID');
   }
+  await installationOperatorAuth.revalidateSessionAuthority(operator);
   const candidate = await getScopedConnection(organizationId, clubId, 'beeline');
   if (!candidate || candidate.status !== 'active') {
     throw managementError('Сначала включите подключение Билайн', 409, 'INTEGRATION_INACTIVE');
@@ -923,6 +935,7 @@ async function setIntegrationStatus(
   input,
   operator,
 ) {
+  await installationOperatorAuth.revalidateSessionAuthority(operator);
   let validation = null;
   const candidateRow = await getScopedConnection(organizationId, clubId, provider);
   if (!candidateRow) throw managementError('Подключение не настроено', 404, 'INTEGRATION_NOT_FOUND');
@@ -996,6 +1009,7 @@ async function setIntegrationStatus(
 }
 
 async function validateIntegration(organizationId, clubId, provider, input, operator) {
+  await installationOperatorAuth.revalidateSessionAuthority(operator);
   const candidate = await getScopedConnection(organizationId, clubId, provider);
   if (!candidate) throw managementError('Подключение не настроено', 404, 'INTEGRATION_NOT_FOUND');
   if (candidate.status === 'revoked') {
@@ -1065,42 +1079,47 @@ async function validateIntegration(organizationId, clubId, provider, input, oper
   });
 }
 
-async function getInstallationOrganization(organizationId) {
-  await assertTenantFoundationInitialized({ strict: true });
-  const organization = await db.Organization.findByPk(Number(organizationId), {
-    attributes: ['createdAt', 'id', 'name', 'status', 'updatedAt'],
-    include: [{
-      attributes: ['id', 'name', 'status', 'timezone', 'updatedAt'],
-      model: db.Club,
-      required: false,
-    }],
+async function getInstallationOrganization(organizationId, operator) {
+  return db.sequelize.transaction(async (transaction) => {
+    await installationOperatorAuth.lockSessionAuthority(operator, transaction);
+    await assertTenantFoundationInitialized({ strict: true, transaction });
+    const organization = await db.Organization.findByPk(Number(organizationId), {
+      attributes: ['createdAt', 'id', 'name', 'status', 'updatedAt'],
+      include: [{
+        attributes: ['id', 'name', 'status', 'timezone', 'updatedAt'],
+        model: db.Club,
+        required: false,
+      }],
+      transaction,
+    });
+    if (!organization) {
+      throw managementError('Организация не найдена', 404, 'INSTALLATION_ORGANIZATION_NOT_FOUND');
+    }
+    const connections = await db.IntegrationConnection.unscoped().findAll({
+      attributes: [
+        'clubId', 'config', 'metadata', 'provider', 'secretUpdatedAt', 'status', 'updatedAt',
+      ],
+      order: [['clubId', 'ASC'], ['provider', 'ASC'], ['id', 'ASC']],
+      transaction,
+      where: { organizationId: organization.id },
+    });
+    const slots = new Map();
+    for (const connection of connections) {
+      const key = `${connection.clubId}:${connection.provider}`;
+      if (!slots.has(key)) slots.set(key, connection);
+    }
+    return {
+      clubs: (organization.Clubs || []).sort((a, b) => a.id - b.id).map((club) => ({
+        ...clubProjection(club),
+        integrations: PROVIDERS.map((provider) => integrationProjection(
+          slots.get(`${club.id}:${provider}`),
+          provider,
+        )),
+      })),
+      createdAt: organization.createdAt,
+      ...organizationProjection(organization),
+    };
   });
-  if (!organization) {
-    throw managementError('Организация не найдена', 404, 'INSTALLATION_ORGANIZATION_NOT_FOUND');
-  }
-  const connections = await db.IntegrationConnection.unscoped().findAll({
-    attributes: [
-      'clubId', 'config', 'metadata', 'provider', 'secretUpdatedAt', 'status', 'updatedAt',
-    ],
-    order: [['clubId', 'ASC'], ['provider', 'ASC'], ['id', 'ASC']],
-    where: { organizationId: organization.id },
-  });
-  const slots = new Map();
-  for (const connection of connections) {
-    const key = `${connection.clubId}:${connection.provider}`;
-    if (!slots.has(key)) slots.set(key, connection);
-  }
-  return {
-    clubs: (organization.Clubs || []).sort((a, b) => a.id - b.id).map((club) => ({
-      ...clubProjection(club),
-      integrations: PROVIDERS.map((provider) => integrationProjection(
-        slots.get(`${club.id}:${provider}`),
-        provider,
-      )),
-    })),
-    createdAt: organization.createdAt,
-    ...organizationProjection(organization),
-  };
 }
 
 module.exports = {

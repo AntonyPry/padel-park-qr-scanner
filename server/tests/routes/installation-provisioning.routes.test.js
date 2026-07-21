@@ -42,19 +42,18 @@ test('installation provisioning routes remain isolated behind operator authority
   const sessions = new Map();
   const originalCreate = db.InstallationOperatorSession.create;
   const originalFindOne = db.InstallationOperatorSession.findOne;
-  const originalUpdate = db.InstallationOperatorSession.update;
+  const originalTransaction = db.sequelize.transaction;
   db.InstallationOperatorSession.create = async (payload) => {
-    const row = { ...payload, revokedAt: null };
+    const row = {
+      ...payload,
+      revokedAt: null,
+      update: async (updates) => Object.assign(row, updates),
+    };
     sessions.set(payload.sessionId, row);
     return row;
   };
   db.InstallationOperatorSession.findOne = async ({ where }) => sessions.get(where.sessionId) || null;
-  db.InstallationOperatorSession.update = async (updates, { where }) => {
-    const row = sessions.get(where.sessionId);
-    if (!row || row.revokedAt) return [0];
-    Object.assign(row, updates);
-    return [1];
-  };
+  db.sequelize.transaction = async (callback) => callback({ LOCK: { UPDATE: 'UPDATE' } });
   try {
     const routes = require('../../src/routes/installation-provisioning');
     const app = express();
@@ -137,7 +136,7 @@ test('installation provisioning routes remain isolated behind operator authority
   } finally {
     db.InstallationOperatorSession.create = originalCreate;
     db.InstallationOperatorSession.findOne = originalFindOne;
-    db.InstallationOperatorSession.update = originalUpdate;
+    db.sequelize.transaction = originalTransaction;
     await close(server);
     for (const [key, value] of Object.entries(previous)) {
       if (value === undefined) delete process.env[key];

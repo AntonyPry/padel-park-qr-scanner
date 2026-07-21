@@ -42,6 +42,7 @@
     "tenant:audit-log-writes:audit": "node scripts/audit-audit-log-writes.js",
     "tenant:backup:manifest": "node scripts/tenant-backup-manifest.js",
     "tenant:onboarding-writes:audit": "node scripts/audit-onboarding-writes.js",
+    "tenant:installation-operator-writes:audit": "node scripts/audit-installation-operator-writes.js",
     "tenant:cache-realtime:audit": "node scripts/audit-tenant-cache-realtime.js",
     "tenant:booking-court-writes:audit": "node scripts/audit-booking-court-writes.js",
     "tenant:client-money-writes:audit": "node scripts/audit-client-money-writes.js",

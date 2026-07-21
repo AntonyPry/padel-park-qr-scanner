@@ -5,6 +5,31 @@ const db = require('../../models');
 
 const SESSION_TTL_SECONDS = 60 * 30;
 const TOKEN_KIND = 'installation-operator';
+const authorities = new WeakSet();
+
+function authorityError() {
+  const error = new Error('Сессия оператора недействительна');
+  error.code = 'INSTALLATION_OPERATOR_SESSION_INVALID';
+  error.statusCode = 401;
+  return error;
+}
+
+function mintAuthority({ expiresAt, sessionId, username }) {
+  const authority = Object.freeze({
+    expiresAt: new Date(expiresAt).toISOString(),
+    sessionId,
+    username,
+  });
+  authorities.add(authority);
+  return authority;
+}
+
+function assertAuthority(operator) {
+  if (!operator || !Object.isFrozen(operator) || !authorities.has(operator)) {
+    throw authorityError();
+  }
+  return operator;
+}
 
 function envEnabled(name) {
   return ['1', 'true', 'yes', 'on'].includes(
@@ -148,7 +173,8 @@ async function verifySession(token) {
     ) {
       return null;
     }
-    return Object.freeze({
+    return mintAuthority({
+      expiresAt: session.expiresAt,
       sessionId: payload.sid,
       username: payload.username,
     });
@@ -157,14 +183,44 @@ async function verifySession(token) {
   }
 }
 
+async function lockSessionAuthority(operator, transaction) {
+  const authority = assertAuthority(operator);
+  if (!transaction) throw new TypeError('Installation operator lock requires a transaction');
+  const session = await db.InstallationOperatorSession.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: {
+      sessionId: authority.sessionId,
+      username: authority.username,
+    },
+  });
+  if (
+    !session ||
+    session.revokedAt ||
+    new Date(session.expiresAt).getTime() <= Date.now() ||
+    new Date(session.expiresAt).toISOString() !== authority.expiresAt
+  ) {
+    throw authorityError();
+  }
+  return authority;
+}
+
+async function revalidateSessionAuthority(operator) {
+  return db.sequelize.transaction((transaction) =>
+    lockSessionAuthority(operator, transaction));
+}
+
 async function revokeSession(operator) {
-  const sessionId = String(operator?.sessionId || '');
-  if (!/^[a-f0-9]{32}$/u.test(sessionId)) return false;
-  const [updated] = await db.InstallationOperatorSession.update(
-    { revokedAt: new Date() },
-    { where: { revokedAt: null, sessionId } },
-  );
-  return updated === 1;
+  return db.sequelize.transaction(async (transaction) => {
+    const authority = await lockSessionAuthority(operator, transaction);
+    const session = await db.InstallationOperatorSession.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: { sessionId: authority.sessionId, username: authority.username },
+    });
+    await session.update({ revokedAt: new Date() }, { transaction });
+    return true;
+  });
 }
 
 function getPublicStatus() {
@@ -194,6 +250,8 @@ module.exports = {
   isEnabled,
   isManagementEnabled,
   isProvisioningEnabled,
+  lockSessionAuthority,
+  revalidateSessionAuthority,
   revokeSession,
   verifySession,
 };

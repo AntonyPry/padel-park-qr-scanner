@@ -27,9 +27,11 @@ class InstallationProvisioningController {
     }
   }
 
-  async snapshot(_req, res) {
+  async snapshot(req, res) {
     try {
-      res.json(await installationProvisioning.getInstallationSnapshot());
+      res.json(await installationProvisioning.getInstallationSnapshot(
+        req.installationOperator,
+      ));
     } catch (error) {
       sendError(res, error, 'Не удалось загрузить состояние установки');
     }
@@ -40,6 +42,7 @@ class InstallationProvisioningController {
       res.json(
         await installationManagement.getInstallationOrganization(
           req.params.organizationId,
+          req.installationOperator,
         ),
       );
     } catch (error) {

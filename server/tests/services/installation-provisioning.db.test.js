@@ -104,6 +104,10 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     ...CAPABILITY_ENV,
     'DB_NAME',
     'INSTALLATION_PROVISIONING_MIGRATION_FAIL_STEP',
+    'INSTALLATION_PROVISIONING_ENABLED',
+    'INSTALLATION_OPERATOR_PASSWORD',
+    'INSTALLATION_OPERATOR_SECRET',
+    'INSTALLATION_OPERATOR_USERNAME',
     'NODE_ENV',
     'INSTALLATION_ACTIVATION_BASE_URL',
   ].map((name) => [name, process.env[name]]));
@@ -114,6 +118,10 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
   process.env.DB_NAME = database;
   process.env.NODE_ENV = 'test';
   process.env.INSTALLATION_ACTIVATION_BASE_URL = 'http://127.0.0.1:5182';
+  process.env.INSTALLATION_PROVISIONING_ENABLED = 'true';
+  process.env.INSTALLATION_OPERATOR_PASSWORD = 'provisioning-db-password';
+  process.env.INSTALLATION_OPERATOR_SECRET = 'provisioning-db-secret-that-is-long-enough';
+  process.env.INSTALLATION_OPERATOR_USERNAME = 'db-test-operator';
   for (const name of CAPABILITY_ENV) process.env[name] = 'false';
 
   try {
@@ -452,11 +460,16 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     for (const name of CAPABILITY_ENV) process.env[name] = 'true';
     db = require('../../models');
     const provisioning = require('../../src/services/installation-provisioning.service');
+    const operatorAuth = require('../../src/services/installation-operator-auth.service');
     const auth = require('../../src/services/auth.service');
     const accountLifecycle = require('../../src/services/account-lifecycle.service');
     const auditService = require('../../src/services/audit.service');
     const tenantContext = require('../../src/services/tenant-context.service');
-    const operator = { username: 'db-test-operator' };
+    const operatorSession = await operatorAuth.createSession({
+      password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+      username: process.env.INSTALLATION_OPERATOR_USERNAME,
+    });
+    const operator = await operatorAuth.verifySession(operatorSession.token);
 
     let created;
     let rawToken;
@@ -494,7 +507,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
         auditMetadata.clubSlugs,
         ['klub-alpha-tsentr', 'klub-alpha-sever'],
       );
-      const snapshot = await provisioning.getInstallationSnapshot();
+      const snapshot = await provisioning.getInstallationSnapshot(operator);
       assert.equal(
         snapshot.organizations.find((item) => item.id === created.organization.id).ownerState,
         'pending_activation',
@@ -828,7 +841,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       assert.equal(status.owner.email, created.owner.email);
       await provisioning.activateOwner(rawToken, 'OwnerSecure123!');
       assert.deepEqual(await provisioning.inspectActivation(rawToken), { state: 'consumed' });
-      const snapshot = await provisioning.getInstallationSnapshot();
+      const snapshot = await provisioning.getInstallationSnapshot(operator);
       assert.equal(
         snapshot.organizations.find((item) => item.id === created.organization.id).ownerState,
         'active',

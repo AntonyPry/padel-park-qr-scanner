@@ -95,7 +95,7 @@ Onboarding/instructions в этой ветке не реализуй без от
 - права ролей и trainer-safe данные;
 - tests/build/typecheck/audit;
 - browser QA desktop/mobile;
-- для frontend-нововведений: visual QA desktop и `390px` с реалистичными длинными данными, screenshots, проверкой `document.scrollWidth`, безопасных отступов от краев, console/network/page errors; если БД недоступна, сначала mocked API layout QA, затем DB-backed проверка после восстановления БД;
+- для frontend-нововведений: visual QA desktop и `390px` с реалистичными длинными данными, проверкой `document.scrollWidth`, безопасных отступов от краев, console/network/page errors; screenshots только по явному запросу пользователя или для внутренней визуальной проверки/диагностики; если БД недоступна, сначала mocked API layout QA, затем DB-backed проверка после восстановления БД;
 - onboarding/release checklist;
 - соответствие исходному ТЗ.
 
@@ -153,12 +153,11 @@ CRM feature-чаты не должны менять WireGuard/Docker/Ubuntu lapt
 
 - запустить проект или прототип и оставить dev server доступным, пока пользователь смотрит результат;
 - дать конкретные URLs, а не только команды;
-- приложить screenshots desktop and mobile `390px`;
 - указать роль/demo account, если это реальная CRM;
 - дать manual QA checklist: какие экраны открыть, что прокликать, на что смотреть;
-- явно написать, если URL/screenshots/browser QA не удалось сделать, и считать это blocker/known risk.
+- явно написать, если URL/browser QA не удалось сделать, и считать это blocker/known risk.
 
-Финал дизайн-чата без живого URL и screenshots недостаточен. Его нужно вернуть на доработку до QA.
+Финал дизайн-чата без живого URL, demo role/account и manual checklist недостаточен. Screenshots создаются только по явному запросу пользователя либо когда Feature/QA нужны для внутреннего сравнения или диагностики; их отсутствие не является preview blocker или handoff gap, и внутренние screenshots не нужно прикладывать без пользы. Product screenshot assets, обязательные для onboarding-урока, регулируются отдельно и остаются обязательным контентом.
 
 Минимальный финальный блок feature-чата:
 
@@ -171,7 +170,6 @@ CRM feature-чаты не должны менять WireGuard/Docker/Ubuntu lapt
 - что открыть:
 - что прокликать:
 - какие edge cases проверить:
-- screenshots:
 ```
 
 Для длинной цепочки фич заведи отдельный integration/QA chat. Его задача - быть тем самым "живым проектом", который раньше был в одном большом чате:
@@ -491,6 +489,8 @@ Codex должен явно сказать, что было проверено. 
 - `server npm run onboarding:audit` или `server npm run onboarding:audit:strict`, если менялись routes/events/tasks/onboarding;
 - обновление OpenAPI/generated contracts, если менялись API contracts;
 - ручная браузерная проверка для заметных UI-изменений.
+
+Переиспользуй exact-SHA evidence: не повторяй полный lint/build/typecheck после каждой локальной итерации, если новые изменения не затронули соответствующий результат. Во время итераций запускай affected gates, а полный релевантный набор — перед публикацией принятого SHA. OpenAPI/generated gates запускай только при изменении API contracts, route scopes или generated consumers.
 
 Если проверку нельзя запустить из-за окружения, это должно быть явно указано в финальном ответе.
 

@@ -24,6 +24,10 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     'INTEGRATION_SECRETS_KEY_VERSION',
     'INTEGRATION_SECRETS_MASTER_KEY',
     'INSTALLATION_PROVIDER_VALIDATION_MODE',
+    'INSTALLATION_MANAGEMENT_ENABLED',
+    'INSTALLATION_OPERATOR_PASSWORD',
+    'INSTALLATION_OPERATOR_SECRET',
+    'INSTALLATION_OPERATOR_USERNAME',
     'NODE_ENV',
   ].map((name) => [name, process.env[name]]));
   let schema;
@@ -34,6 +38,10 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
   process.env.INTEGRATION_SECRETS_KEY_VERSION = 'test-v1';
   process.env.INTEGRATION_SECRETS_MASTER_KEY = crypto.randomBytes(32).toString('base64');
   process.env.INSTALLATION_PROVIDER_VALIDATION_MODE = 'preview';
+  process.env.INSTALLATION_MANAGEMENT_ENABLED = 'true';
+  process.env.INSTALLATION_OPERATOR_PASSWORD = 'feature-10-4-db-password';
+  process.env.INSTALLATION_OPERATOR_SECRET = 'feature-10-4-db-secret-that-is-long-enough';
+  process.env.INSTALLATION_OPERATOR_USERNAME = 'feature-10-4-db-test';
   for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'false';
   process.env.TENANT_ENFORCEMENT_ENABLED = 'false';
 
@@ -45,11 +53,13 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     process.env.TENANT_ENFORCEMENT_ENABLED = 'true';
     db = require('../../models');
     const management = require('../../src/services/installation-management.service');
+    const operatorAuth = require('../../src/services/installation-operator-auth.service');
     const { contextWithSecrets } = require('../../src/provider-integrations/connection-service');
-    const operator = {
-      sessionId: '1234567890abcdef1234567890abcdef',
-      username: 'feature-10-4-db-test',
-    };
+    const operatorSession = await operatorAuth.createSession({
+      password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+      username: process.env.INSTALLATION_OPERATOR_USERNAME,
+    });
+    const operator = await operatorAuth.verifySession(operatorSession.token);
     const organizationId = fixture.organizations.A;
     const clubId = fixture.clubs.A[1];
     const peerClubId = fixture.clubs.B[1];
@@ -175,7 +185,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
       operations: await db.InstallationMutationOperation.count(),
     }, beforeDuplicate);
 
-    const detail = await management.getInstallationOrganization(organizationId);
+    const detail = await management.getInstallationOrganization(organizationId, operator);
     const projection = detail.clubs.find((club) => club.id === clubId)
       .integrations.find((item) => item.provider === 'telegram');
     assert.equal(projection.configured, true);

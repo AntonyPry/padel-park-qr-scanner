@@ -34,19 +34,18 @@ test('installation operator sessions are separately enabled, signed and expiring
   const sessions = new Map();
   const originalCreate = db.InstallationOperatorSession.create;
   const originalFindOne = db.InstallationOperatorSession.findOne;
-  const originalUpdate = db.InstallationOperatorSession.update;
+  const originalTransaction = db.sequelize.transaction;
   db.InstallationOperatorSession.create = async (payload) => {
-    const row = { ...payload, revokedAt: null };
+    const row = {
+      ...payload,
+      revokedAt: null,
+      update: async (updates) => Object.assign(row, updates),
+    };
     sessions.set(payload.sessionId, row);
     return row;
   };
   db.InstallationOperatorSession.findOne = async ({ where }) => sessions.get(where.sessionId) || null;
-  db.InstallationOperatorSession.update = async (updates, { where }) => {
-    const row = sessions.get(where.sessionId);
-    if (!row || row.revokedAt) return [0];
-    Object.assign(row, updates);
-    return [1];
-  };
+  db.sequelize.transaction = async (callback) => callback({ LOCK: { UPDATE: 'UPDATE' } });
   await withEnvironment(
     {
       INSTALLATION_OPERATOR_PASSWORD: 'correct-horse-battery-staple',
@@ -73,6 +72,11 @@ test('installation operator sessions are separately enabled, signed and expiring
       const verified = await auth.verifySession(session.token);
       assert.equal(verified.username, 'setly-operator');
       assert.match(verified.sessionId, /^[a-f0-9]{32}$/u);
+      assert.equal(Object.isFrozen(verified), true);
+      await assert.rejects(
+        auth.lockSessionAuthority({ ...verified }, { LOCK: { UPDATE: 'UPDATE' } }),
+        (error) => error.code === 'INSTALLATION_OPERATOR_SESSION_INVALID',
+      );
       assert.equal(await auth.verifySession(`${session.token}tampered`), null);
       assert.equal(await auth.revokeSession(verified), true);
       assert.equal(await auth.verifySession(session.token), null);
@@ -80,7 +84,7 @@ test('installation operator sessions are separately enabled, signed and expiring
   ).finally(() => {
     db.InstallationOperatorSession.create = originalCreate;
     db.InstallationOperatorSession.findOne = originalFindOne;
-    db.InstallationOperatorSession.update = originalUpdate;
+    db.sequelize.transaction = originalTransaction;
   });
 });
 

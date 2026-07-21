@@ -6,6 +6,7 @@ const {
 } = require('../src/tenant-enforcement/immutable-authority');
 
 const IMMUTABLE_FIELDS = Object.freeze([
+  'id',
   'sessionId',
   'username',
   'expiresAt',
