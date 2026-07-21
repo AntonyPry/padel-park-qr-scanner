@@ -2331,6 +2331,7 @@ async function mapClientWithCurrentStats(client, account = null, options = {}) {
   const { prepaymentSummary } = await getClientPrepaymentContext(
     client.id,
     account,
+    options.tenant,
   );
   return {
     ...mappedClient,
@@ -2379,6 +2380,7 @@ async function lookupByPhone(
   if (!client) return null;
   return mapClientWithCurrentStats(client, account, {
     includePrepaymentSummary: true,
+    tenant,
   });
 }
 

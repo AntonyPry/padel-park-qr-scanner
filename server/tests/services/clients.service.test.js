@@ -1,7 +1,11 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const db = require('../../models');
+const certificatesService = require('../../src/services/certificates.service');
+const subscriptionsService = require('../../src/services/subscriptions.service');
 const {
   __testing,
+  lookupByPhone,
 } = require('../../src/services/clients.service');
 
 const SENSITIVE_CLIENT_KEYS = [
@@ -164,6 +168,67 @@ test('client prepayment summary reports active balances and blocking statuses', 
   assert.equal(summary.activeCertificatesCount, 1);
   assert.equal(summary.subscriptionWarnings.some((item) => item.type === 'used'), true);
   assert.equal(summary.certificateWarnings.some((item) => item.type === 'redeemed'), true);
+});
+
+test('phone lookup keeps the verified tenant authority for prepayment summary', async (t) => {
+  const previousCapability = process.env.TENANT_CLIENTS_REFERENCES_ENABLED;
+  process.env.TENANT_CLIENTS_REFERENCES_ENABLED = 'true';
+  t.after(() => {
+    if (previousCapability === undefined) {
+      delete process.env.TENANT_CLIENTS_REFERENCES_ENABLED;
+    } else {
+      process.env.TENANT_CLIENTS_REFERENCES_ENABLED = previousCapability;
+    }
+  });
+  const tenant = Object.freeze({
+    accountId: 1,
+    membershipId: 2,
+    organizationId: 3,
+    scope: 'organization',
+  });
+  t.mock.method(db.Organization, 'findOne', async () => ({ id: 3 }));
+  t.mock.method(db.Membership, 'findOne', async () => ({
+    accountId: 1,
+    id: 2,
+    organizationId: 3,
+    role: 'owner',
+  }));
+  t.mock.method(db.User, 'findOne', async () => ({
+    toJSON: () => clientFixture(),
+  }));
+  t.mock.method(db.Visit, 'findOne', async () => ({
+    firstVisitAt: null,
+    lastVisitAt: null,
+    visitCount: 0,
+  }));
+  t.mock.method(
+    subscriptionsService,
+    'listClientSubscriptions',
+    async (_clientId, _query, receivedTenant) => {
+      assert.equal(receivedTenant, tenant);
+      return [{ id: 10, remainingSessions: 4, status: 'active' }];
+    },
+  );
+  t.mock.method(
+    certificatesService,
+    'listClientCertificates',
+    async (_clientId, _query, receivedTenant) => {
+      assert.equal(receivedTenant, tenant);
+      return [{ code: 'CERT-1', id: 20, status: 'active' }];
+    },
+  );
+
+  const result = await lookupByPhone(
+    '+7 999 111-22-33',
+    null,
+    { id: 1, role: 'owner' },
+    { includeArchived: true },
+    tenant,
+  );
+
+  assert.equal(result.id, 12);
+  assert.equal(result.prepaymentSummary.hasActiveSubscription, true);
+  assert.equal(result.prepaymentSummary.hasActiveCertificate, true);
 });
 
 test('client prepayment timeline includes sale, link, redemption and reversal events', () => {
