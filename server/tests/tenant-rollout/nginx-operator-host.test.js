@@ -84,9 +84,21 @@ test('operator and product hosts preserve their deny-by-default boundary', () =>
     '/api/health',
     '/api/installation/provisioning/status',
     '/api/installation/provisioning/session',
+    '/api/installation/provisioning/session/revoke',
     '/api/installation/provisioning/snapshot',
     '/api/installation/provisioning/organizations',
+    '/api/installation/provisioning/organizations/1',
+    '/api/installation/provisioning/organizations/1/archive',
+    '/api/installation/provisioning/organizations/1/reactivate',
     '/api/installation/provisioning/organizations/1/activation/reissue',
+    '/api/installation/provisioning/organizations/1/clubs/2',
+    '/api/installation/provisioning/organizations/1/clubs/2/archive',
+    '/api/installation/provisioning/organizations/1/clubs/2/reactivate',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/telegram',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/telegram/restart',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/vk/credentials',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/evotor/validate',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/beeline/cutover',
   ];
   for (const requestTarget of allowedOperatorRequests) {
     assert.notEqual(operatorDisposition(requestTarget), 'return 404;', requestTarget);
@@ -104,7 +116,8 @@ test('operator and product hosts preserve their deny-by-default boundary', () =>
     '/api/auth/login',
     '/api/installation/provisioning/activation/status',
     '/api/installation/provisioning/activation/consume',
-    '/api/installation/provisioning/organizations/1',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/evotor/restart',
+    '/api/installation/provisioning/organizations/1/clubs/2/integrations/vk/check',
   ];
   for (const requestTarget of deniedOperatorRequests) {
     assert.equal(operatorDisposition(requestTarget), 'return 404;', requestTarget);
