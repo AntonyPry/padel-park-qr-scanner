@@ -1248,6 +1248,20 @@ test('Feature 5.4 client bases/call tasks migration and tenant isolation', async
       { status: 'no_answer', summary: 'Scoped attempt' },
       managerATenant,
     );
+    const clientDetails = await clientsService.getClientDetails(
+      clientA.id,
+      legacyActor,
+      legacyTenant,
+    );
+    assert.equal(Number(clientDetails.client.id), Number(clientA.id));
+    assert.ok(
+      clientDetails.timeline.some((item) => item.type === 'call_task'),
+      'client details must include the scoped call task without an invalid subquery alias',
+    );
+    assert.ok(
+      clientDetails.timeline.some((item) => item.type === 'call_attempt'),
+      'client details must include attempts loaded separately from the limited task query',
+    );
     const attempt = await db.CallTaskAttempt.findOne({
       where: { callTaskClientId: taskClient.id },
     });

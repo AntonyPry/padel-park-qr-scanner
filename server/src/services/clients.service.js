@@ -1670,6 +1670,8 @@ async function listClientCallTimeline(clientId, account, clientContext = null) {
       {
         model: db.CallTaskAttempt,
         as: 'attempts',
+        separate: true,
+        order: [['createdAt', 'DESC']],
         include: [
           {
             model: db.Account,
@@ -1681,10 +1683,8 @@ async function listClientCallTimeline(clientId, account, clientContext = null) {
       },
     ],
     limit: 25,
-    order: [
-      ['updatedAt', 'DESC'],
-      [{ model: db.CallTaskAttempt, as: 'attempts' }, 'createdAt', 'DESC'],
-    ],
+    order: [['updatedAt', 'DESC']],
+    subQuery: false,
     where: { userId: clientId },
   });
 
