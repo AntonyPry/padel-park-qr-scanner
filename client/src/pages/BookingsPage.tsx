@@ -727,11 +727,11 @@ function getPriceQuoteKey(
 }
 
 function getStatusClass(status: BookingStatus) {
-  if (status === 'confirmed') return 'border-blue-700 bg-blue-500 text-white dark:bg-blue-600';
-  if (status === 'arrived') return 'border-emerald-700 bg-emerald-500 text-white dark:bg-emerald-600';
+  if (status === 'confirmed') return 'border-blue-300/80 bg-blue-100/90 text-blue-950 dark:border-blue-700/60 dark:bg-blue-950/70 dark:text-blue-100';
+  if (status === 'arrived') return 'border-emerald-300/80 bg-emerald-100/90 text-emerald-950 dark:border-emerald-700/60 dark:bg-emerald-950/70 dark:text-emerald-100';
   if (status === 'canceled') return 'border-muted bg-muted/30 text-muted-foreground';
-  if (status === 'no_show') return 'border-rose-700 bg-rose-500 text-white dark:bg-rose-600';
-  return 'border-violet-700 bg-violet-500 text-white dark:bg-violet-600';
+  if (status === 'no_show') return 'border-rose-300/80 bg-rose-100/90 text-rose-950 dark:border-rose-700/60 dark:bg-rose-950/70 dark:text-rose-100';
+  return 'border-violet-300/80 bg-violet-100/90 text-violet-950 dark:border-violet-700/60 dark:bg-violet-950/70 dark:text-violet-100';
 }
 
 function getPaymentBadgeClass(status: BookingPaymentStatus) {

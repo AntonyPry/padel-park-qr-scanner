@@ -211,7 +211,10 @@ describe('AppSidebar authorization', () => {
 
     expect(screen.getByText('Setly')).toBeInTheDocument();
     expect(
-      container.querySelector('img[src="/setly-mark.png?v=20260714"]'),
+      container.querySelector('img[src="/brand/setly-mark-black.png?v=20260721"]'),
+    ).toBeInTheDocument();
+    expect(
+      container.querySelector('img[src="/brand/setly-mark-white.png?v=20260721"]'),
     ).toBeInTheDocument();
   });
 

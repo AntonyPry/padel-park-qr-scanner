@@ -53,6 +53,7 @@ import { selectAuthorizationRole } from '@/lib/authorization';
 import { getAccountRoleLabel } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './theme-toggle';
+import { BrandMark } from './brand-mark';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -437,13 +438,7 @@ export function AppSidebar() {
     <Sidebar collapsible="none">
       <SidebarHeader className="border-b border-sidebar-border/70 p-4 pb-3">
         <div className="flex h-10 min-w-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-sidebar-border bg-sidebar-accent shadow-sm shadow-foreground/5">
-            <img
-              src="/setly-mark.png?v=20260714"
-              alt=""
-              className="size-full object-cover"
-            />
-          </div>
+          <BrandMark className="size-9" decorative />
           <span className="block min-w-0 truncate text-sm font-semibold tracking-tight text-primary">
             Setly
           </span>
