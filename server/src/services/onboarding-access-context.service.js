@@ -182,6 +182,37 @@ async function resolveOnboardingAccessContext(actor, tenant, scope, options = {}
   return loadAuthority(actor, tenant, scope, options);
 }
 
+async function resolveOnboardingClubAccessFromAuthority(
+  actor,
+  authority,
+  clubId,
+  options = {},
+) {
+  if (
+    !resolvedContexts.has(authority) ||
+    !Object.isFrozen(authority) ||
+    authority.scope !== TENANT_SCOPES.ORGANIZATION
+  ) {
+    throw safeTenantDenial();
+  }
+  const identifiers = {
+    accountId: authority.accountId,
+    clubId,
+    membershipId: authority.membershipId,
+    organizationId: authority.organizationId,
+  };
+  if (authorityResolverOverride) {
+    return authorityResolverOverride(
+      actor,
+      identifiers,
+      TENANT_SCOPES.CLUB,
+      options,
+      freezeContext,
+    );
+  }
+  return loadAuthority(actor, identifiers, TENANT_SCOPES.CLUB, options);
+}
+
 function bindOnboardingActor(actor, context) {
   if (!resolvedContexts.has(context) || !Object.isFrozen(context)) {
     throw safeTenantDenial();
@@ -205,5 +236,6 @@ module.exports = {
     },
   },
   bindOnboardingActor,
+  resolveOnboardingClubAccessFromAuthority,
   resolveOnboardingAccessContext,
 };

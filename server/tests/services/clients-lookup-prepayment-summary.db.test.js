@@ -82,6 +82,7 @@ test('organization client lookup aggregates only authorized Club instruments', a
     const {
       getOrganizationLookupPrepaymentSummary,
     } = require('../../src/services/client-lookup-prepayment-summary.service');
+    const onboardingService = require('../../src/services/onboarding.service');
     const tenantContextService = require('../../src/services/tenant-context.service');
 
     const organizationA = await db.Organization.findOne({
@@ -260,6 +261,69 @@ test('organization client lookup aggregates only authorized Club instruments', a
       authService.login({ email: manager.email, password }),
     ]);
     server = await listen(createApp());
+    const activeSource = await db.ClientSource.findOne({
+      where: { organizationId: organizationA.id, status: 'active' },
+    });
+    assert.ok(activeSource, 'an active Organization client source is required');
+    const ownerClubTenant = await tenantContextService.resolveTenantContext({
+      accountId: ownerA.id,
+      clubId: clubA1.id,
+      organizationId: organizationA.id,
+      scope: 'club',
+    });
+    await onboardingService.setTrainingMode(
+      ownerA,
+      { isEnabled: true, role: 'owner' },
+      ownerClubTenant,
+    );
+    const expectedTrainingMarker = await onboardingService.getTrainingDataMarker(
+      ownerA,
+      ownerClubTenant,
+    );
+    const createPhone = '+7 (999) 555-44-34';
+    const createResponse = await fetch(
+      `http://127.0.0.1:${server.address().port}/api/clients`,
+      {
+        body: JSON.stringify({
+          name: 'Organization HTTP Create',
+          phone: createPhone,
+          sourceId: activeSource.id,
+        }),
+        headers: {
+          Authorization: `Bearer ${ownerSession.token}`,
+          'Content-Type': 'application/json',
+          'X-Organization-Id': String(organizationA.id),
+        },
+        method: 'POST',
+      },
+    );
+    const createPayload = await createResponse.json();
+    assert.equal(
+      createResponse.status,
+      201,
+      JSON.stringify({
+        code: createPayload.code || null,
+        message: createPayload.message || createPayload.error || null,
+        status: createResponse.status,
+      }),
+    );
+    assert.ok(createPayload.client?.id);
+    const createdClient = await db.User.findByPk(createPayload.client.id);
+    assert.equal(createdClient.isTraining, true);
+    assert.equal(
+      createdClient.trainingSessionId,
+      expectedTrainingMarker.trainingSessionId,
+    );
+    assert.equal(
+      await db.User.count({
+        where: {
+          organizationId: organizationA.id,
+          phoneNormalized: '9995554434',
+        },
+      }),
+      1,
+    );
+
     const api = (token, organizationId, phone = sharedPhone) => fetch(
       `http://127.0.0.1:${server.address().port}/api/clients/lookup?` +
         `phone=${encodeURIComponent(phone)}&includeArchived=true`,

@@ -10,8 +10,10 @@ const {
 } = require('../onboarding/catalog');
 const shiftCashAttachmentStorage = require('./shift-cash-attachments');
 const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
+const { safeTenantDenial } = require('./tenant-context.service');
 const {
   bindOnboardingActor,
+  resolveOnboardingClubAccessFromAuthority,
   resolveOnboardingAccessContext,
 } = require('./onboarding-access-context.service');
 const {
@@ -1115,22 +1117,39 @@ async function getTaskDetail(actor, taskKey, query = {}, tenant = null) {
 }
 
 async function loadTrainingMode(boundary, options = {}) {
+  const where = {
+    membershipId: boundary.authority.membershipId,
+    organizationId: boundary.authority.organizationId,
+  };
+  if (boundary.authority.clubId) {
+    where.clubId = boundary.authority.clubId;
+  } else {
+    where.accountId = boundary.authority.accountId;
+  }
   const mode = await db.OnboardingTrainingMode.findOne({
     lock: options.transaction && options.lock
       ? options.transaction.LOCK?.UPDATE
       : undefined,
     transaction: options.transaction,
-    where: {
-      membershipId: boundary.authority.membershipId,
-      clubId: boundary.authority.clubId,
-      organizationId: boundary.authority.organizationId,
-    },
+    where,
   });
-  if (
-    mode?.isEnabled &&
-    mode.expiresAt &&
-    new Date(mode.expiresAt).getTime() <= Date.now()
-  ) {
+  if (!mode?.isEnabled) return mode;
+
+  if (!boundary.authority.clubId) {
+    const clubAuthority = await resolveOnboardingClubAccessFromAuthority(
+      boundary.actor,
+      boundary.authority,
+      mode.clubId,
+      options,
+    );
+    if (
+      clubAuthority.membershipRole !== 'owner' &&
+      mode.role !== clubAuthority.effectiveRole
+    ) {
+      throw safeTenantDenial();
+    }
+  }
+  if (mode.expiresAt && new Date(mode.expiresAt).getTime() <= Date.now()) {
     await mode.update({ disabledAt: new Date(), isEnabled: false }, {
       transaction: options.transaction,
     });
@@ -1178,12 +1197,20 @@ async function getTrainingDataMarker(actor, tenant = null, options = {}) {
     };
   }
 
-  const context = await getEventTargetContext(
-    actor,
-    tenant,
-    TENANT_SCOPES.CLUB,
-    options,
-  );
+  const scope = tenant?.scope === TENANT_SCOPES.ORGANIZATION
+    ? TENANT_SCOPES.ORGANIZATION
+    : TENANT_SCOPES.CLUB;
+  const boundary = await resolveBoundary(actor, tenant, scope, options);
+  const mode = await loadTrainingMode(boundary, options);
+  const plainMode = getPlainProgress(mode);
+  const requestedRole = plainMode?.isEnabled && plainMode.role
+    ? plainMode.role
+    : boundary.actor.role;
+  const context = {
+    isTraining: Boolean(plainMode?.isEnabled && plainMode?.sessionId),
+    role: resolveTargetRole(boundary.actor, requestedRole),
+    trainingSessionId: plainMode?.isEnabled ? plainMode.sessionId : null,
+  };
   if (!context.isTraining) {
     return {
       isTraining: false,
