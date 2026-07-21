@@ -228,7 +228,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  'd7d74385f930223b6611c2a147ad6c331373c9a9ea112376935a5de2dbe2fed9';
+  '5c82bc1290701c6768bc1d3767306ca8c992dc2311b8bcfab2a360a03edacad1';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

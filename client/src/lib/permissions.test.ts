@@ -248,10 +248,15 @@ describe('permissions', () => {
     expect(canManageBookings('viewer')).toBe(false);
   });
 
-  it('keeps legacy telephony capability helpers separate from route access', () => {
-    expect(canWorkTelephony('admin')).toBe(true);
+  it('keeps telephony limited to owners and managers end to end', () => {
+    expect(canAccessPath('owner', '/admin/telephony')).toBe(true);
+    expect(canAccessPath('manager', '/admin/telephony')).toBe(true);
+    expect(canAccessPath('admin', '/admin/telephony')).toBe(false);
+    expect(canAccessPath('viewer', '/admin/telephony')).toBe(false);
+    expect(canWorkTelephony('admin')).toBe(false);
     expect(canManageTelephony('admin')).toBe(false);
     expect(canManageTelephony('manager')).toBe(true);
+    expect(canWorkTelephony('manager')).toBe(true);
     expect(canWorkTelephony('viewer')).toBe(false);
   });
 

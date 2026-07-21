@@ -17,6 +17,7 @@ export const ROUTE_ACCESS = {
   '/admin/methodology-analytics': ['owner', 'manager'],
   '/admin/client-bases': ['owner', 'manager'],
   '/admin/call-tasks': ['owner', 'manager', 'admin'],
+  '/admin/telephony': ['owner', 'manager'],
   '/admin/prepayments': ['owner', 'manager', 'admin', 'accountant'],
   '/admin/certificates': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/corporate-clients': ['owner', 'manager', 'accountant', 'viewer'],
@@ -121,6 +122,7 @@ export const ROUTE_AUTHORIZATION: Record<
     ROUTE_ACCESS['/admin/client-bases'],
   ),
   '/admin/call-tasks': partial('club', ROUTE_ACCESS['/admin/call-tasks']),
+  '/admin/telephony': single('club', ROUTE_ACCESS['/admin/telephony']),
   '/admin/prepayments': single('club', ROUTE_ACCESS['/admin/prepayments']),
   '/admin/certificates': single('club', ROUTE_ACCESS['/admin/certificates']),
   '/admin/corporate-clients': partial(
@@ -300,7 +302,7 @@ export function canManageTelephony(role: AccountRole | null | undefined) {
 }
 
 export function canWorkTelephony(role: AccountRole | null | undefined) {
-  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canManageCatalog(role: AccountRole | null | undefined) {
