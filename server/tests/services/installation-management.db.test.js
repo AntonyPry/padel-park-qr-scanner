@@ -13,6 +13,10 @@ const {
 const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
 } = require('../helpers/accepted-tenant-schema');
+const {
+  assertFeature10_4InstallationOperatorSchema,
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
 
 test('Feature 10.4 exact-Club settings and encrypted integration mutations', async () => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for Feature 10.4 DB tests');
@@ -49,6 +53,8 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
   try {
     schema = connect(database);
     await migrateAll(schema);
+    await assertFeature10_4IntegrationConnectionSchema(schema.getQueryInterface());
+    await assertFeature10_4InstallationOperatorSchema(schema.getQueryInterface());
     const fixture = await seedTwoTenantFixture(schema);
     for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'true';
     process.env.TENANT_ENFORCEMENT_ENABLED = 'true';

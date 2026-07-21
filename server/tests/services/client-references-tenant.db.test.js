@@ -11,6 +11,10 @@ const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
   applyAcceptedTenantMigrations,
 } = require('../helpers/accepted-tenant-schema');
+const {
+  INSTALLATION_MANAGEMENT_MIGRATION_FILE,
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
@@ -453,7 +457,9 @@ test('Feature 5.2 clients/references DB isolation and compatibility', async (t) 
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: VISITS_MIGRATION_FILE }]);
     await applyAcceptedTenantMigrations(queryInterface, {
       afterFile: VISITS_MIGRATION_FILE,
+      throughFile: INSTALLATION_MANAGEMENT_MIGRATION_FILE,
     });
+    await assertFeature10_4IntegrationConnectionSchema(queryInterface);
     const tenantContextService = require('../../src/services/tenant-context.service');
     const defaultContext = await tenantContextService.resolveTenantContext({
       accountId: owner.id,

@@ -17,17 +17,14 @@ const VALIDATION_MIGRATION = require(
 );
 const PROVIDER_VALIDATION_MIGRATION_FILE =
   '20260716120000-validate-provider-reconciliation-connections.js';
-const INSTALLATION_MANAGEMENT_MIGRATION_FILE =
-  '20260720220000-add-installation-operator-management.js';
-const CURRENT_INTEGRATION_CONNECTION_COLUMNS = Object.freeze([
-  'credentialFingerprint',
-  'fingerprintKeyVersion',
-  'providerIdentityFingerprint',
-]);
 const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
   applyAcceptedTenantMigrations,
 } = require('../helpers/accepted-tenant-schema');
+const {
+  INSTALLATION_MANAGEMENT_MIGRATION_FILE,
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
 
 function databaseName() {
   return process.env.TENANT_PROVIDER_TEST_DB_NAME ||
@@ -91,22 +88,6 @@ async function migrateFresh(database) {
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
   }
   return sequelize;
-}
-
-async function assertCurrentIntegrationConnectionSchema(queryInterface) {
-  const [rows] = await queryInterface.sequelize.query(`
-    SELECT COLUMN_NAME
-      FROM INFORMATION_SCHEMA.COLUMNS
-     WHERE TABLE_SCHEMA=DATABASE()
-       AND TABLE_NAME='IntegrationConnections'
-       AND COLUMN_NAME IN (:columns)
-     ORDER BY COLUMN_NAME
-  `, { replacements: { columns: CURRENT_INTEGRATION_CONNECTION_COLUMNS } });
-  assert.deepEqual(
-    rows.map((row) => row.COLUMN_NAME).sort(),
-    [...CURRENT_INTEGRATION_CONNECTION_COLUMNS].sort(),
-    'Current-head provider matrix requires all Feature 10.4 IntegrationConnection fingerprint columns before loading the model',
-  );
 }
 
 function fakeResponse() {
@@ -223,7 +204,7 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
       afterFile: PROVIDER_VALIDATION_MIGRATION_FILE,
       throughFile: INSTALLATION_MANAGEMENT_MIGRATION_FILE,
     });
-    await assertCurrentIntegrationConnectionSchema(queryInterface);
+    await assertFeature10_4IntegrationConnectionSchema(queryInterface);
 
     db = require('../../models');
     const {

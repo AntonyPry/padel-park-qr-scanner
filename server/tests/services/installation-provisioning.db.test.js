@@ -14,6 +14,9 @@ const {
 const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
 } = require('../helpers/accepted-tenant-schema');
+const {
+  assertFeature10_4InstallationOperatorSchema,
+} = require('../helpers/feature-10-4-schema');
 
 const CAPABILITY_ENV = [
   ...ACCEPTED_TENANT_CAPABILITY_ENV,
@@ -458,6 +461,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
 
     await seedTwoTenantFixture(schema);
     for (const name of CAPABILITY_ENV) process.env[name] = 'true';
+    await assertFeature10_4InstallationOperatorSchema(queryInterface);
     db = require('../../models');
     const provisioning = require('../../src/services/installation-provisioning.service');
     const operatorAuth = require('../../src/services/installation-operator-auth.service');

@@ -14,6 +14,10 @@ const {
 const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
 } = require('../helpers/accepted-tenant-schema');
+const {
+  assertFeature10_4InstallationOperatorSchema,
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
 
 const migration = require('../../migrations/20260720220000-add-installation-operator-management');
 
@@ -327,6 +331,8 @@ test('Feature 10.4 operator authority, history triggers and migration safety', a
 
     for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'true';
     process.env.TENANT_ENFORCEMENT_ENABLED = 'true';
+    await assertFeature10_4IntegrationConnectionSchema(queryInterface);
+    await assertFeature10_4InstallationOperatorSchema(queryInterface);
     db = require('../../models');
     const auth = require('../../src/services/installation-operator-auth.service');
     const auditService = require('../../src/services/audit.service');

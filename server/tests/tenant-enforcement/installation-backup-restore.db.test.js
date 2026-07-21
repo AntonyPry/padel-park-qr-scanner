@@ -15,6 +15,9 @@ const {
   seedTwoTenantFixture,
 } = require('../helpers/final-tenant-rc-fixture');
 const {
+  assertFeature10_4IntegrationConnectionSchema,
+} = require('../helpers/feature-10-4-schema');
+const {
   buildTenantStorageKey,
 } = require('../../src/storage/tenant-storage');
 const {
@@ -170,6 +173,7 @@ test('Feature 9 installation-wide backup/restore rehearsal', async () => {
   try {
     source = connect(sourceDatabase);
     await migrateAll(source);
+    await assertFeature10_4IntegrationConnectionSchema(source.getQueryInterface());
     const fixture = await seedTwoTenantFixture(source);
     const sourceCounts = await tableCounts(source);
     const sourceIdentity = await tenantIdentityInventory(source);
