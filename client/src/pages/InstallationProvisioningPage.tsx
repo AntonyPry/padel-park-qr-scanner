@@ -21,6 +21,7 @@ import {
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { BrandMark } from '@/components/brand-mark';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -282,13 +283,13 @@ function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
       <div className="mx-auto flex max-w-5xl justify-end"><ThemeToggle /></div>
       <div className="mx-auto grid min-h-[calc(100vh-7rem)] max-w-5xl items-center gap-10 lg:grid-cols-[1fr_0.82fr]">
         <section className="hidden space-y-5 lg:block">
-          <div className="flex items-center gap-3"><img src="/setly-mark.png?v=20260714" alt="" className="size-12 rounded-xl border shadow-sm" /><span className="text-xl font-semibold text-primary">Setly</span></div>
+          <div className="flex items-center gap-3"><BrandMark className="size-12" decorative /><span className="text-xl font-semibold text-primary">Setly</span></div>
           <h1 className="max-w-xl text-4xl font-semibold tracking-tight">Управление организациями</h1>
           <p className="max-w-lg leading-7 text-muted-foreground">Рабочее место внутреннего оператора Setly.</p>
         </section>
         <Card className="mx-auto w-full max-w-md rounded-2xl shadow-lg shadow-foreground/5">
           <CardHeader className="space-y-4">
-            <div className="flex items-center gap-3 lg:hidden"><img src="/setly-mark.png?v=20260714" alt="" className="size-10 rounded-xl border" /><span className="font-semibold text-primary">Setly</span></div>
+            <div className="flex items-center gap-3 lg:hidden"><BrandMark className="size-10" decorative /><span className="font-semibold text-primary">Setly</span></div>
             <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><KeyRound className="size-5" /></div>
             <div><CardTitle>Вход оператора</CardTitle><p className="mt-2 text-sm text-muted-foreground">Войдите, чтобы управлять организациями.</p></div>
           </CardHeader>
@@ -447,7 +448,7 @@ export default function InstallationProvisioningPage() {
       <div className="mx-auto min-h-[calc(100vh-1.5rem)] max-w-[1500px] overflow-hidden rounded-2xl border bg-background shadow-sm sm:min-h-[calc(100vh-2.5rem)] xl:min-h-[calc(100vh-3.5rem)]">
         <header className="flex flex-wrap items-center justify-between gap-4 border-b px-4 py-4 sm:px-6">
           <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => navigate('/installation')} type="button">
-            <img src="/setly-mark.png?v=20260714" alt="" className="size-10 rounded-xl border" />
+            <BrandMark className="size-10" decorative />
             <div className="min-w-0"><span className="font-semibold text-primary">Setly</span><p className="truncate text-xs text-muted-foreground">Для операторов</p></div>
           </button>
           <div className="flex items-center gap-2"><Button variant="ghost" onClick={() => navigate('/installation')}>Организации</Button><ThemeToggle /><Button variant="outline" onClick={logout}>Выйти</Button></div>

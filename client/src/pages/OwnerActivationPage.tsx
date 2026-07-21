@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { BrandMark } from '@/components/brand-mark';
 import { API_URL } from '@/config';
 
 type ActivationStatus = {
@@ -99,7 +100,7 @@ export default function OwnerActivationPage() {
 
   return (
     <main className="min-h-screen bg-muted/35 p-4 sm:p-8">
-      <div className="mx-auto flex max-w-5xl justify-between"><div className="flex items-center gap-3"><img src="/setly-mark.png?v=20260714" alt="" className="size-10 rounded-xl border" /><span className="font-semibold text-primary">Setly</span></div><ThemeToggle /></div>
+      <div className="mx-auto flex max-w-5xl justify-between"><div className="flex items-center gap-3"><BrandMark className="size-10" decorative /><span className="font-semibold text-primary">Setly</span></div><ThemeToggle /></div>
       <div className="mx-auto flex min-h-[calc(100vh-7rem)] max-w-5xl items-center justify-center py-8">
         <Card className="w-full max-w-lg rounded-2xl shadow-lg shadow-foreground/5">
           {loading ? <CardContent className="p-8 text-center text-sm text-muted-foreground">Проверяем ссылку активации…</CardContent> : null}
