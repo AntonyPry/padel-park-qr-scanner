@@ -15,7 +15,9 @@ const productConfig = fs.readFileSync(
   'utf8',
 );
 
-const requiredOperatorRootAssets = Object.freeze([
+const requiredOperatorStaticAssets = Object.freeze([
+  '/brand/setly-mark-black.png',
+  '/brand/setly-mark-white.png',
   '/setly-mark.png',
   '/favicon-32x32.png',
   '/favicon-16x16.png',
@@ -53,13 +55,15 @@ test('operator host allows only the accepted SPA assets at the root', () => {
 
   assert.deepEqual(rootStaticLocations, [
     '/apple-touch-icon.png',
+    '/brand/setly-mark-black.png',
+    '/brand/setly-mark-white.png',
     '/favicon-16x16.png',
     '/favicon-32x32.png',
     '/favicon.ico',
     '/setly-mark.png',
   ]);
 
-  for (const asset of requiredOperatorRootAssets) {
+  for (const asset of requiredOperatorStaticAssets) {
     assert.equal(
       operatorDisposition(`${asset}?v=20260714`),
       'try_files $uri =404;',
@@ -74,6 +78,7 @@ test('operator host allows only the accepted SPA assets at the root', () => {
 
   assert.equal(operatorDisposition('/favicon.ico'), 'try_files $uri =404;');
   assert.equal(operatorDisposition('/assets/index-abc123.js'), 'try_files $uri =404;');
+  assert.equal(operatorDisposition('/brand/unapproved.png'), 'return 404;');
 });
 
 test('operator and product hosts preserve their deny-by-default boundary', () => {

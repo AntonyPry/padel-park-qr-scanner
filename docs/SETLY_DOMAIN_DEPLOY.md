@@ -34,9 +34,10 @@ The frontend is served from `/opt/padel-park-qr-scanner/client/dist`. API and So
 The initial HTTP bootstrap configurations are `deploy/nginx/setly.tech.conf`
 and `deploy/nginx/ops.setly.tech.conf`. The operator vhost exposes only the
 installation UI, the required operator provisioning API paths and `/api/health`;
-it serves the generated `/assets/` bundle plus only `/favicon.ico`,
-`/setly-mark.png`, `/favicon-32x32.png`, `/favicon-16x16.png` and
-`/apple-touch-icon.png` at the root. It does not expose other root files,
+it serves the generated `/assets/` bundle, the exact light/dark brand marks
+`/brand/setly-mark-black.png` and `/brand/setly-mark-white.png`, plus only
+`/favicon.ico`, `/setly-mark.png`, `/favicon-32x32.png`,
+`/favicon-16x16.png` and `/apple-touch-icon.png` at the root. It does not expose other root files,
 ordinary CRM, Socket.IO or `/activate-owner`. The product vhost denies
 `/installation` and operator API paths while keeping public owner activation
 available. Its access log uses `$uri` (not `$request_uri`) and maps the complete
