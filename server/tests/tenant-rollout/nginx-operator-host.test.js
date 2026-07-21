@@ -39,6 +39,14 @@ function operatorDisposition(requestTarget) {
   const pathname = new URL(requestTarget, 'https://ops.setly.tech').pathname;
   const exact = exactLocationBlocks(operatorConfig);
   if (exact.has(pathname)) return exact.get(pathname);
+  if (pathname.startsWith('/installation/organizations/')) {
+    assert.match(
+      operatorConfig,
+      /location\s+\^~\s+\/installation\/organizations\/\s*\{\s*try_files \/index\.html =404;/,
+      'operator organization UI prefix location must exist',
+    );
+    return 'try_files /index.html =404;';
+  }
   if (pathname.startsWith('/assets/')) return 'try_files $uri =404;';
   if (operatorApiPattern(operatorConfig).test(pathname)) return 'proxy_pass';
   return 'return 404;';
@@ -81,6 +89,14 @@ test('operator and product hosts preserve their deny-by-default boundary', () =>
     '/',
     '/installation',
     '/installation/provisioning',
+    '/installation/organizations/1',
+    '/installation/organizations/1/settings',
+    '/installation/organizations/1/clubs/2/settings',
+    '/installation/organizations/1/clubs/2/integrations',
+    '/installation/organizations/1/clubs/2/integrations/beeline',
+    '/installation/organizations/1/clubs/2/integrations/evotor',
+    '/installation/organizations/1/clubs/2/integrations/telegram',
+    '/installation/organizations/1/clubs/2/integrations/vk',
     '/api/health',
     '/api/installation/provisioning/status',
     '/api/installation/provisioning/session',

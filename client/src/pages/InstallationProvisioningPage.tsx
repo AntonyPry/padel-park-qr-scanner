@@ -31,6 +31,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { BrandMark } from '@/components/brand-mark';
+import {
+  ConfirmActionDialog,
+  type ConfirmAction,
+} from '@/components/confirm-action-dialog';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -47,6 +51,15 @@ type ClubDraft = { name: string; timezone: string };
 type ActivationState = 'pending' | 'consumed' | 'expired' | 'invalidated' | null;
 type OwnerState = 'active' | 'inactive' | 'missing' | 'pending_activation';
 type IntegrationProvider = 'beeline' | 'evotor' | 'telegram' | 'vk';
+type IntegrationCommand =
+  | 'activate'
+  | 'check'
+  | 'cutover'
+  | 'disable'
+  | 'renew'
+  | 'restart'
+  | 'revoke'
+  | 'validate';
 type IntegrationState = {
   configured: boolean;
   lastActivityAt: string | null;
@@ -126,6 +139,94 @@ const providerCopy: Record<IntegrationProvider, { description: string; label: st
     label: 'VK',
   },
 };
+
+const providerValues = new Set<IntegrationProvider>([
+  'beeline',
+  'evotor',
+  'telegram',
+  'vk',
+]);
+
+function integrationCommandCopy(
+  provider: IntegrationProvider,
+  command: IntegrationCommand,
+): ConfirmAction {
+  const providerName = providerCopy[provider].label;
+  const copies: Record<IntegrationCommand, ConfirmAction> = {
+    activate: {
+      confirmLabel: 'Включить',
+      description: `Setly проверит сохранённые данные и возобновит работу интеграции ${providerName} только для этого клуба. Новые события снова начнут обрабатываться.`,
+      title: `Включить ${providerName}?`,
+    },
+    check: {
+      confirmLabel: 'Проверить подписку',
+      description: 'Setly запросит текущее состояние подписки Билайна. Настройки, callback и учётные данные не изменятся.',
+      title: 'Проверить подписку Билайна?',
+    },
+    cutover: {
+      confirmLabel: 'Переключить callback',
+      description: 'Setly выпустит новый защищённый callback и пересоздаст подписку у Билайна. После успешного переключения прежний callback перестанет принимать события.',
+      isDestructive: true,
+      title: 'Переключить callback Билайна?',
+    },
+    disable: {
+      confirmLabel: 'Отключить',
+      description: `Интеграция ${providerName} перестанет принимать и обрабатывать новые события для этого клуба. Зашифрованные учётные данные сохранятся, поэтому подключение можно будет включить снова.`,
+      isDestructive: true,
+      title: `Отключить ${providerName}?`,
+    },
+    renew: {
+      confirmLabel: 'Продлить подписку',
+      description: 'Setly принудительно продлит подписку Билайна с текущим callback. Во время переподключения возможна короткая пауза в доставке событий.',
+      title: 'Продлить подписку Билайна?',
+    },
+    restart: {
+      confirmLabel: 'Перезапустить бота',
+      description: `Setly перезапустит бота ${providerName} для этого клуба. Возможна короткая пауза в ответах; настройки и учётные данные не изменятся.`,
+      title: `Перезапустить ${providerName}?`,
+    },
+    revoke: {
+      confirmLabel: 'Отозвать доступ',
+      description: `Интеграция ${providerName} немедленно остановится, а текущий доступ будет отозван. Для повторного подключения потребуется указать новые учётные данные.`,
+      isDestructive: true,
+      title: `Отозвать доступ ${providerName}?`,
+    },
+    validate: {
+      confirmLabel: 'Проверить подключение',
+      description: provider === 'evotor'
+        ? 'Setly проверит локальную конфигурацию Эвотора. Окончательное подтверждение появится после следующего события от кассы.'
+        : `Setly выполнит безопасный запрос к ${providerName} с сохранёнными данными и обновит результат проверки. Настройки не изменятся.`,
+      title: `Проверить ${providerName}?`,
+    },
+  };
+  return copies[command];
+}
+
+function integrationSaveCopy(
+  provider: IntegrationProvider,
+  mode: 'configure' | 'edit' | 'rotate',
+): ConfirmAction {
+  const providerName = providerCopy[provider].label;
+  if (mode === 'rotate') {
+    return {
+      confirmLabel: 'Проверить и заменить',
+      description: 'Setly сначала проверит новые учётные данные. Текущие данные будут заменены только после успешной проверки; при ошибке действующее подключение продолжит работать.',
+      title: `Обновить учётные данные ${providerName}?`,
+    };
+  }
+  if (mode === 'edit') {
+    return {
+      confirmLabel: 'Проверить и сохранить',
+      description: `Новые настройки ${providerName} будут проверены и применены только к этому клубу. Следующие запросы интеграции пойдут с обновлённой конфигурацией.`,
+      title: `Сохранить настройки ${providerName}?`,
+    };
+  }
+  return {
+    confirmLabel: 'Проверить и подключить',
+    description: `Setly проверит введённые данные и создаст подключение ${providerName} только для этого клуба. Ничего не сохранится, если проверка завершится ошибкой.`,
+    title: `Подключить ${providerName}?`,
+  };
+}
 
 function ProviderIcon({ provider }: { provider: IntegrationProvider }) {
   if (provider === 'beeline') return <PhoneCall className="size-5" />;
@@ -418,6 +519,12 @@ function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
             <div className="space-y-2"><Label htmlFor="operator-password">Пароль</Label><Input id="operator-password" type="password" autoComplete="new-password" name="installationOperatorPassword" value={credentials.password} onChange={(event) => setCredentials({ ...credentials, password: event.target.value })} required /></div>
             {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
             <Button className="w-full" disabled={submitting} type="submit">{submitting ? 'Входим…' : 'Войти'}</Button>
+            <Button asChild className="w-full" variant="ghost">
+              <a href="https://setly.tech/login">
+                <ArrowLeft className="mr-2 size-4" />
+                Вернуться к обычному входу
+              </a>
+            </Button>
           </form></CardContent>
         </Card>
       </div>
@@ -469,13 +576,13 @@ function ConnectionForm({
   provider: IntegrationProvider;
   state: IntegrationState;
 }) {
-  const [showRotationConfirmation, setShowRotationConfirmation] = useState(false);
   const [credential, setCredential] = useState('');
   const [proxyUrl, setProxyUrl] = useState('');
   const [removeProxy, setRemoveProxy] = useState(false);
   const [settings, setSettings] = useState(() => beelineFormSettings(state));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  const [pendingPayload, setPendingPayload] = useState<Record<string, unknown> | null>(null);
   const copy = providerCopy[provider];
   const secretLabel = provider === 'beeline'
     ? 'Токен API'
@@ -490,29 +597,37 @@ function ConnectionForm({
       ? 'Настройки подключения'
       : 'Новое подключение';
 
-  async function submit(event: React.FormEvent) {
+  function submit(event: React.FormEvent) {
     event.preventDefault();
+    const payload: Record<string, unknown> = {};
+    if (credential) payload.credential = credential;
+    if (provider === 'beeline' && mode !== 'rotate') payload.settings = settings;
+    if (provider === 'telegram' && mode !== 'edit') {
+      if (removeProxy) payload.proxyUrl = null;
+      else if (proxyUrl) payload.proxyUrl = proxyUrl;
+    }
+    setPendingPayload(payload);
+  }
+
+  async function confirmSave() {
+    if (!pendingPayload) return;
     setSaving(true);
     setError('');
     try {
-      const payload: Record<string, unknown> = {};
-      if (credential) payload.credential = credential;
-      if (provider === 'beeline' && mode !== 'rotate') payload.settings = settings;
-      if (provider === 'telegram' && mode !== 'edit') {
-        if (removeProxy) payload.proxyUrl = null;
-        else if (proxyUrl) payload.proxyUrl = proxyUrl;
-      }
-      await onSave(payload);
+      await onSave(pendingPayload);
       setCredential('');
       setProxyUrl('');
+      setPendingPayload(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось сохранить подключение');
+      setPendingPayload(null);
     } finally {
       setSaving(false);
     }
   }
 
   return (
+    <>
     <Card className="mt-6 rounded-2xl border-primary/25" id="integration-form-preview">
       <CardHeader className="space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -563,16 +678,25 @@ function ConnectionForm({
             <div className="space-y-3 sm:col-span-2"><div className="space-y-2"><Label htmlFor="telegram-proxy">Прокси · только запись</Label><Input autoComplete="new-password" disabled={removeProxy} id="telegram-proxy" onChange={(event) => setProxyUrl(event.target.value)} placeholder="Оставьте пустым, если прокси не меняется" type="password" value={proxyUrl} /></div>{state.proxyConfigured ? <label className="flex items-center gap-3 text-sm"><input checked={removeProxy} onChange={(event) => setRemoveProxy(event.target.checked)} type="checkbox" />Удалить текущий прокси</label> : null}</div>
           ) : null}
           {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:col-span-2">{error}</div> : null}
-          {mode === 'rotate' && !showRotationConfirmation ? (
-            <div className="sm:col-span-2"><Button onClick={() => setShowRotationConfirmation(true)} type="button">Продолжить</Button></div>
-          ) : mode === 'rotate' && showRotationConfirmation ? (
-            <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-4 sm:col-span-2"><p className="font-medium">Подтвердите замену учётных данных</p><p className="mt-2 text-sm text-muted-foreground">Новые данные будут проверены до замены. При ошибке текущее подключение продолжит работать.</p><div className="mt-4 flex flex-wrap gap-2"><Button disabled={saving} type="submit">{saving ? 'Проверяем…' : 'Проверить и заменить'}</Button><Button disabled={saving} onClick={() => setShowRotationConfirmation(false)} type="button" variant="ghost">Назад</Button></div></div>
-          ) : mode !== 'rotate' ? (
-            <div className="sm:col-span-2"><Button disabled={saving} type="submit">{saving ? 'Проверяем…' : mode === 'edit' ? 'Проверить и сохранить' : 'Проверить и подключить'}</Button></div>
-          ) : null}
+          <div className="sm:col-span-2">
+            <Button disabled={saving} type="submit">
+              {mode === 'rotate'
+                ? 'Обновить учётные данные'
+                : mode === 'edit'
+                  ? 'Сохранить настройки'
+                  : 'Подключить'}
+            </Button>
+          </div>
         </form>
       </CardContent>
     </Card>
+    <ConfirmActionDialog
+      action={pendingPayload ? integrationSaveCopy(provider, mode) : null}
+      loading={saving}
+      onCancel={() => setPendingPayload(null)}
+      onConfirm={confirmSave}
+    />
+    </>
   );
 }
 
@@ -755,12 +879,16 @@ export default function InstallationProvisioningPage() {
   const navigate = useNavigate();
   const isCreateRoute = location.pathname === '/installation/provisioning';
   const organizationRoute = location.pathname.match(
-    /^\/installation\/organizations\/(\d+)(?:\/(settings)|\/clubs\/(\d+)\/(integrations|settings))?$/u,
+    /^\/installation\/organizations\/(\d+)(?:\/(settings)|\/clubs\/(\d+)\/(integrations|settings)(?:\/(beeline|evotor|telegram|vk))?)?$/u,
   );
   const organizationId = organizationRoute ? Number(organizationRoute[1]) : null;
   const isOrganizationSettingsRoute = organizationRoute?.[2] === 'settings';
   const clubId = organizationRoute?.[3] ? Number(organizationRoute[3]) : null;
   const clubSection = organizationRoute?.[4] || null;
+  const providerSegment = organizationRoute?.[5] as IntegrationProvider | undefined;
+  const selectedProvider = providerSegment && providerValues.has(providerSegment)
+    ? providerSegment
+    : null;
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [managementEnabled, setManagementEnabled] = useState(false);
   const [provisioningEnabled, setProvisioningEnabled] = useState(false);
@@ -779,9 +907,13 @@ export default function InstallationProvisioningPage() {
   const [organization, setOrganization] = useState(freshOrganization);
   const [clubs, setClubs] = useState<ClubDraft[]>(freshClubs);
   const [owner, setOwner] = useState(freshOwner);
-  const [selectedProvider, setSelectedProvider] = useState<IntegrationProvider | null>(null);
-  const [connectionFormMode, setConnectionFormMode] = useState<'configure' | 'edit' | 'rotate'>('configure');
+  const [connectionFormMode, setConnectionFormMode] = useState<'configure' | 'edit' | 'rotate' | null>(null);
   const [integrationAction, setIntegrationAction] = useState('');
+  const [pendingIntegrationAction, setPendingIntegrationAction] = useState<{
+    command: IntegrationCommand;
+    confirmation: ConfirmAction;
+    provider: IntegrationProvider;
+  } | null>(null);
 
   async function loadSnapshot() {
     const response = await installationFetch('/snapshot');
@@ -839,7 +971,8 @@ export default function InstallationProvisioningPage() {
   }, []);
 
   useEffect(() => {
-    setSelectedProvider(null);
+    setConnectionFormMode(null);
+    setPendingIntegrationAction(null);
     if (!snapshot || !organizationId || !managementEnabled) {
       setOrganizationDetail(null);
       return;
@@ -934,7 +1067,7 @@ export default function InstallationProvisioningPage() {
   }
 
   async function saveIntegration(payload: Record<string, unknown>) {
-    if (!organizationDetail || !selectedClub || !selectedIntegration || !selectedProvider) return;
+    if (!organizationDetail || !selectedClub || !selectedIntegration || !selectedProvider || !connectionFormMode) return;
     const path = `/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${selectedProvider}`;
     await operatorMutation(
       connectionFormMode === 'rotate' ? `${path}/credentials` : path,
@@ -944,11 +1077,11 @@ export default function InstallationProvisioningPage() {
       },
       connectionFormMode === 'rotate' ? 'POST' : 'PUT',
     );
-    setSelectedProvider(null);
+    setConnectionFormMode(null);
     await refreshOrganization();
   }
 
-  async function runIntegrationAction(provider: IntegrationProvider, action: string) {
+  async function runIntegrationAction(provider: IntegrationProvider, action: IntegrationCommand) {
     if (!organizationDetail || !selectedClub) return;
     const integration = selectedClub.integrations.find((item) => item.provider === provider);
     if (!integration?.updatedAt) return;
@@ -966,6 +1099,24 @@ export default function InstallationProvisioningPage() {
     } finally {
       setIntegrationAction('');
     }
+  }
+
+  function requestIntegrationAction(
+    provider: IntegrationProvider,
+    command: IntegrationCommand,
+  ) {
+    setPendingIntegrationAction({
+      command,
+      confirmation: integrationCommandCopy(provider, command),
+      provider,
+    });
+  }
+
+  async function confirmIntegrationAction() {
+    if (!pendingIntegrationAction) return;
+    const { command, provider } = pendingIntegrationAction;
+    await runIntegrationAction(provider, command);
+    setPendingIntegrationAction(null);
   }
 
   async function createOrganization() {
@@ -1085,6 +1236,73 @@ export default function InstallationProvisioningPage() {
                   </div>
                   <ClubSettings club={selectedClub} key={`${selectedClub.id}-${selectedClub.updatedAt}`} onLifecycle={changeClubLifecycle} onSave={saveClubSettings} />
                 </>
+              ) : selectedClub && organizationDetail && selectedProvider && selectedIntegration && clubSection === 'integrations' ? (
+                <>
+                  <nav aria-label="Навигация" className="flex min-w-0 flex-wrap items-center gap-1 text-sm text-muted-foreground">
+                    <button className="rounded-md px-2 py-1 hover:bg-muted hover:text-foreground" onClick={() => navigate('/installation')} type="button">Организации</button>
+                    <ChevronRight className="size-4" />
+                    <button className="max-w-[140px] truncate rounded-md px-2 py-1 hover:bg-muted hover:text-foreground sm:max-w-[240px]" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}`)} type="button">{organizationDetail.name}</button>
+                    <ChevronRight className="size-4" />
+                    <button className="max-w-[140px] truncate rounded-md px-2 py-1 hover:bg-muted hover:text-foreground sm:max-w-[220px]" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations`)} type="button">{selectedClub.name}</button>
+                    <ChevronRight className="size-4" />
+                    <span className="px-2 py-1 text-foreground">{providerCopy[selectedProvider].label}</span>
+                  </nav>
+                  <div className="mt-6 flex flex-col items-start gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <div className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><ProviderIcon provider={selectedProvider} /></div>
+                      <div className="min-w-0">
+                        <p className="break-words text-sm text-muted-foreground">{selectedClub.name} · {providerCopy[selectedProvider].description}</p>
+                        <h1 className="break-words text-2xl font-semibold tracking-tight sm:text-3xl">{providerCopy[selectedProvider].label}</h1>
+                      </div>
+                    </div>
+                    <span className={cn('shrink-0 rounded-full px-3 py-1.5 text-sm font-medium', integrationStatus(selectedIntegration).tone)}>{integrationStatus(selectedIntegration).label}</span>
+                  </div>
+                  {pageError ? <div className="mt-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{pageError}</div> : null}
+                  <div className="mt-7 grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.62fr)]">
+                    <Card className="rounded-2xl">
+                      <CardHeader><CardTitle className="text-lg">Состояние подключения</CardTitle></CardHeader>
+                      <CardContent className="grid gap-5 sm:grid-cols-2">
+                        <div><p className="text-xs text-muted-foreground">Проверка</p><p className="mt-1 text-sm font-medium">{validationDescription(selectedIntegration) || 'Подключение ещё не настроено.'}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Идентификатор</p><p className="mt-1 break-all text-sm font-medium">{selectedIntegration.safeIdentity || 'Появится после настройки'}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Последнее событие</p><p className="mt-1 text-sm font-medium">{selectedIntegration.lastActivityAt ? formatDate(selectedIntegration.lastActivityAt) : 'Событий пока нет'}</p></div>
+                        <div><p className="text-xs text-muted-foreground">Учётные данные</p><p className="mt-1 text-sm font-medium">{selectedIntegration.secretUpdatedAt ? `Обновлены ${formatDate(selectedIntegration.secretUpdatedAt)}` : 'Не сохранены'}</p></div>
+                        {selectedIntegration.safeCallbackUrl ? <div className="sm:col-span-2"><p className="text-xs text-muted-foreground">Callback URL</p><p className="mt-1 break-all font-mono text-xs">{selectedIntegration.safeCallbackUrl}</p></div> : null}
+                      </CardContent>
+                    </Card>
+                    <Card className="rounded-2xl">
+                      <CardHeader><CardTitle className="text-lg">Управление</CardTitle></CardHeader>
+                      <CardContent className="space-y-3">
+                        {selectedIntegration.status !== 'revoked' && !selectedIntegration.configured ? <Button className="w-full justify-start" disabled={!integrationMutationsEnabled} onClick={() => setConnectionFormMode('configure')} type="button"><Settings2 className="mr-2 size-4" />Настроить подключение</Button> : null}
+                        {selectedIntegration.configured && selectedProvider === 'beeline' && selectedIntegration.status !== 'revoked' ? <Button className="w-full justify-start" disabled={!integrationMutationsEnabled} onClick={() => setConnectionFormMode('edit')} type="button" variant="outline"><Settings2 className="mr-2 size-4" />Изменить настройки</Button> : null}
+                        {selectedIntegration.configured ? <Button className="w-full justify-start" disabled={!integrationMutationsEnabled} onClick={() => setConnectionFormMode('rotate')} type="button" variant="outline"><KeyRound className="mr-2 size-4" />Обновить учётные данные</Button> : null}
+                        {selectedIntegration.configured && selectedIntegration.status !== 'revoked' ? <Button className="w-full justify-start" disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction(selectedProvider, 'validate')} type="button" variant="outline"><ShieldCheck className="mr-2 size-4" />Проверить подключение</Button> : null}
+                        {selectedIntegration.configured && selectedIntegration.status !== 'revoked' ? <Button className="w-full justify-start" disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction(selectedProvider, selectedIntegration.status === 'active' ? 'disable' : 'activate')} type="button" variant={selectedIntegration.status === 'active' ? 'destructive' : 'default'}>{selectedIntegration.status === 'active' ? 'Отключить' : 'Включить'}</Button> : null}
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {selectedIntegration.configured && selectedIntegration.status === 'active' && (selectedProvider === 'telegram' || selectedProvider === 'vk' || selectedProvider === 'beeline') ? (
+                    <section className="mt-7 border-t pt-7">
+                      <h2 className="text-lg font-semibold">Операции провайдера</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">Используйте их для обслуживания уже работающего подключения.</p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {selectedProvider === 'telegram' || selectedProvider === 'vk' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction(selectedProvider, 'restart')} type="button" variant="outline"><RefreshCw className="mr-2 size-4" />Перезапустить бота</Button> : null}
+                        {selectedProvider === 'beeline' ? <><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction('beeline', 'check')} type="button" variant="outline">Проверить подписку</Button><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction('beeline', 'renew')} type="button" variant="outline"><RefreshCw className="mr-2 size-4" />Продлить подписку</Button><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction('beeline', 'cutover')} type="button" variant="destructive">Переключить callback</Button></> : null}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {selectedIntegration.configured && selectedIntegration.status !== 'revoked' ? (
+                    <section className="mt-7 border-t pt-7">
+                      <h2 className="text-lg font-semibold text-destructive">Опасная зона</h2>
+                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">Отзыв доступа останавливает подключение и требует новых учётных данных для восстановления.</p>
+                      <Button className="mt-4" disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => requestIntegrationAction(selectedProvider, 'revoke')} type="button" variant="destructive"><Trash2 className="mr-2 size-4" />Отозвать доступ</Button>
+                    </section>
+                  ) : null}
+
+                  {connectionFormMode ? <ConnectionForm key={`${selectedProvider}-${connectionFormMode}-${selectedIntegration.updatedAt}`} mode={connectionFormMode} onClose={() => setConnectionFormMode(null)} onSave={saveIntegration} provider={selectedProvider} state={selectedIntegration} /> : null}
+                  <ConfirmActionDialog action={pendingIntegrationAction?.confirmation || null} loading={Boolean(integrationAction)} onCancel={() => setPendingIntegrationAction(null)} onConfirm={confirmIntegrationAction} />
+                </>
               ) : selectedClub && organizationDetail && clubSection === 'integrations' ? (
                 <>
                   <nav aria-label="Навигация" className="flex min-w-0 flex-wrap items-center gap-1 text-sm text-muted-foreground">
@@ -1113,21 +1331,12 @@ export default function InstallationProvisioningPage() {
                             {integration.safeIdentity ? <div className="rounded-xl border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Подключено</p><p className="mt-1 text-sm font-medium">{integration.safeIdentity}</p></div> : null}
                             {integration.lastActivityAt ? <p className="text-xs text-muted-foreground">Последнее успешное событие {formatDate(integration.lastActivityAt)}</p> : null}
                             {integration.secretUpdatedAt ? <p className="text-xs text-muted-foreground">Данные обновлены {formatDate(integration.secretUpdatedAt)}</p> : null}
-                            <div className="flex flex-wrap gap-2">
-                              {integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled} onClick={() => { setConnectionFormMode(integration.configured ? 'edit' : 'configure'); setSelectedProvider(integration.provider); }} type="button" variant={integration.configured ? 'outline' : 'default'}>{integration.configured ? 'Открыть настройки' : 'Настроить'}</Button> : null}
-                              {integration.configured ? <Button disabled={!integrationMutationsEnabled} onClick={() => { setConnectionFormMode('rotate'); setSelectedProvider(integration.provider); }} type="button" variant="ghost">Заменить данные</Button> : null}
-                              {integration.configured && integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, integration.status === 'active' ? 'disable' : 'activate')} type="button" variant="ghost">{integrationAction === `${integration.provider}:${integration.status === 'active' ? 'disable' : 'activate'}` ? 'Выполняем…' : integration.status === 'active' ? 'Отключить' : 'Активировать'}</Button> : null}
-                              {integration.configured && integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, 'validate')} type="button" variant="ghost">Проверить</Button> : null}
-                              {integration.configured && ['telegram', 'vk'].includes(integration.provider) && integration.status === 'active' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, 'restart')} type="button" variant="ghost">Перезапустить</Button> : null}
-                              {integration.configured && integration.provider === 'beeline' && integration.status === 'active' ? <><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction('beeline', 'check')} type="button" variant="ghost">Проверить подписку</Button><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction('beeline', 'renew')} type="button" variant="ghost">Продлить подписку</Button><Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction('beeline', 'cutover')} type="button" variant="ghost">Переключить callback</Button></> : null}
-                              {integration.configured && integration.status !== 'revoked' ? <Button disabled={!integrationMutationsEnabled || Boolean(integrationAction)} onClick={() => void runIntegrationAction(integration.provider, 'revoke')} type="button" variant="ghost">Отозвать</Button> : null}
-                            </div>
+                            <Button className="w-full sm:w-auto" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${integration.provider}`)} type="button" variant="outline">Открыть<ArrowRight className="ml-2 size-4" /></Button>
                           </CardContent>
                         </Card>
                       );
                     })}
                   </div>
-                  {selectedProvider && selectedIntegration ? <ConnectionForm key={`${selectedProvider}-${connectionFormMode}-${selectedIntegration.updatedAt}`} mode={connectionFormMode} onClose={() => setSelectedProvider(null)} onSave={saveIntegration} provider={selectedProvider} state={selectedIntegration} /> : null}
                 </>
               ) : organizationId && organizationDetail ? (
                 <>
