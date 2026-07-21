@@ -80,6 +80,18 @@ test('organization client lookup aggregates only authorized Club instruments', a
       '../../migrations/20260721220000-allow-expired-onboarding-mode-disable'
     );
     await expiredModeMigration.down(schema.getQueryInterface());
+    expiredModeMigration.__testing.failNextCreate();
+    await assert.rejects(
+      expiredModeMigration.up(schema.getQueryInterface()),
+      (error) => error?.code === 'ONBOARDING_TRIGGER_CREATE_FORCED_FAILURE',
+    );
+    await expiredModeMigration.up(schema.getQueryInterface());
+    expiredModeMigration.__testing.failNextCreate();
+    await assert.rejects(
+      expiredModeMigration.down(schema.getQueryInterface()),
+      (error) => error?.code === 'ONBOARDING_TRIGGER_CREATE_FORCED_FAILURE',
+    );
+    await expiredModeMigration.down(schema.getQueryInterface());
     await expiredModeMigration.up(schema.getQueryInterface());
     db = require('../../models');
     const createApp = require('../../src/app');
