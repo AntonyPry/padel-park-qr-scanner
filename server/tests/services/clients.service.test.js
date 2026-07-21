@@ -1,8 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const db = require('../../models');
-const certificatesService = require('../../src/services/certificates.service');
-const subscriptionsService = require('../../src/services/subscriptions.service');
+const tenantContextService = require('../../src/services/tenant-context.service');
 const {
   __testing,
   lookupByPhone,
@@ -171,29 +170,37 @@ test('client prepayment summary reports active balances and blocking statuses', 
 });
 
 test('phone lookup keeps the verified tenant authority for prepayment summary', async (t) => {
-  const previousCapability = process.env.TENANT_CLIENTS_REFERENCES_ENABLED;
+  const previousCapabilities = {
+    TENANT_CLIENTS_REFERENCES_ENABLED:
+      process.env.TENANT_CLIENTS_REFERENCES_ENABLED,
+    TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED:
+      process.env.TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED,
+  };
   process.env.TENANT_CLIENTS_REFERENCES_ENABLED = 'true';
+  process.env.TENANT_CLIENT_MONEY_INSTRUMENTS_ENABLED = 'true';
   t.after(() => {
-    if (previousCapability === undefined) {
-      delete process.env.TENANT_CLIENTS_REFERENCES_ENABLED;
-    } else {
-      process.env.TENANT_CLIENTS_REFERENCES_ENABLED = previousCapability;
+    for (const [name, value] of Object.entries(previousCapabilities)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
     }
   });
-  const tenant = Object.freeze({
-    accountId: 1,
-    membershipId: 2,
-    organizationId: 3,
-    scope: 'organization',
-  });
   t.mock.method(db.Organization, 'findOne', async () => ({ id: 3 }));
+  t.mock.method(db.Account, 'findOne', async () => ({
+    id: 1,
+    staffId: null,
+    status: 'active',
+  }));
   t.mock.method(db.Membership, 'findOne', async () => ({
     accountId: 1,
     id: 2,
     organizationId: 3,
     role: 'owner',
+    staffId: null,
+    status: 'active',
   }));
+  t.mock.method(db.Club, 'findAll', async () => [{ id: 4 }]);
   t.mock.method(db.User, 'findOne', async () => ({
+    id: 12,
     toJSON: () => clientFixture(),
   }));
   t.mock.method(db.Visit, 'findOne', async () => ({
@@ -201,22 +208,42 @@ test('phone lookup keeps the verified tenant authority for prepayment summary', 
     lastVisitAt: null,
     visitCount: 0,
   }));
-  t.mock.method(
-    subscriptionsService,
-    'listClientSubscriptions',
-    async (_clientId, _query, receivedTenant) => {
-      assert.equal(receivedTenant, tenant);
-      return [{ id: 10, remainingSessions: 4, status: 'active' }];
-    },
-  );
-  t.mock.method(
-    certificatesService,
-    'listClientCertificates',
-    async (_clientId, _query, receivedTenant) => {
-      assert.equal(receivedTenant, tenant);
-      return [{ code: 'CERT-1', id: 20, status: 'active' }];
-    },
-  );
+  t.mock.method(db.ClientSubscription, 'findAll', async ({ where }) => {
+    assert.equal(where.clientId, 12);
+    assert.equal(where.organizationId, 3);
+    assert.deepEqual(where.clubId[db.Sequelize.Op.in], [4]);
+    return [{
+      expiresAt: null,
+      id: 10,
+      isUnlimited: false,
+      sessionsTotal: 4,
+      sessionsUsed: 0,
+      status: 'active',
+      typeName: '4 занятия',
+    }];
+  });
+  t.mock.method(db.Certificate, 'findAll', async ({ where }) => {
+    assert.equal(where.clientId, 12);
+    assert.equal(where.organizationId, 3);
+    assert.deepEqual(where.clubId[db.Sequelize.Op.in], [4]);
+    return [{
+      amountTotal: 1000,
+      amountUsed: 0,
+      certificateType: 'money',
+      code: 'CERT-1',
+      expiresAt: null,
+      id: 20,
+      status: 'active',
+      unitsTotal: null,
+      unitsUsed: 0,
+    }];
+  });
+
+  const tenant = await tenantContextService.resolveTenantContext({
+    accountId: 1,
+    organizationId: 3,
+    scope: 'organization',
+  });
 
   const result = await lookupByPhone(
     '+7 999 111-22-33',
