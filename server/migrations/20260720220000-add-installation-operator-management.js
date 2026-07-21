@@ -2,6 +2,9 @@
 
 const provisioningArtifacts = require('./20260720120000-add-installation-provisioning').__testing;
 
+const LOWER_CASE_TABLE_NAMES = new WeakMap();
+const INDEX_VISIBILITY_SUPPORT = new WeakMap();
+
 const SESSION_TABLE = 'InstallationOperatorSessions';
 const OPERATION_TABLE = 'InstallationMutationOperations';
 const CONNECTION_TABLE = 'IntegrationConnections';
@@ -158,7 +161,63 @@ function value(row, key) {
   return row?.[key] ?? row?.[key.toLowerCase()] ?? null;
 }
 
-async function tableRows(queryInterface, table) {
+function tableIdentifierEquals(left, right, lowerCaseTableNames) {
+  if (![0, 1, 2].includes(lowerCaseTableNames)) {
+    throw migrationError(`Unsupported lower_case_table_names value: ${lowerCaseTableNames}`);
+  }
+  const leftIdentifier = String(left || '');
+  const rightIdentifier = String(right || '');
+  return lowerCaseTableNames === 0
+    ? leftIdentifier === rightIdentifier
+    : leftIdentifier.toLowerCase() === rightIdentifier.toLowerCase();
+}
+
+async function getLowerCaseTableNames(queryInterface) {
+  if (LOWER_CASE_TABLE_NAMES.has(queryInterface)) {
+    return LOWER_CASE_TABLE_NAMES.get(queryInterface);
+  }
+  const result = await rows(
+    queryInterface,
+    'SELECT @@lower_case_table_names AS lowerCaseTableNames',
+  );
+  const rawSetting = value(result[0], 'lowerCaseTableNames');
+  const setting = rawSetting === null || rawSetting === '' ? Number.NaN : Number(rawSetting);
+  if (![0, 1, 2].includes(setting)) {
+    throw migrationError(`Unsupported lower_case_table_names value: ${setting}`);
+  }
+  LOWER_CASE_TABLE_NAMES.set(queryInterface, setting);
+  return setting;
+}
+
+async function supportsIndexVisibility(queryInterface) {
+  if (INDEX_VISIBILITY_SUPPORT.has(queryInterface)) {
+    return INDEX_VISIBILITY_SUPPORT.get(queryInterface);
+  }
+  let supported;
+  try {
+    await queryInterface.sequelize.query(
+      'SELECT IS_VISIBLE FROM INFORMATION_SCHEMA.STATISTICS LIMIT 0',
+    );
+    supported = true;
+  } catch (error) {
+    const code = error?.parent?.code || error?.original?.code || error?.code;
+    if (!['ER_BAD_FIELD_ERROR', 'ER_PARSE_ERROR'].includes(code)) throw error;
+    supported = false;
+  }
+  INDEX_VISIBILITY_SUPPORT.set(queryInterface, supported);
+  return supported;
+}
+
+async function filterOwnedRows(queryInterface, rawRows, key, table) {
+  const lowerCaseTableNames = await getLowerCaseTableNames(queryInterface);
+  return rawRows.filter((row) => tableIdentifierEquals(
+    value(row, key),
+    table,
+    lowerCaseTableNames,
+  ));
+}
+
+async function rawTableRows(queryInterface, table) {
   return rows(queryInterface, `
     SELECT TABLE_NAME, ENGINE, TABLE_COLLATION
       FROM INFORMATION_SCHEMA.TABLES
@@ -166,8 +225,13 @@ async function tableRows(queryInterface, table) {
   `, { table });
 }
 
+async function tableRows(queryInterface, table) {
+  const result = await rawTableRows(queryInterface, table);
+  return filterOwnedRows(queryInterface, result, 'TABLE_NAME', table);
+}
+
 async function columnRows(queryInterface, table, name = null) {
-  return rows(queryInterface, `
+  const result = await rows(queryInterface, `
     SELECT TABLE_NAME, COLUMN_NAME, ORDINAL_POSITION, DATA_TYPE, COLUMN_TYPE,
            IS_NULLABLE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_SET_NAME,
            COLLATION_NAME, DATETIME_PRECISION, NUMERIC_PRECISION, NUMERIC_SCALE,
@@ -177,20 +241,26 @@ async function columnRows(queryInterface, table, name = null) {
        ${name ? 'AND COLUMN_NAME=:name' : ''}
      ORDER BY ORDINAL_POSITION
   `, { name, table });
+  return filterOwnedRows(queryInterface, result, 'TABLE_NAME', table);
 }
 
-async function indexRows(queryInterface, table) {
-  return rows(queryInterface, `
+async function indexRows(queryInterface, table, name = null) {
+  const visibility = await supportsIndexVisibility(queryInterface)
+    ? 'IS_VISIBLE'
+    : "'YES' AS IS_VISIBLE";
+  const result = await rows(queryInterface, `
     SELECT TABLE_NAME, INDEX_NAME, NON_UNIQUE, SEQ_IN_INDEX, COLUMN_NAME,
-           SUB_PART, COLLATION, INDEX_TYPE
+           SUB_PART, COLLATION, INDEX_TYPE, ${visibility}
       FROM INFORMATION_SCHEMA.STATISTICS
      WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table
+       ${name ? 'AND INDEX_NAME=:name' : ''}
      ORDER BY INDEX_NAME, SEQ_IN_INDEX
-  `, { table });
+  `, { name, table });
+  return filterOwnedRows(queryInterface, result, 'TABLE_NAME', table);
 }
 
-async function foreignKeyRows(queryInterface, table) {
-  return rows(queryInterface, `
+async function foreignKeyRows(queryInterface, table, name = null) {
+  const result = await rows(queryInterface, `
     SELECT k.TABLE_NAME, k.CONSTRAINT_NAME, k.COLUMN_NAME, k.ORDINAL_POSITION,
            k.REFERENCED_TABLE_NAME, k.REFERENCED_COLUMN_NAME,
            r.UPDATE_RULE, r.DELETE_RULE
@@ -200,18 +270,38 @@ async function foreignKeyRows(queryInterface, table) {
        AND r.CONSTRAINT_NAME=k.CONSTRAINT_NAME
        AND r.TABLE_NAME=k.TABLE_NAME
      WHERE k.CONSTRAINT_SCHEMA=DATABASE() AND k.TABLE_NAME=:table
+       ${name ? 'AND k.CONSTRAINT_NAME=:name' : ''}
      ORDER BY k.CONSTRAINT_NAME, k.ORDINAL_POSITION
-  `, { table });
+  `, { name, table });
+  return filterOwnedRows(queryInterface, result, 'TABLE_NAME', table);
 }
 
-async function triggerRows(queryInterface, table) {
-  return rows(queryInterface, `
+async function triggerRows(queryInterface, table, name = null) {
+  const result = await rows(queryInterface, `
     SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE, ACTION_TIMING,
            EVENT_MANIPULATION, ACTION_STATEMENT
       FROM INFORMATION_SCHEMA.TRIGGERS
      WHERE TRIGGER_SCHEMA=DATABASE() AND EVENT_OBJECT_TABLE=:table
+       ${name ? 'AND TRIGGER_NAME=:name' : ''}
      ORDER BY TRIGGER_NAME
-  `, { table });
+  `, { name, table });
+  return filterOwnedRows(queryInterface, result, 'EVENT_OBJECT_TABLE', table);
+}
+
+async function foreignKeyNameRows(queryInterface, name) {
+  return rows(queryInterface, `
+    SELECT TABLE_NAME, CONSTRAINT_NAME
+      FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
+     WHERE CONSTRAINT_SCHEMA=DATABASE() AND CONSTRAINT_NAME=:name
+  `, { name });
+}
+
+async function triggerNameRows(queryInterface, name) {
+  return rows(queryInterface, `
+    SELECT TRIGGER_NAME, EVENT_OBJECT_TABLE
+      FROM INFORMATION_SCHEMA.TRIGGERS
+     WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME=:name
+  `, { name });
 }
 
 function normalizeIndexes(rawRows) {
@@ -220,12 +310,20 @@ function normalizeIndexes(rawRows) {
     const name = value(row, 'INDEX_NAME');
     if (!grouped.has(name)) {
       grouped.set(name, {
-        fields: [],
+        columns: [],
+        indexType: String(value(row, 'INDEX_TYPE') || '').toUpperCase(),
+        isVisible: String(value(row, 'IS_VISIBLE') || '').toUpperCase(),
         name,
+        table: value(row, 'TABLE_NAME'),
         unique: Number(value(row, 'NON_UNIQUE')) === 0,
       });
     }
-    grouped.get(name).fields.push(value(row, 'COLUMN_NAME'));
+    grouped.get(name).columns.push({
+      collation: value(row, 'COLLATION'),
+      name: value(row, 'COLUMN_NAME'),
+      sequence: Number(value(row, 'SEQ_IN_INDEX')),
+      subPart: value(row, 'SUB_PART') === null ? null : Number(value(row, 'SUB_PART')),
+    });
   }
   return [...grouped.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -241,8 +339,8 @@ function normalizeForeignKeys(rawRows) {
         onDelete: String(value(row, 'DELETE_RULE')).toUpperCase().replace('NO ACTION', 'RESTRICT'),
         onUpdate: String(value(row, 'UPDATE_RULE')).toUpperCase().replace('NO ACTION', 'RESTRICT'),
         referencedFields: [],
-        referencedTable: String(value(row, 'REFERENCED_TABLE_NAME')).toLowerCase(),
-        table: String(value(row, 'TABLE_NAME')).toLowerCase(),
+        referencedTable: value(row, 'REFERENCED_TABLE_NAME'),
+        table: value(row, 'TABLE_NAME'),
       });
     }
     grouped.get(name).fields.push(value(row, 'COLUMN_NAME'));
@@ -256,7 +354,7 @@ function normalizeTriggers(rawRows) {
     body: provisioningArtifacts.normalizeSql(value(row, 'ACTION_STATEMENT')),
     event: String(value(row, 'EVENT_MANIPULATION')).toUpperCase(),
     name: value(row, 'TRIGGER_NAME'),
-    table: String(value(row, 'EVENT_OBJECT_TABLE')).toLowerCase(),
+    table: value(row, 'EVENT_OBJECT_TABLE'),
     timing: String(value(row, 'ACTION_TIMING')).toUpperCase(),
   })).sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -281,13 +379,38 @@ function columnSignature(rawRows) {
 
 async function readArtifact(queryInterface, kind, item) {
   if (kind === 'column') return columnRows(queryInterface, item.table, item.name);
-  return provisioningArtifacts.readArtifact(queryInterface, kind, item);
+  if (kind === 'index') return indexRows(queryInterface, item.table, item.name);
+  if (kind === 'foreignKey') return foreignKeyRows(queryInterface, item.table, item.name);
+  if (kind === 'trigger') return triggerRows(queryInterface, item.table, item.name);
+  if (kind === 'table') {
+    const definition = await tableRows(queryInterface, item.table);
+    if (definition.length === 0) return [];
+    definition[0].__columns = await columnRows(queryInterface, item.table);
+    definition[0].__foreignKeys = await foreignKeyRows(queryInterface, item.table);
+    definition[0].__indexes = await indexRows(queryInterface, item.table);
+    definition[0].__triggers = await triggerRows(queryInterface, item.table);
+    return definition;
+  }
+  throw migrationError(`Unknown installation management artifact kind ${kind}`);
 }
 
 function artifactSignature(kind, rawRows) {
-  return kind === 'column'
-    ? columnSignature(rawRows)
-    : provisioningArtifacts.artifactSignature(kind, rawRows);
+  if (kind === 'column') return columnSignature(rawRows);
+  if (kind === 'index') return JSON.stringify(normalizeIndexes(rawRows));
+  if (kind === 'foreignKey') return JSON.stringify(normalizeForeignKeys(rawRows));
+  if (kind === 'trigger') return JSON.stringify(normalizeTriggers(rawRows));
+  if (kind === 'table') {
+    return JSON.stringify(rawRows.map((row) => ({
+      collation: value(row, 'TABLE_COLLATION'),
+      columns: JSON.parse(columnSignature(row.__columns || [])),
+      engine: String(value(row, 'ENGINE') || '').toUpperCase(),
+      foreignKeys: normalizeForeignKeys(row.__foreignKeys || []),
+      indexes: normalizeIndexes(row.__indexes || []),
+      name: value(row, 'TABLE_NAME'),
+      triggers: normalizeTriggers(row.__triggers || []),
+    })));
+  }
+  throw migrationError(`Unknown installation management artifact kind ${kind}`);
 }
 
 async function track(queryInterface, plan, kind, item) {
@@ -329,9 +452,28 @@ function columnReasons(table, rawRows, expected) {
 
 function expectedIndexes(table) {
   const expected = INDEXES.filter((item) => item.table === table)
-    .map(({ fields, name, unique }) => ({ fields: [...fields], name, unique }));
+    .map(({ fields, name, unique }) => ({
+      columns: fields.map((field, index) => ({
+        collation: 'A',
+        name: field,
+        sequence: index + 1,
+        subPart: null,
+      })),
+      indexType: 'BTREE',
+      isVisible: 'YES',
+      name,
+      table,
+      unique,
+    }));
   if ([SESSION_TABLE, OPERATION_TABLE].includes(table)) {
-    expected.push({ fields: ['id'], name: 'PRIMARY', unique: true });
+    expected.push({
+      columns: [{ collation: 'A', name: 'id', sequence: 1, subPart: null }],
+      indexType: 'BTREE',
+      isVisible: 'YES',
+      name: 'PRIMARY',
+      table,
+      unique: true,
+    });
   }
   return expected.sort((left, right) => left.name.localeCompare(right.name));
 }
@@ -343,8 +485,8 @@ function expectedForeignKeys(table) {
     onDelete: item.onDelete,
     onUpdate: item.onUpdate,
     referencedFields: [...item.referencedFields],
-    referencedTable: item.referencedTable.toLowerCase(),
-    table: item.table.toLowerCase(),
+    referencedTable: item.referencedTable,
+    table: item.table,
   })).sort((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -353,36 +495,102 @@ function expectedTriggers(table) {
     body: provisioningArtifacts.normalizeSql(item.body),
     event: item.event,
     name: item.name,
-    table: item.table.toLowerCase(),
+    table: item.table,
     timing: 'BEFORE',
   })).sort((left, right) => left.name.localeCompare(right.name));
 }
 
+function indexIsCanonical(rawRows, expected, lowerCaseTableNames) {
+  if (rawRows.length !== expected.columns.length) return false;
+  return rawRows.every((row, index) => {
+    const expectedColumn = expected.columns[index];
+    const rawCollation = value(row, 'COLLATION');
+    return tableIdentifierEquals(
+      value(row, 'TABLE_NAME'),
+      expected.table,
+      lowerCaseTableNames,
+    ) &&
+      value(row, 'INDEX_NAME') === expected.name &&
+      Number(value(row, 'NON_UNIQUE')) === (expected.unique ? 0 : 1) &&
+      Number(value(row, 'SEQ_IN_INDEX')) === expectedColumn.sequence &&
+      value(row, 'COLUMN_NAME') === expectedColumn.name &&
+      value(row, 'SUB_PART') === expectedColumn.subPart &&
+      rawCollation === expectedColumn.collation &&
+      String(value(row, 'INDEX_TYPE') || '').toUpperCase() === expected.indexType &&
+      String(value(row, 'IS_VISIBLE') || '').toUpperCase() === expected.isVisible;
+  });
+}
+
+function foreignKeyIsCanonical(rawRows, expected, lowerCaseTableNames) {
+  const rowsToCheck = Array.isArray(rawRows) ? rawRows : rawRows ? [rawRows] : [];
+  const fields = expected.fields || [expected.column];
+  const referencedFields = expected.referencedFields || [expected.referencedColumn];
+  if (rowsToCheck.length !== fields.length) return false;
+  return rowsToCheck.every((row, index) =>
+    tableIdentifierEquals(value(row, 'TABLE_NAME'), expected.table, lowerCaseTableNames) &&
+      value(row, 'CONSTRAINT_NAME') === expected.name &&
+      Number(value(row, 'ORDINAL_POSITION')) === index + 1 &&
+      value(row, 'COLUMN_NAME') === fields[index] &&
+    tableIdentifierEquals(
+      value(row, 'REFERENCED_TABLE_NAME'),
+      expected.referencedTable,
+      lowerCaseTableNames,
+    ) &&
+    value(row, 'REFERENCED_COLUMN_NAME') === referencedFields[index] &&
+    String(value(row, 'UPDATE_RULE') || '').toUpperCase().replace('NO ACTION', 'RESTRICT') ===
+      expected.onUpdate &&
+    String(value(row, 'DELETE_RULE') || '').toUpperCase().replace('NO ACTION', 'RESTRICT') ===
+      expected.onDelete);
+}
+
+function triggerIsCanonical(rawRows, expected, lowerCaseTableNames) {
+  const rowsToCheck = Array.isArray(rawRows) ? rawRows : rawRows ? [rawRows] : [];
+  if (rowsToCheck.length !== 1) return false;
+  const row = rowsToCheck[0];
+  return value(row, 'TRIGGER_NAME') === expected.name &&
+    tableIdentifierEquals(
+      value(row, 'EVENT_OBJECT_TABLE'),
+      expected.table,
+      lowerCaseTableNames,
+    ) &&
+    String(value(row, 'EVENT_MANIPULATION') || '').toUpperCase() === expected.event &&
+    String(value(row, 'ACTION_TIMING') || '').toUpperCase() === 'BEFORE' &&
+    provisioningArtifacts.normalizeSql(value(row, 'ACTION_STATEMENT')) ===
+      provisioningArtifacts.normalizeSql(expected.body);
+}
+
 async function reservedArtifactCount(queryInterface) {
-  const tableNames = [SESSION_TABLE, OPERATION_TABLE];
-  const triggerNames = TRIGGERS.map((item) => item.name);
-  const foreignKeyNames = FOREIGN_KEYS.map((item) => item.name);
-  const indexNames = INDEXES.map((item) => item.name);
   const columnNames = TARGET_CONNECTION_COLUMNS.map(([name]) => name);
-  const result = await rows(queryInterface, `
-    SELECT
-      (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN (:tableNames)) AS tablesCount,
-      (SELECT COUNT(*) FROM INFORMATION_SCHEMA.TRIGGERS
-        WHERE TRIGGER_SCHEMA=DATABASE() AND TRIGGER_NAME IN (:triggerNames)) AS triggersCount,
-      (SELECT COUNT(*) FROM INFORMATION_SCHEMA.KEY_COLUMN_USAGE
-        WHERE CONSTRAINT_SCHEMA=DATABASE() AND CONSTRAINT_NAME IN (:foreignKeyNames)) AS foreignKeysCount,
-      (SELECT COUNT(DISTINCT CONCAT(TABLE_NAME, ':', INDEX_NAME))
-         FROM INFORMATION_SCHEMA.STATISTICS
-        WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME IN (:indexNames)) AS indexesCount,
-      (SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:connectionTable
-          AND COLUMN_NAME IN (:columnNames)) AS columnsCount
-  `, { columnNames, connectionTable: CONNECTION_TABLE, foreignKeyNames, indexNames, tableNames, triggerNames });
-  return Object.values(result[0] || {}).reduce((sum, item) => sum + Number(item || 0), 0);
+  let count = 0;
+  for (const table of [SESSION_TABLE, OPERATION_TABLE]) {
+    count += (await rawTableRows(queryInterface, table)).length;
+  }
+  const connectionColumns = await rows(queryInterface, `
+    SELECT TABLE_NAME, COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table AND COLUMN_NAME IN (:columnNames)
+  `, { columnNames, table: CONNECTION_TABLE });
+  count += connectionColumns.length;
+  for (const index of INDEXES) {
+    const found = await rows(queryInterface, `
+      SELECT TABLE_NAME, INDEX_NAME
+        FROM INFORMATION_SCHEMA.STATISTICS
+       WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=:table AND INDEX_NAME=:name
+       LIMIT 1
+    `, index);
+    count += found.length;
+  }
+  for (const foreignKey of FOREIGN_KEYS) {
+    count += (await foreignKeyNameRows(queryInterface, foreignKey.name)).length;
+  }
+  for (const trigger of TRIGGERS) {
+    count += (await triggerNameRows(queryInterface, trigger.name)).length;
+  }
+  return count;
 }
 
 async function connectionArtifactReasons(queryInterface) {
+  const lowerCaseTableNames = await getLowerCaseTableNames(queryInterface);
   const reasons = [];
   for (const expected of TARGET_CONNECTION_COLUMNS) {
     reasons.push(...columnReasons(
@@ -392,10 +600,18 @@ async function connectionArtifactReasons(queryInterface) {
     ));
   }
   const targetNames = new Set(TARGET_CONNECTION_COLUMNS.map(([name]) => name));
-  const relevantIndexes = normalizeIndexes(await indexRows(queryInterface, CONNECTION_TABLE))
-    .filter((index) => INDEXES.some((item) => item.name === index.name) ||
-      index.fields.some((field) => targetNames.has(field)));
-  if (JSON.stringify(relevantIndexes) !== JSON.stringify(expectedIndexes(CONNECTION_TABLE))) {
+  const allIndexRows = await indexRows(queryInterface, CONNECTION_TABLE);
+  const relevantNames = new Set(allIndexRows
+    .filter((row) => INDEXES.some((item) => item.name === value(row, 'INDEX_NAME')) ||
+      targetNames.has(value(row, 'COLUMN_NAME')))
+    .map((row) => value(row, 'INDEX_NAME')));
+  const expected = expectedIndexes(CONNECTION_TABLE);
+  if (relevantNames.size !== expected.length ||
+      expected.some((index) => !indexIsCanonical(
+        allIndexRows.filter((row) => value(row, 'INDEX_NAME') === index.name),
+        index,
+        lowerCaseTableNames,
+      ))) {
     reasons.push(`fingerprint indexes on ${CONNECTION_TABLE} differ`);
   }
   const triggerDependencies = await rows(queryInterface, `
@@ -413,6 +629,7 @@ async function classifyState(queryInterface) {
   if (queryInterface.sequelize.getDialect() !== 'mysql') {
     throw migrationError('Installation management requires MySQL definition guards');
   }
+  const lowerCaseTableNames = await getLowerCaseTableNames(queryInterface);
   if (await reservedArtifactCount(queryInterface) === 0) {
     return { reasons: [], state: 'absent' };
   }
@@ -424,24 +641,39 @@ async function classifyState(queryInterface) {
       continue;
     }
     reasons.push(...columnReasons(table, await columnRows(queryInterface, table), TABLE_COLUMNS[table]));
-    if (JSON.stringify(normalizeIndexes(await indexRows(queryInterface, table))) !==
-        JSON.stringify(expectedIndexes(table))) reasons.push(`indexes on ${table} differ`);
-    if (JSON.stringify(normalizeForeignKeys(await foreignKeyRows(queryInterface, table))) !==
-        JSON.stringify(expectedForeignKeys(table))) reasons.push(`foreign keys on ${table} differ`);
-    if (JSON.stringify(normalizeTriggers(await triggerRows(queryInterface, table))) !==
-        JSON.stringify(expectedTriggers(table))) reasons.push(`triggers on ${table} differ`);
+    const actualIndexes = await indexRows(queryInterface, table);
+    const expectedIndexDefinitions = expectedIndexes(table);
+    const actualIndexNames = new Set(actualIndexes.map((row) => value(row, 'INDEX_NAME')));
+    if (actualIndexNames.size !== expectedIndexDefinitions.length ||
+        expectedIndexDefinitions.some((expected) => !indexIsCanonical(
+          actualIndexes.filter((row) => value(row, 'INDEX_NAME') === expected.name),
+          expected,
+          lowerCaseTableNames,
+        ))) reasons.push(`indexes on ${table} differ`);
+
+    const actualForeignKeys = await foreignKeyRows(queryInterface, table);
+    const expectedForeignKeyDefinitions = expectedForeignKeys(table);
+    const actualForeignKeyNames = new Set(
+      actualForeignKeys.map((row) => value(row, 'CONSTRAINT_NAME')),
+    );
+    if (actualForeignKeyNames.size !== expectedForeignKeyDefinitions.length ||
+        expectedForeignKeyDefinitions.some((expected) => !foreignKeyIsCanonical(
+          actualForeignKeys.filter((row) => value(row, 'CONSTRAINT_NAME') === expected.name),
+          expected,
+          lowerCaseTableNames,
+        ))) reasons.push(`foreign keys on ${table} differ`);
+
+    const actualTriggers = await triggerRows(queryInterface, table);
+    const expectedTriggerDefinitions = expectedTriggers(table);
+    const actualTriggerNames = new Set(actualTriggers.map((row) => value(row, 'TRIGGER_NAME')));
+    if (actualTriggerNames.size !== expectedTriggerDefinitions.length ||
+        expectedTriggerDefinitions.some((expected) => !triggerIsCanonical(
+          actualTriggers.filter((row) => value(row, 'TRIGGER_NAME') === expected.name),
+          expected,
+          lowerCaseTableNames,
+        ))) reasons.push(`triggers on ${table} differ`);
   }
   reasons.push(...await connectionArtifactReasons(queryInterface));
-  const reservedIndexes = await rows(queryInterface, `
-    SELECT DISTINCT TABLE_NAME, INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS
-     WHERE TABLE_SCHEMA=DATABASE() AND INDEX_NAME IN (:names)
-  `, { names: INDEXES.map((item) => item.name) });
-  for (const row of reservedIndexes) {
-    const expected = INDEXES.find((item) => item.name === value(row, 'INDEX_NAME'));
-    if (!expected || value(row, 'TABLE_NAME') !== expected.table) {
-      reasons.push(`reserved index ${value(row, 'INDEX_NAME')} is attached to another table`);
-    }
-  }
   return { reasons: [...new Set(reasons)], state: reasons.length === 0 ? 'ready' : 'partial' };
 }
 
@@ -673,8 +905,14 @@ module.exports = {
     artifactSignature,
     classifyState,
     cleanupInvocation,
+    foreignKeyIsCanonical,
+    getLowerCaseTableNames,
+    indexIsCanonical,
     preflightCleanupInvocation,
     readArtifact,
+    supportsIndexVisibility,
+    tableIdentifierEquals,
+    triggerIsCanonical,
     validateDataIntegrity,
   },
 };

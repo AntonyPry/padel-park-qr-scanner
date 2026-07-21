@@ -32,6 +32,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
   ].map((name) => [name, process.env[name]]));
   let schema;
   let db;
+  let restoreInstrumentation = () => {};
   await createDisposableDatabase(database);
   process.env.DB_NAME = database;
   process.env.NODE_ENV = 'test';
@@ -52,9 +53,49 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'true';
     process.env.TENANT_ENFORCEMENT_ENABLED = 'true';
     db = require('../../models');
+    const connectionService = require('../../src/provider-integrations/connection-service');
+    const operatorValidation = require('../../src/provider-integrations/operator-validation');
+    const telephonyService = require('../../src/services/telephony.service');
+    const originalContextWithSecrets = connectionService.contextWithSecrets;
+    const originalValidateProviderCandidate = operatorValidation.validateProviderCandidate;
+    const originalCheckEventSubscription = telephonyService.checkEventSubscription;
+    const counters = { decrypts: 0, providerCalls: 0 };
+    let providerGate = null;
+    connectionService.contextWithSecrets = (row) => {
+      counters.decrypts += 1;
+      return originalContextWithSecrets(row);
+    };
+    operatorValidation.validateProviderCandidate = async (...args) => {
+      counters.providerCalls += 1;
+      if (providerGate?.kind === 'validation') {
+        const gate = providerGate;
+        providerGate = null;
+        gate.entered();
+        await gate.release;
+      }
+      return originalValidateProviderCandidate(...args);
+    };
+    telephonyService.checkEventSubscription = async (...args) => {
+      counters.providerCalls += 1;
+      if (providerGate?.kind === 'beeline') {
+        const gate = providerGate;
+        providerGate = null;
+        gate.entered();
+        await gate.release;
+      }
+      if (process.env.INSTALLATION_PROVIDER_VALIDATION_MODE === 'authority-race') {
+        return { lastCheckedAt: new Date().toISOString(), status: 'active' };
+      }
+      return originalCheckEventSubscription(...args);
+    };
+    restoreInstrumentation = () => {
+      connectionService.contextWithSecrets = originalContextWithSecrets;
+      operatorValidation.validateProviderCandidate = originalValidateProviderCandidate;
+      telephonyService.checkEventSubscription = originalCheckEventSubscription;
+    };
     const management = require('../../src/services/installation-management.service');
     const operatorAuth = require('../../src/services/installation-operator-auth.service');
-    const { contextWithSecrets } = require('../../src/provider-integrations/connection-service');
+    const { contextWithSecrets } = connectionService;
     const operatorSession = await operatorAuth.createSession({
       password: process.env.INSTALLATION_OPERATOR_PASSWORD,
       username: process.env.INSTALLATION_OPERATOR_USERNAME,
@@ -259,6 +300,279 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     );
     await telegramRow.reload();
     assert.equal(telegramRow.status, 'active');
+
+    const legacyBeelineRows = await db.IntegrationConnection.unscoped().findAll({
+      where: { provider: 'beeline' },
+    });
+    for (const row of legacyBeelineRows) {
+      await row.update({
+        credentialFingerprint: crypto.createHmac(
+          'sha256',
+          Buffer.from(process.env.INTEGRATION_SECRETS_MASTER_KEY, 'base64'),
+        ).update(`legacy-test\u001f${row.publicId}`).digest('hex'),
+        fingerprintKeyVersion: process.env.INTEGRATION_SECRETS_KEY_VERSION,
+      });
+    }
+    const beelineConfigured = await management.configureIntegration(
+      organizationId,
+      clubId,
+      'beeline',
+      {
+        credential: 'preview-beeline-token-club-a',
+        expectedUpdatedAt: null,
+        idempotencyKey: crypto.randomUUID(),
+        settings: {
+          apiBaseUrl: 'https://provider.example',
+          apiTimeoutMs: 15000,
+          callbackBaseUrl: 'https://api.setly.test/api/integrations/beeline/events',
+          recordsPath: '/records',
+          statisticsPath: '/statistics',
+          subscriptionAutoRenewEnabled: true,
+          subscriptionExpiresSeconds: 3600,
+          subscriptionPath: '/subscription',
+          subscriptionPattern: '.*',
+          subscriptionRenewBeforeSeconds: 600,
+          subscriptionType: 'CALL_EVENTS',
+        },
+      },
+      operator,
+    );
+    assert.equal(beelineConfigured.integration.status, 'disabled');
+    const beelineRow = await db.IntegrationConnection.unscoped().findOne({
+      where: { clubId, organizationId, provider: 'beeline' },
+    });
+    await management.setIntegrationStatus(
+      organizationId,
+      clubId,
+      'beeline',
+      'active',
+      {
+        expectedUpdatedAt: beelineRow.updatedAt.toISOString(),
+        idempotencyKey: crypto.randomUUID(),
+      },
+      operator,
+    );
+    await beelineRow.reload();
+
+    const createAuthority = async () => {
+      const session = await operatorAuth.createSession({
+        password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+        username: process.env.INSTALLATION_OPERATOR_USERNAME,
+      });
+      return operatorAuth.verifySession(session.token);
+    };
+    const gatedActionWins = async (kind, action) => {
+      const authority = await createAuthority();
+      let entered;
+      let release;
+      const enteredPromise = new Promise((resolve) => { entered = resolve; });
+      const releasePromise = new Promise((resolve) => { release = resolve; });
+      providerGate = { entered, kind, release: releasePromise };
+      const actionPromise = action(authority);
+      await Promise.race([
+        enteredPromise,
+        actionPromise.then(() => {
+          throw new Error(`${kind} action completed before provider preflight gate`);
+        }),
+        new Promise((resolve, reject) => setTimeout(
+          () => reject(new Error(`${kind} provider preflight gate timed out`)),
+          5000,
+        )),
+      ]);
+      let revoked = false;
+      const revokePromise = operatorAuth.revokeSession(authority).then((result) => {
+        revoked = true;
+        return result;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      assert.equal(revoked, false, `${kind} must retain the session row lock through commit`);
+      release();
+      await actionPromise;
+      assert.equal(await revokePromise, true);
+    };
+
+    await gatedActionWins('validation', (authority) => management.configureIntegration(
+      fixture.organizations.B,
+      fixture.clubs.B[1],
+      'vk',
+      {
+        credential: 'preview-vk-action-wins',
+        expectedUpdatedAt: null,
+        idempotencyKey: crypto.randomUUID(),
+      },
+      authority,
+    ));
+    await telegramRow.reload();
+    await gatedActionWins('validation', (authority) => management.rotateIntegrationCredential(
+      organizationId,
+      clubId,
+      'telegram',
+      {
+        credential: 'preview-telegram-token-action-wins',
+        expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+        idempotencyKey: crypto.randomUUID(),
+      },
+      authority,
+    ));
+    await telegramRow.reload();
+    await management.setIntegrationStatus(
+      organizationId,
+      clubId,
+      'telegram',
+      'disabled',
+      {
+        expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+        idempotencyKey: crypto.randomUUID(),
+      },
+      operator,
+    );
+    await telegramRow.reload();
+    await gatedActionWins('validation', (authority) => management.setIntegrationStatus(
+      organizationId,
+      clubId,
+      'telegram',
+      'active',
+      {
+        expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+        idempotencyKey: crypto.randomUUID(),
+      },
+      authority,
+    ));
+    await telegramRow.reload();
+    await gatedActionWins('validation', (authority) => management.validateIntegration(
+      organizationId,
+      clubId,
+      'telegram',
+      {
+        expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+        idempotencyKey: crypto.randomUUID(),
+      },
+      authority,
+    ));
+    await beelineRow.reload();
+    process.env.INSTALLATION_PROVIDER_VALIDATION_MODE = 'authority-race';
+    try {
+      await gatedActionWins('beeline', (authority) => management.runBeelineAction(
+        organizationId,
+        clubId,
+        'check',
+        {
+          expectedUpdatedAt: beelineRow.updatedAt.toISOString(),
+          idempotencyKey: crypto.randomUUID(),
+        },
+        authority,
+      ));
+    } finally {
+      process.env.INSTALLATION_PROVIDER_VALIDATION_MODE = 'preview';
+    }
+
+    const revokedAuthority = await createAuthority();
+    await operatorAuth.revokeSession(revokedAuthority);
+    await telegramRow.reload();
+    await beelineRow.reload();
+    const beforeRevokedPreflights = {
+      audits: await db.AuditLog.count(),
+      connections: await db.IntegrationConnection.count(),
+      decrypts: counters.decrypts,
+      operations: await db.InstallationMutationOperation.count(),
+      providerCalls: counters.providerCalls,
+    };
+    const revokedPreflights = [
+      () => management.configureIntegration(
+        fixture.organizations.B,
+        fixture.clubs.B[1],
+        'evotor',
+        {
+          credential: 'preview-evotor-revoke-wins',
+          expectedUpdatedAt: null,
+          idempotencyKey: crypto.randomUUID(),
+        },
+        revokedAuthority,
+      ),
+      () => management.rotateIntegrationCredential(
+        organizationId,
+        clubId,
+        'telegram',
+        {
+          credential: 'preview-telegram-revoke-wins',
+          expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+          idempotencyKey: crypto.randomUUID(),
+        },
+        revokedAuthority,
+      ),
+      () => management.setIntegrationStatus(
+        organizationId,
+        clubId,
+        'telegram',
+        'active',
+        {
+          expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+          idempotencyKey: crypto.randomUUID(),
+        },
+        revokedAuthority,
+      ),
+      () => management.validateIntegration(
+        organizationId,
+        clubId,
+        'telegram',
+        {
+          expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+          idempotencyKey: crypto.randomUUID(),
+        },
+        revokedAuthority,
+      ),
+      () => management.runBeelineAction(
+        organizationId,
+        clubId,
+        'check',
+        {
+          expectedUpdatedAt: beelineRow.updatedAt.toISOString(),
+          idempotencyKey: crypto.randomUUID(),
+        },
+        revokedAuthority,
+      ),
+    ];
+    for (const action of revokedPreflights) {
+      await assert.rejects(
+        action(),
+        (error) => error.code === 'INSTALLATION_OPERATOR_SESSION_INVALID',
+      );
+    }
+    assert.deepEqual({
+      audits: await db.AuditLog.count(),
+      connections: await db.IntegrationConnection.count(),
+      decrypts: counters.decrypts,
+      operations: await db.InstallationMutationOperation.count(),
+      providerCalls: counters.providerCalls,
+    }, beforeRevokedPreflights);
+
+    const replayAuthority = await createAuthority();
+    await telegramRow.reload();
+    const replayInput = {
+      expectedUpdatedAt: telegramRow.updatedAt.toISOString(),
+      idempotencyKey: crypto.randomUUID(),
+    };
+    await management.validateIntegration(
+      organizationId,
+      clubId,
+      'telegram',
+      replayInput,
+      replayAuthority,
+    );
+    await operatorAuth.revokeSession(replayAuthority);
+    const beforeRevokedReplay = { ...counters };
+    await assert.rejects(
+      management.validateIntegration(
+        organizationId,
+        clubId,
+        'telegram',
+        replayInput,
+        replayAuthority,
+      ),
+      (error) => error.code === 'INSTALLATION_OPERATOR_SESSION_INVALID',
+    );
+    assert.deepEqual(counters, beforeRevokedReplay);
+
     const clubBeforeArchive = await db.Club.findByPk(clubId);
     await management.setClubLifecycle(
       organizationId,
@@ -289,6 +603,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     assert.equal((await db.Club.findByPk(clubId)).status, 'active');
     assert.equal(telegramRow.status, 'disabled');
   } finally {
+    restoreInstrumentation();
     if (db?.sequelize) await db.sequelize.close();
     if (schema) await schema.close();
     await dropDisposableDatabase(database);

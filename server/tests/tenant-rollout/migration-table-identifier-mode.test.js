@@ -54,6 +54,22 @@ const MIGRATIONS = [
       return this.migration.__testing.readArtifact(queryInterface, kind, item);
     },
   },
+  {
+    migration: require('../../migrations/20260720220000-add-installation-operator-management'),
+    name: 'installation management',
+    plan(kind, item) {
+      return {
+        column: [],
+        foreignKey: kind === 'foreignKey' ? [item] : [],
+        index: [],
+        table: [],
+        trigger: kind === 'trigger' ? [item] : [],
+      };
+    },
+    read(queryInterface, kind, item) {
+      return this.migration.__testing.readArtifact(queryInterface, kind, item);
+    },
+  },
 ];
 
 function wrongCase(identifier) {
@@ -65,10 +81,11 @@ function wrongCase(identifier) {
 
 function foreignKeyRow(expected, overrides = {}) {
   return {
-    COLUMN_NAME: expected.column,
+    COLUMN_NAME: expected.column || expected.fields[0],
     CONSTRAINT_NAME: 'global_fk_name',
     DELETE_RULE: expected.onDelete,
-    REFERENCED_COLUMN_NAME: expected.referencedColumn,
+    ORDINAL_POSITION: 1,
+    REFERENCED_COLUMN_NAME: expected.referencedColumn || expected.referencedFields[0],
     REFERENCED_TABLE_NAME: expected.referencedTable,
     TABLE_NAME: expected.table,
     UPDATE_RULE: expected.onUpdate,
@@ -100,6 +117,9 @@ function fakeQueryInterface(lowerCaseTableNames, artifactRow) {
       state.mutations.push(['removeColumn', ...args]);
     },
     sequelize: {
+      getDialect() {
+        return 'mysql';
+      },
       async query(sql) {
         if (/@@lower_case_table_names/u.test(sql)) {
           state.lowerCaseQueries += 1;
@@ -118,6 +138,7 @@ function fakeQueryInterface(lowerCaseTableNames, artifactRow) {
         if (/INFORMATION_SCHEMA\.(?:COLUMNS|STATISTICS)/u.test(sql)) {
           return [[]];
         }
+        if (/INFORMATION_SCHEMA\.TABLES/u.test(sql)) return [[]];
         throw new Error(`Unexpected identifier-mode test query: ${sql}`);
       },
     },
@@ -128,8 +149,10 @@ function fakeQueryInterface(lowerCaseTableNames, artifactRow) {
 for (const descriptor of MIGRATIONS) {
   test(`${descriptor.name} uses server-aware table identifier equality`, async () => {
     const { __testing } = descriptor.migration;
-    const [foreignKeyName, foreignKey] = Object.entries(__testing.FOREIGN_KEYS)[0];
-    const [triggerName, trigger] = Object.entries(__testing.TRIGGERS)[0];
+    const [foreignKeyEntryName, foreignKey] = Object.entries(__testing.FOREIGN_KEYS)[0];
+    const [triggerEntryName, trigger] = Object.entries(__testing.TRIGGERS)[0];
+    const foreignKeyName = foreignKey.name || foreignKeyEntryName;
+    const triggerName = trigger.name || triggerEntryName;
     const exactForeignKey = foreignKeyRow(foreignKey, {
       CONSTRAINT_NAME: foreignKeyName,
     });
@@ -225,3 +248,60 @@ for (const descriptor of MIGRATIONS) {
     }
   });
 }
+
+test('installation management rejects every non-canonical index signature dimension', () => {
+  const { indexIsCanonical } = require(
+    '../../migrations/20260720220000-add-installation-operator-management',
+  ).__testing;
+  const expected = {
+    columns: [
+      { collation: 'A', name: 'provider', sequence: 1, subPart: null },
+      { collation: 'A', name: 'credentialFingerprint', sequence: 2, subPart: null },
+    ],
+    indexType: 'BTREE',
+    isVisible: 'YES',
+    name: 'uq_integration_provider_credential_fingerprint',
+    table: 'IntegrationConnections',
+    unique: true,
+  };
+  const canonical = expected.columns.map((column) => ({
+    COLLATION: column.collation,
+    COLUMN_NAME: column.name,
+    INDEX_NAME: expected.name,
+    INDEX_TYPE: expected.indexType,
+    IS_VISIBLE: expected.isVisible,
+    NON_UNIQUE: 0,
+    SEQ_IN_INDEX: column.sequence,
+    SUB_PART: column.subPart,
+    TABLE_NAME: expected.table,
+  }));
+  assert.equal(indexIsCanonical(canonical, expected, 0), true);
+  const variants = [
+    canonical.map((row) => ({ ...row, NON_UNIQUE: 1 })),
+    [
+      { ...canonical[0], COLUMN_NAME: canonical[1].COLUMN_NAME },
+      { ...canonical[1], COLUMN_NAME: canonical[0].COLUMN_NAME },
+    ],
+    canonical.map((row, index) => ({ ...row, SUB_PART: index === 0 ? 3 : null })),
+    canonical.map((row) => ({ ...row, COLLATION: 'D' })),
+    canonical.map((row) => ({ ...row, INDEX_TYPE: 'HASH' })),
+    canonical.map((row) => ({ ...row, IS_VISIBLE: 'NO' })),
+  ];
+  for (const variant of variants) {
+    assert.equal(indexIsCanonical(variant, expected, 0), false);
+  }
+});
+
+test('installation management fails closed when lower_case_table_names is missing or unsupported', async () => {
+  const { getLowerCaseTableNames } = require(
+    '../../migrations/20260720220000-add-installation-operator-management',
+  ).__testing;
+  for (const setting of [undefined, null, '', 3, -1]) {
+    const probe = fakeQueryInterface(setting);
+    await assert.rejects(
+      getLowerCaseTableNames(probe.queryInterface),
+      /Unsupported lower_case_table_names/,
+    );
+    assert.deepEqual(probe.state.mutations, []);
+  }
+});

@@ -135,6 +135,35 @@ test('Feature 10.4 operator authority, history triggers and migration safety', a
       delete process.env.INSTALLATION_MANAGEMENT_MIGRATION_FAIL_STEP;
     });
 
+    await t.test('same-named index on an unrelated table is ignored and preserved', async () => {
+      await schema.query(`
+        CREATE TABLE OperatorOwnedBackup (
+          id INT NOT NULL AUTO_INCREMENT,
+          sessionId VARCHAR(32) NOT NULL,
+          note VARCHAR(64) NOT NULL,
+          PRIMARY KEY (id),
+          UNIQUE KEY uq_installation_operator_session_id (sessionId)
+        ) ENGINE=InnoDB
+      `);
+      await schema.query(`
+        INSERT INTO OperatorOwnedBackup (sessionId,note)
+        VALUES ('backup-session','must remain byte stable')
+      `);
+      const [createBeforeRows] = await schema.query('SHOW CREATE TABLE OperatorOwnedBackup');
+      const createBefore = createBeforeRows[0]['Create Table'];
+      const [dataBefore] = await schema.query('SELECT * FROM OperatorOwnedBackup ORDER BY id');
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'absent');
+      await migration.up(queryInterface, SequelizePackage);
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
+      await migration.down(queryInterface);
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'absent');
+      const [createAfterRows] = await schema.query('SHOW CREATE TABLE OperatorOwnedBackup');
+      const [dataAfter] = await schema.query('SELECT * FROM OperatorOwnedBackup ORDER BY id');
+      assert.equal(createAfterRows[0]['Create Table'], createBefore);
+      assert.deepEqual(dataAfter, dataBefore);
+      await queryInterface.dropTable('OperatorOwnedBackup');
+    });
+
     await t.test('partial and lookalike states refuse before mutation', async () => {
       await queryInterface.addColumn('IntegrationConnections', 'credentialFingerprint', {
         allowNull: true,
@@ -201,6 +230,78 @@ test('Feature 10.4 operator authority, history triggers and migration safety', a
       await migration.up(queryInterface, SequelizePackage);
       assert.equal(await targetSchemaFingerprint(schema), ready);
       assert.equal(await connectionSnapshot(schema), legacyConnections);
+    });
+
+    await t.test('wrong authoritative index signatures refuse without mutation', async () => {
+      const indexName = 'uq_integration_provider_credential_fingerprint';
+      const restore = async () => {
+        await queryInterface.addIndex(
+          'IntegrationConnections',
+          ['provider', 'credentialFingerprint'],
+          { name: indexName, unique: true },
+        );
+      };
+      const variants = [
+        {
+          create: () => queryInterface.addIndex(
+            'IntegrationConnections',
+            ['provider', 'credentialFingerprint'],
+            { name: indexName, unique: false },
+          ),
+          name: 'non-unique',
+        },
+        {
+          create: () => queryInterface.addIndex(
+            'IntegrationConnections',
+            ['credentialFingerprint', 'provider'],
+            { name: indexName, unique: true },
+          ),
+          name: 'wrong column order',
+        },
+        {
+          create: () => schema.query(`
+            CREATE UNIQUE INDEX uq_integration_provider_credential_fingerprint
+              ON IntegrationConnections (provider,credentialFingerprint(16))
+          `),
+          name: 'prefix',
+        },
+      ];
+      if (await migration.__testing.supportsIndexVisibility(queryInterface)) {
+        variants.push({
+          create: async () => {
+            await restore();
+            await schema.query(`
+              ALTER TABLE IntegrationConnections
+              ALTER INDEX uq_integration_provider_credential_fingerprint INVISIBLE
+            `);
+          },
+          name: 'invisible',
+          precreated: true,
+        });
+      }
+      for (const variant of variants) {
+        await queryInterface.removeIndex('IntegrationConnections', indexName);
+        try {
+          await variant.create();
+          const before = await targetSchemaFingerprint(schema);
+          await assert.rejects(
+            migration.up(queryInterface, SequelizePackage),
+            (error) => error.code === 'INSTALLATION_MANAGEMENT_REPAIR_REQUIRED',
+            variant.name,
+          );
+          assert.equal(await targetSchemaFingerprint(schema), before, variant.name);
+        } finally {
+          const current = await migration.__testing.readArtifact(queryInterface, 'index', {
+            name: indexName,
+            table: 'IntegrationConnections',
+          });
+          if (current.length > 0) {
+            await queryInterface.removeIndex('IntegrationConnections', indexName);
+          }
+          await restore();
+        }
+      }
+      assert.equal((await migration.__testing.classifyState(queryInterface)).state, 'ready');
     });
 
     await t.test('non-null fingerprint state makes down mutation-free', async () => {

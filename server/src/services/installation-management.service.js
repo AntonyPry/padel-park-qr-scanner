@@ -12,6 +12,7 @@ const {
   contextWithSecrets,
   createConnection,
   generatePublicId,
+  serializeConnection,
   updateConnectionConfiguration,
 } = require('../provider-integrations/connection-service');
 const {
@@ -637,11 +638,24 @@ function candidateSecrets(provider, primarySecret, proxyUrl, current = null) {
   return next;
 }
 
-async function prepareCandidate(organizationId, clubId, provider, input, operation) {
+async function prepareCandidate(
+  organizationId,
+  clubId,
+  provider,
+  input,
+  operation,
+  transaction,
+) {
   if (!PROVIDERS.includes(provider)) {
     throw managementError('Провайдер не поддерживается', 404, 'INTEGRATION_PROVIDER_INVALID');
   }
-  const existing = await getScopedConnection(organizationId, clubId, provider);
+  const existing = await getScopedConnection(
+    organizationId,
+    clubId,
+    provider,
+    transaction,
+    true,
+  );
   if (existing?.status === 'revoked' && operation !== 'rotate') {
     throw managementError(
       'Сначала замените отозванные учётные данные',
@@ -671,7 +685,11 @@ async function prepareCandidate(organizationId, clubId, provider, input, operati
   );
   const validation = await validateProviderCandidate(provider, { config, secrets });
   if (validation.identityKey && ['telegram', 'vk'].includes(provider)) {
-    const peers = await db.IntegrationConnection.unscoped().findAll({ where: { provider } });
+    const peers = await db.IntegrationConnection.unscoped().findAll({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: { provider },
+    });
     for (const peer of peers) {
       if (Number(peer.id) === Number(existing?.id) || peer.providerIdentityFingerprint) continue;
       try {
@@ -711,14 +729,6 @@ async function configureIntegration(
   operator,
   operation = 'configure',
 ) {
-  await installationOperatorAuth.revalidateSessionAuthority(operator);
-  const candidate = await prepareCandidate(
-    organizationId,
-    clubId,
-    provider,
-    input,
-    operation,
-  );
   return runMutation({
     action: `installation.integration.${provider}.${operation}`,
     clubId: Number(clubId),
@@ -731,11 +741,15 @@ async function configureIntegration(
       if (organization.status !== 'active' || club.status !== 'active') {
         throw managementError('Сначала восстановите организацию и клуб', 409, 'TENANT_INACTIVE');
       }
-      let connection = await getScopedConnection(organizationId, clubId, provider, transaction, true);
-      if (connection) assertFresh(connection, input.expectedUpdatedAt, 'Подключение');
-      else if (input.expectedUpdatedAt) {
-        throw managementError('Подключение уже изменилось', 409, 'INSTALLATION_STALE_STATE');
-      }
+      const candidate = await prepareCandidate(
+        organizationId,
+        clubId,
+        provider,
+        input,
+        operation,
+        transaction,
+      );
+      let connection = candidate.existing;
       const fingerprints = await assertUniqueFingerprints({
         credential: candidate.primarySecret,
         excludeConnectionId: connection?.id,
@@ -846,14 +860,7 @@ async function runBeelineAction(organizationId, clubId, action, input, operator)
   if (!['check', 'renew', 'cutover'].includes(action)) {
     throw managementError('Действие Билайн недоступно', 400, 'INTEGRATION_ACTION_INVALID');
   }
-  await installationOperatorAuth.revalidateSessionAuthority(operator);
-  const candidate = await getScopedConnection(organizationId, clubId, 'beeline');
-  if (!candidate || candidate.status !== 'active') {
-    throw managementError('Сначала включите подключение Билайн', 409, 'INTEGRATION_INACTIVE');
-  }
-  assertFresh(candidate, input.expectedUpdatedAt, 'Подключение');
-  const context = contextWithSecrets(candidate);
-  return withProviderConnectionLock(context, () => runMutation({
+  return runMutation({
     action: `installation.integration.beeline.${action}`,
     clubId: Number(clubId),
     input,
@@ -862,69 +869,82 @@ async function runBeelineAction(organizationId, clubId, action, input, operator)
     mutate: async (transaction) => {
       await lockOrganization(organizationId, transaction);
       const club = await lockClub(organizationId, clubId, transaction);
-      const connection = await getScopedConnection(
+      const candidate = await getScopedConnection(
         organizationId,
         clubId,
         'beeline',
         transaction,
-        true,
       );
-      if (!connection || connection.status !== 'active') {
-        throw managementError('Подключение Билайн отключено', 409, 'INTEGRATION_INACTIVE');
+      if (!candidate || candidate.status !== 'active') {
+        throw managementError('Сначала включите подключение Билайн', 409, 'INTEGRATION_INACTIVE');
       }
-      assertFresh(connection, input.expectedUpdatedAt, 'Подключение');
-      let providerResult;
-      let secretUpdate;
-      if (process.env.INSTALLATION_PROVIDER_VALIDATION_MODE === 'preview') {
-        providerResult = previewBeelineResult(action);
-        if (action === 'cutover') {
-          secretUpdate = { ...context.secrets, callbackToken: generateCallbackToken() };
+      assertFresh(candidate, input.expectedUpdatedAt, 'Подключение');
+      return withProviderConnectionLock(serializeConnection(candidate), async () => {
+        const connection = await getScopedConnection(
+          organizationId,
+          clubId,
+          'beeline',
+          transaction,
+          true,
+        );
+        if (!connection || connection.status !== 'active') {
+          throw managementError('Подключение Билайн отключено', 409, 'INTEGRATION_INACTIVE');
         }
-      } else if (action === 'check') {
-        providerResult = await telephonyService.checkEventSubscription(null, context);
-      } else if (action === 'renew') {
-        providerResult = await telephonyService.maintainEventSubscription({
-          connection: context,
-          force: true,
-        });
-        if (providerResult.action === 'failed') {
-          throw managementError('Билайн не обновил подписку', 409, 'BEELINE_SUBSCRIPTION_FAILED');
+        assertFresh(connection, input.expectedUpdatedAt, 'Подключение');
+        const context = contextWithSecrets(connection);
+        let providerResult;
+        let secretUpdate;
+        if (process.env.INSTALLATION_PROVIDER_VALIDATION_MODE === 'preview') {
+          providerResult = previewBeelineResult(action);
+          if (action === 'cutover') {
+            secretUpdate = { ...context.secrets, callbackToken: generateCallbackToken() };
+          }
+        } else if (action === 'check') {
+          providerResult = await telephonyService.checkEventSubscription(null, context);
+        } else if (action === 'renew') {
+          providerResult = await telephonyService.maintainEventSubscription({
+            connection: context,
+            force: true,
+          });
+          if (providerResult.action === 'failed') {
+            throw managementError('Билайн не обновил подписку', 409, 'BEELINE_SUBSCRIPTION_FAILED');
+          }
+        } else {
+          const nextSecrets = { ...context.secrets, callbackToken: generateCallbackToken() };
+          const candidateContext = Object.freeze({ ...context, secrets: Object.freeze(nextSecrets) });
+          providerResult = await telephonyService.subscribeToEvents({}, null, candidateContext);
+          secretUpdate = nextSecrets;
         }
-      } else {
-        const nextSecrets = { ...context.secrets, callbackToken: generateCallbackToken() };
-        const candidateContext = Object.freeze({ ...context, secrets: Object.freeze(nextSecrets) });
-        providerResult = await telephonyService.subscribeToEvents({}, null, candidateContext);
-        secretUpdate = nextSecrets;
-      }
-      const metadata = {
-        ...parseStoredJson(connection.metadata),
-        lastValidatedAt: new Date().toISOString(),
-        validationStatus: 'verified',
-      };
-      await updateConnectionConfiguration(
-        connection,
-        { metadata, ...(secretUpdate ? { secrets: secretUpdate } : {}) },
-        { transaction },
-      );
-      return {
-        audit: {
-          entityId: connection.publicId,
-          entityType: 'integration_connection',
-          metadata: { action, provider: 'beeline' },
-          path: `/api/installation/provisioning/organizations/${organizationId}/clubs/${clubId}/integrations/beeline/${action}`,
-          summary: action === 'check'
-            ? `Подписка Билайн проверена для клуба «${club.name}»`
-            : action === 'renew'
-              ? `Подписка Билайн обновлена для клуба «${club.name}»`
-              : `Callback Билайн безопасно переключён для клуба «${club.name}»`,
-        },
-        response: {
-          integration: integrationProjection(connection),
-          providerResult,
-        },
-      };
+        const metadata = {
+          ...parseStoredJson(connection.metadata),
+          lastValidatedAt: new Date().toISOString(),
+          validationStatus: 'verified',
+        };
+        await updateConnectionConfiguration(
+          connection,
+          { metadata, ...(secretUpdate ? { secrets: secretUpdate } : {}) },
+          { transaction },
+        );
+        return {
+          audit: {
+            entityId: connection.publicId,
+            entityType: 'integration_connection',
+            metadata: { action, provider: 'beeline' },
+            path: `/api/installation/provisioning/organizations/${organizationId}/clubs/${clubId}/integrations/beeline/${action}`,
+            summary: action === 'check'
+              ? `Подписка Билайн проверена для клуба «${club.name}»`
+              : action === 'renew'
+                ? `Подписка Билайн обновлена для клуба «${club.name}»`
+                : `Callback Билайн безопасно переключён для клуба «${club.name}»`,
+          },
+          response: {
+            integration: integrationProjection(connection),
+            providerResult,
+          },
+        };
+      });
     },
-  }));
+  });
 }
 
 async function setIntegrationStatus(
@@ -935,24 +955,6 @@ async function setIntegrationStatus(
   input,
   operator,
 ) {
-  await installationOperatorAuth.revalidateSessionAuthority(operator);
-  let validation = null;
-  const candidateRow = await getScopedConnection(organizationId, clubId, provider);
-  if (!candidateRow) throw managementError('Подключение не настроено', 404, 'INTEGRATION_NOT_FOUND');
-  if (targetStatus === 'active') {
-    if (candidateRow.status === 'revoked') {
-      throw managementError(
-        'Сначала замените отозванные учётные данные',
-        409,
-        'INTEGRATION_CREDENTIAL_REVOKED',
-      );
-    }
-    const context = contextWithSecrets(candidateRow);
-    validation = await validateProviderCandidate(provider, {
-      config: context.config,
-      secrets: context.secrets,
-    });
-  }
   return runMutation({
     action: `installation.integration.${provider}.${targetStatus}`,
     clubId: Number(clubId),
@@ -970,8 +972,19 @@ async function setIntegrationStatus(
       if (!connection) throw managementError('Подключение не настроено', 404, 'INTEGRATION_NOT_FOUND');
       assertFresh(connection, input.expectedUpdatedAt, 'Подключение');
       const metadata = parseStoredJson(connection.metadata);
-      if (validation) {
+      if (targetStatus === 'active') {
+        if (connection.status === 'revoked') {
+          throw managementError(
+            'Сначала замените отозванные учётные данные',
+            409,
+            'INTEGRATION_CREDENTIAL_REVOKED',
+          );
+        }
         const context = contextWithSecrets(connection);
+        const validation = await validateProviderCandidate(provider, {
+          config: context.config,
+          secrets: context.secrets,
+        });
         const fingerprints = await assertUniqueFingerprints({
           credential: context.secrets[PRIMARY_SECRET_KEY[provider]],
           excludeConnectionId: connection.id,
@@ -1009,26 +1022,6 @@ async function setIntegrationStatus(
 }
 
 async function validateIntegration(organizationId, clubId, provider, input, operator) {
-  await installationOperatorAuth.revalidateSessionAuthority(operator);
-  const candidate = await getScopedConnection(organizationId, clubId, provider);
-  if (!candidate) throw managementError('Подключение не настроено', 404, 'INTEGRATION_NOT_FOUND');
-  if (candidate.status === 'revoked') {
-    throw managementError(
-      'Сначала замените отозванные учётные данные',
-      409,
-      'INTEGRATION_CREDENTIAL_REVOKED',
-    );
-  }
-  let validation;
-  try {
-    const context = contextWithSecrets(candidate);
-    validation = await validateProviderCandidate(provider, {
-      config: context.config,
-      secrets: context.secrets,
-    });
-  } catch (error) {
-    validation = { safeIdentity: null, validatedAt: new Date(), validationStatus: 'failed' };
-  }
   return runMutation({
     action: `installation.integration.${provider}.validate`,
     clubId: Number(clubId),
@@ -1040,7 +1033,24 @@ async function validateIntegration(organizationId, clubId, provider, input, oper
       const club = await lockClub(organizationId, clubId, transaction);
       const connection = await getScopedConnection(organizationId, clubId, provider, transaction, true);
       if (!connection) throw managementError('Подключение не настроено', 404, 'INTEGRATION_NOT_FOUND');
+      if (connection.status === 'revoked') {
+        throw managementError(
+          'Сначала замените отозванные учётные данные',
+          409,
+          'INTEGRATION_CREDENTIAL_REVOKED',
+        );
+      }
       assertFresh(connection, input.expectedUpdatedAt, 'Подключение');
+      let validation;
+      try {
+        const context = contextWithSecrets(connection);
+        validation = await validateProviderCandidate(provider, {
+          config: context.config,
+          secrets: context.secrets,
+        });
+      } catch (error) {
+        validation = { safeIdentity: null, validatedAt: new Date(), validationStatus: 'failed' };
+      }
       const metadata = {
         ...parseStoredJson(connection.metadata),
         lastValidatedAt: validation.validatedAt.toISOString(),
