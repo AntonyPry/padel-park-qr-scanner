@@ -17,6 +17,13 @@ const VALIDATION_MIGRATION = require(
 );
 const PROVIDER_VALIDATION_MIGRATION_FILE =
   '20260716120000-validate-provider-reconciliation-connections.js';
+const INSTALLATION_MANAGEMENT_MIGRATION_FILE =
+  '20260720220000-add-installation-operator-management.js';
+const CURRENT_INTEGRATION_CONNECTION_COLUMNS = Object.freeze([
+  'credentialFingerprint',
+  'fingerprintKeyVersion',
+  'providerIdentityFingerprint',
+]);
 const {
   ACCEPTED_TENANT_CAPABILITY_ENV,
   applyAcceptedTenantMigrations,
@@ -84,6 +91,22 @@ async function migrateFresh(database) {
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
   }
   return sequelize;
+}
+
+async function assertCurrentIntegrationConnectionSchema(queryInterface) {
+  const [rows] = await queryInterface.sequelize.query(`
+    SELECT COLUMN_NAME
+      FROM INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA=DATABASE()
+       AND TABLE_NAME='IntegrationConnections'
+       AND COLUMN_NAME IN (:columns)
+     ORDER BY COLUMN_NAME
+  `, { replacements: { columns: CURRENT_INTEGRATION_CONNECTION_COLUMNS } });
+  assert.deepEqual(
+    rows.map((row) => row.COLUMN_NAME).sort(),
+    [...CURRENT_INTEGRATION_CONNECTION_COLUMNS].sort(),
+    'Current-head provider matrix requires all Feature 10.4 IntegrationConnection fingerprint columns before loading the model',
+  );
 }
 
 function fakeResponse() {
@@ -177,8 +200,32 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
   let providerServer;
   try {
     schemaSequelize = await migrateFresh(database);
-    db = require('../../models');
     const queryInterface = schemaSequelize.getQueryInterface();
+
+    await t.test('migrations roll back and reapply before provider rows exist', async () => {
+      await VALIDATION_MIGRATION.down(queryInterface, SequelizePackage);
+      await HARDENING_MIGRATION.down(queryInterface, SequelizePackage);
+      await FEATURE_MIGRATION.down(queryInterface, SequelizePackage);
+      assert.equal(
+        (await queryInterface.showAllTables()).includes('IntegrationConnections'),
+        false,
+      );
+      await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
+      await HARDENING_MIGRATION.up(queryInterface, SequelizePackage);
+      await VALIDATION_MIGRATION.up(queryInterface, SequelizePackage);
+      assert.equal(
+        (await queryInterface.showAllTables()).includes('IntegrationConnections'),
+        true,
+      );
+    });
+
+    await applyAcceptedTenantMigrations(queryInterface, {
+      afterFile: PROVIDER_VALIDATION_MIGRATION_FILE,
+      throughFile: INSTALLATION_MANAGEMENT_MIGRATION_FILE,
+    });
+    await assertCurrentIntegrationConnectionSchema(queryInterface);
+
+    db = require('../../models');
     const {
       createConnection,
       contextWithSecrets,
@@ -203,27 +250,6 @@ test('Feature 4.3 DB security matrix isolates provider connections, ingress IDs 
     const telephonyService = require('../../src/services/telephony.service');
     const tenantFoundation = require('../../src/services/tenant-foundation.service');
     const { tenantFoundationGate } = require('../../src/middleware/tenant-foundation-gate');
-
-    await t.test('migrations roll back and reapply before provider rows exist', async () => {
-      await VALIDATION_MIGRATION.down(queryInterface, SequelizePackage);
-      await HARDENING_MIGRATION.down(queryInterface, SequelizePackage);
-      await FEATURE_MIGRATION.down(queryInterface, SequelizePackage);
-      assert.equal(
-        (await queryInterface.showAllTables()).includes('IntegrationConnections'),
-        false,
-      );
-      await FEATURE_MIGRATION.up(queryInterface, SequelizePackage);
-      await HARDENING_MIGRATION.up(queryInterface, SequelizePackage);
-      await VALIDATION_MIGRATION.up(queryInterface, SequelizePackage);
-      assert.equal(
-        (await queryInterface.showAllTables()).includes('IntegrationConnections'),
-        true,
-      );
-    });
-
-    await applyAcceptedTenantMigrations(queryInterface, {
-      afterFile: PROVIDER_VALIDATION_MIGRATION_FILE,
-    });
     for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'true';
 
     await t.test('bootstrap-pending blocks provider ingress before connection lookup', async () => {
