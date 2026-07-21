@@ -17,6 +17,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { ModuleSwitch } from '@/components/module-switch';
+import { ClientProfileDialog } from '@/components/client-profile-dialog';
+import { ManualPrepaymentIssueDialog } from '@/components/manual-prepayment-issue-dialog';
 import { PrepaymentsMetricsSkeleton } from '@/components/prepayments-page-shell';
 import {
   Card,
@@ -46,6 +48,8 @@ import {
 } from '@/components/ui/select';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { useRealtimeRefresh } from '@/lib/realtime';
+import { selectAuthorizationRole } from '@/lib/authorization';
+import { useAuth } from '@/lib/useAuth';
 import {
   PREPAYMENTS_METRIC_GRID_CLASS,
   PREPAYMENTS_SWITCH_ITEMS,
@@ -317,14 +321,6 @@ function EmptySection({ text }: { text: string }) {
   );
 }
 
-function RoleHiddenSection() {
-  return (
-    <div className="rounded-md border bg-muted/30 p-4 text-sm text-muted-foreground">
-      Раздел скрыт для текущей роли.
-    </div>
-  );
-}
-
 function MetricCard({
   icon: Icon,
   label,
@@ -391,6 +387,16 @@ function SectionHeader({
 }
 
 export default function PrepaymentsPage() {
+  const { account, tenantContext, tenantContextEnabled } = useAuth();
+  const authority = useMemo(
+    () => ({
+      accountRole: account?.role,
+      tenantContext,
+      tenantContextEnabled,
+    }),
+    [account?.role, tenantContext, tenantContextEnabled],
+  );
+  const clubRole = selectAuthorizationRole(authority, 'club');
   const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -403,6 +409,7 @@ export default function PrepaymentsPage() {
   const [statusFilter, setStatusFilter] = useState<DashboardStatus>('all');
   const [expiryFilter, setExpiryFilter] = useState<ExpiryFilter>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [profileClientId, setProfileClientId] = useState<number | null>(null);
   const dashboardRef = useRef<DashboardResponse | null>(null);
   const lastSuccessfulRequestKeyRef = useRef<string | null>(null);
   const latestRequestIdRef = useRef(0);
@@ -500,36 +507,43 @@ export default function PrepaymentsPage() {
     if (!dashboard) return [];
     return [
       {
+        available: dashboard.sections.pendingSales.available,
         icon: Link2,
         label: 'Ожидают привязки',
         sublabel: `${formatMoney(dashboard.summary.pendingSales.amount)} без клиента`,
         value: String(dashboard.summary.pendingSales.count),
       },
       {
+        available: dashboard.sections.subscriptions.available,
         icon: PackageCheck,
         label: 'Активные абонементы',
         sublabel: `${dashboard.summary.activeSubscriptions.expiringSoon} скоро истекают, ${dashboard.summary.activeSubscriptions.lowRemaining} с низким остатком`,
         value: String(dashboard.summary.activeSubscriptions.count),
       },
       {
+        available:
+          dashboard.sections.subscriptions.available ||
+          dashboard.sections.certificates.available,
         icon: CalendarClock,
         label: 'Скоро истекают',
         sublabel: `${dashboard.summary.expiringSoon.subscriptions} абонементов, ${dashboard.summary.expiringSoon.certificates} сертификатов`,
         value: String(dashboard.summary.expiringSoon.total),
       },
       {
+        available: dashboard.sections.certificates.available,
         icon: Gift,
         label: 'Активные сертификаты',
         sublabel: `${formatMoney(dashboard.summary.activeCertificates.amountRemaining)} и ${dashboard.summary.activeCertificates.serviceUnitsRemaining} услуг`,
         value: String(dashboard.summary.activeCertificates.count),
       },
       {
+        available: dashboard.sections.corporateBalances.available,
         icon: Building2,
         label: 'Корпоративные балансы',
         sublabel: `${dashboard.summary.corporateBalances.lowBalance} с низким остатком`,
         value: formatMoney(dashboard.summary.corporateBalances.totalBalance),
       },
-    ];
+    ].filter((card) => card.available);
   }, [dashboard]);
 
   const applySearch = () => {
@@ -555,7 +569,11 @@ export default function PrepaymentsPage() {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid gap-2 rounded-xl border bg-card/60 p-3 xl:grid-cols-[auto_minmax(280px,1fr)_auto_auto] xl:items-center">
-        <ModuleSwitch items={PREPAYMENTS_SWITCH_ITEMS} className="shrink-0" />
+        <ModuleSwitch
+          authority={authority}
+          items={PREPAYMENTS_SWITCH_ITEMS}
+          className="shrink-0"
+        />
         <div className="flex min-w-0 gap-2">
           <div className="relative min-w-0 flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -660,7 +678,11 @@ export default function PrepaymentsPage() {
           </DialogContent>
         </Dialog>
 
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-2">
+          <ManualPrepaymentIssueDialog
+            authorizationRole={clubRole}
+            onIssued={() => void loadDashboard()}
+          />
           <Button
             type="button"
             variant="ghost"
@@ -723,7 +745,8 @@ export default function PrepaymentsPage() {
 
       {dashboard && (
         <div className="grid gap-4 xl:grid-cols-2">
-          <Card>
+          {dashboard.sections.pendingSales.available && (
+            <Card>
             <CardHeader>
               <SectionHeader
                 badge={dashboard.sections.pendingSales.total}
@@ -732,9 +755,7 @@ export default function PrepaymentsPage() {
               />
             </CardHeader>
             <CardContent className="space-y-3">
-              {!dashboard.sections.pendingSales.available && <RoleHiddenSection />}
-              {dashboard.sections.pendingSales.available &&
-                dashboard.sections.pendingSales.items.length === 0 && (
+              {dashboard.sections.pendingSales.items.length === 0 && (
                   <EmptySection text="Продаж по текущим фильтрам нет." />
                 )}
               {dashboard.sections.pendingSales.items.map((sale) => (
@@ -768,9 +789,11 @@ export default function PrepaymentsPage() {
                 </div>
               ))}
             </CardContent>
-          </Card>
+            </Card>
+          )}
 
-          <Card>
+          {dashboard.sections.subscriptions.available && (
+            <Card>
             <CardHeader>
               <SectionHeader
                 badge={dashboard.sections.subscriptions.total}
@@ -779,9 +802,7 @@ export default function PrepaymentsPage() {
               />
             </CardHeader>
             <CardContent className="space-y-3">
-              {!dashboard.sections.subscriptions.available && <RoleHiddenSection />}
-              {dashboard.sections.subscriptions.available &&
-                dashboard.sections.subscriptions.items.length === 0 && (
+              {dashboard.sections.subscriptions.items.length === 0 && (
                   <EmptySection text="Абонементов по текущим фильтрам нет." />
                 )}
               {dashboard.sections.subscriptions.items.map((subscription) => (
@@ -813,18 +834,32 @@ export default function PrepaymentsPage() {
                       {formatDate(subscription.expiresAt)}
                     </div>
                   </div>
-                  <Button asChild size="sm" variant="outline" className="shrink-0">
-                    <Link to={subscription.actionHref}>
-                      <ExternalLink className="mr-2 h-4 w-4" />
+                  {clubRole === 'admin' ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0"
+                      onClick={() => setProfileClientId(subscription.clientId)}
+                    >
                       Клиент
-                    </Link>
-                  </Button>
+                    </Button>
+                  ) : (
+                    <Button asChild size="sm" variant="outline" className="shrink-0">
+                      <Link to={subscription.actionHref}>
+                        <ExternalLink className="mr-2 h-4 w-4" />
+                        Клиент
+                      </Link>
+                    </Button>
+                  )}
                 </div>
               ))}
             </CardContent>
-          </Card>
+            </Card>
+          )}
 
-          <Card>
+          {dashboard.sections.certificates.available && (
+            <Card>
             <CardHeader>
               <SectionHeader
                 badge={dashboard.sections.certificates.total}
@@ -833,9 +868,7 @@ export default function PrepaymentsPage() {
               />
             </CardHeader>
             <CardContent className="space-y-3">
-              {!dashboard.sections.certificates.available && <RoleHiddenSection />}
-              {dashboard.sections.certificates.available &&
-                dashboard.sections.certificates.items.length === 0 && (
+              {dashboard.sections.certificates.items.length === 0 && (
                   <EmptySection text="Сертификатов по текущим фильтрам нет." />
                 )}
               {dashboard.sections.certificates.items.map((certificate) => (
@@ -876,9 +909,11 @@ export default function PrepaymentsPage() {
                 </div>
               ))}
             </CardContent>
-          </Card>
+            </Card>
+          )}
 
-          <Card>
+          {dashboard.sections.corporateBalances.available && (
+            <Card>
             <CardHeader>
               <SectionHeader
                 badge={dashboard.sections.corporateBalances.total}
@@ -887,11 +922,7 @@ export default function PrepaymentsPage() {
               />
             </CardHeader>
             <CardContent className="space-y-3">
-              {!dashboard.sections.corporateBalances.available && (
-                <RoleHiddenSection />
-              )}
-              {dashboard.sections.corporateBalances.available &&
-                dashboard.sections.corporateBalances.items.length === 0 && (
+              {dashboard.sections.corporateBalances.items.length === 0 && (
                   <EmptySection text="Компаний по текущим фильтрам нет." />
                 )}
               {dashboard.sections.corporateBalances.items.map((client) => (
@@ -929,9 +960,17 @@ export default function PrepaymentsPage() {
                 </div>
               ))}
             </CardContent>
-          </Card>
+            </Card>
+          )}
         </div>
       )}
+
+      <ClientProfileDialog
+        clientId={profileClientId}
+        onOpenChange={(open) => {
+          if (!open) setProfileClientId(null);
+        }}
+      />
 
     </div>
   );

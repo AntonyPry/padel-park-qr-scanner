@@ -485,6 +485,7 @@ async function getRecentVisitCards(limit = 50, tenant = null) {
         minute: '2-digit',
       }),
       name: visit.User?.name || 'Неизвестный',
+      userId: visit.User?.id || visit.userId,
       phone: visit.User?.phone || '',
       source: visit.User?.source || '-',
       visitId: visit.id,

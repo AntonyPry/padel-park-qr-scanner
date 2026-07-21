@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { VisitKeyControl } from '@/components/visit-key-control';
+import { ClientProfileDialog } from '@/components/client-profile-dialog';
 import {
   Table,
   TableBody,
@@ -77,6 +78,7 @@ import type { PendingScannerScan } from '@/lib/scanner-scan-queue';
 import { postScannerDiagnosticEvent } from '@/lib/scanner-telemetry';
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
+  birthDate: '',
   name: '',
   phone: '',
   sourceId: '',
@@ -95,6 +97,7 @@ interface VisitCard {
   clientEventId?: string | null;
   name?: string;
   phone?: string;
+  userId?: number;
   source?: string;
   telegramId?: string;
   vkId?: string;
@@ -137,6 +140,7 @@ interface SearchUser {
 }
 
 interface ExistingClientCandidate {
+  birthDate?: string | null;
   id: number;
   name: string;
   note?: string | null;
@@ -302,6 +306,7 @@ export default function AdminPage() {
   const [isDisconnectOpen, setIsDisconnectOpen] = useState(false);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
   const [activeVisit, setActiveVisit] = useState<VisitCard | null>(null);
+  const [clientProfileId, setClientProfileId] = useState<number | null>(null);
   const [visitActionError, setVisitActionError] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -349,6 +354,7 @@ export default function AdminPage() {
   const [savingCategoryVisitId, setSavingCategoryVisitId] = useState<
     number | null
   >(null);
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     activeVisitRef.current = activeVisit;
@@ -494,6 +500,7 @@ export default function AdminPage() {
       clientEventId: data.clientEventId || null,
       isRepeated: data.isRepeated,
       name: data.user?.name || '',
+      userId: data.user?.id,
       phone: data.user?.phone || '',
       source: data.user?.source || '-',
       telegramId: data.user?.telegramId,
@@ -888,6 +895,7 @@ export default function AdminPage() {
     setRegCandidate(null);
     setRegError('');
     setRegForm({
+      birthDate: candidate.birthDate || '',
       name: candidate.name,
       note: candidate.note || '',
       phone: candidate.phone,
@@ -912,12 +920,7 @@ export default function AdminPage() {
 
   const handleKeyInput = (cardId: string, val: string) => {
     const numericVal = val.replace(/\D/g, '');
-    setCards((prev) =>
-      prev.map((c) => (c.id === cardId ? { ...c, keyNumber: numericVal } : c)),
-    );
-    setActiveVisit((prev) =>
-      prev?.id === cardId ? { ...prev, keyNumber: numericVal } : prev,
-    );
+    setKeyDrafts((current) => ({ ...current, [cardId]: numericVal }));
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
@@ -1033,6 +1036,11 @@ export default function AdminPage() {
       setActiveVisit((prev) =>
         prev?.id === cardId ? { ...prev, keyNumber, keyIssued: true } : prev,
       );
+      setKeyDrafts((current) => {
+        const next = { ...current };
+        delete next[cardId];
+        return next;
+      });
       setVisitActionError('');
     } catch (e) {
       console.error('Ошибка выдачи ключа', e);
@@ -1493,14 +1501,20 @@ export default function AdminPage() {
                             <TableCell className="px-5 py-4">
                               <div className="flex min-w-[240px] items-start gap-3">
                                 <div className="min-w-0">
-                                  <div
+                                  <button
+                                    type="button"
                                     className={cn(
-                                      'max-w-[260px] truncate font-semibold leading-5',
+                                      'block max-w-[260px] truncate text-left font-semibold leading-5 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                                       !card.success && 'text-destructive',
                                     )}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (card.success && card.userId) setClientProfileId(card.userId);
+                                    }}
+                                    disabled={!card.success || !card.userId}
                                   >
                                     {card.success ? card.name : 'Неизвестный QR'}
-                                  </div>
+                                  </button>
                                   <div className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground">
                                     {card.success
                                       ? card.source || 'Источник не указан'
@@ -1749,7 +1763,7 @@ export default function AdminPage() {
             )}
             <div>
               <label className="mb-1 block text-xs font-medium">
-                Источник
+                Откуда о нас узнал клиент
               </label>
               <Select
                 value={regForm.sourceId}
@@ -1775,6 +1789,23 @@ export default function AdminPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs font-medium"
+                htmlFor="reception-client-birth-date"
+              >
+                Дата рождения
+              </label>
+              <Input
+                id="reception-client-birth-date"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={regForm.birthDate}
+                onChange={(event) =>
+                  setRegForm({ ...regForm, birthDate: event.target.value })
+                }
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">
@@ -1844,7 +1875,9 @@ export default function AdminPage() {
                   </div>
                 </div>
                 <div className="rounded-md border p-3">
-                  <div className="text-xs text-muted-foreground">Источник</div>
+                  <div className="text-xs text-muted-foreground">
+                    Откуда о нас узнал клиент
+                  </div>
                   <div className="mt-1 font-medium">
                     {activeVisit.success ? activeVisit.source || '-' : '-'}
                   </div>
@@ -2005,7 +2038,7 @@ export default function AdminPage() {
                         <Input
                           placeholder="Номер ключа"
                           inputMode="numeric"
-                          value={activeVisit.keyNumber}
+                          value={keyDrafts[activeVisit.id] ?? activeVisit.keyNumber}
                           disabled={issuingKeyVisitId === activeVisit.visitId}
                           onChange={(event) =>
                             handleKeyInput(activeVisit.id, event.target.value)
@@ -2014,13 +2047,13 @@ export default function AdminPage() {
                         <Button
                           type="button"
                           disabled={
-                            !activeVisit.keyNumber.trim() ||
+                            !(keyDrafts[activeVisit.id] ?? activeVisit.keyNumber).trim() ||
                             issuingKeyVisitId === activeVisit.visitId
                           }
                           onClick={() =>
                             void handleIssueKey(
                               activeVisit.visitId,
-                              activeVisit.keyNumber,
+                              keyDrafts[activeVisit.id] ?? activeVisit.keyNumber,
                               activeVisit.id,
                             )
                           }
@@ -2043,6 +2076,13 @@ export default function AdminPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ClientProfileDialog
+        clientId={clientProfileId}
+        onOpenChange={(open) => {
+          if (!open) setClientProfileId(null);
+        }}
+      />
 
       {/* МОДАЛКА: УДАЛЕНИЕ */}
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>

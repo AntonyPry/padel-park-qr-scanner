@@ -11,7 +11,7 @@ export const ROUTE_ACCESS = {
   '/admin/audit': ['owner', 'manager'],
   '/admin/onboarding': ['owner', 'manager', 'admin', 'accountant', 'viewer', 'trainer'],
   '/admin/bookings': ['owner', 'manager', 'admin', 'viewer'],
-  '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
+  '/admin/clients': ['owner', 'manager', 'viewer'],
   '/admin/trainer': ['owner', 'manager', 'trainer'],
   '/admin/methodology': ['owner', 'manager', 'trainer'],
   '/admin/methodology-analytics': ['owner', 'manager'],
@@ -20,7 +20,6 @@ export const ROUTE_ACCESS = {
   '/admin/prepayments': ['owner', 'manager', 'admin', 'accountant'],
   '/admin/certificates': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/corporate-clients': ['owner', 'manager', 'accountant', 'viewer'],
-  '/admin/telephony': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant'],
@@ -35,7 +34,7 @@ export const ROUTE_ACCESS = {
   '/admin/shift-cash': ['owner', 'manager', 'admin'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
-  '/admin/references': ['owner', 'manager', 'admin', 'accountant', 'viewer'],
+  '/admin/references': ['owner', 'manager', 'accountant', 'viewer'],
 } as const satisfies Record<string, readonly AccountRole[]>;
 
 export type ClientRoute = keyof typeof ROUTE_ACCESS;
@@ -128,7 +127,6 @@ export const ROUTE_AUTHORIZATION: Record<
     'organization',
     ROUTE_ACCESS['/admin/corporate-clients'],
   ),
-  '/admin/telephony': partial('club', ROUTE_ACCESS['/admin/telephony']),
   '/admin/visits-analytics': single(
     'club',
     ROUTE_ACCESS['/admin/visits-analytics'],
@@ -185,6 +183,10 @@ export function canAccessPath(
   path: ClientRoute,
 ) {
   return hasRoleAccess(role, ROUTE_ACCESS[path]);
+}
+
+export function isClientRoute(path: string): path is ClientRoute {
+  return path in ROUTE_ACCESS;
 }
 
 export function canAccessPathForAuthority(

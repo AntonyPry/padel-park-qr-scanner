@@ -45,7 +45,7 @@ import { toast } from '@/components/ui/toast';
 import { ErrorState } from '@/components/error-state';
 import { canManageShifts } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth, useAuthorizationRole } from '@/lib/useAuth';
 import { cn } from '@/lib/utils';
 
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -326,6 +326,7 @@ function CashMetric({
 
 export function ShiftCashPanel() {
   const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const [summary, setSummary] = useState<ShiftCashSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -392,6 +393,7 @@ export function ShiftCashPanel() {
 
   const openingRecorded = Boolean(summary?.session?.openingRecordedAt);
   const canManageAnyExpense = canManageShifts(account?.role);
+  const canSeeReconciliation = canManageShifts(clubRole);
 
   const handleOpeningSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -580,18 +582,25 @@ export function ShiftCashPanel() {
             <ErrorState compact message={error} onRetry={() => void load()} title="Не удалось обновить кассу" />
           )}
 
-          <div className="grid auto-rows-fr grid-cols-2 gap-2 lg:grid-cols-5">
+          <div className={cn(
+            'grid auto-rows-fr grid-cols-2 gap-2',
+            canSeeReconciliation ? 'lg:grid-cols-5' : 'lg:grid-cols-2',
+          )}>
             <CashMetric label="На начало" value={formatMoney(summary?.session?.openingTotal || 0)} />
-            <CashMetric label="Наличная выручка" value={formatMoney(summary?.cashSales || 0)} tone="positive" />
             <CashMetric label="Расходы" value={formatMoney(summary?.activeExpensesTotal || 0)} tone="negative" />
-            <CashMetric label="Ожидаемый остаток" value={formatMoney(summary?.expectedClosingCash || 0)} />
-            <CashMetric
-              label="Факт / расхождение"
-              value={summary?.session?.closingTotal == null
-                ? 'При закрытии'
-                : `${formatMoney(summary.session.closingTotal)} / ${formatMoney(summary.session.variance || 0)}`}
-              tone={(summary?.session?.variance || 0) === 0 ? 'default' : 'negative'}
-            />
+            {canSeeReconciliation && (
+              <>
+                <CashMetric label="Наличная выручка" value={formatMoney(summary?.cashSales || 0)} tone="positive" />
+                <CashMetric label="Ожидаемый остаток" value={formatMoney(summary?.expectedClosingCash || 0)} />
+                <CashMetric
+                  label="Факт / расхождение"
+                  value={summary?.session?.closingTotal == null
+                    ? 'При закрытии'
+                    : `${formatMoney(summary.session.closingTotal)} / ${formatMoney(summary.session.variance || 0)}`}
+                  tone={(summary?.session?.variance || 0) === 0 ? 'default' : 'negative'}
+                />
+              </>
+            )}
           </div>
 
           <section className="rounded-xl border p-4">
@@ -971,6 +980,8 @@ export function ShiftCashCloseDialog({
   onConfirm: (payload: ShiftCashBalancePayload, summary: ShiftCashSummary) => Promise<boolean>;
   open: boolean;
 }) {
+  const clubRole = useAuthorizationRole('club');
+  const canSeeReconciliation = canManageShifts(clubRole);
   const [summary, setSummary] = useState<ShiftCashSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1001,10 +1012,10 @@ export function ShiftCashCloseDialog({
   const hasActualCash = banknotes !== '' && coins !== '';
   const actualTotal = (Number(banknotes.replace(',', '.')) || 0) +
     (Number(coins.replace(',', '.')) || 0);
-  const variance = hasActualCash
+  const variance = hasActualCash && canSeeReconciliation
     ? Number((actualTotal - Number(summary?.expectedClosingCash || 0)).toFixed(2))
     : null;
-  const needsComment = variance !== null && Math.abs(variance) >= 0.01;
+  const needsComment = canSeeReconciliation && variance !== null && Math.abs(variance) >= 0.01;
   const canSubmit = Boolean(
     summary?.session?.openingRecordedAt &&
     hasActualCash &&
@@ -1032,9 +1043,11 @@ export function ShiftCashCloseDialog({
     <Dialog open={open} onOpenChange={(nextOpen) => !nextOpen && !closing && onClose()}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto p-4 sm:max-w-[720px] sm:p-6">
         <DialogHeader>
-          <DialogTitle>Кассовая сверка перед закрытием</DialogTitle>
+          <DialogTitle>{canSeeReconciliation ? 'Кассовая сверка перед закрытием' : 'Фактический остаток кассы'}</DialogTitle>
           <DialogDescription>
-            Пересчитайте купюры и мелочь. Setly сравнит факт с ожидаемым остатком.
+            {canSeeReconciliation
+              ? 'Пересчитайте купюры и мелочь. Setly сравнит факт с ожидаемым остатком.'
+              : 'Пересчитайте кассу и честно внесите фактические купюры и мелочь. Ожидаемая сумма скрыта.'}
           </DialogDescription>
         </DialogHeader>
 
@@ -1050,12 +1063,14 @@ export function ShiftCashCloseDialog({
           </div>
         ) : (
           <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              <CashMetric label="Начало" value={formatMoney(summary.session.openingTotal || 0)} />
-              <CashMetric label="Наличные продажи" value={formatMoney(summary.cashSales)} tone="positive" />
-              <CashMetric label="Расходы" value={formatMoney(summary.activeExpensesTotal)} tone="negative" />
-              <CashMetric label="Ожидается" value={formatMoney(summary.expectedClosingCash)} />
-            </div>
+            {canSeeReconciliation && (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <CashMetric label="Начало" value={formatMoney(summary.session.openingTotal || 0)} />
+                <CashMetric label="Наличные продажи" value={formatMoney(summary.cashSales || 0)} tone="positive" />
+                <CashMetric label="Расходы" value={formatMoney(summary.activeExpensesTotal)} tone="negative" />
+                <CashMetric label="Ожидается" value={formatMoney(summary.expectedClosingCash || 0)} />
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1.5">
                 <Label htmlFor="shift-cash-closing-banknotes">Фактические купюры, ₽</Label>
@@ -1082,7 +1097,7 @@ export function ShiftCashCloseDialog({
                 />
               </div>
             </div>
-            {hasActualCash ? (
+            {hasActualCash && canSeeReconciliation ? (
               <div className={cn(
                 'rounded-lg border p-4',
                 needsComment ? 'border-destructive/40 bg-destructive/5' : 'border-emerald-500/30 bg-emerald-500/5',
@@ -1095,11 +1110,11 @@ export function ShiftCashCloseDialog({
                   {needsComment ? 'Объясните недостачу или излишек перед закрытием.' : 'Фактический остаток совпадает с ожидаемым.'}
                 </div>
               </div>
-            ) : (
+            ) : canSeeReconciliation ? (
               <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 Заполните купюры и мелочь, чтобы увидеть сверку.
               </div>
-            )}
+            ) : null}
             {hasActualCash && (
               <div className="grid gap-1.5">
                 <Label htmlFor="shift-cash-closing-comment">
@@ -1124,7 +1139,7 @@ export function ShiftCashCloseDialog({
           </Button>
           <Button disabled={!canSubmit || closing || loading || Boolean(error)} type="button" variant="destructive" onClick={() => void handleConfirm()}>
             {closing && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Сверить кассу и завершить
+            {canSeeReconciliation ? 'Сверить кассу и завершить' : 'Сохранить факт и завершить'}
           </Button>
         </DialogFooter>
       </DialogContent>

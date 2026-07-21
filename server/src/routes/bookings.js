@@ -51,7 +51,7 @@ router.get(
 router.get('/bookings/settings', viewBookings, bookingRulesController.getSettings);
 router.put(
   '/bookings/settings',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.settingsBody }),
   bookingRulesController.updateSettings,
 );
@@ -69,19 +69,19 @@ router.get(
 );
 router.post(
   '/bookings/price-rules',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.priceRuleBody }),
   bookingRulesController.createPriceRule,
 );
 router.put(
   '/bookings/price-rules/:id',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.priceRuleBody.partial().passthrough(), params: apiSchemas.bookings.params }),
   bookingRulesController.updatePriceRule,
 );
 router.delete(
   '/bookings/price-rules/:id',
-  manageBookings,
+  manageBookingResources,
   validate({ params: apiSchemas.bookings.params }),
   bookingRulesController.archivePriceRule,
 );
@@ -93,19 +93,19 @@ router.get(
 );
 router.post(
   '/bookings/blocks',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.blockBody }),
   bookingRulesController.createBlock,
 );
 router.put(
   '/bookings/blocks/:id',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.blockBody.partial().passthrough(), params: apiSchemas.bookings.params }),
   bookingRulesController.updateBlock,
 );
 router.delete(
   '/bookings/blocks/:id',
-  manageBookings,
+  manageBookingResources,
   validate({ params: apiSchemas.bookings.params }),
   bookingRulesController.archiveBlock,
 );
@@ -117,19 +117,19 @@ router.get(
 );
 router.post(
   '/bookings/exceptions',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.exceptionBody }),
   bookingRulesController.upsertException,
 );
 router.put(
   '/bookings/exceptions/:id',
-  manageBookings,
+  manageBookingResources,
   validate({ body: apiSchemas.bookings.exceptionBody.partial().passthrough(), params: apiSchemas.bookings.params }),
   bookingRulesController.updateException,
 );
 router.delete(
   '/bookings/exceptions/:id',
-  manageBookings,
+  manageBookingResources,
   validate({ params: apiSchemas.bookings.params }),
   bookingRulesController.archiveException,
 );

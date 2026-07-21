@@ -24,6 +24,15 @@ router.get(
   }),
   certificatesController.listClientCertificates,
 );
+router.post(
+  '/clients/:clientId/certificates',
+  redeemCertificates,
+  validate({
+    body: apiSchemas.certificates.manualIssueBody,
+    params: apiSchemas.certificates.clientParams,
+  }),
+  certificatesController.issue,
+);
 router.get(
   '/certificates/:id',
   viewCertificates,

@@ -107,7 +107,7 @@ const ACCESS_MATRIX: Record<AccessKey, AccountRole[]> = {
   staffManage: ['owner', 'manager'],
   staffView: ['owner', 'manager', 'accountant', 'viewer'],
   subscriptionTypesManage: ['owner', 'manager'],
-  subscriptionTypesView: ['owner', 'manager'],
+  subscriptionTypesView: ['owner', 'manager', 'admin'],
   systemUsersManage: ['owner', 'manager'],
   telephonyManage: ['owner', 'manager'],
   telephonyView: ['owner', 'manager', 'admin', 'viewer'],

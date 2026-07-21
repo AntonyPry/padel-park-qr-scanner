@@ -217,8 +217,8 @@ function contextKeyForMarker(marker) {
   return `training:${marker.trainingSessionId}`;
 }
 
-async function getDataContext(account, tenant) {
-  const marker = await onboardingService.getTrainingDataMarker(account, tenant);
+async function getDataContext(account, tenant, options = {}) {
+  const marker = await onboardingService.getTrainingDataMarker(account, tenant, options);
   return { contextKey: contextKeyForMarker(marker), marker };
 }
 
@@ -369,6 +369,26 @@ async function buildCashSummary(shift, session, context, options = {}) {
   };
 }
 
+function hideReconciliationFromAdministrator(summary, account) {
+  if (account?.role !== 'admin') return summary;
+  return {
+    ...summary,
+    cashSales: null,
+    expectedClosingCash: null,
+    manualAdjustments: null,
+    session: summary.session
+      ? {
+          ...summary.session,
+          cashSalesSnapshot: null,
+          expectedClosingCash: null,
+          expensesSnapshot: null,
+          manualAdjustmentsSnapshot: null,
+          variance: null,
+        }
+      : null,
+  };
+}
+
 async function getActiveCash(account, tenant) {
   const boundary = await resolveBoundary(account, tenant);
   const [shift, context] = await Promise.all([
@@ -388,7 +408,10 @@ async function getActiveCash(account, tenant) {
   }
   assertShiftViewAccess(shift, boundary.account);
   const session = await findSession(shift.id, context);
-  return buildCashSummary(shift, session, context);
+  return hideReconciliationFromAdministrator(
+    await buildCashSummary(shift, session, context),
+    boundary.account,
+  );
 }
 
 async function getShiftCash(shiftId, account, tenant) {
@@ -420,7 +443,10 @@ async function saveOpening(data, account, tenant) {
       lock: true,
       transaction,
     });
-    const context = await getDataContext(boundary.account, tenant);
+    const context = await getDataContext(boundary.account, tenant, {
+      lock: true,
+      transaction,
+    });
     const shift = await findActiveShift({
       context: boundary.context,
       transaction,
@@ -495,7 +521,10 @@ async function createExpense(data, account, tenant) {
       lock: true,
       transaction,
     });
-    const context = await getDataContext(boundary.account, tenant);
+    const context = await getDataContext(boundary.account, tenant, {
+      lock: true,
+      transaction,
+    });
     const shift = await findActiveShift({
       context: boundary.context,
       transaction,
@@ -574,7 +603,10 @@ async function loadExpenseForMutation(expenseId, boundary, transaction, tenant) 
     transaction,
   });
   if (!expense) throw appError('Кассовый расход не найден', 404);
-  const context = await getDataContext(boundary.account, tenant);
+  const context = await getDataContext(boundary.account, tenant, {
+    lock: true,
+    transaction,
+  });
   assertTrainingScopeMatches(expense, context.marker);
   const shift = expense.shift || expense.Shift;
   assertShiftViewAccess(shift, boundary.account);
@@ -875,7 +907,9 @@ async function closeCashSession({ shift, endedAt, data, account, transaction }) 
     openingBanknotes: session.openingBanknotes,
     openingCoins: session.openingCoins,
   });
-  assertVarianceComment(variance, closingComment);
+  if (MANAGER_ROLES.has(account?.role)) {
+    assertVarianceComment(variance, closingComment);
+  }
 
   const beforeData = session.toJSON();
   await session.update(
@@ -908,6 +942,7 @@ async function closeCashSession({ shift, endedAt, data, account, transaction }) 
 }
 
 module.exports = {
+  __testing: { getDataContext },
   accountInclude,
   buildCashSummary,
   calculateCashReconciliation,
@@ -921,6 +956,7 @@ module.exports = {
   getAttachment,
   getCashSalesForShift,
   getShiftCash,
+  hideReconciliationFromAdministrator,
   removeAttachment,
   roundMoney,
   SHIFT_CASH_EXPENSE_CATEGORY,

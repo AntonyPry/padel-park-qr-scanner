@@ -1368,20 +1368,30 @@ function shouldAutoPrice(data, currentBooking = null) {
   return Boolean(data.courtId || data.startsAt || data.date || data.startTime || data.durationMinutes);
 }
 
+function withoutAdminManualPrice(data, account) {
+  if (account?.role !== 'admin' || data?.price === undefined) return data;
+  const sanitized = { ...data };
+  delete sanitized.price;
+  return sanitized;
+}
+
 async function applyAutomaticPrice(
   data,
   courtId,
   timing,
   currentBooking = null,
   authority = null,
+  account = null,
+  transaction = null,
 ) {
-  if (!shouldAutoPrice(data, currentBooking)) return data;
+  const priceSafeData = withoutAdminManualPrice(data, account);
+  if (!shouldAutoPrice(priceSafeData, currentBooking)) return priceSafeData;
   const quote = await bookingRulesService.calculateQuote({
     courtId,
     durationMinutes: timing.durationMinutes,
     startsAt: timing.startsAt,
-  }, authority);
-  return { ...data, price: quote.price };
+  }, authority, { transaction });
+  return { ...priceSafeData, price: quote.price };
 }
 
 function buildSeriesConfig(data) {
@@ -1497,7 +1507,7 @@ async function inspectSeriesOccurrence(config, date, transaction, context) {
             courtId: config.courtId,
             durationMinutes: config.durationMinutes,
             startsAt: timing.startsAt,
-          }, context)).price
+          }, context, { transaction })).price
         : config.price;
     return {
       date,
@@ -1598,12 +1608,13 @@ async function createBookingSeries(data, account, tenant = null, options = {}) {
         return loadCreatedSeriesResult(existing, context, transaction);
       }
     }
-    const config = buildSeriesConfig(data);
+    const priceSafeData = withoutAdminManualPrice(data, account);
+    const config = buildSeriesConfig(priceSafeData);
     const responsibleStaffId = await resolveResponsibleStaffId(data, null, transaction, context);
     const courtsById = await lockCourtsForBooking([config.courtId], transaction, context);
     const court = courtsById.get(config.courtId);
     const preview = await buildSeriesPreview(
-      { ...data, courtId: config.courtId },
+      { ...priceSafeData, courtId: config.courtId },
       transaction,
       context,
     );
@@ -1912,7 +1923,15 @@ async function createBooking(data, account, tenant = null, options = {}) {
       transaction,
       context,
     );
-    const pricedData = await applyAutomaticPrice(data, court.id, timing, null, context);
+    const pricedData = await applyAutomaticPrice(
+      data,
+      court.id,
+      timing,
+      null,
+      context,
+      account,
+      transaction,
+    );
     const bookingPayload = buildBookingPayload(
       { ...pricedData, responsibleStaffId },
       account,
@@ -2013,7 +2032,15 @@ async function updateBooking(id, data, account, tenant = null, options = {}) {
       transaction,
       context,
     );
-    const pricedData = await applyAutomaticPrice(data, courtId, timing, booking, context);
+    const pricedData = await applyAutomaticPrice(
+      data,
+      courtId,
+      timing,
+      booking,
+      context,
+      account,
+      transaction,
+    );
     const payload = buildBookingPayload(
       { ...pricedData, courtId, responsibleStaffId },
       account,
@@ -2166,6 +2193,8 @@ module.exports = {
   updateBookingResource,
   updateBooking,
   __testing: {
+    applyAutomaticPrice,
     normalizeGroupParticipantIds,
+    withoutAdminManualPrice,
   },
 };

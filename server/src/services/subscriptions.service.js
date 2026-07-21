@@ -638,6 +638,73 @@ async function getClientSubscription(id, tenant = null) {
   return serializeSubscription(row);
 }
 
+async function issueClientSubscription(
+  clientId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.ClientSubscription,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+
+  return db.sequelize.transaction(async (transaction) => {
+    const [client, type] = await Promise.all([
+      assertClientExists(clientId, transaction, context),
+      getTypeOrFail(data.subscriptionTypeId, { transaction }, context),
+    ]);
+    if (type.status !== 'active') {
+      throw appError('Нельзя выдать архивный тип абонемента', 409);
+    }
+
+    const startsAt = normalizeDateTime(data.startsAt, 'Дата начала', new Date());
+    const expiresAt = type.validityDays
+      ? addDays(startsAt, Number(type.validityDays))
+      : null;
+    const saleAmount = normalizeMoney(data.saleAmount, 'Сумма оплаты', 0);
+    const paymentMethod = normalizeEnum(
+      data.paymentMethod,
+      ['unknown', 'cash', 'cashless', 'mixed'],
+      'способ оплаты',
+      'unknown',
+    );
+
+    const created = await db.ClientSubscription.create(
+      {
+        ...clubTenantValues(context),
+        bonusPersonalSessions: Number(type.bonusPersonalSessions || 0),
+        clientId: client.id,
+        createdByAccountId: authorityActor?.id || null,
+        expiresAt,
+        isUnlimited: Boolean(type.isUnlimited),
+        metadata: {
+          comment: normalizeOptionalText(data.comment),
+          issuedManually: true,
+          paymentMethod,
+          subscriptionTypeSnapshot: serializeType(type),
+        },
+        pricePaid: saleAmount,
+        saleAmount,
+        serviceType: type.serviceType,
+        sessionsTotal: type.sessionsTotal,
+        sessionsUsed: 0,
+        source: 'manual',
+        startsAt,
+        status: 'active',
+        subscriptionTypeId: type.id,
+        timeSegment: type.timeSegment,
+        trainingKind: type.trainingKind,
+        typeName: type.name,
+      },
+      { transaction },
+    );
+
+    return findClientSubscriptionForResponse(created.id, transaction, context);
+  });
+}
+
 async function findClientSubscriptionForUpdate(id, transaction, context = null) {
   const row = await findClubRecordByPk(db.ClientSubscription, id, {
     transaction,
@@ -1153,6 +1220,7 @@ module.exports = {
   createFromPendingSale,
   createSubscriptionType,
   getClientSubscription,
+  issueClientSubscription,
   listClientSubscriptionRedemptions,
   listClientSubscriptions,
   listSubscriptionTypes,

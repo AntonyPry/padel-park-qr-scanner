@@ -1,6 +1,7 @@
 import { apiRequest } from '@/lib/api';
 
 export interface ClientListItem {
+  birthDate?: string | null;
   createdAt: string;
   id: number;
   name: string;
@@ -48,5 +49,18 @@ export function listClients(params: {
     `/api/clients${toQueryString(params)}`,
     {},
     'Не удалось получить клиентов',
+  );
+}
+
+export function searchClients(params: {
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  status?: 'active' | 'archived' | 'all';
+}) {
+  return apiRequest<ClientsListResponse>(
+    `/api/clients/search${toQueryString(params)}`,
+    {},
+    'Не удалось найти клиентов',
   );
 }

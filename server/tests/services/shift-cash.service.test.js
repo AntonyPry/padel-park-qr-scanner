@@ -145,6 +145,44 @@ test('cash closing requires a comment when fact differs from expectation', () =>
   assert.doesNotThrow(() => shiftCashService.assertVarianceComment(0, ''));
 });
 
+test('administrator cash summary hides reconciliation while manager keeps it', () => {
+  const summary = {
+    activeExpensesTotal: 900,
+    cashSales: 12500,
+    expectedClosingCash: 45450,
+    manualAdjustments: 0,
+    session: {
+      cashSalesSnapshot: 12500,
+      expectedClosingCash: 45450,
+      expensesSnapshot: [{ amount: 900 }],
+      manualAdjustmentsSnapshot: 0,
+      variance: -500,
+    },
+  };
+
+  assert.equal(
+    shiftCashService.hideReconciliationFromAdministrator(summary, { role: 'manager' }),
+    summary,
+  );
+  assert.deepEqual(
+    shiftCashService.hideReconciliationFromAdministrator(summary, { role: 'admin' }),
+    {
+      ...summary,
+      cashSales: null,
+      expectedClosingCash: null,
+      manualAdjustments: null,
+      session: {
+        ...summary.session,
+        cashSalesSnapshot: null,
+        expectedClosingCash: null,
+        expensesSnapshot: null,
+        manualAdjustmentsSnapshot: null,
+        variance: null,
+      },
+    },
+  );
+});
+
 test('expense correction permissions keep financeManage separate from shift cash', () => {
   const activeShift = { status: 'active' };
   const closedShift = { status: 'closed' };
@@ -186,6 +224,40 @@ test('training cash contexts are isolated per account and role', () => {
     }),
     'training:session-17-admin',
   );
+});
+
+test('cash data context reuses the active write transaction for onboarding lookup', async () => {
+  const calls = [];
+  const transaction = { id: 'cash-write' };
+  onboardingService.getTrainingDataMarker = async (account, tenant, options) => {
+    calls.push({ account, options, tenant });
+    return {
+      isTraining: false,
+      trainingAccountId: null,
+      trainingRole: null,
+      trainingSessionId: null,
+    };
+  };
+
+  assert.deepEqual(
+    await shiftCashService.__testing.getDataContext(
+      { id: 7, role: 'admin' },
+      { clubId: 1 },
+      { lock: true, transaction },
+    ),
+    {
+      contextKey: 'production',
+      marker: {
+        isTraining: false,
+        trainingAccountId: null,
+        trainingRole: null,
+        trainingSessionId: null,
+      },
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.transaction, transaction);
+  assert.equal(calls[0].options.lock, true);
 });
 
 test('account includes use independent nested Staff aliases', () => {

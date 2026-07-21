@@ -411,8 +411,10 @@ async function assertBookable(
   return schedule;
 }
 
-async function listPriceRules(status = 'active', tenant = null) {
-  const context = await resolveRulesContext(tenant);
+async function listPriceRules(status = 'active', tenant = null, options = {}) {
+  const context = await resolveRulesContext(tenant, {
+    transaction: options.transaction,
+  });
   const where = bookingTenantWhere(context, {}, { force: true });
   if (status !== 'all') where.status = STATUSES.has(status) ? status : 'active';
   const rows = await db.BookingPriceRule.findAll({
@@ -420,6 +422,7 @@ async function listPriceRules(status = 'active', tenant = null) {
       ['priority', 'DESC'],
       ['id', 'ASC'],
     ],
+    transaction: options.transaction,
     where,
   });
   return rows.map(mapPriceRule);
@@ -502,20 +505,31 @@ async function lockCourts(courtIds, context, transaction) {
   return courtsById;
 }
 
-async function calculateQuote({ courtId, durationMinutes, startsAt }, tenant = null) {
-  const context = await resolveRulesContext(tenant);
+async function calculateQuote(
+  { courtId, durationMinutes, startsAt },
+  tenant = null,
+  options = {},
+) {
+  const context = await resolveRulesContext(tenant, {
+    transaction: options.transaction,
+  });
   const court = await db.Court.findOne({
+    transaction: options.transaction,
     where: bookingTenantWhere(context, { id: Number(courtId) }, { force: true }),
   });
   if (!court || !court.isActive) throw appError('Ресурс бронирования не найден или выключен', 404);
   const start = normalizeDate(startsAt, 'Время начала');
   const duration = normalizeInteger(durationMinutes, 'Длительность', 1, 720);
   const end = new Date(start.getTime() + duration * 60000);
-  const schedule = await getEffectiveSchedule(getLocalDateOnly(start), context);
+  const schedule = await getEffectiveSchedule(
+    getLocalDateOnly(start),
+    context,
+    options.transaction,
+  );
   assertDuration(duration, schedule);
   assertWorkingHours(start, end, schedule);
 
-  const rules = await listPriceRules('active', context);
+  const rules = await listPriceRules('active', context, options);
   let price = 0;
   const applied = new Map();
   for (let offset = 0; offset < duration; offset += schedule.slotStepMinutes) {

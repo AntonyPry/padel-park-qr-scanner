@@ -215,6 +215,14 @@ describe('AppSidebar authorization', () => {
     ).toBeInTheDocument();
   });
 
+  it('removes telephony for every role and hides client registry and CRM references from admin', () => {
+    renderSidebar('admin');
+
+    expect(screen.queryByRole('link', { name: 'Телефония' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Клиенты' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Справочники CRM' })).not.toBeInTheDocument();
+  });
+
   it.each<AccountRole>(['owner', 'manager', 'accountant'])(
     'shows a disabled coming-soon item for %s',
     (role) => {

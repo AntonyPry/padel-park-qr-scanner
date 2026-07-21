@@ -65,11 +65,11 @@ export interface ShiftCashSession {
 
 export interface ShiftCashSummary {
   activeExpensesTotal: number;
-  cashSales: number;
+  cashSales: number | null;
   createdExpenseId?: number;
   expenses: ShiftCashExpense[];
-  expectedClosingCash: number;
-  manualAdjustments: number;
+  expectedClosingCash: number | null;
+  manualAdjustments: number | null;
   session: ShiftCashSession | null;
   shift: {
     adminName: string;

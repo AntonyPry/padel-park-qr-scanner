@@ -40,7 +40,7 @@ import {
   Search,
   Settings,
   Trash2,
-  UserCheck,
+  UserX,
   UsersRound,
   XCircle,
 } from 'lucide-react';
@@ -100,13 +100,14 @@ import {
   type CourtBlock,
   type CourtBlockPayload,
 } from '@/api/bookings';
-import { listClients, type ClientListItem } from '@/api/clients';
+import { searchClients, type ClientListItem } from '@/api/clients';
 import {
   quickCompleteTrainingPlan,
   type TrainingPlan,
 } from '@/api/training-plans';
 import { queryKeys } from '@/api/query-keys';
 import { Badge } from '@/components/ui/badge';
+import { ClientProfileDialog } from '@/components/client-profile-dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -726,11 +727,11 @@ function getPriceQuoteKey(
 }
 
 function getStatusClass(status: BookingStatus) {
-  if (status === 'confirmed') return 'border-blue-500/50 bg-blue-500/15 text-blue-100';
-  if (status === 'arrived') return 'border-green-500/50 bg-green-500/15 text-green-100';
+  if (status === 'confirmed') return 'border-blue-700 bg-blue-500 text-white dark:bg-blue-600';
+  if (status === 'arrived') return 'border-emerald-700 bg-emerald-500 text-white dark:bg-emerald-600';
   if (status === 'canceled') return 'border-muted bg-muted/30 text-muted-foreground';
-  if (status === 'no_show') return 'border-red-500/50 bg-red-500/15 text-red-100';
-  return 'border-primary/50 bg-primary/15 text-primary-foreground';
+  if (status === 'no_show') return 'border-rose-700 bg-rose-500 text-white dark:bg-rose-600';
+  return 'border-violet-700 bg-violet-500 text-white dark:bg-violet-600';
 }
 
 function getPaymentBadgeClass(status: BookingPaymentStatus) {
@@ -1122,6 +1123,7 @@ export default function BookingsPage() {
     isDateOnly(dateFromUrl) ? dateFromUrl! : format(new Date(), 'yyyy-MM-dd'),
   );
   const [formOpen, setFormOpen] = useState(false);
+  const [profileClientId, setProfileClientId] = useState<number | null>(null);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<number | null>(null);
@@ -1289,7 +1291,7 @@ export default function BookingsPage() {
     [bookings],
   );
   const upcomingBooking = useMemo(() => (
-    activeBookings
+    [...activeBookings]
       .sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime())[0] || null
   ), [activeBookings]);
   const filteredBookings = useMemo(() => {
@@ -1414,7 +1416,7 @@ export default function BookingsPage() {
       bookingTypeValue === 'group_training' &&
       groupParticipantSearch.trim().length >= 2,
     queryFn: () =>
-      listClients({
+      searchClients({
         page: 1,
         pageSize: 8,
         q: groupParticipantSearch.trim(),
@@ -1452,9 +1454,10 @@ export default function BookingsPage() {
     bookingClientDetailsQuery.data?.prepaymentSummary ||
     lookupClient?.prepaymentSummary ||
     null;
-  const selectedBookingClientHref = getBookingClientHref(
-    selectedClientIdForPrepayments || editingBooking?.userId,
-  );
+  const selectedBookingClientId =
+    selectedClientIdForPrepayments || editingBooking?.userId || null;
+  const selectedBookingClientHref =
+    clubRole === 'admin' ? '' : getBookingClientHref(selectedBookingClientId);
   const bookingHistoryRows = useMemo(
     () => buildBookingHistoryRows(historyQuery.data || []),
     [historyQuery.data],
@@ -2258,7 +2261,10 @@ export default function BookingsPage() {
     name: seriesDraft.name.trim() || `Постоянка ${seriesDraft.clientName.trim()}`,
     paymentMethod: seriesDraft.paymentMethod,
     paymentStatus: seriesDraft.paymentStatus,
-    price: seriesDraft.price ? Number(seriesDraft.price) : undefined,
+    price:
+      canEditBookingResources && seriesDraft.price
+        ? Number(seriesDraft.price)
+        : undefined,
     responsibleStaffId:
       seriesDraft.responsibleStaffId && seriesDraft.responsibleStaffId !== 'none'
         ? Number(seriesDraft.responsibleStaffId)
@@ -2697,24 +2703,14 @@ export default function BookingsPage() {
           const canQuickEdit = canEditBookings && booking.status !== 'canceled';
           return (
             <div className="flex flex-wrap justify-end gap-1">
-              {canQuickEdit && booking.status === 'new' && (
+              {canQuickEdit && booking.status !== 'no_show' && (
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={() => void quickStatus(booking, 'confirmed')}
-                  title="Подтвердить бронь"
+                  onClick={() => void quickStatus(booking, 'no_show')}
+                  title="Клиент не пришел"
                 >
-                  <CheckCircle2 className="size-4" />
-                </Button>
-              )}
-              {canQuickEdit && booking.status !== 'arrived' && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => void quickStatus(booking, 'arrived')}
-                  title="Клиент пришел"
-                >
-                  <UserCheck className="size-4" />
+                  <UserX className="size-4" />
                 </Button>
               )}
               {canQuickEdit && isBookingNeedsPayment(booking) && (
@@ -2842,7 +2838,7 @@ export default function BookingsPage() {
             <BarChart3 className="mr-2 size-4" />
             Отчет
           </Button>
-          {canEditBookings && (
+          {canEditBookingResources && (
             <Button variant="outline" onClick={openRules}>
               <Settings className="mr-2 size-4" />
               Правила
@@ -2937,7 +2933,7 @@ export default function BookingsPage() {
               </div>
 
               {courts.map((court) => {
-                const courtBookings = bookings.filter((booking) => booking.courtId === court.id);
+                const courtBookings = activeBookings.filter((booking) => booking.courtId === court.id);
                 const courtBlocks = (schedule?.blocks || []).filter((block) => block.courtId === court.id);
                 return (
                   <div
@@ -3087,34 +3083,19 @@ export default function BookingsPage() {
                                 >
                                   <Pencil className="size-3" />
                                 </Button>
-                                {booking.status === 'new' && (
+                                {booking.status !== 'no_show' && (
                                   <Button
                                     type="button"
                                     size="icon-xs"
                                     variant="ghost"
                                     className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Подтвердить бронь"
+                                    title="Клиент не пришел"
                                     onClick={(event) => {
                                       event.stopPropagation();
-                                      void quickStatus(booking, 'confirmed');
+                                      void quickStatus(booking, 'no_show');
                                     }}
                                   >
-                                    <CheckCircle2 className="size-3" />
-                                  </Button>
-                                )}
-                                {booking.status !== 'arrived' && (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Клиент пришел"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void quickStatus(booking, 'arrived');
-                                    }}
-                                  >
-                                    <UserCheck className="size-3" />
+                                    <UserX className="size-3" />
                                   </Button>
                                 )}
                                 {needsPayment && (
@@ -3409,14 +3390,23 @@ export default function BookingsPage() {
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Label>Телефон клиента</Label>
-                  {selectedBookingClientHref && (
+                  {selectedBookingClientId && clubRole === 'admin' ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setProfileClientId(selectedBookingClientId)}
+                    >
+                      Карточка клиента
+                    </Button>
+                  ) : selectedBookingClientHref ? (
                     <Button asChild type="button" variant="outline" size="xs">
                       <Link to={selectedBookingClientHref}>
                         <ExternalLink className="size-3" />
                         Карточка клиента
                       </Link>
                     </Button>
-                  )}
+                  ) : null}
                 </div>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -3675,9 +3665,13 @@ export default function BookingsPage() {
                 <Label>Цена</Label>
                 <Input
                   inputMode="decimal"
-                  disabled={!canEditBookings}
+                  disabled={!canEditBookingResources}
                   {...bookingForm.register('price', {
-                    onChange: (event) => markPriceManuallyEdited(event.target.value),
+                    onChange: (event) => {
+                      if (canEditBookingResources) {
+                        markPriceManuallyEdited(event.target.value);
+                      }
+                    },
                   })}
                 />
                 <FormError message={bookingForm.formState.errors.price?.message} />
@@ -3762,31 +3756,17 @@ export default function BookingsPage() {
               <div className="rounded-md border bg-muted/20 p-3">
                 {canEditBookings && (
                   <div className="mb-3 flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => quickStatus(editingBooking, 'confirmed')}
-                    >
-                      <CheckCircle2 className="mr-2 size-4" />
-                      Подтвердить
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => quickStatus(editingBooking, 'arrived')}
-                    >
-                      Пришел
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => quickStatus(editingBooking, 'no_show')}
-                    >
-                      Не пришел
-                    </Button>
+                    {editingBooking.status !== 'no_show' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => quickStatus(editingBooking, 'no_show')}
+                      >
+                        <UserX className="mr-2 size-4" />
+                        Не пришел
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -4454,6 +4434,7 @@ export default function BookingsPage() {
                   <Label>Цена за бронь</Label>
                   <Input
                     inputMode="decimal"
+                    disabled={!canEditBookingResources}
                     value={seriesDraft.price}
                     onChange={(event) => setSeriesDraft((current) => ({ ...current, price: event.target.value }))}
                     placeholder="Авто"
@@ -5439,6 +5420,12 @@ export default function BookingsPage() {
         loading={pendingActionLoading}
         onCancel={() => setPendingAction(null)}
         onConfirm={confirmPendingAction}
+      />
+      <ClientProfileDialog
+        clientId={profileClientId}
+        onOpenChange={(open) => {
+          if (!open) setProfileClientId(null);
+        }}
       />
     </div>
   );

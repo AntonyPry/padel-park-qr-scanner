@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ShiftCashCloseDialog,
   ShiftCashPanel,
@@ -9,6 +9,7 @@ import type { ShiftCashSummary } from '@/api/shift-cash';
 Element.prototype.scrollIntoView = vi.fn();
 
 const mocks = vi.hoisted(() => ({
+  authRole: 'manager',
   cancelExpense: vi.fn(),
   createExpense: vi.fn(),
   fetchAttachment: vi.fn(),
@@ -39,7 +40,8 @@ vi.mock('@/lib/realtime', () => ({
 }));
 
 vi.mock('@/lib/useAuth', () => ({
-  useAuth: () => ({ account: { id: 7, role: 'admin' } }),
+  useAuth: () => ({ account: { id: 7, role: mocks.authRole } }),
+  useAuthorizationRole: () => mocks.authRole,
 }));
 
 function makeSummary({ opening = true, expenses = [] }: {
@@ -80,7 +82,13 @@ function makeSummary({ opening = true, expenses = [] }: {
 
 afterEach(() => {
   cleanup();
-  Object.values(mocks).forEach((mock) => mock.mockReset());
+  Object.values(mocks).forEach((mock) => {
+    if (typeof mock !== 'string') mock.mockReset();
+  });
+});
+
+beforeEach(() => {
+  mocks.authRole = 'manager';
 });
 
 describe('ShiftCashPanel', () => {
@@ -371,5 +379,44 @@ describe('ShiftCashCloseDialog', () => {
         summary,
       ),
     );
+  });
+
+  it('keeps expected cash and variance hidden from an administrator', async () => {
+    mocks.authRole = 'admin';
+    const summary = {
+      ...makeSummary(),
+      cashSales: null,
+      expectedClosingCash: null,
+      manualAdjustments: null,
+    };
+    mocks.getActive.mockResolvedValueOnce(summary);
+    const onConfirm = vi.fn().mockResolvedValue(true);
+    render(
+      <ShiftCashCloseDialog
+        loading={false}
+        onClose={vi.fn()}
+        onConfirm={onConfirm}
+        open
+      />,
+    );
+
+    expect(await screen.findByText('Фактический остаток кассы')).toBeInTheDocument();
+    expect(screen.queryByText('Ожидается')).not.toBeInTheDocument();
+    expect(screen.queryByText('Наличные продажи')).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Фактические купюры, ₽'), {
+      target: { value: '45000' },
+    });
+    fireEvent.change(screen.getByLabelText('Фактическая мелочь, ₽'), {
+      target: { value: '400' },
+    });
+    expect(screen.queryByText('Расхождение')).not.toBeInTheDocument();
+    const submit = screen.getByRole('button', { name: 'Сохранить факт и завершить' });
+    expect(submit).toBeEnabled();
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(onConfirm).toHaveBeenCalledWith(
+      { banknotes: 45000, coins: 400, comment: null },
+      summary,
+    ));
   });
 });

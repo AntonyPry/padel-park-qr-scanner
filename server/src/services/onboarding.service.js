@@ -1168,7 +1168,7 @@ async function getEventTargetContext(
   };
 }
 
-async function getTrainingDataMarker(actor, tenant = null) {
+async function getTrainingDataMarker(actor, tenant = null, options = {}) {
   if (!actor?.id || !actor.role) {
     return {
       isTraining: false,
@@ -1178,7 +1178,12 @@ async function getTrainingDataMarker(actor, tenant = null) {
     };
   }
 
-  const context = await getEventTargetContext(actor, tenant, TENANT_SCOPES.CLUB);
+  const context = await getEventTargetContext(
+    actor,
+    tenant,
+    TENANT_SCOPES.CLUB,
+    options,
+  );
   if (!context.isTraining) {
     return {
       isTraining: false,
