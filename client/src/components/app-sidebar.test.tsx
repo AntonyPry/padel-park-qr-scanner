@@ -218,7 +218,21 @@ describe('AppSidebar authorization', () => {
     ).toBeInTheDocument();
   });
 
-  it('removes telephony for every role and hides client registry and CRM references from admin', () => {
+  it('keeps telephony for owners and managers while hiding it from administrators', () => {
+    const owner = renderSidebar('owner');
+    expect(screen.getByRole('link', { name: 'Телефония' })).toHaveAttribute(
+      'href',
+      '/admin/telephony',
+    );
+    owner.unmount();
+
+    const manager = renderSidebar('manager');
+    expect(screen.getByRole('link', { name: 'Телефония' })).toHaveAttribute(
+      'href',
+      '/admin/telephony',
+    );
+    manager.unmount();
+
     renderSidebar('admin');
 
     expect(screen.queryByRole('link', { name: 'Телефония' })).not.toBeInTheDocument();

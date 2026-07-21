@@ -9,7 +9,7 @@ import { Layout } from './components/Layout';
 import { LegacyShiftRedirect } from './components/legacy-shift-redirect';
 import { OnboardingQuestRouteObserver } from './components/onboarding-quest-route-observer';
 import { OnboardingRouteEvents } from './components/onboarding-route-events';
-import { AccessDeniedPage, HomeRedirect, RequireRoles } from './components/RequireRoles';
+import { HomeRedirect, RequireRoles } from './components/RequireRoles';
 import { AuthProvider } from './lib/auth';
 import { queryClient } from './lib/query-client';
 import { RealtimeProvider } from './lib/realtime-provider';
@@ -41,6 +41,7 @@ const CallTasksPage = lazy(() => import('./pages/CallTasksPage'));
 const PrepaymentsPage = lazy(() => import('./pages/PrepaymentsPage'));
 const CertificatesPage = lazy(() => import('./pages/CertificatesPage'));
 const CorporateClientsPage = lazy(() => import('./pages/CorporateClientsPage'));
+const TelephonyPage = lazy(() => import('./pages/TelephonyPage'));
 const ReferencesPage = lazy(() => import('./pages/ReferencesPage'));
 const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const TrainerPage = lazy(() => import('./pages/TrainerPage'));
@@ -208,7 +209,11 @@ function ApplicationContent() {
                     />
                     <Route
                       path="/admin/telephony"
-                      element={<AccessDeniedPage section="Телефония" />}
+                      element={
+                        <RequireRoles path="/admin/telephony">
+                          <TelephonyPage />
+                        </RequireRoles>
+                      }
                     />
                     <Route
                       path="/admin/staff"

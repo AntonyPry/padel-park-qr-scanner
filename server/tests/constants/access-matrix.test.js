@@ -111,13 +111,10 @@ test('admins can operate shift cash without receiving finance management', () =>
   assert.equal(ACCESS_MATRIX.financeView.includes('admin'), false);
 });
 
-test('telephony separates setup from call processing', () => {
-  assert.equal(ACCESS_MATRIX.telephonyManage.includes('owner'), true);
-  assert.equal(ACCESS_MATRIX.telephonyManage.includes('manager'), true);
-  assert.equal(ACCESS_MATRIX.telephonyManage.includes('admin'), false);
-  assert.equal(ACCESS_MATRIX.telephonyWork.includes('admin'), true);
-  assert.equal(ACCESS_MATRIX.telephonyView.includes('viewer'), true);
-  assert.equal(ACCESS_MATRIX.telephonyWork.includes('viewer'), false);
+test('telephony is available only to owners and managers', () => {
+  assert.deepEqual(ACCESS_MATRIX.telephonyManage, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.telephonyWork, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.telephonyView, ['owner', 'manager']);
 });
 
 test('access key correction keeps the existing access operator roles', () => {
