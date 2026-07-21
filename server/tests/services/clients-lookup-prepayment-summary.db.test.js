@@ -76,6 +76,11 @@ test('organization client lookup aggregates only authorized Club instruments', a
   try {
     schema = connect(database);
     await migrateAll(schema);
+    const expiredModeMigration = require(
+      '../../migrations/20260721220000-allow-expired-onboarding-mode-disable'
+    );
+    await expiredModeMigration.down(schema.getQueryInterface());
+    await expiredModeMigration.up(schema.getQueryInterface());
     db = require('../../models');
     const createApp = require('../../src/app');
     const authService = require('../../src/services/auth.service');
@@ -95,6 +100,13 @@ test('organization client lookup aggregates only authorized Club instruments', a
       name: 'Lookup sibling Club',
       organizationId: organizationA.id,
       slug: 'lookup-sibling-club',
+      status: 'active',
+      timezone: 'Europe/Moscow',
+    });
+    const trainingClub = await db.Club.create({
+      name: 'Lookup training Club',
+      organizationId: organizationA.id,
+      slug: 'lookup-training-club',
       status: 'active',
       timezone: 'Europe/Moscow',
     });
@@ -160,8 +172,15 @@ test('organization client lookup aggregates only authorized Club instruments', a
       staffId: managerStaff.id,
       status: 'active',
     });
-    const managerAccess = await db.MembershipClubAccess.create({
+    let managerAccess = await db.MembershipClubAccess.create({
       clubId: clubA1.id,
+      membershipId: managerMembership.id,
+      organizationId: organizationA.id,
+      roleOverride: null,
+      status: 'active',
+    });
+    await db.MembershipClubAccess.create({
+      clubId: trainingClub.id,
       membershipId: managerMembership.id,
       organizationId: organizationA.id,
       roleOverride: null,
@@ -267,7 +286,7 @@ test('organization client lookup aggregates only authorized Club instruments', a
     assert.ok(activeSource, 'an active Organization client source is required');
     const ownerClubTenant = await tenantContextService.resolveTenantContext({
       accountId: ownerA.id,
-      clubId: clubA1.id,
+      clubId: trainingClub.id,
       organizationId: organizationA.id,
       scope: 'club',
     });
@@ -280,22 +299,23 @@ test('organization client lookup aggregates only authorized Club instruments', a
       ownerA,
       ownerClubTenant,
     );
-    const createPhone = '+7 (999) 555-44-34';
-    const createResponse = await fetch(
+    const createClient = (token, phone, name) => fetch(
       `http://127.0.0.1:${server.address().port}/api/clients`,
       {
-        body: JSON.stringify({
-          name: 'Organization HTTP Create',
-          phone: createPhone,
-          sourceId: activeSource.id,
-        }),
+        body: JSON.stringify({ name, phone, sourceId: activeSource.id }),
         headers: {
-          Authorization: `Bearer ${ownerSession.token}`,
+          Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
           'X-Organization-Id': String(organizationA.id),
         },
         method: 'POST',
       },
+    );
+    const createPhone = '+7 (999) 555-44-34';
+    const createResponse = await createClient(
+      ownerSession.token,
+      createPhone,
+      'Organization HTTP Create',
     );
     const createPayload = await createResponse.json();
     assert.equal(
@@ -322,6 +342,127 @@ test('organization client lookup aggregates only authorized Club instruments', a
         },
       }),
       1,
+    );
+
+    const ownerMode = await db.OnboardingTrainingMode.findOne({
+      where: { membershipId: ownerAMembership.id },
+    });
+    assert.ok(ownerMode);
+    await ownerMode.update({ expiresAt: new Date(Date.now() - 60_000) });
+    await trainingClub.update({ status: 'archived' });
+    const expiredArchivedClubResponse = await createClient(
+      ownerSession.token,
+      '+7 (999) 555-44-35',
+      'Expired Archived Club Create',
+    );
+    assert.equal(expiredArchivedClubResponse.status, 201);
+    await ownerMode.reload();
+    assert.equal(ownerMode.isEnabled, false);
+    assert.ok(ownerMode.disabledAt);
+    await trainingClub.update({ status: 'active' });
+
+    await onboardingService.setTrainingMode(
+      ownerA,
+      { isEnabled: true, role: 'owner' },
+      ownerClubTenant,
+    );
+    await trainingClub.update({ status: 'archived' });
+    const activeArchivedClubResponse = await createClient(
+      ownerSession.token,
+      '+7 (999) 555-44-36',
+      'Active Archived Club Create',
+    );
+    assert.equal(activeArchivedClubResponse.status, 404);
+    assert.equal(
+      await db.User.count({
+        where: {
+          organizationId: organizationA.id,
+          phoneNormalized: '9995554436',
+        },
+      }),
+      0,
+    );
+    await trainingClub.update({ status: 'active' });
+    await onboardingService.setTrainingMode(
+      ownerA,
+      { isEnabled: false, role: 'owner' },
+      ownerClubTenant,
+    );
+
+    const managerClubTenant = await tenantContextService.resolveTenantContext({
+      accountId: manager.id,
+      clubId: clubA1.id,
+      organizationId: organizationA.id,
+      scope: 'club',
+    });
+    await onboardingService.setTrainingMode(
+      manager,
+      { isEnabled: true, role: 'manager' },
+      managerClubTenant,
+    );
+    const managerMode = await db.OnboardingTrainingMode.findOne({
+      where: { membershipId: managerMembership.id },
+    });
+    assert.ok(managerMode);
+    await managerMode.update({ expiresAt: new Date(Date.now() - 60_000) });
+    await managerAccess.destroy();
+    const expiredRevokedAccessResponse = await createClient(
+      managerSession.token,
+      '+7 (999) 555-44-37',
+      'Expired Revoked Access Create',
+    );
+    assert.equal(expiredRevokedAccessResponse.status, 201);
+    await managerMode.reload();
+    assert.equal(managerMode.isEnabled, false);
+    managerAccess = await db.MembershipClubAccess.create({
+      clubId: clubA1.id,
+      membershipId: managerMembership.id,
+      organizationId: organizationA.id,
+      roleOverride: null,
+      status: 'active',
+    });
+
+    await onboardingService.setTrainingMode(
+      manager,
+      { isEnabled: true, role: 'manager' },
+      managerClubTenant,
+    );
+    await managerMode.update({ expiresAt: new Date(Date.now() - 60_000) });
+    await managerAccess.update({ roleOverride: 'admin' });
+    const expiredRoleDriftResponse = await createClient(
+      managerSession.token,
+      '+7 (999) 555-44-38',
+      'Expired Role Drift Create',
+    );
+    assert.equal(expiredRoleDriftResponse.status, 201);
+    await managerMode.reload();
+    assert.equal(managerMode.isEnabled, false);
+    await managerAccess.update({ roleOverride: null });
+
+    const disabledModeResponse = await createClient(
+      managerSession.token,
+      '+7 (999) 555-44-39',
+      'Disabled Mode Create',
+    );
+    assert.equal(disabledModeResponse.status, 201);
+
+    await onboardingService.setTrainingMode(
+      manager,
+      { isEnabled: true, role: 'manager' },
+      managerClubTenant,
+    );
+    await managerAccess.update({ roleOverride: 'admin' });
+    const activeRoleDriftResponse = await createClient(
+      managerSession.token,
+      '+7 (999) 555-44-40',
+      'Active Role Drift Create',
+    );
+    assert.equal(activeRoleDriftResponse.status, 404);
+    await managerAccess.update({ roleOverride: null });
+    await onboardingService.setTrainingMode(
+      manager,
+      { isEnabled: false, role: 'manager' },
+      managerClubTenant,
     );
 
     const api = (token, organizationId, phone = sharedPhone) => fetch(

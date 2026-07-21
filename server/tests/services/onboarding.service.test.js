@@ -317,6 +317,66 @@ test('training data marker mirrors the active training role', async () => {
   });
 });
 
+test('expired Organization training mode is disabled before stale Club authority is checked', async () => {
+  const expiredMode = {
+    accountId: 10,
+    clubId: 999,
+    expiresAt: new Date(Date.now() - 60_000),
+    isEnabled: true,
+    membershipId: 10,
+    organizationId: 10,
+    role: 'owner',
+    sessionId: 'expired-session',
+    async update(payload) {
+      Object.assign(this, payload);
+      return this;
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return expiredMode;
+    },
+  };
+  onboardingAccess._private.setAuthorityResolverOverride(
+    async (actor, tenant, scope, _options, freezeContext) => {
+      if (scope === 'club') {
+        const error = new Error('stale Club authority must not be resolved');
+        error.code = 'TENANT_CONTEXT_NOT_FOUND';
+        throw error;
+      }
+      return freezeContext({
+        accountId: Number(actor.id),
+        clubId: null,
+        effectiveRole: actor.role,
+        membershipId: Number(tenant.membershipId),
+        membershipRole: actor.role,
+        organizationId: Number(tenant.organizationId),
+        scope,
+      });
+    },
+  );
+
+  const marker = await getTrainingDataMarker(
+    { id: 10, role: 'owner' },
+    Object.freeze({
+      accountId: 10,
+      clubId: null,
+      membershipId: 10,
+      organizationId: 10,
+      scope: 'organization',
+    }),
+  );
+
+  assert.deepEqual(marker, {
+    isTraining: false,
+    trainingAccountId: null,
+    trainingRole: null,
+    trainingSessionId: null,
+  });
+  assert.equal(expiredMode.isEnabled, false);
+  assert.ok(expiredMode.disabledAt instanceof Date);
+});
+
 test('guided task requires lesson, practice and quiz before completion', async () => {
   const progressRows = new Map();
   let trainingMode = null;

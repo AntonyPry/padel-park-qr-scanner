@@ -1135,6 +1135,13 @@ async function loadTrainingMode(boundary, options = {}) {
   });
   if (!mode?.isEnabled) return mode;
 
+  if (mode.expiresAt && new Date(mode.expiresAt).getTime() <= Date.now()) {
+    await mode.update({ disabledAt: new Date(), isEnabled: false }, {
+      transaction: options.transaction,
+    });
+    return mode;
+  }
+
   if (!boundary.authority.clubId) {
     const clubAuthority = await resolveOnboardingClubAccessFromAuthority(
       boundary.actor,
@@ -1148,11 +1155,6 @@ async function loadTrainingMode(boundary, options = {}) {
     ) {
       throw safeTenantDenial();
     }
-  }
-  if (mode.expiresAt && new Date(mode.expiresAt).getTime() <= Date.now()) {
-    await mode.update({ disabledAt: new Date(), isEnabled: false }, {
-      transaction: options.transaction,
-    });
   }
   return mode;
 }
