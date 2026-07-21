@@ -43,6 +43,15 @@ test('client list SQL ignores blank numeric filters', () => {
   assert.equal(query.sql.includes('visitCount <= :visitCountMax'), false);
 });
 
+test('client birth date accepts an optional real past date and rejects invalid values', () => {
+  assert.equal(__testing.normalizeBirthDate(undefined), undefined);
+  assert.equal(__testing.normalizeBirthDate(''), null);
+  assert.equal(__testing.normalizeBirthDate('1991-02-28'), '1991-02-28');
+  assert.throws(() => __testing.normalizeBirthDate('1991-02-29'), /корректную дату/);
+  assert.throws(() => __testing.normalizeBirthDate('28.02.1991'), /YYYY-MM-DD/);
+  assert.throws(() => __testing.normalizeBirthDate('2999-01-01'), /корректную дату/);
+});
+
 test('client list SQL keeps explicit zero visit count max filter', () => {
   const query = __testing.buildClientListSql(
     {

@@ -67,6 +67,15 @@ router.get(
   }),
   subscriptionsController.listClientSubscriptions,
 );
+router.post(
+  '/clients/:clientId/subscriptions',
+  redeemClientSubscriptions,
+  validate({
+    body: apiSchemas.subscriptions.manualIssueBody,
+    params: apiSchemas.subscriptions.clientParams,
+  }),
+  subscriptionsController.issueClientSubscription,
+);
 router.get(
   '/client-subscriptions/:id',
   viewClientSubscriptions,

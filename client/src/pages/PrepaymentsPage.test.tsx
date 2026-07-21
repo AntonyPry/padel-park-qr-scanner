@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import PrepaymentsPage from '@/pages/PrepaymentsPage';
 
 const mocks = vi.hoisted(() => ({
+  authRole: 'owner',
   apiFetch: vi.fn(),
   realtimeRefresh: null as null | (() => void),
 }));
@@ -19,6 +20,14 @@ vi.mock('@/lib/realtime', () => ({
   useRealtimeRefresh: (_targets: string[], refresh: () => void) => {
     mocks.realtimeRefresh = refresh;
   },
+}));
+
+vi.mock('@/lib/useAuth', () => ({
+  useAuth: () => ({
+    account: { id: 1, role: mocks.authRole },
+    tenantContext: null,
+    tenantContextEnabled: false,
+  }),
 }));
 
 function makeDashboard({
@@ -113,11 +122,23 @@ function metricCard(label: string) {
 
 afterEach(() => {
   cleanup();
+  mocks.authRole = 'owner';
   mocks.apiFetch.mockReset();
   mocks.realtimeRefresh = null;
 });
 
 describe('PrepaymentsPage KPI stability', () => {
+  it('hides the corporate tab from an administrator without hiding manual issue', async () => {
+    mocks.authRole = 'admin';
+    mocks.apiFetch.mockResolvedValueOnce(jsonResponse(makeDashboard()));
+
+    renderPage();
+
+    await screen.findByText('Ожидают привязки');
+    expect(screen.queryByRole('link', { name: 'Корпоративные' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Выдать вручную' })).toBeInTheDocument();
+  });
+
   it('renders a first-frame skeleton and keeps full labels in a two-column header', async () => {
     mocks.apiFetch.mockResolvedValueOnce(jsonResponse(makeDashboard()));
 

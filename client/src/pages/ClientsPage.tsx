@@ -161,6 +161,7 @@ interface ClientTrainingSummary {
 }
 
 interface Client {
+  birthDate?: string | null;
   id: number;
   telegramId?: string | null;
   vkId?: string | null;
@@ -569,6 +570,7 @@ interface DuplicateGroupSelection {
 }
 
 interface ClientFormState {
+  birthDate: string;
   name: string;
   phone: string;
   sourceId: string;
@@ -581,6 +583,7 @@ interface ClientFormState {
 }
 
 interface ClientPayload {
+  birthDate?: string | null;
   name: string;
   note: string;
   phone: string;
@@ -604,6 +607,7 @@ type PendingAction = ConfirmAction & {
 };
 
 const EMPTY_FORM: ClientFormState = {
+  birthDate: '',
   name: '',
   phone: '',
   sourceId: '',
@@ -635,6 +639,7 @@ const EMPTY_CALL_TASK_FORM: ClientCallTaskFormState = {
   title: '',
 };
 const clientFormSchema = z.object({
+  birthDate: z.string(),
   name: z.string().trim().min(2, 'Введите имя клиента'),
   note: z.string(),
   phone: z.string().refine((value) => getPhoneDigits(value).length === 10, {
@@ -1324,9 +1329,7 @@ export default function ClientsPage() {
   const canRedeemSubscriptions = canRedeemClientSubscriptions(clubRole);
   const canViewClientCertificates = canViewCertificates(clubRole);
   const canRedeemClientCertificates = canRedeemCertificates(clubRole);
-  const canViewClientTelephony = ['owner', 'manager', 'admin', 'viewer'].includes(
-    clubRole || '',
-  );
+  const canViewClientTelephony = false;
   const isOrganizationTrainer = organizationRole === 'trainer';
   const canViewClubBookingHistory = canAccessPath(clubRole, '/admin/bookings');
 
@@ -1852,6 +1855,7 @@ export default function ClientsPage() {
   const openEdit = (client: Client) => {
     setEditingClient(client);
     clientForm.reset({
+      birthDate: client.birthDate || '',
       name: client.name,
       phone: client.phone,
       sourceId: client.sourceId
@@ -1872,6 +1876,7 @@ export default function ClientsPage() {
   const openRestoreFromArchive = (client: Client) => {
     setEditingClient(client);
     clientForm.reset({
+      birthDate: client.birthDate || '',
       name: client.name,
       phone: client.phone,
       sourceId: client.sourceId
@@ -2147,7 +2152,6 @@ export default function ClientsPage() {
       'references',
       'trainingNotes',
       'trainingPlans',
-      'telephony',
     ],
     () => {
       void fetchClients();
@@ -2381,6 +2385,7 @@ export default function ClientsPage() {
 
   const handleSave = clientForm.handleSubmit(async (values) => {
     const payload: ClientPayload = {
+      birthDate: values.birthDate || null,
       name: values.name.trim(),
       phone: values.phone,
       sourceId: values.sourceId ? Number(values.sourceId) : undefined,
@@ -3687,6 +3692,19 @@ export default function ClientsPage() {
                 />
                 <FieldError>{clientForm.formState.errors.phone?.message}</FieldError>
               </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Дата рождения
+                </label>
+                <Input
+                  type="date"
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={form.birthDate}
+                  onChange={(event) =>
+                    setForm({ ...form, birthDate: event.target.value })
+                  }
+                />
+              </div>
             </div>
 
             {duplicateWarning && (
@@ -4555,6 +4573,16 @@ export default function ClientsPage() {
                         </div>
                         <div className="flex justify-between gap-3">
                           <span className="text-muted-foreground">
+                            Дата рождения
+                          </span>
+                          <span className="min-w-0 break-words text-right">
+                            {details.client.birthDate
+                              ? formatDate(details.client.birthDate)
+                              : '-'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between gap-3">
+                          <span className="text-muted-foreground">
                             Первый визит
                           </span>
                           <span className="min-w-0 break-words text-right">
@@ -4978,7 +5006,7 @@ export default function ClientsPage() {
                     </div>
                   )}
 
-                  {canViewClientTelephony && (
+                  {canCreateCallTask && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>

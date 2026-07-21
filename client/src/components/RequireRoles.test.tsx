@@ -103,7 +103,7 @@ describe('RequireRoles scope authority', () => {
       membershipRole: 'trainer',
     });
 
-    expect(await screen.findByText('redirect:/admin')).toBeInTheDocument();
+    expect(await screen.findByText('Нет доступа')).toBeInTheDocument();
     expect(screen.queryByText('protected:/admin/staff')).not.toBeInTheDocument();
   });
 
@@ -153,7 +153,7 @@ describe('RequireRoles scope authority', () => {
       });
 
       expect(
-        await screen.findByText(/^redirect:/),
+        await screen.findByText('Нет доступа'),
       ).toBeInTheDocument();
       expect(screen.queryByText(`protected:${path}`)).not.toBeInTheDocument();
     },
@@ -201,7 +201,7 @@ describe('RequireRoles scope authority', () => {
           if (allowed) {
             await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
           } else {
-            await screen.findByText(/^redirect:/);
+            await screen.findByText('Нет доступа');
             expect(request).not.toHaveBeenCalled();
           }
           expect(screen.queryByText(/403/)).not.toBeInTheDocument();
@@ -222,14 +222,14 @@ describe('RequireRoles scope authority', () => {
     expect(screen.getByText('protected:/admin/users')).toBeInTheDocument();
   });
 
-  it('redirects organization admin away from direct Shift settings access', async () => {
+  it('shows explicit access denial for organization admin on Shift settings', async () => {
     renderProtected('/admin/shift-settings', {
       accountRole: 'admin',
       effectiveRole: 'manager',
       membershipRole: 'admin',
     });
 
-    expect(await screen.findByText(/^redirect:/)).toBeInTheDocument();
+    expect(await screen.findByText('Нет доступа')).toBeInTheDocument();
     expect(screen.queryByText('protected:/admin/shift-settings')).not.toBeInTheDocument();
   });
 

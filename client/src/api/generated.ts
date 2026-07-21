@@ -107,12 +107,14 @@ export const apiEndpoints = {
   "subscriptions.types.restore": { method: "POST", path: "/subscriptions/types/{id}/restore", responseType: "json", tenantScope: "organization" },
   "subscriptions.types.deletePermanent": { method: "DELETE", path: "/subscriptions/types/{id}/permanent", responseType: "json", tenantScope: "organization" },
   "subscriptions.client.list": { method: "GET", path: "/clients/{clientId}/subscriptions", responseType: "json", tenantScope: "club" },
+  "subscriptions.client.issue": { method: "POST", path: "/clients/{clientId}/subscriptions", responseType: "json", tenantScope: "club" },
   "subscriptions.client.get": { method: "GET", path: "/client-subscriptions/{id}", responseType: "json", tenantScope: "club" },
   "subscriptions.client.redemptions": { method: "GET", path: "/client-subscriptions/{id}/redemptions", responseType: "json", tenantScope: "club" },
   "subscriptions.client.redeem": { method: "POST", path: "/client-subscriptions/{id}/redemptions", responseType: "json", tenantScope: "club" },
   "subscriptions.client.reverseRedemption": { method: "POST", path: "/client-subscriptions/{id}/redemptions/{redemptionId}/reverse", responseType: "json", tenantScope: "club" },
   "certificates.list": { method: "GET", path: "/certificates", responseType: "json", tenantScope: "club" },
   "certificates.client.list": { method: "GET", path: "/clients/{clientId}/certificates", responseType: "json", tenantScope: "club" },
+  "certificates.client.issue": { method: "POST", path: "/clients/{clientId}/certificates", responseType: "json", tenantScope: "club" },
   "certificates.get": { method: "GET", path: "/certificates/{id}", responseType: "json", tenantScope: "club" },
   "certificates.redemptions": { method: "GET", path: "/certificates/{id}/redemptions", responseType: "json", tenantScope: "club" },
   "certificates.redeem": { method: "POST", path: "/certificates/{id}/redemptions", responseType: "json", tenantScope: "club" },
@@ -150,23 +152,6 @@ export const apiEndpoints = {
   "callTasks.clients": { method: "GET", path: "/call-tasks/{id}/clients", responseType: "json", tenantScope: "club" },
   "callTasks.clientsBulk": { method: "PATCH", path: "/call-tasks/{id}/clients/bulk", responseType: "json", tenantScope: "club" },
   "callTasks.addAttempt": { method: "POST", path: "/call-task-clients/{taskClientId}/attempts", responseType: "json", tenantScope: "club" },
-  "telephony.config": { method: "GET", path: "/telephony/config", responseType: "json", tenantScope: "club" },
-  "telephony.stats": { method: "GET", path: "/telephony/stats", responseType: "json", tenantScope: "club" },
-  "telephony.report": { method: "GET", path: "/telephony/report", responseType: "json", tenantScope: "club" },
-  "telephony.calls": { method: "GET", path: "/telephony/calls", responseType: "json", tenantScope: "club" },
-  "telephony.getCall": { method: "GET", path: "/telephony/calls/{id}", responseType: "json", tenantScope: "club" },
-  "telephony.startCall": { method: "POST", path: "/telephony/calls/{id}/start", responseType: "json", tenantScope: "club" },
-  "telephony.linkClient": { method: "POST", path: "/telephony/calls/{id}/client", responseType: "json", tenantScope: "club" },
-  "telephony.createClient": { method: "POST", path: "/telephony/calls/{id}/client/create", responseType: "json", tenantScope: "club" },
-  "telephony.completeCall": { method: "POST", path: "/telephony/calls/{id}/complete", responseType: "json", tenantScope: "club" },
-  "telephony.ignoreCall": { method: "POST", path: "/telephony/calls/{id}/ignore", responseType: "json", tenantScope: "club" },
-  "telephony.recordingReference": { method: "POST", path: "/telephony/calls/{id}/recording-reference", responseType: "json", tenantScope: "club" },
-  "telephony.createTranscriptionJob": { method: "POST", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json", tenantScope: "club" },
-  "telephony.queueMissingTranscriptionJobs": { method: "POST", path: "/telephony/transcription-jobs/queue-missing", responseType: "json", tenantScope: "club" },
-  "telephony.callTranscriptionJobs": { method: "GET", path: "/telephony/calls/{id}/transcription-jobs", responseType: "json", tenantScope: "club" },
-  "telephony.transcriptionJobs": { method: "GET", path: "/telephony/transcription-jobs", responseType: "json", tenantScope: "club" },
-  "telephony.transcriptionJobStats": { method: "GET", path: "/telephony/transcription-jobs/stats", responseType: "json", tenantScope: "club" },
-  "telephony.getTranscriptionJob": { method: "GET", path: "/telephony/transcription-jobs/{id}", responseType: "json", tenantScope: "club" },
   "telephony.workerTranscriptionQueue": { method: "GET", path: "/telephony/transcription-jobs/worker-queue", responseType: "json", tenantScope: "worker" },
   "telephony.claimTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/claim", responseType: "json", tenantScope: "worker" },
   "telephony.transcriptionAudioReference": { method: "POST", path: "/telephony/transcription-jobs/{id}/audio-reference", responseType: "json", tenantScope: "worker" },
@@ -174,17 +159,11 @@ export const apiEndpoints = {
   "telephony.completeTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/result", responseType: "json", tenantScope: "worker" },
   "telephony.failTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/fail", responseType: "json", tenantScope: "worker" },
   "telephony.workerRetryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/worker-retry", responseType: "json", tenantScope: "worker" },
-  "telephony.retryTranscriptionJob": { method: "POST", path: "/telephony/transcription-jobs/{id}/retry", responseType: "json", tenantScope: "club" },
-  "telephony.syncStatistics": { method: "POST", path: "/telephony/beeline/sync", responseType: "json", tenantScope: "club" },
-  "telephony.syncRecordings": { method: "POST", path: "/telephony/beeline/records/sync", responseType: "json", tenantScope: "club" },
-  "telephony.subscribe": { method: "POST", path: "/telephony/beeline/subscribe", responseType: "json", tenantScope: "club" },
-  "telephony.checkSubscription": { method: "POST", path: "/telephony/beeline/subscription/check", responseType: "json", tenantScope: "club" },
-  "telephony.rawEvents": { method: "GET", path: "/telephony/raw-events", responseType: "json", tenantScope: "club" },
-  "telephony.reprocessRawEvent": { method: "POST", path: "/telephony/raw-events/{id}/reprocess", responseType: "json", tenantScope: "club" },
   "telephony.beelineWebhook": { method: "POST", path: "/integrations/beeline/events", responseType: "json", tenantScope: "provider_ingress" },
   "telephony.beelineConnectionWebhook": { method: "POST", path: "/integrations/beeline/events/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "telephony.beelineCapabilityWebhook": { method: "POST", path: "/integrations/beeline/events/{connectionPublicId}/{callbackToken}", responseType: "json", tenantScope: "provider_ingress" },
   "clients.list": { method: "GET", path: "/clients", responseType: "json", tenantScope: "organization" },
+  "clients.search": { method: "GET", path: "/clients/search", responseType: "json", tenantScope: "organization" },
   "clients.lookup": { method: "GET", path: "/clients/lookup", responseType: "json", tenantScope: "organization" },
   "clients.duplicates": { method: "GET", path: "/clients/duplicates", responseType: "json", tenantScope: "organization" },
   "clients.views.list": { method: "GET", path: "/clients/views", responseType: "json", tenantScope: "club" },
@@ -990,6 +969,10 @@ export type SubscriptionsClientListQuery = {
   status?: "active" | "expired" | "used" | "canceled" | "all";
   [key: string]: unknown;
 };
+export type SubscriptionsClientIssueParams = {
+  clientId: number | string;
+};
+export type SubscriptionsClientIssueBody = Record<string, unknown>;
 export type SubscriptionsClientGetParams = {
   id: number | string;
 };
@@ -1025,6 +1008,10 @@ export type CertificatesClientListQuery = {
   status?: "active" | "expired" | "redeemed" | "canceled" | "all";
   [key: string]: unknown;
 };
+export type CertificatesClientIssueParams = {
+  clientId: number | string;
+};
+export type CertificatesClientIssueBody = Record<string, unknown>;
 export type CertificatesGetParams = {
   id: number | string;
 };
@@ -1415,84 +1402,6 @@ export type CallTasksAddAttemptParams = {
   taskClientId: number | string;
 };
 export type CallTasksAddAttemptBody = Record<string, unknown>;
-export type TelephonyReportQuery = {
-  from?: string | "";
-  to?: string | "";
-  callStatus?: "ringing" | "answered" | "completed" | "missed" | "failed" | "unknown";
-  direction?: "inbound" | "outbound" | "unknown";
-  recordingStatus?: "available" | "missing" | "pending" | "unknown";
-  status?: "all" | "new" | "in_progress" | "processed" | "ignored";
-  [key: string]: unknown;
-};
-export type TelephonyCallsQuery = Record<string, unknown>;
-export type TelephonyGetCallParams = {
-  id: number | string;
-};
-export type TelephonyStartCallParams = {
-  id: number | string;
-};
-export type TelephonyLinkClientParams = {
-  id: number | string;
-};
-export type TelephonyLinkClientBody = {
-  clientId: number | string;
-  [key: string]: unknown;
-};
-export type TelephonyCreateClientParams = {
-  id: number | string;
-};
-export type TelephonyCreateClientBody = {
-  name: string;
-  note?: string | "" | null;
-  source?: string | "" | null;
-  sourceId?: number | string | "" | null;
-  status?: "active" | "archived";
-  telegramId?: string | "" | null;
-  vkId?: string | "" | null;
-  webId?: string | "" | null;
-  [key: string]: unknown;
-};
-export type TelephonyCompleteCallParams = {
-  id: number | string;
-};
-export type TelephonyCompleteCallBody = Record<string, unknown>;
-export type TelephonyIgnoreCallParams = {
-  id: number | string;
-};
-export type TelephonyIgnoreCallBody = {
-  summary?: string | "" | null;
-  [key: string]: unknown;
-};
-export type TelephonyRecordingReferenceParams = {
-  id: number | string;
-};
-export type TelephonyCreateTranscriptionJobParams = {
-  id: number | string;
-};
-export type TelephonyQueueMissingTranscriptionJobsBody = {
-  limit?: number;
-  [key: string]: unknown;
-};
-export type TelephonyCallTranscriptionJobsParams = {
-  id: number | string;
-};
-export type TelephonyCallTranscriptionJobsQuery = {
-  page?: number | string | "";
-  pageSize?: number | string | "";
-  callId?: number | string | "";
-  status?: "all" | "queued" | "processing" | "completed" | "failed";
-  [key: string]: unknown;
-};
-export type TelephonyTranscriptionJobsQuery = {
-  page?: number | string | "";
-  pageSize?: number | string | "";
-  callId?: number | string | "";
-  status?: "all" | "queued" | "processing" | "completed" | "failed";
-  [key: string]: unknown;
-};
-export type TelephonyGetTranscriptionJobParams = {
-  id: number | string;
-};
 export type TelephonyWorkerTranscriptionQueueQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
@@ -1578,27 +1487,6 @@ export type TelephonyFailTranscriptionJobBody = {
 export type TelephonyWorkerRetryTranscriptionJobParams = {
   id: number | string;
 };
-export type TelephonyRetryTranscriptionJobParams = {
-  id: number | string;
-};
-export type TelephonySyncStatisticsBody = Record<string, unknown>;
-export type TelephonySyncRecordingsBody = Record<string, unknown>;
-export type TelephonySubscribeBody = {
-  expires?: number | string | "" | null;
-  pattern?: string | "" | null;
-  subscriptionType?: "BASIC_CALL" | "ADVANCED_CALL";
-  url?: string | "" | null;
-  [key: string]: unknown;
-};
-export type TelephonyRawEventsQuery = {
-  page?: number | string | "";
-  pageSize?: number | string | "";
-  status?: "all" | "new" | "processed" | "failed";
-  [key: string]: unknown;
-};
-export type TelephonyReprocessRawEventParams = {
-  id: number | string;
-};
 export type TelephonyBeelineConnectionWebhookParams = {
   connectionPublicId: string;
 };
@@ -1607,6 +1495,44 @@ export type TelephonyBeelineCapabilityWebhookParams = {
   callbackToken: string;
 };
 export type ClientsListQuery = {
+  page?: number | string | "";
+  pageSize?: number | string | "";
+  duplicateOnly?: boolean | "true" | "false" | "1" | "0";
+  lastVisitDaysFrom?: number | string | "" | null;
+  lastVisitDaysTo?: number | string | "" | null;
+  lastVisitFrom?: string | "";
+  lastVisitTo?: string | "";
+  q?: string | "" | null;
+  segment?: "all" | "new" | "regular" | "inactive" | "no_visits";
+  source?: string | "" | null;
+  sourceId?: number | string | "" | null;
+  status?: "active" | "archived" | "all";
+  trainingLevel?: "D" | "D+" | "C" | "C+" | "B" | "B+" | "A";
+  visitCategory?: string | "" | null;
+  visitCategoryId?: number | string | "" | null;
+  visitCountMax?: number | string | "" | null;
+  visitCountMin?: number | string | "" | null;
+  visitsAnalytics?: {
+    algorithmVersion: "visits_analytics_segment_v1";
+    asOf: string;
+    canonicalClientRule: "recursive_merged_root_v1";
+    clientStatus: "active";
+    excludeDuplicateVisits: true;
+    excludeTraining: true;
+    firstVisitFrom?: string | "";
+    firstVisitMonth?: string;
+    firstVisitTo?: string | "";
+    lastVisitFrom?: string | "";
+    lastVisitTo?: string | "";
+    lifecycleStatus?: "new" | "developing" | "regular" | "atRisk" | "sleeping" | "lost";
+    sourceKeys: Array<string>;
+    timeZone: "Europe/Moscow";
+    visitCountMax?: number | string | "" | null;
+    visitCountMin?: number | string | "" | null;
+  };
+  [key: string]: unknown;
+};
+export type ClientsSearchQuery = {
   page?: number | string | "";
   pageSize?: number | string | "";
   duplicateOnly?: boolean | "true" | "false" | "1" | "0";
@@ -1737,6 +1663,7 @@ export type ClientsViewsDeleteParams = {
   viewId: number | string;
 };
 export type ClientsCreateBody = {
+  birthDate?: string | "" | null;
   name: string;
   note?: string | "" | null;
   phone: string;
@@ -1785,6 +1712,7 @@ export type ClientsUpdateParams = {
   id: number | string;
 };
 export type ClientsUpdateBody = {
+  birthDate?: string | "" | null;
   name?: string;
   note?: string | "" | null;
   phone?: string;
@@ -2627,12 +2555,14 @@ export interface ApiEndpointRequestMap {
   "subscriptions.types.restore": ApiEndpointRequest<SubscriptionsTypesRestoreParams, undefined, undefined>;
   "subscriptions.types.deletePermanent": ApiEndpointRequest<SubscriptionsTypesDeletePermanentParams, undefined, undefined>;
   "subscriptions.client.list": ApiEndpointRequest<SubscriptionsClientListParams, SubscriptionsClientListQuery, undefined>;
+  "subscriptions.client.issue": ApiEndpointRequest<SubscriptionsClientIssueParams, undefined, SubscriptionsClientIssueBody>;
   "subscriptions.client.get": ApiEndpointRequest<SubscriptionsClientGetParams, undefined, undefined>;
   "subscriptions.client.redemptions": ApiEndpointRequest<SubscriptionsClientRedemptionsParams, undefined, undefined>;
   "subscriptions.client.redeem": ApiEndpointRequest<SubscriptionsClientRedeemParams, undefined, SubscriptionsClientRedeemBody>;
   "subscriptions.client.reverseRedemption": ApiEndpointRequest<SubscriptionsClientReverseRedemptionParams, undefined, SubscriptionsClientReverseRedemptionBody>;
   "certificates.list": ApiEndpointRequest<undefined, CertificatesListQuery, undefined>;
   "certificates.client.list": ApiEndpointRequest<CertificatesClientListParams, CertificatesClientListQuery, undefined>;
+  "certificates.client.issue": ApiEndpointRequest<CertificatesClientIssueParams, undefined, CertificatesClientIssueBody>;
   "certificates.get": ApiEndpointRequest<CertificatesGetParams, undefined, undefined>;
   "certificates.redemptions": ApiEndpointRequest<CertificatesRedemptionsParams, undefined, undefined>;
   "certificates.redeem": ApiEndpointRequest<CertificatesRedeemParams, undefined, CertificatesRedeemBody>;
@@ -2670,23 +2600,6 @@ export interface ApiEndpointRequestMap {
   "callTasks.clients": ApiEndpointRequest<CallTasksClientsParams, CallTasksClientsQuery, undefined>;
   "callTasks.clientsBulk": ApiEndpointRequest<CallTasksClientsBulkParams, undefined, CallTasksClientsBulkBody>;
   "callTasks.addAttempt": ApiEndpointRequest<CallTasksAddAttemptParams, undefined, CallTasksAddAttemptBody>;
-  "telephony.config": ApiEndpointRequest<undefined, undefined, undefined>;
-  "telephony.stats": ApiEndpointRequest<undefined, undefined, undefined>;
-  "telephony.report": ApiEndpointRequest<undefined, TelephonyReportQuery, undefined>;
-  "telephony.calls": ApiEndpointRequest<undefined, TelephonyCallsQuery, undefined>;
-  "telephony.getCall": ApiEndpointRequest<TelephonyGetCallParams, undefined, undefined>;
-  "telephony.startCall": ApiEndpointRequest<TelephonyStartCallParams, undefined, undefined>;
-  "telephony.linkClient": ApiEndpointRequest<TelephonyLinkClientParams, undefined, TelephonyLinkClientBody>;
-  "telephony.createClient": ApiEndpointRequest<TelephonyCreateClientParams, undefined, TelephonyCreateClientBody>;
-  "telephony.completeCall": ApiEndpointRequest<TelephonyCompleteCallParams, undefined, TelephonyCompleteCallBody>;
-  "telephony.ignoreCall": ApiEndpointRequest<TelephonyIgnoreCallParams, undefined, TelephonyIgnoreCallBody>;
-  "telephony.recordingReference": ApiEndpointRequest<TelephonyRecordingReferenceParams, undefined, undefined>;
-  "telephony.createTranscriptionJob": ApiEndpointRequest<TelephonyCreateTranscriptionJobParams, undefined, undefined>;
-  "telephony.queueMissingTranscriptionJobs": ApiEndpointRequest<undefined, undefined, TelephonyQueueMissingTranscriptionJobsBody>;
-  "telephony.callTranscriptionJobs": ApiEndpointRequest<TelephonyCallTranscriptionJobsParams, TelephonyCallTranscriptionJobsQuery, undefined>;
-  "telephony.transcriptionJobs": ApiEndpointRequest<undefined, TelephonyTranscriptionJobsQuery, undefined>;
-  "telephony.transcriptionJobStats": ApiEndpointRequest<undefined, undefined, undefined>;
-  "telephony.getTranscriptionJob": ApiEndpointRequest<TelephonyGetTranscriptionJobParams, undefined, undefined>;
   "telephony.workerTranscriptionQueue": ApiEndpointRequest<undefined, TelephonyWorkerTranscriptionQueueQuery, undefined>;
   "telephony.claimTranscriptionJob": ApiEndpointRequest<undefined, undefined, TelephonyClaimTranscriptionJobBody>;
   "telephony.transcriptionAudioReference": ApiEndpointRequest<TelephonyTranscriptionAudioReferenceParams, undefined, TelephonyTranscriptionAudioReferenceBody>;
@@ -2694,17 +2607,11 @@ export interface ApiEndpointRequestMap {
   "telephony.completeTranscriptionJob": ApiEndpointRequest<TelephonyCompleteTranscriptionJobParams, undefined, TelephonyCompleteTranscriptionJobBody>;
   "telephony.failTranscriptionJob": ApiEndpointRequest<TelephonyFailTranscriptionJobParams, undefined, TelephonyFailTranscriptionJobBody>;
   "telephony.workerRetryTranscriptionJob": ApiEndpointRequest<TelephonyWorkerRetryTranscriptionJobParams, undefined, undefined>;
-  "telephony.retryTranscriptionJob": ApiEndpointRequest<TelephonyRetryTranscriptionJobParams, undefined, undefined>;
-  "telephony.syncStatistics": ApiEndpointRequest<undefined, undefined, TelephonySyncStatisticsBody>;
-  "telephony.syncRecordings": ApiEndpointRequest<undefined, undefined, TelephonySyncRecordingsBody>;
-  "telephony.subscribe": ApiEndpointRequest<undefined, undefined, TelephonySubscribeBody>;
-  "telephony.checkSubscription": ApiEndpointRequest<undefined, undefined, undefined>;
-  "telephony.rawEvents": ApiEndpointRequest<undefined, TelephonyRawEventsQuery, undefined>;
-  "telephony.reprocessRawEvent": ApiEndpointRequest<TelephonyReprocessRawEventParams, undefined, undefined>;
   "telephony.beelineWebhook": ApiEndpointRequest<undefined, undefined, undefined>;
   "telephony.beelineConnectionWebhook": ApiEndpointRequest<TelephonyBeelineConnectionWebhookParams, undefined, undefined>;
   "telephony.beelineCapabilityWebhook": ApiEndpointRequest<TelephonyBeelineCapabilityWebhookParams, undefined, undefined>;
   "clients.list": ApiEndpointRequest<undefined, ClientsListQuery, undefined>;
+  "clients.search": ApiEndpointRequest<undefined, ClientsSearchQuery, undefined>;
   "clients.lookup": ApiEndpointRequest<undefined, ClientsLookupQuery, undefined>;
   "clients.duplicates": ApiEndpointRequest<undefined, undefined, undefined>;
   "clients.views.list": ApiEndpointRequest<undefined, undefined, undefined>;
@@ -2922,12 +2829,14 @@ export interface ApiEndpointResponseMap {
   "subscriptions.types.restore": unknown;
   "subscriptions.types.deletePermanent": unknown;
   "subscriptions.client.list": unknown;
+  "subscriptions.client.issue": unknown;
   "subscriptions.client.get": unknown;
   "subscriptions.client.redemptions": unknown;
   "subscriptions.client.redeem": unknown;
   "subscriptions.client.reverseRedemption": unknown;
   "certificates.list": unknown;
   "certificates.client.list": unknown;
+  "certificates.client.issue": unknown;
   "certificates.get": unknown;
   "certificates.redemptions": unknown;
   "certificates.redeem": unknown;
@@ -2965,23 +2874,6 @@ export interface ApiEndpointResponseMap {
   "callTasks.clients": unknown;
   "callTasks.clientsBulk": unknown;
   "callTasks.addAttempt": unknown;
-  "telephony.config": unknown;
-  "telephony.stats": unknown;
-  "telephony.report": unknown;
-  "telephony.calls": unknown;
-  "telephony.getCall": unknown;
-  "telephony.startCall": unknown;
-  "telephony.linkClient": unknown;
-  "telephony.createClient": unknown;
-  "telephony.completeCall": unknown;
-  "telephony.ignoreCall": unknown;
-  "telephony.recordingReference": unknown;
-  "telephony.createTranscriptionJob": unknown;
-  "telephony.queueMissingTranscriptionJobs": unknown;
-  "telephony.callTranscriptionJobs": unknown;
-  "telephony.transcriptionJobs": unknown;
-  "telephony.transcriptionJobStats": unknown;
-  "telephony.getTranscriptionJob": unknown;
   "telephony.workerTranscriptionQueue": unknown;
   "telephony.claimTranscriptionJob": unknown;
   "telephony.transcriptionAudioReference": unknown;
@@ -2989,17 +2881,11 @@ export interface ApiEndpointResponseMap {
   "telephony.completeTranscriptionJob": unknown;
   "telephony.failTranscriptionJob": unknown;
   "telephony.workerRetryTranscriptionJob": unknown;
-  "telephony.retryTranscriptionJob": unknown;
-  "telephony.syncStatistics": unknown;
-  "telephony.syncRecordings": unknown;
-  "telephony.subscribe": unknown;
-  "telephony.checkSubscription": unknown;
-  "telephony.rawEvents": unknown;
-  "telephony.reprocessRawEvent": unknown;
   "telephony.beelineWebhook": unknown;
   "telephony.beelineConnectionWebhook": unknown;
   "telephony.beelineCapabilityWebhook": unknown;
   "clients.list": unknown;
+  "clients.search": unknown;
   "clients.lookup": unknown;
   "clients.duplicates": unknown;
   "clients.views.list": unknown;

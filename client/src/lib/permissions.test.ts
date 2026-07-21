@@ -158,6 +158,13 @@ describe('permissions', () => {
     expect(canViewTrainingNotes('trainer')).toBe(true);
   });
 
+  it('keeps administrator operational client access without registry or references pages', () => {
+    expect(canAccessPath('admin', '/admin')).toBe(true);
+    expect(canAccessPath('admin', '/admin/clients')).toBe(false);
+    expect(canAccessPath('admin', '/admin/references')).toBe(false);
+    expect(canManageClients('admin')).toBe(true);
+  });
+
   it('allows owners and managers to manage methodology approvals', () => {
     expect(canManageMethodology('owner')).toBe(true);
     expect(canManageMethodology('manager')).toBe(true);
@@ -241,8 +248,7 @@ describe('permissions', () => {
     expect(canManageBookings('viewer')).toBe(false);
   });
 
-  it('allows admins to process calls but keeps telephony setup for managers', () => {
-    expect(canAccessPath('admin', '/admin/telephony')).toBe(true);
+  it('keeps legacy telephony capability helpers separate from route access', () => {
     expect(canWorkTelephony('admin')).toBe(true);
     expect(canManageTelephony('admin')).toBe(false);
     expect(canManageTelephony('manager')).toBe(true);

@@ -1,6 +1,8 @@
 import { Link, useLocation } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
+import type { RoleAuthority } from '@/lib/authorization';
 import { cn } from '@/lib/utils';
+import { canAccessPathForAuthority, isClientRoute } from '@/lib/permissions';
 
 interface ModuleSwitchItem {
   label: string;
@@ -8,12 +10,19 @@ interface ModuleSwitchItem {
 }
 
 interface ModuleSwitchProps {
+  authority?: RoleAuthority;
   className?: string;
   items: ModuleSwitchItem[];
 }
 
-export function ModuleSwitch({ className, items }: ModuleSwitchProps) {
+export function ModuleSwitch({ authority, className, items }: ModuleSwitchProps) {
   const location = useLocation();
+  const visibleItems = items.filter(
+    (item) =>
+      !authority ||
+      !isClientRoute(item.to) ||
+      canAccessPathForAuthority(authority, item.to),
+  );
 
   return (
     <div
@@ -23,7 +32,7 @@ export function ModuleSwitch({ className, items }: ModuleSwitchProps) {
         className,
       )}
     >
-      {items.map((item) => {
+      {visibleItems.map((item) => {
         const active = location.pathname === item.to;
 
         return (

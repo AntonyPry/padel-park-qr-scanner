@@ -102,6 +102,21 @@ class SubscriptionsController {
     }
   }
 
+  async issueClientSubscription(req, res) {
+    try {
+      res.status(201).json(
+        await subscriptionsService.issueClientSubscription(
+          req.params.clientId,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка ручной выдачи абонемента');
+    }
+  }
+
   async getClientSubscription(req, res) {
     try {
       res.json(

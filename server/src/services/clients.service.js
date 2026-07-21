@@ -41,6 +41,7 @@ const CLIENT_ATTRIBUTES = [
   'name',
   'phone',
   'phoneNormalized',
+  'birthDate',
   'source',
   'sourceId',
   'note',
@@ -175,6 +176,27 @@ function normalizeStatus(status = 'active') {
 function normalizeNote(note) {
   const value = String(note || '').trim();
   return value || null;
+}
+
+function normalizeBirthDate(value) {
+  if (value === undefined) return undefined;
+  if (value === null || String(value).trim() === '') return null;
+
+  const normalized = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw appError('Дата рождения должна быть в формате YYYY-MM-DD');
+  }
+
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== normalized ||
+    parsed.getTime() > Date.now()
+  ) {
+    throw appError('Укажите корректную дату рождения');
+  }
+
+  return normalized;
 }
 
 function normalizeOptionalIdentity(value) {
@@ -1289,7 +1311,7 @@ async function getClientDetails(id, account = null, tenant = null) {
     includeOperationalHistory
       ? listClientActiveCallTasks(client.id, account, context)
       : [],
-    includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
+    [],
     includeOperationalHistory && includeClubDetails
       ? getClientPrepaymentContext(client.id, account, tenant)
       : buildEmptyClientPrepaymentContext(),
@@ -1656,7 +1678,14 @@ async function listClientCallTimeline(clientId, account, clientContext = null) {
       {
         model: db.CallTask,
         as: 'callTask',
-        attributes: ['id', 'title', 'status', 'dueAt', 'updatedAt'],
+        attributes: [
+          'id',
+          'clientBaseId',
+          'title',
+          'status',
+          'dueAt',
+          'updatedAt',
+        ],
         include: [
           {
             model: db.ClientBase,
@@ -2466,6 +2495,7 @@ async function createClientWithEventResult(
           name,
           phone,
           phoneNormalized,
+          birthDate: normalizeBirthDate(data.birthDate) ?? null,
           source: sourceRef.name,
           sourceId: sourceRef.id,
           note: normalizeNote(data.note),
@@ -2696,6 +2726,7 @@ async function updateClientAfterIdentityLock(
     payload.sourceId = sourceRef.id;
   }
   if ('note' in data) payload.note = normalizeNote(data.note);
+  if ('birthDate' in data) payload.birthDate = normalizeBirthDate(data.birthDate);
   if ('status' in data) payload.status = normalizeStatus(data.status);
 
   await assertIdentityAvailable(
@@ -3448,6 +3479,7 @@ module.exports = {
     clientWhere,
     listClientAuditTimeline,
     listClientPrepaymentTimeline,
+    normalizeBirthDate,
     sanitizeClientForAccount,
   },
 };

@@ -71,9 +71,9 @@ test('prepayment sale settings stay separate from catalog management', () => {
   assert.equal(ACCESS_MATRIX.prepaymentsDashboardView.includes('trainer'), false);
 });
 
-test('subscription type management stays owner manager while trainers do not see balances', () => {
+test('subscription type management stays owner manager while admins can issue existing types', () => {
   assert.deepEqual(ACCESS_MATRIX.subscriptionTypesManage, ['owner', 'manager']);
-  assert.deepEqual(ACCESS_MATRIX.subscriptionTypesView, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.subscriptionTypesView, ['owner', 'manager', 'admin']);
   assert.deepEqual(ACCESS_MATRIX.clientSubscriptionsRedeem, ['owner', 'manager', 'admin']);
   assert.equal(ACCESS_MATRIX.clientSubscriptionsView.includes('admin'), true);
   assert.equal(ACCESS_MATRIX.clientSubscriptionsRedeem.includes('admin'), true);

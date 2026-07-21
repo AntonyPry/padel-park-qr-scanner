@@ -179,6 +179,7 @@ const CLUB_ENDPOINT_IDS = new Set([
 
 const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
   'clients.list',
+  'clients.search',
   'clients.lookup',
   'clients.duplicates',
   'clients.create',
@@ -190,7 +191,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '3f952369867762f7e05c8c05fbcaa3786cd079cb39bb6287f58719b91c41ff48';
+  '3aa6709bf70102f51fa7d15cd951b7e47d529060d258524296e031a1690afac8';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

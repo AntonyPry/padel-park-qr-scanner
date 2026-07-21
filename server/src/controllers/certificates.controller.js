@@ -28,6 +28,21 @@ class CertificatesController {
     }
   }
 
+  async issue(req, res) {
+    try {
+      res.status(201).json(
+        await certificatesService.issueCertificate(
+          req.params.clientId,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка ручной выдачи сертификата');
+    }
+  }
+
   async get(req, res) {
     try {
       res.json(await certificatesService.getCertificate(req.params.id, req.tenant));

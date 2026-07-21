@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import {
@@ -802,6 +802,24 @@ type AdminMotivationPageProps = {
   view?: 'operations' | 'settings';
 };
 
+const StableSalesTable = memo(function StableSalesTable({
+  columns,
+  data,
+}: {
+  columns: ColumnDef<BonusRecord>[];
+  data: BonusRecord[];
+}) {
+  return (
+    <DataTable
+      columns={columns}
+      data={data}
+      emptyText="В эту смену продаж пока не было."
+      minWidthClassName="min-w-[900px]"
+      getRowClassName={() => 'hover:bg-muted/50'}
+    />
+  );
+});
+
 export default function AdminMotivationPage({
   view = 'operations',
 }: AdminMotivationPageProps) {
@@ -835,7 +853,6 @@ export default function AdminMotivationPage({
   );
   const [loading, setLoading] = useState(false);
   const [rulesLoading, setRulesLoading] = useState(false);
-  const [now, setNow] = useState(Date.now());
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const [cashCloseOpen, setCashCloseOpen] = useState(false);
@@ -984,12 +1001,6 @@ export default function AdminMotivationPage({
   });
 
   useEffect(() => {
-    if (!isShiftActive) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, [isShiftActive]);
-
-  useEffect(() => {
     if (
       isSettingsView ||
       searchParams.get('closeShift') !== '1' ||
@@ -1020,18 +1031,31 @@ export default function AdminMotivationPage({
     return () => clearInterval(interval);
   }, [fetchFinances, isShiftActive]);
 
-  const shiftStats = useMemo<ShiftStats | null>(() => {
+  const salesStats = useMemo<ShiftStats | null>(() => {
     if (!shiftStart) return null;
 
     return calculateShiftStatsSnapshot({
       bonusRules,
-      now,
+      now: shiftStart,
       paymentSummary,
       records,
       rulesMap,
       shiftStart,
     });
-  }, [bonusRules, now, paymentSummary, records, rulesMap, shiftStart]);
+  }, [bonusRules, paymentSummary, records, rulesMap, shiftStart]);
+  const liveDurationHours = shiftStart
+    ? Math.max(0, ((shiftWorkspace?.now || Date.now()) - shiftStart) / 3600000)
+    : 0;
+  const liveBasePay = calculateBasePay(liveDurationHours, rulesMap);
+  const shiftStats = useMemo<ShiftStats | null>(() => {
+    if (!salesStats) return null;
+    return {
+      ...salesStats,
+      basePay: liveBasePay,
+      durationHours: liveDurationHours,
+      totalPay: liveBasePay + salesStats.totalBonus,
+    };
+  }, [liveBasePay, liveDurationHours, salesStats]);
 
   const executeEndShift = async (
     cash: ShiftCashBalancePayload,
@@ -1314,7 +1338,7 @@ export default function AdminMotivationPage({
       },
     },
   ];
-  const salesColumns: ColumnDef<BonusRecord>[] = [
+  const salesColumns = useMemo<ColumnDef<BonusRecord>[]>(() => [
     {
       accessorKey: 'date',
       header: 'Время',
@@ -1418,7 +1442,7 @@ export default function AdminMotivationPage({
         );
       },
     },
-  ];
+  ], []);
 
   return (
     <div className="flex flex-col gap-5">
@@ -1876,12 +1900,9 @@ export default function AdminMotivationPage({
                 </div>
               ) : !salesError ? (
                 <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                  <DataTable
+                  <StableSalesTable
                     columns={salesColumns}
                     data={shiftStats?.salesList || []}
-                    emptyText="В эту смену продаж пока не было."
-                    minWidthClassName="min-w-[900px]"
-                    getRowClassName={() => 'hover:bg-muted/50'}
                   />
                 </div>
               ) : null}

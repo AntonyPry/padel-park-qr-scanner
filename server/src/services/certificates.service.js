@@ -381,6 +381,93 @@ async function getCertificate(id, tenant = null) {
   return serializeCertificate(row);
 }
 
+async function issueCertificate(
+  clientId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.Certificate,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+
+  return db.sequelize.transaction(async (transaction) => {
+    const client = await assertClientExists(clientId, transaction, context);
+    const startsAt = normalizeDateTime(data.startsAt, 'Дата начала', new Date());
+    const validityDays = normalizePositiveInt(
+      data.validityDays,
+      'Срок действия сертификата',
+      365,
+    );
+    const certificateType = normalizeCertificateType(data.certificateType);
+    const code = await resolveCertificateCode(
+      data.code,
+      startsAt,
+      transaction,
+      context,
+    );
+    const rawSaleAmount = Number(data.saleAmount ?? 0);
+    if (!Number.isFinite(rawSaleAmount) || rawSaleAmount < 0) {
+      throw appError('Сумма оплаты должна быть неотрицательным числом');
+    }
+    const saleAmount = Number(rawSaleAmount.toFixed(2));
+    const paymentMethod = String(data.paymentMethod || 'unknown');
+    if (!['unknown', 'cash', 'cashless', 'mixed'].includes(paymentMethod)) {
+      throw appError('Некорректный способ оплаты');
+    }
+
+    const payload = {
+      ...clubTenantValues(context),
+      amountUsed: 0,
+      certificateType,
+      clientId: client.id,
+      code,
+      createdByAccountId: authorityActor?.id || null,
+      expiresAt: addDays(startsAt, validityDays),
+      metadata: {
+        comment: normalizeOptionalText(data.comment),
+        issuedManually: true,
+        paymentMethod,
+      },
+      saleAmount,
+      source: 'manual',
+      startsAt,
+      status: 'active',
+      title: normalizeOptionalText(data.title) || 'Сертификат',
+      unitsUsed: 0,
+    };
+
+    if (certificateType === 'money') {
+      payload.amountTotal = normalizeMoney(
+        data.amountTotal,
+        'Номинал сертификата',
+      );
+      if (payload.amountTotal === null) {
+        throw appError('Укажите номинал сертификата');
+      }
+      payload.unitsTotal = null;
+      payload.serviceName = null;
+      payload.serviceType = null;
+    } else {
+      payload.amountTotal = null;
+      payload.unitsTotal = normalizePositiveInt(
+        data.unitsTotal,
+        'Количество услуг',
+      );
+      if (payload.unitsTotal === null) {
+        throw appError('Укажите количество услуг');
+      }
+      payload.serviceName = normalizeOptionalText(data.serviceName) || payload.title;
+      payload.serviceType = normalizeOptionalText(data.serviceType) || 'service';
+    }
+
+    const created = await db.Certificate.create(payload, { transaction });
+    return findCertificateForResponse(created.id, transaction, context);
+  });
+}
+
 async function findCertificateForUpdate(id, transaction, context = null) {
   const row = await findClubRecordByPk(db.Certificate, id, {
     transaction,
@@ -923,6 +1010,7 @@ module.exports = {
   cancelFromPendingSale,
   createFromPendingSale,
   getCertificate,
+  issueCertificate,
   listCertificateRedemptions,
   listCertificates,
   listClientCertificates,

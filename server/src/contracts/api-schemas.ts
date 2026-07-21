@@ -347,6 +347,7 @@ const savedViewUpdateBody = z
 
 const clientBody = z
   .object({
+    birthDate: z.union([dateOnly, z.literal(''), z.null()]).optional(),
     name: nameString,
     note: optionalString,
     phone: requiredString,
@@ -447,6 +448,16 @@ const subscriptionRedemptionReverseBody = z
   })
   .passthrough();
 
+const manualSubscriptionIssueBody = z
+  .object({
+    comment: optionalString,
+    paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
+    saleAmount: nonNegativeNumberValue,
+    startsAt: optionalDateTime,
+    subscriptionTypeId: id,
+  })
+  .passthrough();
+
 const certificateSalePayload = z
   .object({
     amountTotal: positiveNumberValue.optional(),
@@ -476,6 +487,23 @@ const certificateRedemptionBody = z
 const certificateRedemptionReverseBody = z
   .object({
     reason: optionalString,
+  })
+  .passthrough();
+
+const manualCertificateIssueBody = z
+  .object({
+    amountTotal: positiveNumberValue.optional(),
+    certificateType: certificateTypeValue,
+    code: optionalString,
+    comment: optionalString,
+    paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
+    saleAmount: nonNegativeNumberValue,
+    serviceName: optionalString,
+    serviceType: optionalString,
+    startsAt: optionalDateTime,
+    title: nameString,
+    unitsTotal: id.optional(),
+    validityDays: id,
   })
   .passthrough();
 
@@ -1702,6 +1730,7 @@ const apiSchemas = {
       })
       .passthrough(),
     clientParams: clientIdParams,
+    manualIssueBody: manualCertificateIssueBody,
     listQuery: z
       .object({
         certificateType: certificateTypeValue.optional(),
@@ -1984,6 +2013,7 @@ const apiSchemas = {
       })
       .passthrough(),
     clientParams: clientIdParams,
+    manualIssueBody: manualSubscriptionIssueBody,
     redemptionBody: subscriptionRedemptionBody,
     redemptionReverse: {
       body: subscriptionRedemptionReverseBody,
