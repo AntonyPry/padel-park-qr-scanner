@@ -48,6 +48,7 @@ const trainingNotesRoutes = require('./training-notes');
 const trainingPlansRoutes = require('./training-plans');
 const trainingMethodologyRoutes = require('./training-methodology');
 const telephonyTranscriptionWorkerRoutes = require('./telephony-transcription-worker');
+const telephonyRemovedRoutes = require('./telephony-removed');
 const onboardingRoutes = require('./onboarding');
 const installationProvisioningRoutes = require('./installation-provisioning');
 
@@ -111,6 +112,7 @@ router.use('/auth', authRoutes);
 router.use('/installation/provisioning', installationProvisioningRoutes);
 router.use(realtimeMutations());
 router.use(telephonyTranscriptionWorkerRoutes);
+router.use(telephonyRemovedRoutes);
 
 router.use(requireAuth);
 router.use(resolveRequestTenant);
