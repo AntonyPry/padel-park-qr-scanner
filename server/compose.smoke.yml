@@ -1,0 +1,72 @@
+name: setly-server-smoke
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: setly_smoke
+      MYSQL_USER: setly_smoke
+      MYSQL_PASSWORD: local-smoke-db-only
+      MYSQL_ROOT_PASSWORD: local-smoke-root-only
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  migrate:
+    image: setly-server:dev
+    pull_policy: never
+    platform: linux/amd64
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: setly_smoke
+      DB_USER: setly_smoke
+      DB_PASSWORD: local-smoke-db-only
+    command:
+      - ./node_modules/.bin/sequelize-cli
+      - db:migrate
+      - --env
+      - production
+    healthcheck:
+      disable: true
+
+  server:
+    image: setly-server:dev
+    pull_policy: never
+    platform: linux/amd64
+    depends_on:
+      mysql:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: setly_smoke
+      DB_USER: setly_smoke
+      DB_PASSWORD: local-smoke-db-only
+      AUTH_SECRET: local-smoke-auth-only
+    ports:
+      - "127.0.0.1:3100:3000"
+    volumes:
+      - server-var:/app/var
+
+volumes:
+  mysql-data:
+  server-var:

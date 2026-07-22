@@ -13,6 +13,7 @@
     "qrcode": "^1.5.4",
     "redis": "^5.12.1",
     "sequelize": "^6.37.7",
+    "sequelize-cli": "^6.6.5",
     "serialport": "^13.0.0",
     "socket.io": "^4.8.3",
     "socks-proxy-agent": "^10.0.0",
@@ -25,7 +26,6 @@
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
-    "sequelize-cli": "^6.6.5",
     "typescript": "^6.0.3"
   },
   "scripts": {
