@@ -8,6 +8,8 @@ const {
   requireInstallationProvisioning,
 } = require('../middleware/installation-operator-auth');
 const { validate } = require('../middleware/validate');
+const { limitCredentialEntry } = require('../middleware/auth-rate-limit');
+const { SURFACES } = require('../services/auth-rate-limit.service');
 const { apiSchemas } = require('../contracts/api-schemas');
 const {
   requireRouteClassification,
@@ -23,6 +25,7 @@ router.get('/status', installationEndpoint, controller.status);
 router.post(
   '/session',
   installationEndpoint,
+  limitCredentialEntry(SURFACES.INSTALLATION_OPERATOR_SESSION),
   validate(apiSchemas.installationProvisioning.session),
   controller.session,
 );
@@ -197,12 +200,14 @@ router.post(
 router.post(
   '/activation/status',
   installationEndpoint,
+  limitCredentialEntry(SURFACES.ACTIVATION_STATUS),
   validate(apiSchemas.installationProvisioning.activationStatus),
   controller.activationStatus,
 );
 router.post(
   '/activation/consume',
   installationEndpoint,
+  limitCredentialEntry(SURFACES.ACTIVATION_CONSUME),
   validate(apiSchemas.installationProvisioning.activate),
   controller.activate,
 );

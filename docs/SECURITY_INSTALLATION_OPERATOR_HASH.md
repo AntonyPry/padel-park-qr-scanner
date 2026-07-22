@@ -76,8 +76,11 @@ cutover correction path, not a plaintext fallback.
    flags or deploys another SEC-A3-compatible reader; it never restores silent
    plaintext verification.
 
-Production operator Argon2 verification remains blocked until SEC-A4 contains
-the public operator-session endpoint and the Team Lead accepts production-like
-CPU, memory and concurrent-login preflight for the exact release SHA. SEC-A3
-does not change the required privileged migration identity / least-privilege
-runtime identity split and requires no DDL privileges.
+Production operator Argon2 verification remains blocked until SEC-A4 is accepted
+in production `enforce` mode for the public operator-session endpoint and the
+Team Lead accepts production-like CPU, memory and concurrent-login preflight for
+the exact release SHA. The default-off SEC-A4a candidate alone does not satisfy
+this gate; see
+[`SECURITY_AUTH_RATE_LIMITING.md`](./SECURITY_AUTH_RATE_LIMITING.md). SEC-A3 does
+not change the required privileged migration identity / least-privilege runtime
+identity split and requires no DDL privileges.

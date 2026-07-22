@@ -39,14 +39,21 @@ const {
 const {
   validatePasswordHashingConfiguration,
 } = require('./services/auth.service');
+const {
+  createAuthRateLimiter,
+  validateAuthRateLimitConfiguration,
+} = require('./services/auth-rate-limit.service');
 
 function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
   validateRolloutMaintenanceConfiguration();
   validateBeelineCapabilityCutoverConfiguration();
   validatePasswordHashingConfiguration();
+  validateAuthRateLimitConfiguration();
+  const authRateLimiter = createAuthRateLimiter();
   const app = express();
 
+  app.set('authRateLimiter', authRateLimiter);
   app.set('onTenantInitialized', onTenantInitialized);
   app.set('onIntegrationConnectionChanged', onIntegrationConnectionChanged);
   app.use(cors({

@@ -60,8 +60,10 @@ supply-chain slice.
 
 Production enablement is blocked until both prerequisites are accepted:
 
-1. SEC-A4 rate-limit/abuse containment covers login and other credential entry
-   points.
+1. SEC-A4 rate-limit/abuse containment is accepted in production `enforce` mode
+   for login and the other credential-entry points. The default-off SEC-A4a
+   application candidate alone does not satisfy this production gate; see
+   [`SECURITY_AUTH_RATE_LIMITING.md`](./SECURITY_AUTH_RATE_LIMITING.md).
 2. The Team Lead has production-like CPU, memory and concurrent login/rehash
    preflight evidence for the exact release SHA and configuration.
 

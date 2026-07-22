@@ -15,6 +15,7 @@ interface EndpointContract {
   path: string;
   public?: boolean;
   query?: unknown;
+  rateLimited?: boolean;
   response?: unknown;
   responseType?: 'binary' | 'json' | 'xlsx';
   successStatus?: number;
@@ -42,6 +43,11 @@ const apiError = z.object({
   error: z.string(),
   status: z.number(),
 });
+const rateLimitError = z.object({
+  code: z.literal('AUTH_RATE_LIMITED'),
+  error: z.literal('Слишком много попыток. Повторите позже'),
+  status: z.literal(429),
+});
 const integrationConnectionParams = z.object({
   connectionPublicId: z.string().regex(/^ic_[a-f0-9]{32}$/u),
 });
@@ -54,12 +60,12 @@ const rawEndpointContracts: EndpointContract[] = [
   { id: 'system.openapi', method: 'get', path: '/openapi.json', public: true, summary: 'OpenAPI document', tags: ['System'] },
 
   { id: 'auth.status', method: 'get', path: '/auth/status', public: true, summary: 'Setup status', tags: ['Auth'] },
-  { ...apiSchemas.auth.bootstrap, id: 'auth.bootstrap', method: 'post', path: '/auth/bootstrap', public: true, summary: 'Bootstrap owner account', tags: ['Auth'] },
-  { ...apiSchemas.auth.login, id: 'auth.login', method: 'post', path: '/auth/login', public: true, summary: 'Login', tags: ['Auth'] },
+  { ...apiSchemas.auth.bootstrap, id: 'auth.bootstrap', method: 'post', path: '/auth/bootstrap', public: true, rateLimited: true, summary: 'Bootstrap owner account', tags: ['Auth'] },
+  { ...apiSchemas.auth.login, id: 'auth.login', method: 'post', path: '/auth/login', public: true, rateLimited: true, summary: 'Login', tags: ['Auth'] },
   { id: 'auth.me', method: 'get', path: '/auth/me', summary: 'Current account', tags: ['Auth'] },
   { id: 'auth.memberships', method: 'get', path: '/auth/me/memberships', response: apiSchemas.auth.membershipsResponse, summary: 'Current account tenant memberships', tags: ['Auth'] },
   { id: 'installationProvisioning.status', method: 'get', path: '/installation/provisioning/status', public: true, response: apiSchemas.installationProvisioning.statusResponse, summary: 'Installation provisioning status', tags: ['Installation Provisioning'] },
-  { ...apiSchemas.installationProvisioning.session, id: 'installationProvisioning.session', method: 'post', path: '/installation/provisioning/session', public: true, summary: 'Create installation operator session', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.session, id: 'installationProvisioning.session', method: 'post', path: '/installation/provisioning/session', public: true, rateLimited: true, summary: 'Create installation operator session', tags: ['Installation Provisioning'] },
   { ...apiSchemas.installationProvisioning.sessionRevoke, id: 'installationProvisioning.sessionRevoke', method: 'post', path: '/installation/provisioning/session/revoke', summary: 'Revoke current installation operator session', tags: ['Installation Provisioning'] },
   { id: 'installationProvisioning.snapshot', method: 'get', path: '/installation/provisioning/snapshot', response: apiSchemas.installationProvisioning.snapshotResponse, summary: 'Read installation tenant graph', tags: ['Installation Provisioning'] },
   { ...apiSchemas.installationProvisioning.organization, id: 'installationProvisioning.organization', method: 'get', path: '/installation/provisioning/organizations/{organizationId}', summary: 'Read one installation Organization, its Clubs and redacted integration states', tags: ['Installation Provisioning'] },
@@ -84,8 +90,8 @@ const rawEndpointContracts: EndpointContract[] = [
   ...(['check', 'renew', 'cutover'] as const).map((action) => ({ ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.beeline${action[0].toUpperCase()}${action.slice(1)}`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/${action}`, summary: `${action} exact Club Beeline subscription`, tags: ['Installation Provisioning'] })),
   { ...apiSchemas.installationProvisioning.create, id: 'installationProvisioning.create', method: 'post', path: '/installation/provisioning/organizations', successStatus: 201, summary: 'Atomically provision an Organization and first owner activation', tags: ['Installation Provisioning'] },
   { ...apiSchemas.installationProvisioning.reissue, id: 'installationProvisioning.reissue', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/activation/reissue', summary: 'Reissue first owner activation link', tags: ['Installation Provisioning'] },
-  { ...apiSchemas.installationProvisioning.activationStatus, id: 'installationProvisioning.activationStatus', method: 'post', path: '/installation/provisioning/activation/status', public: true, summary: 'Inspect first owner activation link', tags: ['Installation Provisioning'] },
-  { ...apiSchemas.installationProvisioning.activate, id: 'installationProvisioning.activate', method: 'post', path: '/installation/provisioning/activation/consume', public: true, summary: 'Activate first owner account', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.activationStatus, id: 'installationProvisioning.activationStatus', method: 'post', path: '/installation/provisioning/activation/status', public: true, rateLimited: true, summary: 'Inspect first owner activation link', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.activate, id: 'installationProvisioning.activate', method: 'post', path: '/installation/provisioning/activation/consume', public: true, rateLimited: true, summary: 'Activate first owner account', tags: ['Installation Provisioning'] },
   { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
   { id: 'webhooks.evotorConnection', method: 'post', params: integrationConnectionParams, path: '/webhooks/evotor/{connectionPublicId}', public: true, summary: 'Receive Evotor webhook through an integration connection', tags: ['Integrations'] },
 
@@ -534,6 +540,23 @@ function buildOperation(endpoint: EndpointContract) {
       description: 'Server error',
     },
   };
+  if (endpoint.rateLimited) {
+    responses[429] = {
+      content: {
+        'application/json': {
+          schema: schemaToJsonSchema(rateLimitError),
+        },
+      },
+      description: 'Temporary credential-entry rate limit exceeded',
+      headers: {
+        'Retry-After': {
+          description: 'Positive integer seconds until the fixed window expires.',
+          required: true,
+          schema: { minimum: 1, type: 'integer' },
+        },
+      },
+    };
+  }
   if (tenantScoped) {
     responses[403] = {
       content: {
