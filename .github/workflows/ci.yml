@@ -10,6 +10,7 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       DB_NAME: padel_park_test
       DB_PASSWORD: root
@@ -57,6 +58,7 @@ jobs:
   client:
     name: Client checks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: client
@@ -77,3 +79,46 @@ jobs:
         run: npm run test
       - name: Production build
         run: npm run build
+      - name: Upload client build artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: setly-client-dist
+          path: client/dist
+          retention-days: 7
+          if-no-files-found: error
+
+  server-image:
+    name: Server image smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build server image
+        run: docker build --platform linux/amd64 --tag setly-server:dev ./server
+
+      - name: Start smoke stack
+        run: docker compose --file server/compose.smoke.yml up --detach
+
+      - name: Verify API health
+        run: >-
+          curl
+          --fail
+          --show-error
+          --silent
+          --retry 30
+          --retry-delay 2
+          --retry-connrefused
+          --retry-all-errors
+          http://127.0.0.1:3100/api/health
+
+      - name: Show smoke diagnostics
+        if: failure()
+        run: |
+          docker compose --file server/compose.smoke.yml ps --all
+          docker compose --file server/compose.smoke.yml logs --no-color --tail=200
+
+      - name: Remove smoke stack
+        if: always()
+        run: docker compose --file server/compose.smoke.yml down --volumes
