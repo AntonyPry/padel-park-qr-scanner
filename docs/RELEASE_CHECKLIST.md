@@ -2,6 +2,16 @@
 
 ## Before deploy
 
+Release checklist выполняет тимлид на одном exact release candidate. Green
+feature/QA evidence на входящих exact SHA переиспользуется: принятые domain,
+DB/browser/security matrices не повторяются только ради стадии release. Общий
+regression добавляется при runtime reconciliation, shared-foundation конфликте,
+изменении schema/auth/tenant/money/public API или новом системном сигнале.
+
+Этот checklist подтверждает свойства собранного release: ancestry, migration
+order, artifact/build, configuration, backup, rollback и production readiness.
+Он не является третьим независимым Feature QA.
+
 ### Feature 10.3 staged SaaS go-live gate
 
 - Следовать [`MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md`](./MULTI_TENANCY_PRODUCTION_ROLLOUT_V10_3.md); этот checklist сам по себе не разрешает `main`, deploy, production flags или второй tenant.
@@ -69,7 +79,7 @@
 - Check `/api/health`; expected `status: "ok"` and `services.database: "ok"`.
 - `server`: `API_SMOKE_URL=<prod-api-url>/api npm run smoke:api`
 - Run UI smoke against the deployed frontend and API.
-- Save smoke screenshots and `report.json` from `outputs/qa/<date>/ui-smoke`.
+- Save `report.json` from `outputs/qa/<date>/ui-smoke`. Keep smoke screenshots only when they were needed for diagnosis/comparison or explicitly requested.
 - Verify login, client creation, duplicate restore, bases, call tasks, payroll, motivation, catalog, references and access monitor.
 - Verify Manager Control Dashboard `/admin/manager-control` for owner/manager: daily queue loads, filters apply, links open the source screens and route-view onboarding checkpoint is recorded only with active task context.
 - Verify booking cleanup in `/admin/bookings`: quick status/payment/cancel/edit actions, payment/conflict/active-prepayment warnings, group participants and client-card link.
