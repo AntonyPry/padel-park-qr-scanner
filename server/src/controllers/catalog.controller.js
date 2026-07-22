@@ -11,7 +11,7 @@ class CatalogController {
   // Категории
   async getCategories(req, res) {
     try {
-      res.json(await catalogService.getCategories(req.query));
+      res.json(await catalogService.getCategories(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения категорий');
     }
@@ -19,13 +19,14 @@ class CatalogController {
 
   async createCategory(req, res) {
     try {
-      const category = await catalogService.createCategory(req.body);
+      const category = await catalogService.createCategory(req.body, req.tenant);
       await onboardingService.recordEventSafe(
         req.account,
         'catalog.category_updated',
         {
           entityId: category.id,
           entityType: 'catalog_category',
+          tenant: req.tenant,
           payload: { categoryId: category.id, group: category.group },
         },
       );
@@ -37,7 +38,7 @@ class CatalogController {
 
   async deleteCategory(req, res) {
     try {
-      res.json(await catalogService.deleteCategory(req.params.id));
+      res.json(await catalogService.deleteCategory(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления категории');
     }
@@ -45,7 +46,7 @@ class CatalogController {
 
   async restoreCategory(req, res) {
     try {
-      res.json(await catalogService.restoreCategory(req.params.id));
+      res.json(await catalogService.restoreCategory(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка восстановления категории');
     }
@@ -53,7 +54,7 @@ class CatalogController {
 
   async removeArchivedCategory(req, res) {
     try {
-      res.json(await catalogService.removeArchivedCategory(req.params.id));
+      res.json(await catalogService.removeArchivedCategory(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления категории из архива');
     }
@@ -64,6 +65,7 @@ class CatalogController {
       const updated = await catalogService.updateCategory(
         req.params.id,
         req.body,
+        req.tenant,
       );
       await onboardingService.recordEventSafe(
         req.account,
@@ -71,6 +73,7 @@ class CatalogController {
         {
           entityId: updated.id,
           entityType: 'catalog_category',
+          tenant: req.tenant,
           payload: { categoryId: updated.id, group: updated.group },
         },
       );
@@ -83,7 +86,7 @@ class CatalogController {
   // Правила (Маппинг)
   async getUnmapped(req, res) {
     try {
-      res.json(await catalogService.getUnmappedItems());
+      res.json(await catalogService.getUnmappedItems(req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения неразобранных товаров');
     }
@@ -91,7 +94,7 @@ class CatalogController {
 
   async getRules(req, res) {
     try {
-      res.json(await catalogService.getRules(req.query));
+      res.json(await catalogService.getRules(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения правил');
     }
@@ -99,9 +102,10 @@ class CatalogController {
 
   async createRule(req, res) {
     try {
-      const result = await catalogService.saveRule(req.body);
+      const result = await catalogService.saveRule(req.body, req.tenant);
       await onboardingService.recordEventSafe(req.account, 'catalog.rule_updated', {
         entityType: 'catalog_rule',
+        tenant: req.tenant,
         payload: {
           category: req.body.category,
           itemName: req.body.itemName,
@@ -115,7 +119,7 @@ class CatalogController {
 
   async deleteRule(req, res) {
     try {
-      res.json(await catalogService.deleteRule(req.params.id));
+      res.json(await catalogService.deleteRule(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления правила');
     }
@@ -123,10 +127,11 @@ class CatalogController {
 
   async restoreRule(req, res) {
     try {
-      const rule = await catalogService.restoreRule(req.params.id);
+      const rule = await catalogService.restoreRule(req.params.id, req.tenant);
       await onboardingService.recordEventSafe(req.account, 'catalog.rule_updated', {
         entityId: rule.id,
         entityType: 'catalog_rule',
+        tenant: req.tenant,
         payload: {
           category: rule.category,
           itemName: rule.itemName,
@@ -141,7 +146,7 @@ class CatalogController {
 
   async removeArchivedRule(req, res) {
     try {
-      res.json(await catalogService.removeArchivedRule(req.params.id));
+      res.json(await catalogService.removeArchivedRule(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка удаления правила из архива');
     }
@@ -150,7 +155,7 @@ class CatalogController {
   // Настройки продаж Эвотора
   async getSaleSettings(req, res) {
     try {
-      res.json(await pendingSaleService.getSaleSettings());
+      res.json(await pendingSaleService.getSaleSettings(req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения настроек продаж');
     }
@@ -161,6 +166,7 @@ class CatalogController {
       const setting = await pendingSaleService.saveSaleSetting(
         req.body,
         req.account,
+        req.tenant,
       );
       res.status(201).json(setting);
     } catch (error) {
@@ -171,7 +177,7 @@ class CatalogController {
   // Очередь привязки продаж
   async getPendingSales(req, res) {
     try {
-      res.json(await pendingSaleService.listPendingSales(req.query));
+      res.json(await pendingSaleService.listPendingSales(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения очереди продаж');
     }
@@ -184,6 +190,7 @@ class CatalogController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -198,6 +205,7 @@ class CatalogController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -212,6 +220,7 @@ class CatalogController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

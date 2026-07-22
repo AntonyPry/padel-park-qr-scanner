@@ -4,16 +4,42 @@ const http = require('http');
 const db = require('./models');
 const createApp = require('./src/app');
 const { createSocketServer } = require('./src/sockets');
-const { publishRealtimeChange } = require('./src/realtime');
+const { publishLegacyRealtimeChange } = require('./src/realtime');
 const { createTelegramBot } = require('./src/bots/telegram');
 const { createVkBot } = require('./src/bots/vk');
 const callTasksService = require('./src/services/call-tasks.service');
 const telephonyService = require('./src/services/telephony.service');
+const {
+  assertTenantFoundationInitialized,
+  assertTenantFoundationOperational,
+} = require('./src/services/tenant-foundation.service');
+const {
+  TENANT_FOUNDATION_STATES,
+} = require('./src/tenant-foundation/constants');
+const {
+  BACKGROUND_COMPONENT_POLICIES,
+} = require('./src/files-workers/background-run-context');
+const {
+  isTenantFilesWorkersEnabled,
+  isTenantProviderIntegrationsEnabled,
+} = require('./src/tenant-context/capabilities');
+const {
+  BotRunnerRegistry,
+} = require('./src/provider-integrations/bot-runner-registry');
+const {
+  isRolloutMaintenanceActive,
+} = require('./src/tenant-rollout/contract');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
 
-const app = createApp();
+const botRunnerRegistry = new BotRunnerRegistry();
+const app = createApp({
+  onIntegrationConnectionChanged: (scope) => isFeatureEnabled('BOTS_ENABLED')
+    ? botRunnerRegistry.reconcile(scope)
+    : Promise.resolve({ action: 'bots_disabled' }),
+  onTenantInitialized: startBackgroundComponents,
+});
 const server = http.createServer(app);
 const io = createSocketServer(server);
 
@@ -22,6 +48,7 @@ app.set('io', io);
 async function startDatabase() {
   await db.sequelize.authenticate();
   console.log('✅ БД подключена.');
+  return assertTenantFoundationOperational();
 }
 
 function startHttpServer() {
@@ -43,6 +70,8 @@ function isFeatureEnabled(envName, defaultValue = true) {
 }
 
 function startRecurringCallTasksRunner() {
+  if (startRecurringCallTasksRunner.started) return;
+  startRecurringCallTasksRunner.started = true;
   const intervalMs = Number(process.env.CALL_TASKS_RUNNER_INTERVAL_MS || 60000);
 
   const run = async () => {
@@ -52,7 +81,7 @@ function startRecurringCallTasksRunner() {
         console.log(
           `📞 Автозадачи обзвона: обработано баз ${result.processed}.`,
         );
-        publishRealtimeChange(io, {
+        await publishLegacyRealtimeChange(io, {
           domain: 'call_tasks',
           entity: 'call_task',
           action: 'synced',
@@ -78,6 +107,8 @@ function startRecurringCallTasksRunner() {
 }
 
 function startTelephonySubscriptionRunner() {
+  if (startTelephonySubscriptionRunner.started) return;
+  startTelephonySubscriptionRunner.started = true;
   const rawIntervalMs = Number(process.env.BEELINE_SUBSCRIPTION_RUNNER_INTERVAL_MS);
   const intervalMs =
     Number.isFinite(rawIntervalMs) && rawIntervalMs >= 60 * 1000
@@ -86,10 +117,15 @@ function startTelephonySubscriptionRunner() {
 
   const run = async () => {
     try {
-      const result = await telephonyService.maintainEventSubscription();
-      if (['created', 'renewed'].includes(result.action)) {
-        console.log(`☎️ XSI-подписка Билайна: ${result.action}.`);
-        publishRealtimeChange(io, {
+      const aggregate = isTenantProviderIntegrationsEnabled()
+        ? await telephonyService.maintainAllEventSubscriptions()
+        : { results: [await telephonyService.maintainEventSubscription()] };
+      const changed = aggregate.results.filter((result) =>
+        ['created', 'renewed'].includes(result.action),
+      );
+      if (changed.length > 0) {
+        console.log(`☎️ XSI-подписки Билайна обновлены: ${changed.length}.`);
+        await publishLegacyRealtimeChange(io, {
           domain: 'telephony',
           entity: 'telephony_subscription',
           action: 'synced',
@@ -100,8 +136,9 @@ function startTelephonySubscriptionRunner() {
           },
         });
       }
-      if (result.action === 'failed') {
-        console.error('❌ Ошибка автопродления XSI-подписки:', result.error);
+      const failed = aggregate.results.filter((result) => result.action === 'failed');
+      if (failed.length > 0) {
+        console.error(`❌ Ошибка автопродления XSI-подписок: ${failed.length}.`);
       }
     } catch (error) {
       console.error('❌ Ошибка runner XSI-подписки:', error);
@@ -113,6 +150,13 @@ function startTelephonySubscriptionRunner() {
 }
 
 async function startTelegramBot() {
+  if (startTelegramBot.started) return;
+  if (isTenantProviderIntegrationsEnabled()) {
+    const results = await botRunnerRegistry.startProvider('telegram');
+    startTelegramBot.started = true;
+    console.log(`✈️ Telegram connections запущено: ${results.filter((item) => item.status === 'started').length}.`);
+    return;
+  }
   const telegramBot = createTelegramBot();
   if (!telegramBot) {
     console.log('✈️ Telegram Бот не запущен: BOT_TOKEN не задан.');
@@ -120,10 +164,18 @@ async function startTelegramBot() {
   }
 
   telegramBot.start();
+  startTelegramBot.started = true;
   console.log('✈️ Telegram Бот запущен.');
 }
 
 async function startVkBot() {
+  if (startVkBot.started) return;
+  if (isTenantProviderIntegrationsEnabled()) {
+    const results = await botRunnerRegistry.startProvider('vk');
+    startVkBot.started = true;
+    console.log(`🟦 VK connections запущено: ${results.filter((item) => item.status === 'started').length}.`);
+    return;
+  }
   const vkBot = createVkBot();
   if (!vkBot) {
     console.log('🟦 ВКонтакте Бот не запущен: VK_TOKEN не задан.');
@@ -131,16 +183,37 @@ async function startVkBot() {
   }
 
   await vkBot.start();
+  startVkBot.started = true;
   console.log('🟦 ВКонтакте Бот запущен.');
 }
 
-async function startApp() {
-  try {
-    await startDatabase();
-  } catch (error) {
-    console.error('❌ Ошибка старта БД:', error);
+async function startBackgroundComponents() {
+  await assertTenantFoundationInitialized();
+  if (isRolloutMaintenanceActive()) {
+    console.log('🛑 Bots/runners отключены: SETLY_ROLLOUT_MAINTENANCE_MODE=full-stop.');
+    return;
   }
-
+  if (isTenantFilesWorkersEnabled() && !isTenantProviderIntegrationsEnabled()) {
+    const deferred = Object.entries(BACKGROUND_COMPONENT_POLICIES)
+      .filter(([, policy]) => policy.classification === 'deferred')
+      .map(([component, policy]) => ({
+        component,
+        deferredTo: policy.deferredTo,
+        scope: 'global-scan-blocked',
+      }));
+    console.warn('TENANT_BACKGROUND_COMPONENTS_DEFERRED', JSON.stringify(deferred));
+    return;
+  }
+  if (isTenantFilesWorkersEnabled()) {
+    const deferred = Object.entries(BACKGROUND_COMPONENT_POLICIES)
+      .filter(([, policy]) => policy.classification === 'deferred')
+      .map(([component, policy]) => ({
+        component,
+        deferredTo: policy.deferredTo,
+        scope: 'global-scan-blocked',
+      }));
+    console.warn('TENANT_BACKGROUND_COMPONENTS_DEFERRED', JSON.stringify(deferred));
+  }
   if (isFeatureEnabled('BOTS_ENABLED')) {
     try {
       await startTelegramBot();
@@ -157,16 +230,41 @@ async function startApp() {
     console.log('🤖 Боты отключены через BOTS_ENABLED=false.');
   }
 
+  if (isFeatureEnabled('BACKGROUND_RUNNERS_ENABLED')) {
+    if (!isTenantFilesWorkersEnabled()) startRecurringCallTasksRunner();
+    startTelephonySubscriptionRunner();
+  } else {
+    console.log('⏱️ Фоновые runner-ы отключены через BACKGROUND_RUNNERS_ENABLED=false.');
+  }
+}
+
+async function startApp() {
+  let foundationState = null;
+  try {
+    foundationState = await startDatabase();
+  } catch (error) {
+    console.error('❌ Tenant foundation не прошел startup assertion:', error);
+  }
+
   try {
     startHttpServer();
-    if (isFeatureEnabled('BACKGROUND_RUNNERS_ENABLED')) {
-      startRecurringCallTasksRunner();
-      startTelephonySubscriptionRunner();
-    } else {
-      console.log('⏱️ Фоновые runner-ы отключены через BACKGROUND_RUNNERS_ENABLED=false.');
-    }
   } catch (error) {
     console.error('❌ Ошибка старта сервера:', error);
+    return;
+  }
+
+  if (foundationState?.state === TENANT_FOUNDATION_STATES.INITIALIZED) {
+    try {
+      await startBackgroundComponents();
+    } catch (error) {
+      console.error('❌ Ошибка старта фоновых компонентов:', error);
+    }
+  } else if (
+    foundationState?.state === TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING
+  ) {
+    console.log('🧱 Setly ожидает первичную настройку; bots/runners отключены.');
+  } else {
+    console.error('🛑 Business components заблокированы fail-closed.');
   }
 }
 

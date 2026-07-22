@@ -1,9 +1,14 @@
 const authService = require('../services/auth.service');
+const tenantContextService = require('../services/tenant-context.service');
 const { sendError } = require('../utils/api-error');
 
 class AuthController {
   async status(req, res) {
-    res.json({ setupRequired: await authService.isSetupRequired() });
+    try {
+      res.json(await authService.getSetupStatus());
+    } catch (error) {
+      sendError(res, error, 'Ошибка проверки состояния системы');
+    }
   }
 
   async bootstrap(req, res) {
@@ -23,6 +28,10 @@ class AuthController {
         email,
         password,
       });
+      const onTenantInitialized = req.app.get('onTenantInitialized');
+      if (typeof onTenantInitialized === 'function') {
+        await onTenantInitialized();
+      }
       res.json(session);
     } catch (error) {
       sendError(res, error, 'Ошибка настройки аккаунта');
@@ -45,6 +54,14 @@ class AuthController {
 
   async me(req, res) {
     res.json({ account: authService.sanitizeAccount(req.account) });
+  }
+
+  async memberships(req, res) {
+    try {
+      res.json(await tenantContextService.discoverMemberships(req.account.id));
+    } catch (error) {
+      sendError(res, error, 'Не удалось загрузить доступные организации и клубы');
+    }
   }
 }
 

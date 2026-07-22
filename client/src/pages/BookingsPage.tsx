@@ -40,7 +40,7 @@ import {
   Search,
   Settings,
   Trash2,
-  UserCheck,
+  UserX,
   UsersRound,
   XCircle,
 } from 'lucide-react';
@@ -100,13 +100,14 @@ import {
   type CourtBlock,
   type CourtBlockPayload,
 } from '@/api/bookings';
-import { listClients, type ClientListItem } from '@/api/clients';
+import { searchClients, type ClientListItem } from '@/api/clients';
 import {
   quickCompleteTrainingPlan,
   type TrainingPlan,
 } from '@/api/training-plans';
 import { queryKeys } from '@/api/query-keys';
 import { Badge } from '@/components/ui/badge';
+import { ClientProfileDialog } from '@/components/client-profile-dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from '@/components/ui/toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -151,7 +152,7 @@ import {
 } from '@/lib/permissions';
 import { formatClientPhone, getPhoneDigits } from '@/lib/phone';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 const SLOT_HEIGHT = 38;
 const DEFAULT_DAY_START_MINUTES = 8 * 60;
@@ -726,11 +727,11 @@ function getPriceQuoteKey(
 }
 
 function getStatusClass(status: BookingStatus) {
-  if (status === 'confirmed') return 'border-blue-500/50 bg-blue-500/15 text-blue-100';
-  if (status === 'arrived') return 'border-green-500/50 bg-green-500/15 text-green-100';
+  if (status === 'confirmed') return 'border-blue-300/80 bg-blue-100/90 text-blue-950 dark:border-blue-700/60 dark:bg-blue-950/70 dark:text-blue-100';
+  if (status === 'arrived') return 'border-emerald-300/80 bg-emerald-100/90 text-emerald-950 dark:border-emerald-700/60 dark:bg-emerald-950/70 dark:text-emerald-100';
   if (status === 'canceled') return 'border-muted bg-muted/30 text-muted-foreground';
-  if (status === 'no_show') return 'border-red-500/50 bg-red-500/15 text-red-100';
-  return 'border-primary/50 bg-primary/15 text-primary-foreground';
+  if (status === 'no_show') return 'border-rose-300/80 bg-rose-100/90 text-rose-950 dark:border-rose-700/60 dark:bg-rose-950/70 dark:text-rose-100';
+  return 'border-violet-300/80 bg-violet-100/90 text-violet-950 dark:border-violet-700/60 dark:bg-violet-950/70 dark:text-violet-100';
 }
 
 function getPaymentBadgeClass(status: BookingPaymentStatus) {
@@ -1104,13 +1105,13 @@ function buildAnalyticsCsv(report: BookingAnalytics) {
 }
 
 export default function BookingsPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const queryClient = useQueryClient();
-  const canEditBookings = canManageBookings(account?.role);
-  const canEditBookingResources = canManageBookingResources(account?.role);
-  const canCloseTrainingPlans = canManageTrainingNotes(account?.role);
-  const canViewBookingCertificates = canViewCertificates(account?.role);
-  const canViewBookingSubscriptions = canViewClientSubscriptions(account?.role);
+  const canEditBookings = canManageBookings(clubRole);
+  const canEditBookingResources = canManageBookingResources(clubRole);
+  const canCloseTrainingPlans = canManageTrainingNotes(clubRole);
+  const canViewBookingCertificates = canViewCertificates(clubRole);
+  const canViewBookingSubscriptions = canViewClientSubscriptions(clubRole);
   const [searchParams, setSearchParams] = useSearchParams();
   const priceManuallyEditedRef = useRef(false);
   const priceQuoteBaselineRef = useRef('');
@@ -1122,6 +1123,7 @@ export default function BookingsPage() {
     isDateOnly(dateFromUrl) ? dateFromUrl! : format(new Date(), 'yyyy-MM-dd'),
   );
   const [formOpen, setFormOpen] = useState(false);
+  const [profileClientId, setProfileClientId] = useState<number | null>(null);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [selectionDraft, setSelectionDraft] = useState<SelectionDraft | null>(null);
   const [draggingBookingId, setDraggingBookingId] = useState<number | null>(null);
@@ -1289,7 +1291,7 @@ export default function BookingsPage() {
     [bookings],
   );
   const upcomingBooking = useMemo(() => (
-    activeBookings
+    [...activeBookings]
       .sort((left, right) => new Date(left.startsAt).getTime() - new Date(right.startsAt).getTime())[0] || null
   ), [activeBookings]);
   const filteredBookings = useMemo(() => {
@@ -1414,7 +1416,7 @@ export default function BookingsPage() {
       bookingTypeValue === 'group_training' &&
       groupParticipantSearch.trim().length >= 2,
     queryFn: () =>
-      listClients({
+      searchClients({
         page: 1,
         pageSize: 8,
         q: groupParticipantSearch.trim(),
@@ -1452,9 +1454,10 @@ export default function BookingsPage() {
     bookingClientDetailsQuery.data?.prepaymentSummary ||
     lookupClient?.prepaymentSummary ||
     null;
-  const selectedBookingClientHref = getBookingClientHref(
-    selectedClientIdForPrepayments || editingBooking?.userId,
-  );
+  const selectedBookingClientId =
+    selectedClientIdForPrepayments || editingBooking?.userId || null;
+  const selectedBookingClientHref =
+    clubRole === 'admin' ? '' : getBookingClientHref(selectedBookingClientId);
   const bookingHistoryRows = useMemo(
     () => buildBookingHistoryRows(historyQuery.data || []),
     [historyQuery.data],
@@ -2170,7 +2173,7 @@ export default function BookingsPage() {
     booking: Booking,
   ) => {
     if (
-      !canEditBookings ||
+      !canEditBookingResources ||
       isScheduleClosed ||
       booking.status === 'canceled' ||
       event.button !== 0 ||
@@ -2258,7 +2261,10 @@ export default function BookingsPage() {
     name: seriesDraft.name.trim() || `Постоянка ${seriesDraft.clientName.trim()}`,
     paymentMethod: seriesDraft.paymentMethod,
     paymentStatus: seriesDraft.paymentStatus,
-    price: seriesDraft.price ? Number(seriesDraft.price) : undefined,
+    price:
+      canEditBookingResources && seriesDraft.price
+        ? Number(seriesDraft.price)
+        : undefined,
     responsibleStaffId:
       seriesDraft.responsibleStaffId && seriesDraft.responsibleStaffId !== 'none'
         ? Number(seriesDraft.responsibleStaffId)
@@ -2697,24 +2703,14 @@ export default function BookingsPage() {
           const canQuickEdit = canEditBookings && booking.status !== 'canceled';
           return (
             <div className="flex flex-wrap justify-end gap-1">
-              {canQuickEdit && booking.status === 'new' && (
+              {canQuickEdit && booking.status !== 'no_show' && (
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={() => void quickStatus(booking, 'confirmed')}
-                  title="Подтвердить бронь"
+                  onClick={() => void quickStatus(booking, 'no_show')}
+                  title="Клиент не пришел"
                 >
-                  <CheckCircle2 className="size-4" />
-                </Button>
-              )}
-              {canQuickEdit && booking.status !== 'arrived' && (
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => void quickStatus(booking, 'arrived')}
-                  title="Клиент пришел"
-                >
-                  <UserCheck className="size-4" />
+                  <UserX className="size-4" />
                 </Button>
               )}
               {canQuickEdit && isBookingNeedsPayment(booking) && (
@@ -2842,7 +2838,7 @@ export default function BookingsPage() {
             <BarChart3 className="mr-2 size-4" />
             Отчет
           </Button>
-          {canEditBookings && (
+          {canEditBookingResources && (
             <Button variant="outline" onClick={openRules}>
               <Settings className="mr-2 size-4" />
               Правила
@@ -2937,7 +2933,7 @@ export default function BookingsPage() {
               </div>
 
               {courts.map((court) => {
-                const courtBookings = bookings.filter((booking) => booking.courtId === court.id);
+                const courtBookings = activeBookings.filter((booking) => booking.courtId === court.id);
                 const courtBlocks = (schedule?.blocks || []).filter((block) => block.courtId === court.id);
                 return (
                   <div
@@ -3025,7 +3021,6 @@ export default function BookingsPage() {
                         (getMinutesFromDayStart(booking.startsAt, dayStartMinutes) / stepMinutes) * SLOT_HEIGHT,
                       );
                       const height = getBookingCardHeight(booking.durationMinutes, stepMinutes);
-                      const canQuickEdit = canEditBookings && booking.status !== 'canceled';
                       const needsPayment = isBookingNeedsPayment(booking);
                       const participantCount = getBookingParticipantCount(booking);
                       const participantNames = getBookingParticipantNames(booking);
@@ -3036,8 +3031,10 @@ export default function BookingsPage() {
                           role="button"
                           tabIndex={0}
                           className={cn(
-                            'absolute left-1 right-1 z-20 overflow-hidden rounded-md border p-2 text-left text-xs shadow-sm transition-transform hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                            canEditBookings && booking.status !== 'canceled' && 'cursor-grab active:cursor-grabbing',
+                            'absolute left-1 right-1 z-20 overflow-hidden rounded-md border p-1 text-left text-xs shadow-sm transition-transform hover:scale-[1.01] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                            canEditBookingResources && booking.status !== 'canceled'
+                              ? 'cursor-grab active:cursor-grabbing'
+                              : 'cursor-pointer',
                             draggingBookingId === booking.id && 'opacity-45',
                             getStatusClass(booking.status),
                           )}
@@ -3065,138 +3062,41 @@ export default function BookingsPage() {
                           }}
                           onPointerDown={(event) => handleBookingDragStart(event, booking)}
                         >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="font-semibold">
-                              {formatTime(booking.startsAt)}-{formatTime(booking.endsAt)}
-                            </span>
-                            {canQuickEdit && height >= 64 ? (
-                              <div
-                                className="flex shrink-0 gap-0.5"
-                                onPointerDown={(event) => event.stopPropagation()}
-                              >
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                  title="Открыть бронь"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    openEdit(booking);
-                                  }}
-                                >
-                                  <Pencil className="size-3" />
-                                </Button>
-                                {booking.status === 'new' && (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Подтвердить бронь"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void quickStatus(booking, 'confirmed');
-                                    }}
-                                  >
-                                    <CheckCircle2 className="size-3" />
-                                  </Button>
-                                )}
-                                {booking.status !== 'arrived' && (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Клиент пришел"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      void quickStatus(booking, 'arrived');
-                                    }}
-                                  >
-                                    <UserCheck className="size-3" />
-                                  </Button>
-                                )}
-                                {needsPayment && (
-                                  <Button
-                                    type="button"
-                                    size="icon-xs"
-                                    variant="ghost"
-                                    className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                    title="Отметить оплату"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      openPaymentDialog(booking);
-                                    }}
-                                  >
-                                    <Banknote className="size-3" />
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  size="icon-xs"
-                                  variant="ghost"
-                                  className="size-5 bg-background/15 text-inherit hover:bg-background/30 hover:text-inherit"
-                                  title="Отменить бронь"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    void quickStatus(booking, 'canceled');
-                                  }}
-                                >
-                                  <XCircle className="size-3" />
-                                </Button>
-                              </div>
-                            ) : (
-                              <span>{booking.bookingSeriesId ? 'Постоянка' : STATUS_LABELS[booking.status]}</span>
-                            )}
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {booking.isFirstBooking && (
-                              <span className="rounded-sm bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-50">
-                                Впервые
-                              </span>
-                            )}
-                            <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                              {BOOKING_TYPE_SHORT_LABELS[booking.bookingType] || 'Игра'}
-                            </span>
-                            {booking.trainingPlan && (
-                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                                {getTrainingPlanStatusLabel(booking.trainingPlan)}
-                              </span>
-                            )}
-                            {booking.bookingSeriesId && (
-                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                                Постоянка
-                              </span>
-                            )}
-                            {booking.bookingType === 'group_training' && (
-                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1.5 py-0.5 text-[10px] font-semibold">
-                                {participantCount} участн.
-                              </span>
-                            )}
-                            {needsPayment && (
-                              <span className="max-w-full truncate rounded-sm bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-semibold">
-                                К оплате
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1 truncate font-medium">{booking.clientName}</div>
-                          <div className="truncate opacity-80">
-                            {PAYMENT_STATUS_LABELS[booking.paymentStatus]} · {formatCurrency(booking.price)}
-                          </div>
-                          {height > 104 && booking.bookingType === 'group_training' && (
-                            <div className="mt-1 truncate opacity-75">
-                              {participantNames.join(', ')}
+                          <div className="flex h-full min-w-0 flex-col justify-center gap-0.5">
+                            <div className="truncate text-[11px] font-semibold leading-3">
+                              {booking.clientName}
                             </div>
-                          )}
-                          {height > 96 && booking.responsibleStaff && (
-                            <div className="mt-1 truncate opacity-75">
-                              {formatResponsibleStaff(booking.responsibleStaff)}
+                            <div className="flex flex-wrap gap-0.5 overflow-hidden">
+                              <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                {BOOKING_TYPE_SHORT_LABELS[booking.bookingType] || 'Игра'}
+                              </span>
+                              {needsPayment && (
+                                <span className="max-w-full truncate rounded-sm bg-amber-500/25 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  К оплате
+                                </span>
+                              )}
+                              {booking.isFirstBooking && (
+                                <span className="rounded-sm bg-emerald-500/20 px-1 py-0.5 text-[9px] font-semibold leading-3 text-emerald-50">
+                                  Впервые
+                                </span>
+                              )}
+                              {booking.trainingPlan && (
+                                <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  {getTrainingPlanStatusLabel(booking.trainingPlan)}
+                                </span>
+                              )}
+                              {booking.bookingSeriesId && (
+                                <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  Постоянка
+                                </span>
+                              )}
+                              {booking.bookingType === 'group_training' && (
+                                <span className="max-w-full truncate rounded-sm bg-background/20 px-1 py-0.5 text-[9px] font-semibold leading-3">
+                                  {participantCount} участн.
+                                </span>
+                              )}
                             </div>
-                          )}
-                          {height > 86 && booking.comment && (
-                            <div className="mt-1 truncate opacity-70">{booking.comment}</div>
-                          )}
+                          </div>
                         </div>
                       );
                     })}
@@ -3409,14 +3309,23 @@ export default function BookingsPage() {
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <Label>Телефон клиента</Label>
-                  {selectedBookingClientHref && (
+                  {selectedBookingClientId && clubRole === 'admin' ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => setProfileClientId(selectedBookingClientId)}
+                    >
+                      Карточка клиента
+                    </Button>
+                  ) : selectedBookingClientHref ? (
                     <Button asChild type="button" variant="outline" size="xs">
                       <Link to={selectedBookingClientHref}>
                         <ExternalLink className="size-3" />
                         Карточка клиента
                       </Link>
                     </Button>
-                  )}
+                  ) : null}
                 </div>
                 <div className="relative">
                   <Phone className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -3675,9 +3584,13 @@ export default function BookingsPage() {
                 <Label>Цена</Label>
                 <Input
                   inputMode="decimal"
-                  disabled={!canEditBookings}
+                  disabled={!canEditBookingResources}
                   {...bookingForm.register('price', {
-                    onChange: (event) => markPriceManuallyEdited(event.target.value),
+                    onChange: (event) => {
+                      if (canEditBookingResources) {
+                        markPriceManuallyEdited(event.target.value);
+                      }
+                    },
                   })}
                 />
                 <FormError message={bookingForm.formState.errors.price?.message} />
@@ -3762,31 +3675,28 @@ export default function BookingsPage() {
               <div className="rounded-md border bg-muted/20 p-3">
                 {canEditBookings && (
                   <div className="mb-3 flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => quickStatus(editingBooking, 'confirmed')}
-                    >
-                      <CheckCircle2 className="mr-2 size-4" />
-                      Подтвердить
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => quickStatus(editingBooking, 'arrived')}
-                    >
-                      Пришел
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => quickStatus(editingBooking, 'no_show')}
-                    >
-                      Не пришел
-                    </Button>
+                    {editingBooking.status !== 'no_show' && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => quickStatus(editingBooking, 'no_show')}
+                      >
+                        <UserX className="mr-2 size-4" />
+                        Не пришел
+                      </Button>
+                    )}
+                    {isBookingNeedsPayment(editingBooking) && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPaymentDialog(editingBooking)}
+                      >
+                        <Banknote className="mr-2 size-4" />
+                        Отметить оплату
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       variant="outline"
@@ -4454,6 +4364,7 @@ export default function BookingsPage() {
                   <Label>Цена за бронь</Label>
                   <Input
                     inputMode="decimal"
+                    disabled={!canEditBookingResources}
                     value={seriesDraft.price}
                     onChange={(event) => setSeriesDraft((current) => ({ ...current, price: event.target.value }))}
                     placeholder="Авто"
@@ -5439,6 +5350,12 @@ export default function BookingsPage() {
         loading={pendingActionLoading}
         onCancel={() => setPendingAction(null)}
         onConfirm={confirmPendingAction}
+      />
+      <ClientProfileDialog
+        clientId={profileClientId}
+        onOpenChange={(open) => {
+          if (!open) setProfileClientId(null);
+        }}
       />
     </div>
   );

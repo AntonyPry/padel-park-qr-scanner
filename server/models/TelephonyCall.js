@@ -1,5 +1,32 @@
+const {
+  assertBulkFieldsAreMutable,
+} = require('../src/provider-integrations/immutable-attribution');
+
+const IMMUTABLE_PROVIDER_FIELDS = Object.freeze([
+  'organizationId',
+  'clubId',
+  'integrationConnectionId',
+  'providerNamespace',
+]);
+
 module.exports = (sequelize, DataTypes) => {
   const TelephonyCall = sequelize.define('TelephonyCall', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    integrationConnectionId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    providerNamespace: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
     provider: {
       type: DataTypes.ENUM('beeline'),
       allowNull: false,
@@ -169,9 +196,30 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       allowNull: true,
     },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkFieldsAreMutable(
+          options,
+          IMMUTABLE_PROVIDER_FIELDS,
+          'Telephony call provider attribution is immutable',
+        );
+      },
+      beforeUpdate(call) {
+        if (IMMUTABLE_PROVIDER_FIELDS.some((field) => call.changed(field))) {
+          const error = new Error('Telephony call provider attribution is immutable');
+          error.code = 'PROVIDER_ATTRIBUTION_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   TelephonyCall.associate = (models) => {
+    TelephonyCall.belongsTo(models.IntegrationConnection, {
+      as: 'integrationConnection',
+      foreignKey: 'integrationConnectionId',
+    });
     TelephonyCall.belongsTo(models.User, {
       as: 'client',
       foreignKey: 'userId',

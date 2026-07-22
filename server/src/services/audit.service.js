@@ -1,4 +1,17 @@
 const db = require('../../models');
+const {
+  isTenantAuditLogEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
+  auditTenantValues,
+  auditTenantWhere,
+  bindAuditActor,
+  resolveAuditAccessContext,
+  toOrganizationRealtimeContext,
+} = require('./audit-access-context.service');
 
 const MAX_PAGE_SIZE = 100;
 const SENSITIVE_KEYS = new Set([
@@ -141,13 +154,85 @@ function parseMetadata(metadata) {
 
 async function record(entry) {
   try {
+    if (!isTenantAuditLogEnabled()) {
+      await requireExactSingletonDefault();
+      const row = await createRecord(entry, null);
+      return {
+        actor: entry.account || null,
+        auditLogId: row?.id || null,
+        recorded: true,
+        tenant: null,
+      };
+    }
+
+    return await db.sequelize.transaction(async (transaction) => {
+      const scope = entry.tenantScope || entry.tenant?.scope;
+      const context = await resolveAuditAccessContext(
+        entry.account,
+        entry.tenant,
+        scope,
+        { lock: true, transaction },
+      );
+      const actor = bindAuditActor(entry.account, context);
+      const row = await createRecord({ ...entry, account: actor }, context, transaction);
+      return {
+        actor,
+        auditLogId: row.id,
+        recorded: true,
+        tenant: toOrganizationRealtimeContext(context),
+      };
+    });
+  } catch (error) {
+    console.error('Ошибка записи аудита:', error);
+    return {
+      actor: null,
+      auditLogId: null,
+      errorCode: error?.code || null,
+      recorded: false,
+      tenant: null,
+    };
+  }
+}
+
+async function recordInstallation(entry, transaction) {
+  if (!transaction) {
+    throw appError(
+      'Installation audit requires the provisioning transaction',
+      500,
+    );
+  }
+  if (!Number.isSafeInteger(Number(entry.organizationId))) {
+    throw appError('Installation audit requires Organization scope', 500);
+  }
+  return createRecord(
+    {
+      ...entry,
+      account: null,
+      accountId: null,
+      role: null,
+      tenantScope: 'installation',
+    },
+    null,
+    transaction,
+  );
+}
+
+async function createRecord(entry, context, transaction) {
     const { entityType, entityId } = entry.entityType
       ? entry
       : inferEntity(entry.path);
     const action =
       entry.action || inferAction(entry.method, entry.path, entry.statusCode);
 
-    await db.AuditLog.create({
+    return db.AuditLog.create({
+      ...(context
+        ? auditTenantValues(context)
+        : Number.isSafeInteger(Number(entry.organizationId))
+          ? {
+              clubId: entry.clubId || null,
+              organizationId: Number(entry.organizationId),
+            }
+          : {}),
       accountId: entry.account?.id || entry.accountId || null,
       role: entry.account?.role || entry.role || null,
       action,
@@ -166,28 +251,33 @@ async function record(entry) {
           statusCode: entry.statusCode,
         }),
       metadata: sanitizeValue(entry.metadata || {}),
-    });
-  } catch (error) {
-    console.error('Ошибка записи аудита:', error);
-  }
+    }, { transaction });
 }
 
-async function list(query = {}) {
+function normalizeListQuery(query = {}) {
   const page = Math.max(1, Number.parseInt(query.page, 10) || 1);
   const pageSize = Math.min(
     MAX_PAGE_SIZE,
     Math.max(10, Number.parseInt(query.pageSize, 10) || 25),
   );
-  const where = {};
+  const filters = {};
 
-  if (query.action && query.action !== 'all') where.action = query.action;
+  if (query.action && query.action !== 'all') filters.action = query.action;
   if (query.entityType && query.entityType !== 'all') {
-    where.entityType = query.entityType;
+    filters.entityType = query.entityType;
   }
-  if (query.accountId) where.accountId = Number(query.accountId);
+  if (query.accountId) filters.accountId = Number(query.accountId);
+  return { filters, page, pageSize };
+}
+
+async function queryAuditRows({ context, filters, page, pageSize, transaction }) {
+  const where = context ? auditTenantWhere(context, filters) : filters;
+  const staffWhere = context?.readScoped
+    ? { organizationId: context.organizationId }
+    : undefined;
 
   const [count, rows] = await Promise.all([
-    db.AuditLog.count({ where }),
+    db.AuditLog.count({ transaction, where }),
     db.AuditLog.findAll({
       attributes: [
         'id',
@@ -209,12 +299,18 @@ async function list(query = {}) {
           model: db.Account,
           as: 'account',
           attributes: ['id', 'email', 'role', 'staffId'],
-          include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+          include: [{
+            model: db.Staff,
+            attributes: ['id', 'name'],
+            required: false,
+            where: staffWhere,
+          }],
         },
       ],
       limit: pageSize,
       offset: (page - 1) * pageSize,
-      order: [['createdAt', 'DESC']],
+      order: [['createdAt', 'DESC'], ['id', 'DESC']],
+      transaction,
     }),
   ]);
 
@@ -227,7 +323,7 @@ async function list(query = {}) {
           ? {
               id: raw.account.id,
               email: raw.account.email,
-              role: raw.account.role,
+              role: raw.role || raw.account.role,
               name: raw.account.Staff?.name || raw.account.email,
             }
           : null,
@@ -240,6 +336,27 @@ async function list(query = {}) {
   };
 }
 
+async function list(query = {}, actor, tenant) {
+  const normalized = normalizeListQuery(query);
+  if (!isTenantAuditLogEnabled()) {
+    await requireExactSingletonDefault();
+    assertCanView(actor);
+    return queryAuditRows({ ...normalized, context: null, transaction: undefined });
+  }
+
+  return db.sequelize.transaction(async (transaction) => {
+    const context = await resolveAuditAccessContext(
+      actor,
+      tenant,
+      'organization',
+      { lock: true, transaction },
+    );
+    const authorityActor = bindAuditActor(actor, context);
+    assertCanView(authorityActor);
+    return queryAuditRows({ ...normalized, context, transaction });
+  });
+}
+
 function assertCanView(actor) {
   if (!['owner', 'manager'].includes(actor?.role)) {
     throw appError('Недостаточно прав для просмотра аудита', 403);
@@ -247,7 +364,17 @@ function assertCanView(actor) {
 }
 
 module.exports = {
+  _private: {
+    buildSummary,
+    createRecord,
+    inferAction,
+    inferEntity,
+    normalizeListQuery,
+    parseMetadata,
+    sanitizeValue,
+  },
   assertCanView,
   list,
   record,
+  recordInstallation,
 };

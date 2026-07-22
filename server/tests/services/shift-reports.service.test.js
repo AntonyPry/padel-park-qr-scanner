@@ -1,7 +1,10 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const path = require('node:path');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const shiftReportsService = require('../../src/services/shift-reports.service');
+const { buildTenantStorageKey } = require('../../src/storage/tenant-storage');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalModels = {
   Account: db.Account,
@@ -14,9 +17,15 @@ const originalModels = {
   Staff: db.Staff,
   sequelize: db.sequelize,
 };
+let restoreSingleton;
+
+beforeEach(() => {
+  restoreSingleton = mockExactSingletonDefault(db);
+});
 
 afterEach(() => {
   Object.assign(db, originalModels);
+  restoreSingleton();
 });
 
 function makeModel(payload) {
@@ -30,6 +39,13 @@ function makeModel(payload) {
       return { ...this };
     },
   };
+}
+
+async function runTestTransaction(optionsOrCallback, maybeCallback) {
+  const callback = typeof optionsOrCallback === 'function'
+    ? optionsOrCallback
+    : maybeCallback;
+  return callback({ id: 'transaction' });
 }
 
 test('ensureReportsForShift creates scheduled reports with item snapshots', async () => {
@@ -64,24 +80,18 @@ test('ensureReportsForShift creates scheduled reports with item snapshots', asyn
     version: 3,
   });
 
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
   db.ShiftReportTemplate = {
     async findAll() {
       return [template];
     },
   };
   db.ShiftReport = {
-    async create(payload) {
+    async findOrCreate({ defaults, where }) {
+      const payload = { ...where, ...defaults };
       const report = makeModel({ id: createdReports.length + 1, ...payload });
       createdReports.push(payload);
-      return report;
-    },
-    async findOne() {
-      return null;
+      return [report, true];
     },
   };
   db.ShiftReportAnswer = {
@@ -106,7 +116,7 @@ test('ensureReportsForShift creates scheduled reports with item snapshots', asyn
   assert.equal(createdAnswers[0].photoRequired, true);
 });
 
-test('createTemplate normalizes daily report times', async () => {
+test('createTemplate normalizes daily report times and ignores legacy scope keys', async () => {
   let createdPayload = null;
   db.ShiftReportTemplate = {
     async create(payload) {
@@ -121,6 +131,8 @@ test('createTemplate normalizes daily report times', async () => {
 
   const template = await shiftReportsService.createTemplate(
     {
+      appliesToRole: 'admin',
+      appliesToShiftType: 'day',
       name: 'Контроль смены',
       scheduleConfig: { times: ['15:00', '09:00', '09:00'] },
       scheduleType: 'daily_times',
@@ -130,7 +142,11 @@ test('createTemplate normalizes daily report times', async () => {
 
   assert.equal(createdPayload.scheduleType, 'daily_times');
   assert.deepEqual(createdPayload.scheduleConfig.times, ['09:00', '15:00']);
+  assert.equal(Object.hasOwn(createdPayload, 'appliesToRole'), false);
+  assert.equal(Object.hasOwn(createdPayload, 'appliesToShiftType'), false);
   assert.deepEqual(template.scheduleConfig.times, ['09:00', '15:00']);
+  assert.equal(Object.hasOwn(template, 'appliesToRole'), false);
+  assert.equal(Object.hasOwn(template, 'appliesToShiftType'), false);
 });
 
 test('deleting a template item soft-deletes it and bumps template version', async () => {
@@ -148,11 +164,7 @@ test('deleting a template item soft-deletes it and bumps template version', asyn
     version: 4,
   });
 
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
   db.ShiftReportTemplateItem = {
     async findByPk(id) {
       assert.equal(Number(id), item.id);
@@ -225,6 +237,89 @@ test('ensureReportsForShift asks only for active templates', async () => {
   assert.deepEqual(where, { status: 'active' });
 });
 
+test('ensureReportsForShift applies every active template without legacy role or type filtering', async () => {
+  const createdReports = [];
+  const templates = [
+    makeModel({
+      appliesToRole: 'admin',
+      appliesToShiftType: 'day',
+      gracePeriodMinutes: 10,
+      id: 41,
+      items: [
+        makeModel({
+          id: 401,
+          itemType: 'checkbox',
+          label: 'Открытие',
+          photoRequired: false,
+          sortOrder: 10,
+          status: 'active',
+        }),
+      ],
+      name: 'Открытие',
+      scheduleConfig: { times: ['09:00'] },
+      scheduleType: 'daily_times',
+      sortOrder: 10,
+      status: 'active',
+      version: 1,
+    }),
+    makeModel({
+      appliesToRole: 'manager',
+      appliesToShiftType: 'night',
+      gracePeriodMinutes: 10,
+      id: 42,
+      items: [
+        makeModel({
+          id: 402,
+          itemType: 'text',
+          label: 'Передача смены',
+          photoRequired: false,
+          sortOrder: 10,
+          status: 'active',
+        }),
+      ],
+      name: 'Передача смены',
+      scheduleConfig: { times: ['18:00'] },
+      scheduleType: 'daily_times',
+      sortOrder: 20,
+      status: 'active',
+      version: 1,
+    }),
+  ];
+
+  db.ShiftReportTemplate = {
+    async findAll(options) {
+      assert.deepEqual(options.where, { status: 'active' });
+      return templates;
+    },
+  };
+  db.ShiftReport = {
+    async findOrCreate({ defaults, where }) {
+      const payload = { ...where, ...defaults };
+      createdReports.push(payload);
+      return [makeModel({ id: createdReports.length, ...payload }), true];
+    },
+  };
+  db.ShiftReportAnswer = { async bulkCreate() {} };
+  db.sequelize = { transaction: runTestTransaction };
+
+  await shiftReportsService.ensureReportsForShift({
+    date: '2026-07-17',
+    id: 9,
+    staffRole: 'trainer',
+    status: 'active',
+  });
+
+  assert.equal(createdReports.length, 2);
+  assert.deepEqual(
+    createdReports.map((report) => report.templateId),
+    [41, 42],
+  );
+  for (const report of createdReports) {
+    assert.equal(Object.hasOwn(report.templateSnapshot, 'appliesToRole'), false);
+    assert.equal(Object.hasOwn(report.templateSnapshot, 'appliesToShiftType'), false);
+  }
+});
+
 test('submit saves a report comment separately from item answers', async () => {
   const answer = makeModel({
     attachments: [],
@@ -252,11 +347,7 @@ test('submit saves a report comment separately from item answers', async () => {
       return report;
     },
   };
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
 
   const saved = await shiftReportsService.saveReport(
     report.id,
@@ -297,11 +388,7 @@ test('submit does not require photos for photo-enabled answers', async () => {
       return report;
     },
   };
-  db.sequelize = {
-    async transaction(callback) {
-      return callback({ id: 'transaction' });
-    },
-  };
+  db.sequelize = { transaction: runTestTransaction };
 
   const saved = await shiftReportsService.saveReport(
     report.id,
@@ -331,7 +418,12 @@ test('historical report opens from snapshot when template was deleted', async ()
     shift: { id: 2, staffId: 11, status: 'active' },
     status: 'submitted',
     template: null,
-    templateSnapshot: { gracePeriodMinutes: 30, name: 'Удаленный шаблон' },
+    templateSnapshot: {
+      appliesToRole: 'admin',
+      appliesToShiftType: 'day',
+      gracePeriodMinutes: 30,
+      name: 'Удаленный шаблон',
+    },
   });
 
   db.ShiftReport = {
@@ -347,7 +439,19 @@ test('historical report opens from snapshot when template was deleted', async ()
   });
 
   assert.equal(saved.templateSnapshot.name, 'Удаленный шаблон');
+  assert.equal(Object.hasOwn(saved.templateSnapshot, 'appliesToRole'), false);
+  assert.equal(Object.hasOwn(saved.templateSnapshot, 'appliesToShiftType'), false);
+  assert.equal(report.templateSnapshot.appliesToRole, 'admin');
+  assert.equal(report.templateSnapshot.appliesToShiftType, 'day');
   assert.equal(saved.answers[0].itemLabel, 'Входная зона');
+});
+
+test('ShiftReportTemplate model does not expose removed scope attributes', () => {
+  assert.equal(Object.hasOwn(db.ShiftReportTemplate.rawAttributes, 'appliesToRole'), false);
+  assert.equal(
+    Object.hasOwn(db.ShiftReportTemplate.rawAttributes, 'appliesToShiftType'),
+    false,
+  );
 });
 
 test('uploadAttachment rejects more than 10 photos per answer', async () => {
@@ -389,6 +493,67 @@ test('uploadAttachment rejects more than 10 photos per answer', async () => {
       ),
     /до 10 фото/,
   );
+});
+
+test('tenant attachment metadata binds tenant, parent identity and canonical storage key', () => {
+  const tenant = { organizationId: 4, clubId: 9 };
+  const attachment = {
+    checksumSha256: 'a'.repeat(64),
+    clubId: tenant.clubId,
+    domain: 'shift-report-attachments',
+    id: '912c1a0e-9f21-4e43-8f26-278af61b3e58',
+    organizationId: tenant.organizationId,
+    record: {
+      answerId: 7,
+      fileId: '912c1a0e-9f21-4e43-8f26-278af61b3e58',
+      reportId: 42,
+    },
+    storageKey: buildTenantStorageKey({
+      ...tenant,
+      domain: 'shift-report-attachments',
+      fileId: '912c1a0e-9f21-4e43-8f26-278af61b3e58',
+      recordId: 'report:42:answer:7',
+    }),
+    storageSchemaVersion: 1,
+  };
+
+  assert.doesNotThrow(() =>
+    shiftReportsService.assertTenantAttachmentMetadata(attachment, 42, 7, tenant));
+  for (const invalid of [
+    [{ ...attachment, clubId: 10 }, 42, 7, tenant],
+    [{ ...attachment, storageKey: attachment.storageKey.replace(/file_[a-f0-9]+$/, 'file_bbbbbbbb') }, 42, 7, tenant],
+    [attachment, 43, 7, tenant],
+    [attachment, 42, 8, tenant],
+  ]) {
+    assert.throws(
+      () => shiftReportsService.assertTenantAttachmentMetadata(...invalid),
+      (error) => error.statusCode === 404,
+    );
+  }
+});
+
+test('legacy attachment fallback accepts only exact default layout metadata', () => {
+  const id = '912c1a0e-9f21-4e43-8f26-278af61b3e58';
+  const valid = {
+    id,
+    mimeType: 'image/heic',
+    relativePath: path.join('42', `${id}.heic`),
+  };
+  assert.equal(
+    shiftReportsService.assertLegacyAttachmentMetadata(valid, 42),
+    path.join('42', `${id}.heic`),
+  );
+  for (const attachment of [
+    { ...valid, relativePath: `../42/${id}.heic` },
+    { ...valid, relativePath: path.join('41', `${id}.heic`) },
+    { ...valid, id: '../../escape' },
+    { ...valid, organizationId: 1 },
+  ]) {
+    assert.throws(
+      () => shiftReportsService.assertLegacyAttachmentMetadata(attachment, 42),
+      (error) => error.statusCode === 404,
+    );
+  }
 });
 
 test('admin report list is limited to active shift scope', async () => {

@@ -3,6 +3,26 @@ const xlsx = require('xlsx');
 const db = require('../../models');
 const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
+const {
+  isTenantBookingsCourtsEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  resolveTrainingOperationsAccessContext,
+  trainingOperationsTenantWhere,
+} = require('./training-operations-access-context.service');
+const {
+  bindClientMoneyActor,
+  clubTenantValues,
+  clubTenantWhere,
+  findClubRecordByPk,
+  organizationTenantValues,
+  organizationTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
 
 const CORPORATE_CLIENT_STATUSES = ['active', 'archived'];
 const CORPORATE_LEDGER_ENTRY_STATUSES = ['active', 'canceled'];
@@ -339,7 +359,7 @@ function buildLedgerInclude() {
   ];
 }
 
-function buildCorporateClientInclude({ withLedger = false } = {}) {
+function buildCorporateClientInclude({ context = null, withLedger = false } = {}) {
   const include = [buildAccountInclude('createdBy'), buildAccountInclude('archivedBy')];
   if (withLedger) {
     include.push({
@@ -351,18 +371,20 @@ function buildCorporateClientInclude({ withLedger = false } = {}) {
         ['id', 'DESC'],
       ],
       separate: true,
+      where: context?.clubId ? clubTenantWhere(context) : undefined,
     });
   }
   return include;
 }
 
-async function getTrainingWhere(account) {
-  const marker = await onboardingService.getTrainingDataMarker(account);
+async function getTrainingWhere(account, tenant) {
+  const marker = await onboardingService.getTrainingDataMarker(account, tenant);
   if (marker.isTraining) {
     return {
       isTraining: true,
       trainingAccountId: marker.trainingAccountId,
       trainingRole: marker.trainingRole,
+      trainingSessionId: marker.trainingSessionId,
     };
   }
   return { isTraining: false };
@@ -385,14 +407,24 @@ function buildListWhere(query = {}, trainingWhere = { isTraining: false }) {
   return where;
 }
 
-async function getBalancesForClientIds(clientIds, transaction = null) {
+function ledgerTenantWhere(context, values = {}) {
+  return context?.clubId
+    ? clubTenantWhere(context, values)
+    : organizationTenantWhere(context, values);
+}
+
+async function getBalancesForClientIds(
+  clientIds,
+  transaction = null,
+  context = null,
+) {
   if (!clientIds.length) return new Map();
   const rows = await db.CorporateLedgerEntry.findAll({
     attributes: ['corporateClientId', 'type', 'status', 'amount'],
-    where: {
+    where: ledgerTenantWhere(context, {
       corporateClientId: { [Op.in]: clientIds },
       status: 'active',
-    },
+    }),
     transaction,
   });
   const balances = new Map();
@@ -405,16 +437,25 @@ async function getBalancesForClientIds(clientIds, transaction = null) {
   return balances;
 }
 
-async function getOpeningBalance(corporateClientId, from, transaction = null) {
+async function getOpeningBalance(
+  corporateClientId,
+  from,
+  transaction = null,
+  context = null,
+) {
   if (!from) return 0;
-  const balances = await getBalancesForClientIds([corporateClientId], transaction);
+  const balances = await getBalancesForClientIds(
+    [corporateClientId],
+    transaction,
+    context,
+  );
   const periodRows = await db.CorporateLedgerEntry.findAll({
     attributes: ['type', 'status', 'amount'],
-    where: {
+    where: ledgerTenantWhere(context, {
       corporateClientId,
       date: { [Op.gte]: normalizeDateOnly(from, 'дату начала') },
       status: 'active',
-    },
+    }),
     transaction,
   });
   const periodDelta = periodRows.reduce((sum, entry) => {
@@ -424,10 +465,18 @@ async function getOpeningBalance(corporateClientId, from, transaction = null) {
   return Number(((balances.get(corporateClientId) || 0) - periodDelta).toFixed(2));
 }
 
-async function listCorporateClients(query = {}, account = null) {
-  const trainingWhere = await getTrainingWhere(account);
+async function listCorporateClients(query = {}, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateClient,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const trainingWhere = await getTrainingWhere(authorityActor, tenant);
   const rows = await db.CorporateClient.findAll({
-    where: buildListWhere(query, trainingWhere),
+    where: organizationTenantWhere(
+      context,
+      buildListWhere(query, trainingWhere),
+    ),
     include: buildCorporateClientInclude(),
     order: [
       ['status', 'ASC'],
@@ -435,7 +484,11 @@ async function listCorporateClients(query = {}, account = null) {
       ['id', 'ASC'],
     ],
   });
-  const balances = await getBalancesForClientIds(rows.map((row) => row.id));
+  const balances = await getBalancesForClientIds(
+    rows.map((row) => row.id),
+    null,
+    context,
+  );
   return rows.map((row) =>
     serializeCorporateClient(row, {
       balance: balances.get(row.id) || 0,
@@ -446,17 +499,28 @@ async function listCorporateClients(query = {}, account = null) {
 
 async function findCorporateClient(id, options = {}) {
   const corporateClientId = normalizeId(id, 'ID компании');
-  const row = await db.CorporateClient.findByPk(corporateClientId, {
-    include: buildCorporateClientInclude({ withLedger: options.withLedger }),
+  const query = {
+    include: buildCorporateClientInclude({
+      context: options.context,
+      withLedger: options.withLedger,
+    }),
     transaction: options.transaction || null,
     lock: options.lock || undefined,
-  });
+  };
+  const row = options.context
+    ? await db.CorporateClient.findOne({
+      ...query,
+      where: organizationTenantWhere(options.context, {
+        id: corporateClientId,
+      }),
+    })
+    : await db.CorporateClient.findByPk(corporateClientId, query);
   if (!row) throw appError('Корпоративный клиент не найден', 404);
   return row;
 }
 
-async function assertCorporateClientInScope(client, account) {
-  const trainingWhere = await getTrainingWhere(account);
+async function assertCorporateClientInScope(client, account, tenant) {
+  const trainingWhere = await getTrainingWhere(account, tenant);
   const raw = client.toJSON ? client.toJSON() : client;
   if (Boolean(raw.isTraining) !== Boolean(trainingWhere.isTraining)) {
     throw appError('Корпоративный клиент не найден', 404);
@@ -464,15 +528,21 @@ async function assertCorporateClientInScope(client, account) {
   if (
     trainingWhere.isTraining &&
     (Number(raw.trainingAccountId) !== Number(trainingWhere.trainingAccountId) ||
-      raw.trainingRole !== trainingWhere.trainingRole)
+      raw.trainingRole !== trainingWhere.trainingRole ||
+      raw.trainingSessionId !== trainingWhere.trainingSessionId)
   ) {
     throw appError('Корпоративный клиент не найден', 404);
   }
 }
 
-async function getCorporateClient(id, account = null) {
-  const row = await findCorporateClient(id, { withLedger: true });
-  await assertCorporateClientInScope(row, account);
+async function getCorporateClient(id, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateClient,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const row = await findCorporateClient(id, { context, withLedger: true });
+  await assertCorporateClientInScope(row, authorityActor, tenant);
   return serializeCorporateClient(row);
 }
 
@@ -489,26 +559,42 @@ function buildClientPayload(data = {}, account = null, trainingMarker = {}) {
   };
 }
 
-async function createCorporateClient(data = {}, account = null) {
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+async function createCorporateClient(data = {}, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateClient,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(
+    authorityActor,
+    tenant,
+  );
   const row = await db.CorporateClient.create(
-    buildClientPayload(data, account, trainingMarker),
+    {
+      ...organizationTenantValues(context),
+      ...buildClientPayload(data, authorityActor, trainingMarker),
+    },
   );
 
   await payrollService.recordChange({
     action: 'corporate_client.create',
     entityType: 'corporate_client',
     entityId: row.id,
-    account,
+    account: authorityActor,
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, account);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
-async function updateCorporateClient(id, data = {}, account = null) {
-  const row = await findCorporateClient(id);
-  await assertCorporateClientInScope(row, account);
+async function updateCorporateClient(id, data = {}, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateClient,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const row = await findCorporateClient(id, { context });
+  await assertCorporateClientInScope(row, authorityActor, tenant);
   const beforeData = row.toJSON ? row.toJSON() : { ...row };
   const payload = {};
   if (data.name !== undefined) payload.name = normalizeName(data.name);
@@ -528,22 +614,29 @@ async function updateCorporateClient(id, data = {}, account = null) {
     action: 'corporate_client.update',
     entityType: 'corporate_client',
     entityId: row.id,
-    account,
+    account: authorityActor,
     beforeData,
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, account);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
-async function archiveCorporateClient(id, data = {}, account = null) {
-  const row = await findCorporateClient(id);
-  await assertCorporateClientInScope(row, account);
-  if (row.status === 'archived') return getCorporateClient(row.id, account);
+async function archiveCorporateClient(id, data = {}, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateClient,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const row = await findCorporateClient(id, { context });
+  await assertCorporateClientInScope(row, authorityActor, tenant);
+  if (row.status === 'archived') {
+    return getCorporateClient(row.id, authorityActor, tenant);
+  }
   const beforeData = row.toJSON ? row.toJSON() : { ...row };
   await row.update({
     archivedAt: new Date(),
-    archivedByAccountId: account?.id || null,
+    archivedByAccountId: authorityActor?.id || null,
     archiveReason: normalizeOptionalText(data.reason),
     status: 'archived',
   });
@@ -552,19 +645,26 @@ async function archiveCorporateClient(id, data = {}, account = null) {
     action: 'corporate_client.archive',
     entityType: 'corporate_client',
     entityId: row.id,
-    account,
+    account: authorityActor,
     reason: data.reason,
     beforeData,
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, account);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
-async function restoreCorporateClient(id, account = null) {
-  const row = await findCorporateClient(id);
-  await assertCorporateClientInScope(row, account);
-  if (row.status === 'active') return getCorporateClient(row.id, account);
+async function restoreCorporateClient(id, account = null, tenant = null) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateClient,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const row = await findCorporateClient(id, { context });
+  await assertCorporateClientInScope(row, authorityActor, tenant);
+  if (row.status === 'active') {
+    return getCorporateClient(row.id, authorityActor, tenant);
+  }
   const beforeData = row.toJSON ? row.toJSON() : { ...row };
   await row.update({
     archivedAt: null,
@@ -577,20 +677,20 @@ async function restoreCorporateClient(id, account = null) {
     action: 'corporate_client.restore',
     entityType: 'corporate_client',
     entityId: row.id,
-    account,
+    account: authorityActor,
     beforeData,
     afterData: row.toJSON ? row.toJSON() : row,
   });
 
-  return getCorporateClient(row.id, account);
+  return getCorporateClient(row.id, authorityActor, tenant);
 }
 
-async function assertFinanceLinkAvailable(financeId, transaction) {
+async function assertFinanceLinkAvailable(financeId, transaction, context = null) {
   const existing = await db.CorporateLedgerEntry.findOne({
-    where: {
+    where: clubTenantWhere(context, {
       financeId,
       status: 'active',
-    },
+    }),
     transaction,
   });
   if (existing) {
@@ -606,7 +706,8 @@ function assertFinanceMatchesTrainingScope(finance, trainingMarker) {
   if (
     trainingMarker.isTraining &&
     (Number(raw.trainingAccountId) !== Number(trainingMarker.trainingAccountId) ||
-      raw.trainingRole !== trainingMarker.trainingRole)
+      raw.trainingRole !== trainingMarker.trainingRole ||
+      raw.trainingSessionId !== trainingMarker.trainingSessionId)
   ) {
     throw appError('Финансовая запись не соответствует текущему режиму обучения', 409);
   }
@@ -621,30 +722,42 @@ function assertEntityMatchesTrainingScope(entity, trainingMarker, entityName) {
   if (
     trainingMarker.isTraining &&
     (Number(raw.trainingAccountId) !== Number(trainingMarker.trainingAccountId) ||
-      raw.trainingRole !== trainingMarker.trainingRole)
+      raw.trainingRole !== trainingMarker.trainingRole ||
+      raw.trainingSessionId !== trainingMarker.trainingSessionId)
   ) {
     throw appError(`${entityName} не соответствует текущему режиму обучения`, 409);
   }
 }
 
-async function loadLinkedFinance(data, trainingMarker, transaction) {
+async function loadLinkedFinance(
+  data,
+  trainingMarker,
+  transaction,
+  context = null,
+) {
   const financeId = normalizeId(data.financeId, 'ID финансовой записи');
-  const finance = await db.Finance.findByPk(financeId, {
+  const finance = await findClubRecordByPk(db.Finance, financeId, {
     transaction,
     lock: transaction?.LOCK?.UPDATE,
-  });
+  }, context);
   if (!finance) throw appError('Финансовая запись не найдена', 404);
   if (finance.type !== 'income') {
     throw appError('Связать можно только ручной доход', 409);
   }
   const amount = normalizeMoney(finance.amount, 'Сумма финансовой записи');
   await payrollService.assertDateEditable(finance.date, 'корпоративное пополнение');
-  await assertFinanceLinkAvailable(finance.id, transaction);
+  await assertFinanceLinkAvailable(finance.id, transaction, context);
   assertFinanceMatchesTrainingScope(finance, trainingMarker);
   return finance;
 }
 
-async function buildSpendingMetadata(data, trainingMarker, transaction) {
+async function buildSpendingMetadata(
+  data,
+  trainingMarker,
+  transaction,
+  tenant = null,
+  context = null,
+) {
   const metadata = {
     ...(normalizeMetadata(data.metadata) || {}),
     service: normalizeService(data.service),
@@ -655,7 +768,10 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
 
   const clientId = normalizeOptionalId(data.clientId, 'ID клиента');
   if (clientId) {
-    const client = await db.User.findByPk(clientId, { transaction });
+    const client = await db.User.findOne({
+      transaction,
+      where: organizationTenantWhere(context, { id: clientId }),
+    });
     if (!client) throw appError('Клиент списания не найден', 404);
     assertEntityMatchesTrainingScope(client, trainingMarker, 'Клиент списания');
     const raw = client.toJSON ? client.toJSON() : client;
@@ -667,7 +783,17 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
 
   const bookingId = normalizeOptionalId(data.bookingId, 'ID бронирования');
   if (bookingId) {
-    const booking = await db.Booking.findByPk(bookingId, { transaction });
+    const context = isTenantBookingsCourtsEnabled()
+      ? await resolveBookingAccessContext(tenant, { transaction })
+      : null;
+    const booking = await db.Booking.findOne({
+      transaction,
+      where: bookingTenantWhere(
+        context,
+        { id: bookingId },
+        { force: Boolean(context) },
+      ),
+    });
     if (!booking) throw appError('Бронирование списания не найдено', 404);
     assertEntityMatchesTrainingScope(booking, trainingMarker, 'Бронирование списания');
     const raw = booking.toJSON ? booking.toJSON() : booking;
@@ -678,7 +804,10 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
 
   const visitId = normalizeOptionalId(data.visitId, 'ID визита');
   if (visitId) {
-    const visit = await db.Visit.findByPk(visitId, { transaction });
+    const visit = await db.Visit.findOne({
+      transaction,
+      where: clubTenantWhere(context, { id: visitId }),
+    });
     if (!visit) throw appError('Визит списания не найден', 404);
     assertEntityMatchesTrainingScope(visit, trainingMarker, 'Визит списания');
     const raw = visit.toJSON ? visit.toJSON() : visit;
@@ -691,8 +820,15 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
     'ID тренерской заметки',
   );
   if (trainingNoteId) {
-    const trainingNote = await db.TrainingNote.findByPk(trainingNoteId, {
+    const trainingContext = await resolveTrainingOperationsAccessContext(tenant, {
       transaction,
+    });
+    const trainingNote = await db.TrainingNote.findOne({
+      transaction,
+      where: trainingOperationsTenantWhere(
+        trainingContext,
+        { id: trainingNoteId },
+      ),
     });
     if (!trainingNote) throw appError('Тренерская заметка списания не найдена', 404);
     assertEntityMatchesTrainingScope(
@@ -708,7 +844,13 @@ async function buildSpendingMetadata(data, trainingMarker, transaction) {
   return metadata;
 }
 
-async function createFinanceIncomeForDeposit(data, account, trainingMarker, transaction) {
+async function createFinanceIncomeForDeposit(
+  data,
+  account,
+  trainingMarker,
+  transaction,
+  context = null,
+) {
   const amount = normalizeMoney(data.amount);
   const date = normalizeDateOnly(data.date);
   const categoryName = normalizeIncomeCategory(data.category);
@@ -726,6 +868,7 @@ async function createFinanceIncomeForDeposit(data, account, trainingMarker, tran
 
   const finance = await db.Finance.create(
     {
+      ...clubTenantValues(context),
       amount,
       category: category.name,
       comment: normalizeOptionalText(data.comment),
@@ -751,8 +894,17 @@ async function createFinanceIncomeForDeposit(data, account, trainingMarker, tran
   return finance;
 }
 
-function buildDepositPayload({ client, data, finance, account, trainingMarker, linked }) {
+function buildDepositPayload({
+  account,
+  client,
+  context,
+  data,
+  finance,
+  linked,
+  trainingMarker,
+}) {
   return {
+    ...clubTenantValues(context),
     amount: normalizeMoney(finance.amount),
     category: finance.category || normalizeOptionalText(data.category),
     comment: normalizeOptionalText(data.comment) || finance.comment || null,
@@ -770,27 +922,49 @@ function buildDepositPayload({ client, data, finance, account, trainingMarker, l
   };
 }
 
-async function createDeposit(corporateClientId, data = {}, account = null) {
+async function createDeposit(
+  corporateClientId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   const result = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.CorporateLedgerEntry,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
     const client = await findCorporateClient(corporateClientId, {
+      context,
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, account);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     if (client.status !== 'active') {
       throw appError('Пополнение доступно только для активной компании', 409);
     }
 
-    const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+    const trainingMarker = await onboardingService.getTrainingDataMarker(
+      authorityActor,
+      tenant,
+    );
     const linked = Boolean(data.financeId);
     const finance = linked
-      ? await loadLinkedFinance(data, trainingMarker, transaction)
-      : await createFinanceIncomeForDeposit(data, account, trainingMarker, transaction);
+      ? await loadLinkedFinance(data, trainingMarker, transaction, context)
+      : await createFinanceIncomeForDeposit(
+        data,
+        authorityActor,
+        trainingMarker,
+        transaction,
+        context,
+      );
 
     const entry = await db.CorporateLedgerEntry.create(
       buildDepositPayload({
-        account,
+        account: authorityActor,
         client,
+        context,
         data,
         finance,
         linked,
@@ -803,7 +977,7 @@ async function createDeposit(corporateClientId, data = {}, account = null) {
       action: linked ? 'corporate_deposit.link' : 'corporate_deposit.create',
       entityType: 'corporate_ledger_entry',
       entityId: entry.id,
-      account,
+      account: authorityActor,
       date: entry.date,
       reason: data.comment,
       afterData: entry.toJSON ? entry.toJSON() : entry,
@@ -825,34 +999,57 @@ async function createDeposit(corporateClientId, data = {}, account = null) {
               type: finance.type,
             },
           },
+      context,
+      actor: authorityActor,
     };
   });
 
   if (result.financeEvent) {
     await onboardingService.recordEventSafe(
-      account,
+      result.actor,
       'finance.record_created',
-      result.financeEvent,
+      { ...result.financeEvent, tenant },
     );
   }
 
-  const ledgerEntry = await db.CorporateLedgerEntry.findByPk(result.entryId, {
+  const ledgerEntry = await findClubRecordByPk(
+    db.CorporateLedgerEntry,
+    result.entryId,
+    {
     include: buildLedgerInclude(),
-  });
+    },
+    result.context,
+  );
 
   return {
-    corporateClient: await getCorporateClient(result.clientId, account),
+    corporateClient: await getCorporateClient(
+      result.clientId,
+      result.actor,
+      tenant,
+    ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
 }
 
-async function createSpending(corporateClientId, data = {}, account = null) {
+async function createSpending(
+  corporateClientId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   const result = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.CorporateLedgerEntry,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
     const client = await findCorporateClient(corporateClientId, {
+      context,
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, account);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     if (client.status !== 'active') {
       throw appError('Списание доступно только для активной компании', 409);
     }
@@ -860,20 +1057,32 @@ async function createSpending(corporateClientId, data = {}, account = null) {
     const amount = normalizeMoney(data.amount);
     const date = normalizeDateOnly(data.date);
     await payrollService.assertDateEditable(date, 'корпоративное списание');
-    const balance = (await getBalancesForClientIds([client.id], transaction)).get(client.id) || 0;
+    const balance = (
+      await getBalancesForClientIds([client.id], transaction, context)
+    ).get(client.id) || 0;
     if (amount > balance) {
       throw appError('Недостаточно средств на корпоративном балансе', 409);
     }
 
-    const trainingMarker = await onboardingService.getTrainingDataMarker(account);
-    const metadata = await buildSpendingMetadata(data, trainingMarker, transaction);
+    const trainingMarker = await onboardingService.getTrainingDataMarker(
+      authorityActor,
+      tenant,
+    );
+    const metadata = await buildSpendingMetadata(
+      data,
+      trainingMarker,
+      transaction,
+      tenant,
+      context,
+    );
     const entry = await db.CorporateLedgerEntry.create(
       {
+        ...clubTenantValues(context),
         amount,
         category: metadata.service,
         comment: normalizeOptionalText(data.comment),
         corporateClientId: client.id,
-        createdByAccountId: account?.id || null,
+        createdByAccountId: authorityActor?.id || null,
         date,
         financeCreatedByLedger: false,
         financeId: null,
@@ -889,7 +1098,7 @@ async function createSpending(corporateClientId, data = {}, account = null) {
       action: 'corporate_spending.create',
       entityType: 'corporate_ledger_entry',
       entityId: entry.id,
-      account,
+      account: authorityActor,
       date,
       reason: data.comment,
       afterData: entry.toJSON ? entry.toJSON() : entry,
@@ -899,15 +1108,26 @@ async function createSpending(corporateClientId, data = {}, account = null) {
     return {
       clientId: client.id,
       entryId: entry.id,
+      context,
+      actor: authorityActor,
     };
   });
 
-  const ledgerEntry = await db.CorporateLedgerEntry.findByPk(result.entryId, {
+  const ledgerEntry = await findClubRecordByPk(
+    db.CorporateLedgerEntry,
+    result.entryId,
+    {
     include: buildLedgerInclude(),
-  });
+    },
+    result.context,
+  );
 
   return {
-    corporateClient: await getCorporateClient(result.clientId, account),
+    corporateClient: await getCorporateClient(
+      result.clientId,
+      result.actor,
+      tenant,
+    ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
 }
@@ -931,10 +1151,10 @@ function normalizeLedgerFilters(query = {}) {
   };
 }
 
-function buildLedgerWhere(clientId, filters, options = {}) {
-  const where = {
+function buildLedgerWhere(clientId, filters, options = {}, context = null) {
+  const where = clubTenantWhere(context, {
     corporateClientId: clientId,
-  };
+  });
   const status = options.activeOnly ? 'active' : filters.status;
   if (status && status !== 'all') where.status = status;
   if (options.includeType !== false && filters.type !== 'all') {
@@ -1020,11 +1240,21 @@ function buildLedgerSummary(entries, client, filters) {
   };
 }
 
-async function listLedgerEntries(corporateClientId, query = {}, account = null) {
-  const client = await findCorporateClient(corporateClientId);
-  await assertCorporateClientInScope(client, account);
+async function listLedgerEntries(
+  corporateClientId,
+  query = {},
+  account = null,
+  tenant = null,
+) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateLedgerEntry,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const client = await findCorporateClient(corporateClientId, { context });
+  await assertCorporateClientInScope(client, authorityActor, tenant);
   const filters = normalizeLedgerFilters(query);
-  const where = buildLedgerWhere(client.id, filters);
+  const where = buildLedgerWhere(client.id, filters, {}, context);
 
   const rows = await db.CorporateLedgerEntry.findAll({
     where,
@@ -1037,7 +1267,7 @@ async function listLedgerEntries(corporateClientId, query = {}, account = null) 
   const balanceWhere = buildLedgerWhere(client.id, filters, {
     activeOnly: true,
     includeType: false,
-  });
+  }, context);
   const balanceRows = await db.CorporateLedgerEntry.findAll({
     where: balanceWhere,
     order: [
@@ -1046,7 +1276,7 @@ async function listLedgerEntries(corporateClientId, query = {}, account = null) 
     ],
   });
   const runningBalances = new Map();
-  let balance = await getOpeningBalance(client.id, query.from, null);
+  let balance = await getOpeningBalance(client.id, query.from, null, context);
   balanceRows.forEach((entry) => {
     const raw = entry.toJSON ? entry.toJSON() : entry;
     balance = Number((balance + toSignedAmount(raw)).toFixed(2));
@@ -1064,10 +1294,15 @@ async function listLedgerEntries(corporateClientId, query = {}, account = null) 
   }).filter((entry) => matchesLedgerTextFilters(entry, filters));
 }
 
-async function getLedgerDetails(corporateClientId, query = {}, account = null) {
+async function getLedgerDetails(
+  corporateClientId,
+  query = {},
+  account = null,
+  tenant = null,
+) {
   const [client, entries] = await Promise.all([
-    getCorporateClient(corporateClientId, account),
-    listLedgerEntries(corporateClientId, query, account),
+    getCorporateClient(corporateClientId, account, tenant),
+    listLedgerEntries(corporateClientId, query, account, tenant),
   ]);
   const filters = normalizeLedgerFilters(query);
   return {
@@ -1079,19 +1314,32 @@ async function getLedgerDetails(corporateClientId, query = {}, account = null) {
   };
 }
 
-async function cancelDeposit(corporateClientId, entryId, data = {}, account = null) {
+async function cancelDeposit(
+  corporateClientId,
+  entryId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   const result = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.CorporateLedgerEntry,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
     const client = await findCorporateClient(corporateClientId, {
+      context,
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, account);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     const entry = await db.CorporateLedgerEntry.findOne({
-      where: {
+      where: clubTenantWhere(context, {
         corporateClientId: client.id,
         id: normalizeId(entryId, 'ID пополнения'),
         type: 'deposit',
-      },
+      }),
       include: buildLedgerInclude(),
       transaction,
       lock: transaction?.LOCK?.UPDATE,
@@ -1106,7 +1354,7 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
     await entry.update(
       {
         canceledAt: new Date(),
-        canceledByAccountId: account?.id || null,
+        canceledByAccountId: authorityActor?.id || null,
         cancelReason: normalizeOptionalText(data.reason),
         status: 'canceled',
       },
@@ -1114,10 +1362,10 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
     );
 
     if (entry.financeId && entry.financeCreatedByLedger) {
-      const finance = await db.Finance.findByPk(entry.financeId, {
+      const finance = await findClubRecordByPk(db.Finance, entry.financeId, {
         transaction,
         lock: transaction?.LOCK?.UPDATE,
-      });
+      }, context);
       if (finance) {
         const financeBefore = finance.toJSON ? finance.toJSON() : { ...finance };
         await finance.destroy({ transaction });
@@ -1125,7 +1373,7 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
           action: 'corporate_deposit.finance_deleted',
           entityType: 'finance',
           entityId: finance.id,
-          account,
+          account: authorityActor,
           date: financeBefore.date,
           reason: data.reason,
           beforeData: financeBefore,
@@ -1138,7 +1386,7 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
       action: 'corporate_deposit.cancel',
       entityType: 'corporate_ledger_entry',
       entityId: entry.id,
-      account,
+      account: authorityActor,
       date: entry.date,
       reason: data.reason,
       beforeData,
@@ -1149,32 +1397,56 @@ async function cancelDeposit(corporateClientId, entryId, data = {}, account = nu
     return {
       clientId: client.id,
       entryId: entry.id,
+      actor: authorityActor,
+      context,
     };
   });
 
-  const ledgerEntry = await db.CorporateLedgerEntry.findByPk(result.entryId, {
+  const ledgerEntry = await findClubRecordByPk(
+    db.CorporateLedgerEntry,
+    result.entryId,
+    {
     include: buildLedgerInclude(),
-  });
+    },
+    result.context,
+  );
 
   return {
-    corporateClient: await getCorporateClient(result.clientId, account),
+    corporateClient: await getCorporateClient(
+      result.clientId,
+      result.actor,
+      tenant,
+    ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
 }
 
-async function reverseSpending(corporateClientId, entryId, data = {}, account = null) {
+async function reverseSpending(
+  corporateClientId,
+  entryId,
+  data = {},
+  account = null,
+  tenant = null,
+) {
   const result = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientMoneyAccessContextForModel(
+      tenant,
+      db.CorporateLedgerEntry,
+      { lock: true, transaction },
+    );
+    const authorityActor = bindClientMoneyActor(account, context);
     const client = await findCorporateClient(corporateClientId, {
+      context,
       transaction,
       lock: transaction?.LOCK?.UPDATE,
     });
-    await assertCorporateClientInScope(client, account);
+    await assertCorporateClientInScope(client, authorityActor, tenant);
     const entry = await db.CorporateLedgerEntry.findOne({
-      where: {
+      where: clubTenantWhere(context, {
         corporateClientId: client.id,
         id: normalizeId(entryId, 'ID списания'),
         type: 'spending',
-      },
+      }),
       include: buildLedgerInclude(),
       transaction,
       lock: transaction?.LOCK?.UPDATE,
@@ -1189,7 +1461,7 @@ async function reverseSpending(corporateClientId, entryId, data = {}, account = 
     await entry.update(
       {
         canceledAt: new Date(),
-        canceledByAccountId: account?.id || null,
+        canceledByAccountId: authorityActor?.id || null,
         cancelReason: normalizeOptionalText(data.reason),
         status: 'canceled',
       },
@@ -1200,7 +1472,7 @@ async function reverseSpending(corporateClientId, entryId, data = {}, account = 
       action: 'corporate_spending.reverse',
       entityType: 'corporate_ledger_entry',
       entityId: entry.id,
-      account,
+      account: authorityActor,
       date: entry.date,
       reason: data.reason,
       beforeData,
@@ -1211,15 +1483,26 @@ async function reverseSpending(corporateClientId, entryId, data = {}, account = 
     return {
       clientId: client.id,
       entryId: entry.id,
+      actor: authorityActor,
+      context,
     };
   });
 
-  const ledgerEntry = await db.CorporateLedgerEntry.findByPk(result.entryId, {
+  const ledgerEntry = await findClubRecordByPk(
+    db.CorporateLedgerEntry,
+    result.entryId,
+    {
     include: buildLedgerInclude(),
-  });
+    },
+    result.context,
+  );
 
   return {
-    corporateClient: await getCorporateClient(result.clientId, account),
+    corporateClient: await getCorporateClient(
+      result.clientId,
+      result.actor,
+      tenant,
+    ),
     ledgerEntry: serializeLedgerEntry(ledgerEntry),
   };
 }
@@ -1278,16 +1561,35 @@ function buildLedgerExport(rows, client, query = {}) {
   return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
-async function exportLedgerDetails(corporateClientId, query = {}, account = null) {
-  const client = await getCorporateClient(corporateClientId, account);
+async function exportLedgerDetails(
+  corporateClientId,
+  query = {},
+  account = null,
+  tenant = null,
+) {
+  const context = await resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateLedgerEntry,
+  );
+  const authorityActor = bindClientMoneyActor(account, context);
+  const client = await getCorporateClient(
+    corporateClientId,
+    authorityActor,
+    tenant,
+  );
   const exportQuery = { ...query, status: query.status || 'active' };
-  const rows = await listLedgerEntries(corporateClientId, exportQuery, account);
+  const rows = await listLedgerEntries(
+    corporateClientId,
+    exportQuery,
+    authorityActor,
+    tenant,
+  );
 
   await payrollService.recordChange({
     action: 'corporate_ledger.export',
     entityType: 'corporate_client',
     entityId: client.id,
-    account,
+    account: authorityActor,
     fromDate: exportQuery.from || null,
     toDate: exportQuery.to || null,
     afterData: {
@@ -1296,8 +1598,9 @@ async function exportLedgerDetails(corporateClientId, query = {}, account = null
     },
   });
 
-  await onboardingService.recordEventSafe(account, 'report.exported', {
+  await onboardingService.recordEventSafe(authorityActor, 'report.exported', {
     entityType: 'corporate_ledger',
+    tenant,
     payload: {
       corporateClientId: client.id,
       fromDate: exportQuery.from || null,

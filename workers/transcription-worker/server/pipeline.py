@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import re
 import shutil
@@ -1206,10 +1207,33 @@ class PipelineRunner:
         self.config = config
 
     def run(self, job: dict[str, Any], audio_reference: dict[str, Any], emit: Emit) -> dict[str, Any]:
-        temp_dir_path = Path(tempfile.mkdtemp(prefix=f"crm-transcription-{job.get('id', 'job')}-", dir=self.config.temp_root))
+        tenant = job.get("tenant") or {}
+        lease = job.get("_lease") or {}
+
+        def opaque(value: Any, prefix: str) -> str:
+            text = str(value or "")
+            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{7,80}", text):
+                return text
+            return f"{prefix}-{hashlib.sha256(text.encode('utf-8')).hexdigest()[:24]}"
+
+        temp_root = Path(self.config.temp_root).resolve() / "setly-transcription"
+        attempt_parent = (
+            temp_root
+            / opaque(tenant.get("organizationKey"), "org")
+            / opaque(tenant.get("clubKey"), "club")
+        ).resolve()
+        attempt_parent.mkdir(parents=True, exist_ok=True)
+        temp_dir_path = Path(
+            tempfile.mkdtemp(
+                prefix=f"{opaque(lease.get('claimId') or job.get('id'), 'attempt')}-",
+                dir=attempt_parent,
+            )
+        ).resolve()
+        if temp_root not in temp_dir_path.parents:
+            raise PipelineError("Unsafe transcription attempt namespace")
         try:
             audio_path = temp_dir_path / "recording.audio"
-            emit("downloading_audio", "Downloading recording", {"target": str(audio_path)})
+            emit("downloading_audio", "Downloading recording", None)
             download = download_audio(audio_reference["audio"].get("downloadUrl"), audio_path, self.config)
             emit("downloading_audio", "Recording downloaded", {"bytes": download["bytes"], "contentType": download.get("contentType")})
 

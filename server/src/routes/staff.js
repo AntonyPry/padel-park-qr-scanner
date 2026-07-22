@@ -10,6 +10,7 @@ const viewStaff = requireRole(...ACCESS_MATRIX.staffView);
 const manageStaff = requireRole(...ACCESS_MATRIX.staffManage);
 
 router.get('/staff', viewStaff, validate({ query: apiSchemas.staff.listQuery }), staffController.getAll);
+router.get('/staff/:id', viewStaff, validate({ params: apiSchemas.staff.params }), staffController.getById);
 router.post('/staff', manageStaff, validate({ body: apiSchemas.staff.body }), staffController.create);
 router.put('/staff/:id', manageStaff, validate({ body: apiSchemas.staff.body, params: apiSchemas.staff.params }), staffController.update);
 router.post('/staff/:id/restore', manageStaff, validate({ params: apiSchemas.staff.params }), staffController.restore);

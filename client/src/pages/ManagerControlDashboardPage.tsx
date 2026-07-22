@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { queryKeys } from '@/api/query-keys';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
@@ -276,7 +277,7 @@ export default function ManagerControlDashboardPage() {
     [date, expiringDays, lowBalanceThreshold],
   );
   const dashboardQuery = useQuery({
-    queryKey: ['manager-control-dashboard', filters],
+    queryKey: queryKeys.managerControl.detail(filters),
     queryFn: () => fetchDashboard(filters),
   });
   const dashboard = dashboardQuery.data;

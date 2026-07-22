@@ -1,12 +1,14 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const financeService = require('../../src/services/finance.service');
 const onboardingService = require('../../src/services/onboarding.service');
 const payrollService = require('../../src/services/payroll.service');
 const shiftCashService = require('../../src/services/shift-cash.service');
 const attachmentStorage = require('../../src/services/shift-cash-attachments');
+const { buildTenantStorageKey, checksumBuffer } = require('../../src/storage/tenant-storage');
 const migration = require('../../migrations/20260714100000-create-shift-cash');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalModels = {
   Category: db.Category,
@@ -23,6 +25,11 @@ const originalFunctions = {
   recordEventSafe: onboardingService.recordEventSafe,
   storeAttachment: attachmentStorage.storeAttachment,
 };
+let restoreSingleton;
+
+beforeEach(() => {
+  restoreSingleton = mockExactSingletonDefault(db);
+});
 
 afterEach(() => {
   Object.assign(db, originalModels);
@@ -31,6 +38,7 @@ afterEach(() => {
   onboardingService.getTrainingDataMarker = originalFunctions.getTrainingDataMarker;
   onboardingService.recordEventSafe = originalFunctions.recordEventSafe;
   payrollService.recordChange = originalFunctions.recordChange;
+  restoreSingleton();
 });
 
 function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {
@@ -52,8 +60,6 @@ function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {
   const expense = {
     amount: 900,
     attachments: [],
-    categoryId: 9,
-    categoryName: 'Хозяйственные расходы',
     createdByAccountId: 7,
     description: 'Фото чека',
     financeId: 55,
@@ -71,8 +77,6 @@ function mockAttachmentUpload({ storeError = null, updateError = null } = {}) {
       return {
         amount: this.amount,
         attachments: this.attachments,
-        categoryId: this.categoryId,
-        categoryName: this.categoryName,
         createdByAccountId: this.createdByAccountId,
         description: this.description,
         financeId: this.financeId,
@@ -141,6 +145,44 @@ test('cash closing requires a comment when fact differs from expectation', () =>
   assert.doesNotThrow(() => shiftCashService.assertVarianceComment(0, ''));
 });
 
+test('administrator cash summary hides reconciliation while manager keeps it', () => {
+  const summary = {
+    activeExpensesTotal: 900,
+    cashSales: 12500,
+    expectedClosingCash: 45450,
+    manualAdjustments: 0,
+    session: {
+      cashSalesSnapshot: 12500,
+      expectedClosingCash: 45450,
+      expensesSnapshot: [{ amount: 900 }],
+      manualAdjustmentsSnapshot: 0,
+      variance: -500,
+    },
+  };
+
+  assert.equal(
+    shiftCashService.hideReconciliationFromAdministrator(summary, { role: 'manager' }),
+    summary,
+  );
+  assert.deepEqual(
+    shiftCashService.hideReconciliationFromAdministrator(summary, { role: 'admin' }),
+    {
+      ...summary,
+      cashSales: null,
+      expectedClosingCash: null,
+      manualAdjustments: null,
+      session: {
+        ...summary.session,
+        cashSalesSnapshot: null,
+        expectedClosingCash: null,
+        expensesSnapshot: null,
+        manualAdjustmentsSnapshot: null,
+        variance: null,
+      },
+    },
+  );
+});
+
 test('expense correction permissions keep financeManage separate from shift cash', () => {
   const activeShift = { status: 'active' };
   const closedShift = { status: 'closed' };
@@ -178,9 +220,44 @@ test('training cash contexts are isolated per account and role', () => {
       isTraining: true,
       trainingAccountId: 17,
       trainingRole: 'admin',
+      trainingSessionId: 'session-17-admin',
     }),
-    'training:17:admin',
+    'training:session-17-admin',
   );
+});
+
+test('cash data context reuses the active write transaction for onboarding lookup', async () => {
+  const calls = [];
+  const transaction = { id: 'cash-write' };
+  onboardingService.getTrainingDataMarker = async (account, tenant, options) => {
+    calls.push({ account, options, tenant });
+    return {
+      isTraining: false,
+      trainingAccountId: null,
+      trainingRole: null,
+      trainingSessionId: null,
+    };
+  };
+
+  assert.deepEqual(
+    await shiftCashService.__testing.getDataContext(
+      { id: 7, role: 'admin' },
+      { clubId: 1 },
+      { lock: true, transaction },
+    ),
+    {
+      contextKey: 'production',
+      marker: {
+        isTraining: false,
+        trainingAccountId: null,
+        trainingRole: null,
+        trainingSessionId: null,
+      },
+    },
+  );
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.transaction, transaction);
+  assert.equal(calls[0].options.lock, true);
 });
 
 test('account includes use independent nested Staff aliases', () => {
@@ -216,11 +293,6 @@ test('linked shift cash expense creates an expense Finance record for P&L', asyn
   const history = [];
   const transaction = { id: 'shift-cash-finance' };
   db.PayrollPeriod = { async findOne() { return null; } };
-  db.Category = {
-    async findOne() {
-      return { id: 9, name: 'Хозяйственные расходы', type: 'expense' };
-    },
-  };
   db.Finance = {
     async create(payload, options) {
       created.push({ options, payload });
@@ -240,7 +312,7 @@ test('linked shift cash expense creates an expense Finance record for P&L', asyn
   const result = await financeService.createLinkedExpenseRecord(
     {
       amount: 900,
-      categoryId: 9,
+      category: shiftCashService.SHIFT_CASH_EXPENSE_CATEGORY,
       comment: 'Касса смены #12: сборка подставки',
       date: '2026-07-14',
     },
@@ -258,7 +330,10 @@ test('linked shift cash expense creates an expense Finance record for P&L', asyn
   assert.equal(result.record.id, 55);
   assert.equal(created[0].payload.type, 'expense');
   assert.equal(created[0].payload.amount, 900);
-  assert.equal(created[0].payload.category, 'Хозяйственные расходы');
+  assert.equal(
+    created[0].payload.category,
+    shiftCashService.SHIFT_CASH_EXPENSE_CATEGORY,
+  );
   assert.equal(created[0].options.transaction, transaction);
   assert.equal(history[0].payload.action, 'shift_cash_expense.finance_created');
 });
@@ -276,6 +351,44 @@ test('attachment storage rejects unsupported files before writing', async () => 
         { id: 7 },
       ),
     /только JPEG, PNG, WEBP, GIF или HEIC/,
+  );
+});
+
+test('shift cash attachment metadata is immutable across tenant and parent identity', () => {
+  const expenseId = 91;
+  const fileId = '8da05cba-94a5-4d77-b673-80f0a84918dc';
+  const tenant = { clubId: 20, organizationId: 10 };
+  const attachment = {
+    checksumSha256: checksumBuffer(Buffer.from('receipt')),
+    clubId: tenant.clubId,
+    domain: attachmentStorage.ATTACHMENT_STORAGE_DOMAIN,
+    id: fileId,
+    mimeType: 'image/png',
+    organizationId: tenant.organizationId,
+    record: { expenseId, fileId },
+    storageKey: buildTenantStorageKey({
+      clubId: tenant.clubId,
+      domain: attachmentStorage.ATTACHMENT_STORAGE_DOMAIN,
+      fileId,
+      organizationId: tenant.organizationId,
+      recordId: `expense:${expenseId}`,
+    }),
+    storageSchemaVersion: attachmentStorage.ATTACHMENT_STORAGE_SCHEMA_VERSION,
+  };
+
+  assert.doesNotThrow(() =>
+    attachmentStorage.assertTenantAttachmentMetadata(attachment, expenseId, tenant),
+  );
+  assert.throws(
+    () => attachmentStorage.assertTenantAttachmentMetadata(attachment, expenseId, {
+      clubId: 21,
+      organizationId: 10,
+    }),
+    /Фото не найдено/,
+  );
+  assert.throws(
+    () => attachmentStorage.assertTenantAttachmentMetadata(attachment, expenseId + 1, tenant),
+    /Фото не найдено/,
   );
 });
 
@@ -320,6 +433,7 @@ test('successful attachment upload emits exactly one backend onboarding checkpoi
       options: {
         entityId: 'attachment-1',
         entityType: 'shift_cash_attachment',
+        tenant: null,
         payload: {
           attachmentId: 'attachment-1',
           expenseId: 91,
@@ -355,7 +469,12 @@ test('shift cash migration creates indexed session and expense tables and rolls 
 
   await migration.up(queryInterface, Sequelize);
   assert.equal(operations[0][1], 'ShiftCashSessions');
-  assert.equal(operations.some((item) => item[1] === 'ShiftCashExpenses'), true);
+  const expenseTable = operations.find(
+    (item) => item[0] === 'create' && item[1] === 'ShiftCashExpenses',
+  );
+  assert.ok(expenseTable);
+  assert.equal(expenseTable[2].categoryId, undefined);
+  assert.equal(expenseTable[2].categoryName, undefined);
   assert.equal(
     operations.some((item) => item[3]?.name === 'shift_cash_expenses_finance_idx'),
     true,
@@ -378,6 +497,8 @@ test('shift cash models expose required links and soft-cancel fields', () => {
   assert.ok(expenseAttributes.status);
   assert.ok(expenseAttributes.cancelReason);
   assert.ok(expenseAttributes.attachments);
+  assert.equal(expenseAttributes.categoryId, undefined);
+  assert.equal(expenseAttributes.categoryName, undefined);
   assert.ok(sessionAttributes.openingBanknotes);
   assert.ok(sessionAttributes.closingBanknotes);
   assert.ok(sessionAttributes.expectedClosingCash);

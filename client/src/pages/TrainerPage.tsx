@@ -89,7 +89,7 @@ import { listMethodologyExercises } from '@/api/methodology';
 import { queryKeys } from '@/api/query-keys';
 import { apiFetch } from '@/lib/api';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth, useAuthorizationRole } from '@/lib/useAuth';
 
 type TrainingLevel = 'D' | 'D+' | 'C' | 'C+' | 'B' | 'B+' | 'A';
 
@@ -282,6 +282,7 @@ function getPlanSortTime(plan: TrainingPlan) {
 
 export default function TrainerPage() {
   const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const [clients, setClients] = useState<Client[]>([]);
   const [clientsError, setClientsError] = useState<string | null>(null);
   const [clientsLoading, setClientsLoading] = useState(true);
@@ -559,10 +560,10 @@ export default function TrainerPage() {
 
   const canChangeNote = useCallback(
     (note: TrainingNote) => {
-      if (account?.role === 'owner' || account?.role === 'manager') return true;
-      return account?.role === 'trainer' && note.trainer?.id === account.id;
+      if (clubRole === 'owner' || clubRole === 'manager') return true;
+      return clubRole === 'trainer' && note.trainer?.id === account?.id;
     },
-    [account?.id, account?.role],
+    [account?.id, clubRole],
   );
 
   const resetForm = () => {

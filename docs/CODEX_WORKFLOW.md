@@ -1,311 +1,216 @@
-# Как эффективно работать с Codex в этом проекте
+# Как работать с Codex в Setly
 
-Этот документ - рабочая схема для нескольких Codex-чатов, worktree и релизного процесса CRM.
+Этот документ описывает технический цикл разработки. Активная организационная
+модель и границы ролей закреплены в
+[`CODEX_ORGANIZATION.md`](./CODEX_ORGANIZATION.md).
 
-## Главная идея
+## Активная модель
 
-Не держи правила в памяти отдельных чатов. Общие правила живут в `AGENTS.md`, а процессные детали - в документах `docs/`.
+Setly использует один штаб, одного тимлида интеграции, три универсальных
+диспетчерских потока, три закрепленных QA и временные Feature-чаты.
 
-Когда появляется новое правило, лучше обновить проектный документ один раз, чем копировать текст в каждый новый чат. В новый чат достаточно дать роль, worktree и задачу.
+- Штаб обсуждает стратегию и неоднозначные продуктовые вопросы.
+- Тимлид назначает эпики, интегрирует их, владеет `main`, rollout и rollback.
+- Диспетчер ведет один или несколько согласованных эпиков в своем потоке.
+- Feature-чат реализует одну capability и проводит прямой User Preview.
+- Закрепленный QA владеет independent test plan и verdict.
+- Instructions/onboarding service подключается пакетно при реальном impact.
 
-Если новый чат стартует прямо внутри `worktrees/crm-features` или `worktrees/crm-instructions` и ведет себя так, будто не знает общих правил, первой строкой попроси:
+Диспетчеры и QA не привязаны к доменам. После завершения эпика поток получает
+следующий приоритетный эпик из любого домена.
 
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, docs/CODEX_WORKFLOW.md, codex-vault/00_INDEX.md, codex-vault/06_PROJECT_MAP.md и codex-vault/07_DOMAIN_INVENTORY.md, затем работай дальше.
+## Старт чата
+
+Название implementation-чата начинается с `Feature`:
+
+- `Feature N — Короткое название` для среза эпика;
+- `Feature — Короткое название` для самостоятельной capability.
+
+Перед работой Feature-чат читает:
+
+```text
+/Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md
+/Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_ORGANIZATION.md
+/Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md
+/Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md
+/Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md
+/Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md
 ```
 
-## Обязательный старт нового чата
+Затем проверяет `git status --short --branch`, текущую ветку,
+`docs/SPRINT_STATUS.md` и релевантный domain-файл vault. Для телефонии,
+транскрибации и ASR дополнительно читает `docs/TRANSCRIBER_SERVER.md` и
+`codex-vault/epics/telephony-transcription.md`.
 
-Сразу после создания назови feature-чат по единому правилу: `Feature N — Короткое название` для среза эпика или `Feature — Короткое название` для самостоятельной фичи. Слово `Feature` всегда должно стоять первым.
+## Декомпозиция
 
-Для feature-чата всегда начинай примерно так:
+Тимлид передает диспетчеру эпик с целью, product boundaries и зависимостями.
+Диспетчер создает Feature-чаты не под отдельные файлы или кнопки, а под
+законченные capabilities.
 
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
+Хороший Feature scope содержит:
 
-Перед дизайном фичи найди релевантный файл в /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/domains/ и проверь существующие модели/маршруты/сервисы/страницы через rg. В начале ответа коротко скажи, что уже существует и что именно расширяешь.
+- пользовательский или технический результат;
+- `in scope` и `out of scope`;
+- affected contracts и shared-foundation boundaries;
+- acceptance criteria;
+- risk class;
+- worktree/branch;
+- expected handoff и onboarding impact.
 
-Работай в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-features на ветке codex/crm-features.
+У одного диспетчера обычно не больше трех активных Feature-чатов. Два изменения
+одного auth/schema/tenant/money foundation не выполняются параллельно без
+явного integration plan.
 
-Сначала проверь git status, текущую ветку и docs/SPRINT_STATUS.md.
+## Feature-цикл
 
-Фича: ...
+1. Feature-чат делает discovery существующих models/services/routes/pages,
+   permissions и generated contracts.
+2. Реализует только свой scope в отдельной ветке/worktree.
+3. Пишет или обновляет regression tests для измененного поведения.
+4. Запускает минимальные developer checks, нужные для разработки.
+5. Для user-facing изменения запускает живой проект и проводит User Preview.
+6. После пользовательского `ок` делает обычный commit/non-force push в свою
+   feature-ветку.
+7. Возвращает диспетчеру exact SHA, concise handoff, риски и onboarding impact.
+8. Диспетчер передает candidate своему закрепленному QA.
+9. При findings диспетчер возвращает точный fix prompt в тот же Feature-чат.
+10. После green QA диспетчер интегрирует accepted exact SHA в ветку эпика.
 
-Onboarding/instructions в этой ветке не реализуй без отдельного явного запроса. В финале обязательно дай:
-- что изменено;
-- какие проверки прошли;
-- риски/ограничения;
-- как мне открыть и проверить результат локально: frontend URL, backend URL, роль/demo account, manual QA checklist;
-- Existing integration points checked:
-  - domain files:
-  - existing models/services/routes:
-  - frontend pages/api/lib:
-  - permissions:
-  - API contracts/generated client:
-  - onboarding/training mode:
-  - why new code is extension, not duplicate:
-- Onboarding impact:
-  - roles:
-  - scenarios:
-  - routes:
-  - new actions:
-  - checkpoint events:
-  - training data:
-  - instructions/tasks to update:
-```
+Feature-чат не создает QA-чат, не пушит в integration/main и не выполняет deploy.
 
-Для instructions/onboarding-чата после готовой фичи:
+## User Preview
 
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
+User Preview не передается между чатами.
 
-Работай в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-instructions на ветке codex/crm-instructions.
+1. Исходный Feature-чат запускает backend/frontend своего worktree.
+2. Дает пользователю URL, роль/demo account и короткий manual checklist.
+3. Пользователь открывает интерфейс и пишет замечания прямо в Feature-чат.
+4. Feature-чат исправляет их и сохраняет тот же живой preview.
+5. Candidate уходит диспетчеру и QA только после явного пользовательского `ок`.
 
-Фича готова в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-features на ветке codex/crm-features.
+Для navigation, sidebar, routes, tabs, крупных layout/redesign и mobile UX сначала
+проводится ранний `structure preview`. Backend-only, test-only и явно одобренный
+узкий polish повторного User Preview не требуют.
 
-Обнови onboarding/instructions по этому Onboarding impact:
-- roles:
-- scenarios:
-- routes:
-- new actions:
-- checkpoint events:
-- training data:
-- instructions/tasks to update:
+Screenshots не создаются и не прикладываются по умолчанию. Их отсутствие не
+является blocker или finding. Screenshots допустимы по прямому запросу либо для
+внутреннего сравнения/диагностики; внутренние изображения не нужно выгружать в
+handoff без пользы. Реальные screenshots, являющиеся контентом onboarding-урока,
+регулируются отдельно.
 
-Проверь docs/SPRINT_STATUS.md, docs/ONBOARDING_RELEASE_WORKFLOW.md, server/src/onboarding/catalog.js, checkpoint events, training safety и release checklist. Перед финалом прогони релевантные audit/test/build команды или явно скажи, что не удалось прогнать.
-```
-
-Для QA/release review-чата после фичи или пачки фич:
-
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
-
-Проведи подробный QA/release review результата.
-
-Проверяем:
-- feature branch: /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-features, ветка codex/crm-features;
-- instructions branch: /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-instructions, ветка codex/crm-instructions, если onboarding уже обновлялся;
-- исходное ТЗ/acceptance criteria: ...
-- финалы feature/instructions чатов: ...
-
-Сначала не исправляй код, а сделай review:
-- diff и архитектура;
-- миграции и data integrity;
-- API contracts/OpenAPI/generated client;
-- права ролей и trainer-safe данные;
-- tests/build/typecheck/audit;
-- browser QA desktop/mobile;
-- для frontend-нововведений: visual QA desktop и `390px` с реалистичными длинными данными, screenshots, проверкой `document.scrollWidth`, безопасных отступов от краев, console/network/page errors; если БД недоступна, сначала mocked API layout QA, затем DB-backed проверка после восстановления БД;
-- onboarding/release checklist;
-- соответствие исходному ТЗ.
-
-Если найдешь blockers или high severity bugs, перечисли их первыми с файлами/строками и предложи, в какой feature-чат вернуть задачу. Если мелкие проблемы можно безопасно исправить в этом QA-чате, сначала явно скажи, что именно собираешься править.
-
-В финале дай:
-- findings by severity;
-- что проверено командами;
-- что проверено в браузере;
-- что не удалось проверить;
-- release status: blocked / needs fixes / ready for merge;
-- follow-up prompts для нужных чатов.
-- если статус ready for merge/deploy, дай production deploy runbook: git pull, install, migrations, build, pm2 restart/logs, health and smoke.
-```
-
-## Как смотреть результат
-
-Отдельные feature-чаты не заменяют живую проверку продукта. После каждой крупной фичи feature-чат должен запустить проект или дать точные команды/URL для проверки в своем worktree.
-
-## Чистота worktree
-
-`worktrees/crm-features` не должен быть складом старых незакоммиченных правок. После merge/release QA или штаб обязаны привести feature worktree в чистое состояние:
-
-- `git status --short --branch` без modified/untracked файлов;
-- ветка `codex/crm-features` fast-forward до актуального `origin/main`, если все ее изменения уже влиты;
-- remote `origin/codex/crm-features` также обновлен, если эта ветка продолжает использоваться как рабочая;
-- если feature worktree больше не нужен, он удален/pruned.
-
-Если новый feature-chat видит грязный или устаревший `crm-features`, он не должен работать поверх него. Правильный выбор: остановиться и попросить cleanup или создать отдельный feature worktree от `origin/main` под конкретную задачу.
-
-## Transcriber-server handoff
-
-Для задач телефонии, записей звонков, транскрибации или ASR-интеграции новый чат должен дополнительно прочитать:
+Минимальный preview handoff:
 
 ```md
-/Users/antonypry/Documents/padel-park-qr-scanner/docs/TRANSCRIBER_SERVER.md
-/Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/epics/telephony-transcription.md
-```
-
-Текущий infrastructure handoff:
-
-- CRM/VDS WireGuard IP: `10.8.0.1`;
-- Ubuntu laptop/transcriber WireGuard IP: `10.8.0.2`;
-- ASR base URL: `http://10.8.0.2:9000`;
-- ASR endpoint: `POST /asr?task=transcribe&language=...&output=json`;
-- multipart audio field: `audio_file`;
-- laptop service: `transcriber-asr.service`;
-- Docker container: `transcriber-asr`;
-- current ASR model: `small`;
-- remote SSH via VDS jump: `ssh -J root@155.212.163.43 antonypry@10.8.0.2`.
-
-CRM feature-чаты не должны менять WireGuard/Docker/Ubuntu laptop setup без явного запроса. Если `10.8.0.2` недоступен из Codex sandbox, используй mocked ASR для automated QA и оставь real endpoint QA как hardware/network check.
-
-Для design/redesign/UI prototype чатов это обязательный release gate. Такой чат должен:
-
-- запустить проект или прототип и оставить dev server доступным, пока пользователь смотрит результат;
-- дать конкретные URLs, а не только команды;
-- приложить screenshots desktop and mobile `390px`;
-- указать роль/demo account, если это реальная CRM;
-- дать manual QA checklist: какие экраны открыть, что прокликать, на что смотреть;
-- явно написать, если URL/screenshots/browser QA не удалось сделать, и считать это blocker/known risk.
-
-Финал дизайн-чата без живого URL и screenshots недостаточен. Его нужно вернуть на доработку до QA.
-
-Минимальный финальный блок feature-чата:
-
-```md
-Как проверить локально:
-- worktree:
+Как проверить:
 - frontend URL:
 - backend URL:
-- demo account / роль:
+- роль/demo account:
 - что открыть:
 - что прокликать:
-- какие edge cases проверить:
-- screenshots:
+- известные ограничения:
 ```
 
-Для длинной цепочки фич заведи отдельный integration/QA chat. Его задача - быть тем самым "живым проектом", который раньше был в одном большом чате:
+## Ответственность за проверки
 
-- работать в одном стабильном worktree;
-- запускать server/client и держать понятные URL;
-- после каждой feature-фичи принимать handoff;
-- прогонять smoke/browser QA;
-- собирать твои ручные замечания;
-- возвращать точечные fix prompts в нужные feature-чаты;
-- перед merge/deploy делать полный release review.
+Feature-чат пишет regression tests, но QA владеет независимой проверкой. Это не
+означает, что Feature-чат передает заведомо неработающий код: он выполняет только
+минимальные developer checks, необходимые для разработки и preview.
 
-Чаты не общаются друг с другом автоматически. Есть два режима передачи:
+| Этап | Проверки |
+|---|---|
+| Feature implementation | Syntax/changed-file check, нужный unit/regression test, локальный smoke |
+| Feature QA | Independent risk-based acceptance: diff, regression, API/DB/browser/security matrix по риску |
+| Fix/re-QA | Исходный reproducer, новый regression и affected neighbors |
+| Epic integration | SHA, ancestry, scope, conflicts; affected checks только при runtime reconciliation |
+| Release integration | Cross-epic contracts, artifact/build/migration readiness; accepted matrices не повторяются |
+| Production | Backup/guards, health и короткий smoke измененных критичных сценариев |
 
-- вручную: пользователь копирует handoff из feature-чата в integration/QA или instructions-чат;
-- через штаб: пользователь просит coordination chat прочитать/найти нужный thread и отправить туда follow-up prompt через thread tools.
+Запрещено последовательно запускать одинаковый широкий набор в Feature-чате, QA,
+диспетчере, тимлиде и onboarding. Green evidence привязано к exact SHA и
+переиспользуется. Новый commit инвалидирует только затронутый scope.
 
-Пример запроса в штаб:
+Автоматический CI может выполнить общий suite один раз на итоговом release
+candidate. Ручной полный regression нужен только при конкретном сигнале:
+
+- reconciliation изменила runtime-код;
+- несколько эпиков меняют shared foundation;
+- затронуты schema, auth, tenant authority, money или public API contracts;
+- QA не может локализовать системный finding;
+- выпускается самостоятельная high-risk фича.
+
+OpenAPI/generated regeneration запускается только при изменении API contract,
+route manifest, tenant scope или generated consumer. Full lint/build/typecheck не
+повторяется после каждого CSS/copy/test-only fix: достаточно affected checks, а
+нужный итоговый build выполняется владельцем candidate один раз.
+
+DB-backed полный server suite запускается с `--test-concurrency=1`. CI обязан
+поднять test MySQL и применить migrations до server tests.
+
+## QA
+
+Три постоянных QA закреплены за тремя диспетчерами. QA получает короткий handoff:
 
 ```md
-Найди feature thread по методической базе, возьми его последний handoff и отправь в integration/QA thread на ревью.
+QA handoff:
+- dispatcher callback:
+- branch / exact SHA / base:
+- scope and acceptance criteria:
+- risk class:
+- changed contracts:
+- developer checks already green:
+- unresolved leads:
+- User Preview status:
+- Onboarding impact:
 ```
 
-Канонический цикл по одной фиче:
+QA сначала читает diff и evidence, затем выбирает непокрытые проверки. Он не
+начинает с реализации, не проводит User Preview за Feature-чат и не запускает
+полный gate автоматически.
 
-1. В coordination chat обсуждаем новую фичу и декомпозируем ее до одного понятного feature-scope.
-2. Создаем feature-chat для этой фичи. Он реализует только свой scope и возвращает `QA handoff` + `Onboarding impact`.
-3. Передаем `QA handoff` в integration/QA chat. Там уже запущен проект, есть URL и manual QA checklist.
-4. Пользователь кликает CRM руками и отправляет замечания в integration/QA chat.
-5. Если QA находит проблемы, он формирует точный fix prompt для исходного feature-chat. Фиксы возвращаются в тот же feature-chat.
-6. Цикл feature-chat -> QA повторяется, пока QA не даст `ready for merge` или явное `accepted for next step`.
-7. Если фича будет релизиться отдельно, после QA передаем `Onboarding impact` в instructions/onboarding chat.
-8. Если несколько фич идут одной большой release-chain, копим `Onboarding impact` и обновляем onboarding пачкой после стабилизации всей цепочки, но до merge/deploy. QA может вести onboarding backlog, но не должен отправлять пользователя в onboarding-чат после каждой принятой фичи без явного запроса.
-9. После onboarding-обновления integration/QA chat делает финальный release review: feature + instructions + tests + browser QA + release checklist.
-10. Только после финального QA идем к следующему release/merge решению.
+Вердикт:
 
-Когда QA/release chat говорит `ready for merge/deploy`, он должен вернуть временный production runbook с дампом БД перед deploy. Не сохраняй пароль в workflow-файлах; для smoke используй `API_SMOKE_EMAIL=egorsmi19@gmail.com`. Если пароль уже известен проектному контексту, не проси пользователя подставлять `<пароль>` или `<prod-password>` вручную; запускай smoke сам с секретом в защищенном контексте или показывай команду через уже установленную переменную `API_SMOKE_PASSWORD`, не раскрывая значение.
+- `blocked`;
+- `needs fixes` с точным reproducer/fix boundary;
+- `accepted` с exact SHA и covered risks.
 
-Шаблон runbook:
+QA возвращает verdict своему диспетчеру. Routine callbacks не идут в штаб.
 
-```bash
-cd /opt/padel-park-qr-scanner
+## Epic integration
 
-cd /opt/padel-park-qr-scanner/server
-mkdir -p /opt/backups/padel-park
-set -a
-. ./.env
-set +a
-mysqldump -u "$DB_USER" -p"$DB_PASSWORD" "$DB_NAME" > /opt/backups/padel-park/padelpark-$(date +%Y%m%d-%H%M%S).sql
+После green QA диспетчер:
 
-cd /opt/padel-park-qr-scanner
-git pull origin main
+- подтверждает local/tracking/fresh-remote SHA parity;
+- выполняет обычный non-force promotion exact SHA в integration branch эпика;
+- проверяет scope, ancestry и migration order;
+- при code reconciliation запускает только affected checks;
+- хранит onboarding impacts и остаточные риски;
+- после завершения всех capabilities передает тимлиду один epic candidate.
 
-cd /opt/padel-park-qr-scanner/server
-npm install
-npx sequelize-cli db:migrate --env production
+Диспетчер не повторяет Feature QA и не принимает решение о `main`/production.
 
-cd /opt/padel-park-qr-scanner/client
-npm install
-npm run build
+## Release integration
 
-pm2 restart 0 --update-env
-pm2 logs 0 --lines 80
+Тимлид принимает только accepted epic candidates и владеет общей интеграцией:
 
-cd /opt/padel-park-qr-scanner/server
-API_HEALTH_URL=http://127.0.0.1:3000/api npm run health
-API_SMOKE_URL=http://127.0.0.1:3000/api API_SMOKE_EMAIL=egorsmi19@gmail.com API_SMOKE_PASSWORD="$API_SMOKE_PASSWORD" npm run smoke:api
-```
+- сверяет межэпиковые contracts и migration order;
+- разрешает механические конфликты без изменения принятого поведения;
+- при runtime reconciliation назначает affected checks правильному QA;
+- создает точный release candidate и immutable evidence;
+- принимает решение о публикации в `main`, production rollout и rollback;
+- обращается в штаб только за неоднозначным продуктовым решением.
 
-Первое сообщение для integration/QA chat:
+Release gate не является повторным feature QA. Он подтверждает только свойства,
+которые появляются после объединения: совместимость эпиков, build artifact,
+migration chain, конфигурацию, rollback и production readiness.
+
+Production checklist находится в [`RELEASE_CHECKLIST.md`](./RELEASE_CHECKLIST.md).
+
+## Onboarding
+
+Feature-чат всегда возвращает:
 
 ```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
-
-Ты integration/QA chat для большой цепочки фич.
-
-Работай с /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-features на ветке codex/crm-features.
-
-Задача:
-- проверить текущий git status и ветку;
-- запустить backend/frontend для этого worktree;
-- дать мне frontend/backend URL и demo accounts/роли для ручной проверки;
-- после каждой завершенной feature-фичи принимать ее handoff, прогонять smoke/browser QA и давать список точечных фиксов;
-- не реализовывать новые фичи без отдельного запроса, кроме мелких QA-fix если я явно разрешу.
-
-Когда проект запущен, дай:
-- URL;
-- какие страницы открыть первыми;
-- что я должен прокликать руками;
-- куда присылать мои замечания.
-```
-
-## Роли чатов
-
-### 1. Coordination chat
-
-Назначение: управляет процессом, правилами и handoff между чатами.
-
-Используй его для:
-
-- обновления `AGENTS.md` и workflow-документов;
-- подготовки промптов для новых feature/instructions/QA чатов;
-- проверки, что фича передает нормальный `Onboarding impact`;
-- решения, где лучше делать задачу: feature, onboarding, QA, release.
-
-Хороший запрос:
-
-```md
-Помоги разложить эту задачу по чатам и worktree. Нужно: ...
-```
-
-### 2. Feature chat
-
-Назначение: одна продуктовая фича или один связный кусок CRM-функциональности.
-
-Стартовый промпт:
-
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
-Найди релевантный файл в /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/domains/ и через rg проверь существующие модели/маршруты/сервисы/страницы.
-
-Работай в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-features на ветке codex/crm-features.
-
-Сначала проверь git status и docs/SPRINT_STATUS.md. Реализуй фичу: ...
-
-Onboarding/instructions в этой ветке не реализуй. В финале обязательно дай Existing integration points checked и Onboarding impact:
-- domain files:
-- existing models/services/routes:
-- frontend pages/api/lib:
-- permissions:
-- API contracts/generated client:
-- onboarding/training mode:
-- why new code is extension, not duplicate:
-
 Onboarding impact:
 - roles:
 - scenarios:
@@ -316,156 +221,52 @@ Onboarding impact:
 - instructions/tasks to update:
 ```
 
-Правило "1 фича - 1 чат" полезно, когда фича имеет понятный результат и может быть проверена отдельно. Если фича большая, лучше разбить ее на несколько релизных частей, а не держать один бесконечный чат.
+`none` с объяснением закрывается диспетчером без отдельного onboarding-чата.
+Реальные impacts накапливаются и передаются instructions/onboarding service одной
+пачкой после стабилизации epic/release candidate.
 
-### 3. Instructions/onboarding chat
+Targeted onboarding tests запускаются при изменении onboarding-кода. Strict audit,
+полная сверка каталога и screenshot assets выполняются один раз на итоговом
+candidate. Общие правила находятся в
+[`ONBOARDING_RELEASE_WORKFLOW.md`](./ONBOARDING_RELEASE_WORKFLOW.md).
 
-Назначение: обновляет обучение, ролевые сценарии, training mode, чекпоинты, подсказки и release checklist после готовой фичи.
+## Git и worktree
 
-Обычно это один постоянный чат для `worktrees/crm-instructions`. Для редизайна onboarding, нового стандарта уроков и постепенного перевода ролей не создавай новый onboarding-chat на каждый сценарий; веди итерации в том же чате и проверяй их через QA.
+Feature-чат в своей именованной `codex/...` ветке заранее может:
 
-Для action-инструкций стандарт качества строгий: урок должен объяснять общий процесс, а не заставлять создать конкретного тестового клиента; шаги должны говорить, что нажать, какие поля заполнить и как проверить результат; screenshots должны быть реальными скриншотами CRM с видимыми стрелками/номерами/выделениями. Если реального скриншота нет, это missing asset, а не повод использовать сгенерированную картинку.
+- выполнять `git add` и обычные commits по scope;
+- делать non-force push в ту же feature-ветку;
+- добавлять fix-коммиты без переписывания reviewed history;
+- подтверждать clean worktree и exact remote parity.
 
-Если в одном onboarding-сценарии найден дефект формата, проверяй весь класс похожих сценариев: тестовую пачку, роль или эпик. Не ограничивайся одной карточкой, если тот же шаблон мог размножить ошибку.
+Feature-чат не может пушить в чужую/integration/release/main ветку, делать
+force-push, rebase/squash reviewed history, promotion или deploy.
 
-Стартовый промпт:
+Диспетчер может продвигать accepted SHA только в integration branch своего эпика.
+Тимлид владеет release branch, `main`, production и rollback.
 
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
+После merge/release диспетчер очищает feature worktree: либо синхронизирует его с
+актуальным `origin/main`, либо удаляет/prune, если он больше не нужен. Новая фича
+не стартует поверх грязного или устаревшего worktree.
 
-Работай в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-instructions на ветке codex/crm-instructions.
+## Штаб
 
-Фича готова в ветке codex/crm-features. Освежи инструкции и onboarding.
+Штаб не получает routine handoff и не разрешает технически готовый release. Он
+используется для:
 
-Onboarding impact:
-- roles:
-- scenarios:
-- routes:
-- new actions:
-- checkpoint events:
-- training data:
-- instructions/tasks to update:
+- обсуждения стратегии и приоритетов продукта;
+- выбора между несколькими продуктовыми/архитектурными вариантами;
+- решения о ролях, permissions, data ownership и visible behavior;
+- обсуждения необратимых продуктовых последствий.
 
-Проверь docs/SPRINT_STATUS.md, server/src/onboarding/catalog.js, checkpoint events, training safety и release checklist. Перед финалом прогони релевантные audit/test команды или явно скажи, что не удалось прогнать.
-```
+Когда решение принято, выполнение возвращается тимлиду и соответствующему
+диспетчерскому потоку.
 
-### 4. QA/release chat
+## Первый запуск модели
 
-Назначение: проверяет сборку, тесты, smoke, релизный чеклист и риски перед деплоем.
-
-Хороший запрос:
-
-```md
-Сначала прочитай /Users/antonypry/Documents/padel-park-qr-scanner/AGENTS.md, /Users/antonypry/Documents/padel-park-qr-scanner/docs/CODEX_WORKFLOW.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/00_INDEX.md, /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/06_PROJECT_MAP.md и /Users/antonypry/Documents/padel-park-qr-scanner/codex-vault/07_DOMAIN_INVENTORY.md.
-
-Проведи release readiness review для веток codex/crm-features и codex/crm-instructions.
-Проверь docs/RELEASE_CHECKLIST.md, onboarding audit, тесты, build и список незакрытых рисков.
-```
-
-## ТЗ отдельно от реализации
-
-Разделять ТЗ и реализацию стоит, когда задача размытая, затрагивает несколько ролей или может расползтись по backend/frontend/onboarding.
-
-Схема:
-
-1. В coordination или planning chat подготовить короткое ТЗ: цель, роли, сценарии, API/UI, права, edge cases, acceptance criteria, проверки.
-2. Передать ТЗ в feature chat.
-3. Feature chat реализует только согласованный scope.
-4. Instructions chat обновляет onboarding по `Onboarding impact`.
-
-Если задача маленькая и понятная, отдельный ТЗ-чат не нужен.
-
-## Минимальный handoff между чатами
-
-Feature -> Instructions:
-
-```md
-Фича готова в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-features на ветке codex/crm-features.
-
-Что изменилось:
-- ...
-
-Проверки:
-- ...
-
-Onboarding impact:
-- roles:
-- scenarios:
-- routes:
-- new actions:
-- checkpoint events:
-- training data:
-- instructions/tasks to update:
-```
-
-Instructions -> Release:
-
-```md
-Onboarding обновлен в /Users/antonypry/Documents/padel-park-qr-scanner/worktrees/crm-instructions на ветке codex/crm-instructions.
-
-Что обновлено:
-- ...
-
-Проверки:
-- server npm run onboarding:audit:strict
-- ...
-
-Релизные риски:
-- ...
-```
-
-## Как формулировать задачи Codex
-
-Лучшие запросы содержат:
-
-- где работать: путь и ветка;
-- что является источником правды;
-- что нужно изменить;
-- что не нужно менять;
-- какие проверки нужны;
-- какой формат финального ответа нужен.
-
-Пример:
-
-```md
-Работай в worktrees/crm-features. Нужно добавить ...
-Не меняй onboarding в этой ветке, только верни Onboarding impact.
-Перед изменениями проверь текущие паттерны API и UI. После реализации прогони server/client тесты по затронутым модулям.
-```
-
-## Когда открывать новый чат
-
-Открывай новый чат, если:
-
-- начинается новая независимая фича;
-- текущий чат стал слишком длинным и Codex начал терять детали;
-- меняется роль работы: планирование -> реализация -> onboarding -> QA;
-- нужна параллельная работа в другом worktree;
-- нужно сделать review чужого diff без риска смешать контекст.
-
-Оставайся в том же чате, если:
-
-- задача является прямым продолжением текущей реализации;
-- нужно исправить баг, найденный только что;
-- Codex уже держит важный локальный контекст и worktree тот же.
-
-## Проверки перед финалом
-
-Codex должен явно сказать, что было проверено. Для user-facing CRM-фич обычно нужны:
-
-- backend tests/typecheck по затронутым зонам;
-- frontend tests/build по затронутым зонам;
-- `server npm run onboarding:audit` или `server npm run onboarding:audit:strict`, если менялись routes/events/tasks/onboarding;
-- обновление OpenAPI/generated contracts, если менялись API contracts;
-- ручная браузерная проверка для заметных UI-изменений.
-
-Если проверку нельзя запустить из-за окружения, это должно быть явно указано в финальном ответе.
-
-## Source of truth
-
-- Общие правила для Codex: `AGENTS.md`.
-- Статус продукта и спринтов: `docs/SPRINT_STATUS.md`.
-- Onboarding workflow: `docs/ONBOARDING_RELEASE_WORKFLOW.md`.
-- Onboarding system: `docs/ONBOARDING_SYSTEM.md`.
-- Release gate: `docs/RELEASE_CHECKLIST.md`.
-- Feature branch diff and final `Onboarding impact`.
+- Поток 1 получает `Security Foundation v1`.
+- Потоки 2 и 3 получают продуктовые эпики по приоритету тимлида.
+- Инфраструктурную часть Security Foundation пользователь делает с
+  DevOps-наставником; application contracts и evidence маршрутизируются через
+  диспетчера потока 1.
+- DevOps-наставник не является четвертым диспетчером или QA.

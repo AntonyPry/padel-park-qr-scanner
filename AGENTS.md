@@ -10,6 +10,14 @@
 - Не откатывай чужие незакоммиченные изменения. Если рабочее дерево грязное, работай рядом с ними и явно упоминай важные риски.
 - Для поиска используй `rg` / `rg --files`.
 - После изменения пользовательских CRM-сценариев проверяй onboarding impact.
+- В production UI не добавляй псевдоподсказки, которые пересказывают видимую иерархию, элементы управления или детали реализации. Оставляй только actionable guidance, фактические статусы, validation/recovery и необходимые предупреждения о последствиях.
+
+## Production organization
+
+- Активная организационная модель проекта: один стратегический штаб, один постоянный тимлид интеграции, три постоянных универсальных диспетчера, три закрепленных QA (по одному на диспетчера) и временные Feature-чаты.
+- Диспетчеры и QA являются производственными потоками, а не владельцами доменов. Тимлид может назначить любому свободному потоку следующий эпик из любого домена.
+- Канонические роли, handoff и ownership проверок описаны в `docs/CODEX_ORGANIZATION.md`. Старые модели с двумя QA, отдельным SaaS-диспетчером или совмещенным integration/QA chat больше не применяются.
+- Feature-чат реализует capability и проводит прямой User Preview с пользователем. QA владеет independent test plan и verdict. Диспетчер собирает epic candidate. Тимлид интегрирует эпики, принимает решения о `main`, production rollout и rollback. Штаб обсуждает стратегию и неоднозначные продуктовые вопросы, но не является release gate.
 
 ## Continuous workflow memory
 
@@ -39,7 +47,7 @@
 
 Если пользователь просит реализовать CRM-фичу, работай в feature worktree. Если просит обновить инструкции, onboarding, training mode, чекпоинты или release checklist после фичи, работай в instructions worktree.
 
-После merge/release feature worktree не должен оставаться грязным. Штаб или QA должны привести его к одному из двух состояний:
+После merge/release feature worktree не должен оставаться грязным. Закрепленный диспетчер должен привести его к одному из двух состояний:
 
 - `git status --short --branch` чистый и ветка синхронизирована с актуальным `origin/main`;
 - worktree больше не используется и явно удален/pruned.
@@ -58,24 +66,56 @@
 ## New chat bootstrap
 
 - Название каждого чата, в котором реализуется продуктовая фича, должно начинаться со слова `Feature`. Для срезов эпика используй формат `Feature N — Короткое название`; для самостоятельной фичи — `Feature — Короткое название`.
-- В начале нового feature-чата пользователь должен дать ссылку на этот файл и `docs/CODEX_WORKFLOW.md`; если такой ссылки нет, сначала самостоятельно прочитай эти файлы, если они доступны.
+- В начале нового feature-чата пользователь должен дать ссылку на этот файл, `docs/CODEX_ORGANIZATION.md` и `docs/CODEX_WORKFLOW.md`; если такой ссылки нет, сначала самостоятельно прочитай эти файлы, если они доступны.
 - Feature-чат всегда должен проверить `git status --short --branch`, текущую ветку и `docs/SPRINT_STATUS.md` перед реализацией.
 - Feature-чат работает в `worktrees/crm-features` на `codex/crm-features`, если пользователь явно не указал другой worktree.
 - Instructions/onboarding-чат работает в `worktrees/crm-instructions` на `codex/crm-instructions`, если пользователь явно не указал другой worktree.
 - Feature-чат не должен менять onboarding/instructions в feature-ветке без явного запроса; вместо этого он обязан вернуть `Onboarding impact`.
-- Если фича релизится отдельно, после QA пользователь передает ее `Onboarding impact` в instructions/onboarding-чат.
-- Если фича входит в большой эпик/release-chain, копи `Onboarding impact` по фичам и обновляй instructions/onboarding пачкой после стабилизации всей цепочки, но до merge/deploy.
+- Если фича релизится отдельно, диспетчер передает ее реальный `Onboarding impact` в instructions/onboarding service после QA.
+- Если фича входит в большой эпик/release-chain, диспетчер копит impacts и передает их одной пачкой после стабилизации цепочки, но до release candidate.
 
 ## Feature workflow
 
 В feature worktree реализуй продуктовую фичу, но не обновляй onboarding/instructions в этой же ветке без явного запроса пользователя.
+
+Feature-чатам заранее разрешены обычные Git-операции в собственной feature-ветке:
+
+- самостоятельно выполнять `git add` и создавать локальные commits по своей задаче;
+- выполнять обычный non-force `git push` только в свою именованную feature-ветку `codex/...`, включая первый push новой remote branch;
+- после каждого push проверять clean worktree и exact local/remote SHA parity и указывать SHA в handoff;
+- fix-коммиты после QA также можно commit/push в ту же feature-ветку без отдельного подтверждения, если reviewed history не переписывается.
+
+Это разрешение не распространяется на `main`, `codex/saas-multitenancy-integration`, другие integration/release/deploy branches, чужие feature-ветки, merge/rebase/cherry-pick в общие ветки, force-push, удаление remote branches, создание PR, promotion и deploy. Эти действия требуют отдельного release/integration gate и явного разрешения соответствующей стадии.
+
+После green QA закрепленный диспетчер имеет standing permission на обычный non-force promotion accepted exact SHA только в integration branch своего эпика с fresh-ref/race/parity checks. Если reconciliation меняет runtime-код, запускаются только affected checks. Тимлид интегрирует accepted epic candidates, владеет публикацией в `main`, production rollout и rollback. Диспетчер не выполняет эти release-действия самостоятельно.
 
 Перед дизайном и реализацией новой фичи сначала сделай existing-functionality discovery:
 
 - прочитай project map/domain inventory/domain file из vault;
 - найди существующие модели, маршруты, сервисы, страницы, API wrappers and permissions через `rg`;
 - явно реши, что расширяешь существующий домен, а не создаешь параллельную подсистему;
-- если подходящего domain-файла нет, верни короткий inventory в `QA handoff`, чтобы штаб мог добавить его в vault.
+- если подходящего domain-файла нет, верни короткий inventory диспетчеру, чтобы он добавил его в vault.
+
+На время multi-tenant эпика каждая новая модель, endpoint, worker/job, cache/query key, file/upload, export, webhook и realtime event должна явно декларировать scope (`global`, `organization`, `club` или `membership`) и источник проверенного tenant context; неизвестный scope блокирует merge.
+
+### Осознанная модель данных
+
+- Не добавляй persisted/API-поля «на будущее». Поле появляется вместе с подтвержденным поведением и реальным consumer.
+- Для нового поля до реализации зафиксируй продуктовый смысл, источник, writer, readers, UI/backend effect, permissions, validation, lifecycle/cleanup и regression coverage.
+- Поле без UI допустимо только как техническое audit/security/idempotency/relation/integration metadata исключение с текущим backend-consumer и явным обоснованием.
+- Удаление поля по умолчанию является end-to-end: UI, state/types, API/OpenAPI/generated client, validation/services, model/schema/index/constraint, fixtures/tests/docs/onboarding.
+- Production schema изменяется только forward migration. Не переписывай уже примененную migration; заранее опиши data impact и rollback.
+- QA изменения модели проверяет фактическую schema, migration behavior, сохранность связанных строк и отсутствие contract/generated drift по затронутому scope.
+
+Если фича меняет модель данных, добавь в handoff:
+
+```md
+Data model impact:
+- fields added and current consumers:
+- fields removed end to end:
+- technical-only exceptions:
+- migration/data/rollback risks:
+```
 
 Если фича меняет UI или пользовательский workflow, в конце feature-чата нужно не только перечислить проверки, но и дать пользователю способ посмотреть результат:
 
@@ -84,7 +124,17 @@
 - дать короткий manual QA checklist: какие экраны открыть и какие сценарии прокликать;
 - если сервер не удалось запустить, явно объяснить почему и какую команду запускать в нужном worktree.
 
-Для design/redesign/UI prototype чатов это жесткое правило: финал без живого URL и screenshots не считается готовым. Такой чат должен запустить проект или прототип, дать пользователю кликабельные frontend/backend URLs, приложить screenshots desktop и mobile `390px`, указать роль/demo account and manual QA сценарии. Если браузерная проверка или dev server невозможны, это blocker/known risk, а не нормальный финал.
+### User Preview Gate
+
+- User Preview всегда проводит исходный Feature-чат до independent QA. Он запускает живые frontend/backend URL, указывает роль/demo account и дает короткий manual checklist.
+- Пользователь отправляет визуальные замечания прямо в тот же Feature-чат. Диспетчер, QA и тимлид не пересказывают интерфейс и не переносят эти замечания между чатами.
+- До явного пользовательского `ок` user-facing candidate не передается QA, не интегрируется и не уходит в onboarding.
+- Для navigation/layout/major redesign сначала нужен ранний structure preview, затем целостный preview. Backend-only, test-only и пользовательски одобренный узкий polish не требуют повторного preview.
+- Screenshots не являются deliverable по умолчанию и их отсутствие не является blocker/finding. Создавай их только по явному запросу пользователя либо когда они нужны Feature/QA для внутреннего сравнения или диагностики; не выгружай внутренние screenshots в handoff без пользы.
+- Product screenshot assets для onboarding-урока являются отдельным контентным требованием и не делают screenshots обязательными для обычного Feature/QA handoff.
+- Если dev server или реальная DB-backed проверка недоступны, это blocker для user-facing preview. Описание diff, lint/build или screenshots не заменяют живой URL.
+
+Для design/redesign/UI prototype чатов живой просмотр обязателен: запусти проект или прототип, дай кликабельные frontend/backend URLs, роль/demo account и manual QA сценарии. Если dev server или сама браузерная проверка невозможны, это blocker/known risk.
 
 В конце каждой user-facing фичи обязательно добавь в финальный ответ блок:
 
@@ -112,9 +162,16 @@ Onboarding impact:
 
 ## Instructions/onboarding workflow
 
-Для развития самой onboarding-системы, структуры уроков, стиля инструкций и массового обновления сценариев предпочитай один постоянный instructions/onboarding chat в `worktrees/crm-instructions`, а не новый чат на каждый onboarding-сценарий. Новый onboarding-chat нужен только если старый потерял контекст, стал слишком тяжелым или пользователь явно просит параллельную независимую ветку.
+Для развития самой onboarding-системы, структуры уроков, стиля инструкций и массового обновления сценариев используй один постоянный instructions/onboarding service в `worktrees/crm-instructions`, а не новый чат на каждую фичу.
 
-Для action-onboarding задач формат должен быть операционным, а не обзорным: что нажать, какие поля заполнить, что сохранить и как проверить результат. Не подставляй конкретные тестовые имена/телефоны как обязательное действие, если пользователь просит объяснить общий процесс. Release-quality action task не считается готовой без реальных CRM screenshots с видимыми стрелками/номерами/выделениями для ключевых шагов. Сгенерированные или схематичные картинки нельзя выдавать за CRM screenshot; если реального скриншота нет, явно пометь asset как missing и верни это в QA handoff.
+Onboarding подключается пакетно и только при реальном impact:
+
+- Feature-чат возвращает конкретный `Onboarding impact`, но не обновляет onboarding в feature-ветке.
+- Диспетчер накапливает impacts эпика. `Onboarding impact: none` не требует отдельного чата или подтверждения.
+- Instructions/onboarding service запускается после стабилизации epic/release candidate, если изменились видимый workflow, роли/permissions, routes, actions, checkpoint events, training data или инструкции.
+- Targeted onboarding checks выполняются при изменении onboarding-кода. Strict audit, ролевой каталог и полный onboarding gate выполняются один раз на итоговом candidate.
+
+Для action-onboarding задач формат должен быть операционным, а не обзорным: что нажать, какие поля заполнить, что сохранить и как проверить результат. Не подставляй конкретные тестовые имена/телефоны как обязательное действие, если пользователь просит объяснить общий процесс. Если карточке урока нужен screenshot asset, используй реальный CRM screenshot; графические аннотации необязательны без прямого запроса. Сгенерированные или схематичные картинки нельзя выдавать за CRM screenshot.
 
 Если пользователь нашел ошибку в одном onboarding-сценарии, считай это сигналом проверить весь затронутый класс сценариев: все action-lessons, всю тестовую пачку или всю роль/эпик, где мог быть применен тот же шаблон. Не исправляй только один видимый пример, если вероятны такие же ошибки в соседних задачах. В fix handoff явно перечисли scope массовой проверки, что найдено, что исправлено и что осталось missing.
 
@@ -126,25 +183,24 @@ Onboarding impact:
 4. Для checkpoint events предпочитай реальные product/service events, а review-only события - через allowlist client-side events.
 5. Для владельца сохраняй механику "пройти обучение как роль": owner может выбирать admin/trainer/accountant/etc без потери owner-прав.
 6. Обнови `docs/SPRINT_STATUS.md`, если работа закрывает или меняет onboarding sprint.
-7. Перед релизом стремись прогнать `server npm run onboarding:audit:strict` и релевантные тесты/build.
+7. На итоговом onboarding candidate прогони `server npm run onboarding:audit:strict` и targeted onboarding checks; общий server/client release gate не повторяй.
 
 ## Review and QA workflow
 
-- Для подробной проверки результата используй отдельный QA/release review chat, особенно после крупной фичи, пачки связанных фич или перед merge/deploy.
-- Feature-чат в финальном ответе должен давать отдельный `QA handoff`: scope, acceptance criteria, changed areas, commands run, known risks, manual QA hints and `Onboarding impact`.
-- Не жди завершения всех фич, чтобы впервые открыть продукт. После каждой крупной feature-фичи должен быть локальный manual QA проход.
-- Для длинной цепочки фич используй отдельный integration/QA chat, который держит живой проект в одном worktree, запускает server/client, принимает finished feature handoffs, прогоняет smoke/browser QA and returns fixes to the right feature chat.
-- QA/review chat не должен начинать с реализации новых фич. Сначала он читает diff, финальные ответы feature/instructions чатов, `Onboarding impact`, `docs/SPRINT_STATUS.md` и `docs/RELEASE_CHECKLIST.md`.
-- В code review stance сначала ищи bugs, regressions, missing tests, permission leaks, data migration risks, API contract drift, UX dead ends and onboarding gaps.
-- Проверяй результат на трех уровнях: automated tests/build/typecheck/audit, ручной browser QA основных сценариев, product acceptance по исходному ТЗ.
-- Для UI-фич запускай локальные серверы и проверяй в браузере desktop/mobile, console/network, empty/loading/error states and role-specific access.
-- Для frontend-нововведений `lint/build` и login smoke не считаются полноценной проверкой. Обязательно делай visual QA desktop и мобильного `390px` с реалистичными длинными данными, screenshots, проверкой `document.scrollWidth`, безопасных отступов от краев, console/network/page errors. Если локальная БД недоступна, сначала используй mocked API для layout QA, а после восстановления БД повтори DB-backed сценарий.
+- В проекте постоянно существуют ровно три QA-чата, по одному на каждого универсального диспетчера. QA не привязан к домену и не создается заново под отдельную фичу.
+- Feature-чат пишет/обновляет regression tests, но запускает только минимальные developer checks, необходимые для разработки и живого preview. Это не independent QA и не широкий gate.
+- Закрепленный QA владеет test plan, independent risk-based checks и verdict на exact SHA. Он использует developer evidence и не повторяет ту же команду без причины.
+- Диспетчер не тестирует candidate заново: он проверяет SHA, ancestry, scope, conflicts и запускает affected checks только если integration/reconciliation изменила runtime-код.
+- Тимлид на общем release candidate проверяет cross-epic contracts, artifact/build/migration readiness и production guards. Принятые feature-level DB/browser/security matrices повторно не запускаются без нового сигнала риска.
+- Автоматический CI может выполнить общий suite один раз на release candidate. Это не основание вручную повторять его в Feature, QA, dispatcher и release chats.
+- Новый commit инвалидирует только evidence затронутых областей. Re-QA проверяет исходный finding, regression и affected neighbors; полный gate нужен только при расширении риска или shared-foundation изменении.
+- OpenAPI/generated regeneration и no-drift gate запускаются только при изменении API contract, route manifest, tenant scope или generated consumer.
+- Для UI independent QA проверяет измененные состояния, desktop/mobile, overflow и console/network по риску, но не проводит User Preview вместо Feature-чата.
+- Feature-чат в финальном ответе дает диспетчеру `QA handoff`: exact branch/SHA/base, scope, acceptance criteria, changed areas, developer checks, known risks, manual QA hints and `Onboarding impact`.
 - Полный server test suite запускай через `server npm test`: DB-backed fixtures должны идти с `--test-concurrency=1`, иначе параллельная очистка связанных MySQL-таблиц может давать ложные deadlock failures.
 - GitHub Actions server job должен поднимать MySQL, задавать test `DB_*`, применять migrations и только затем запускать полный `server npm test`; DB-backed suite без test database не является рабочим CI gate.
-- Для redesign-срезов и дизайн-прототипов QA должен проверять не только diff/build, но и реальные URLs, screenshots, desktop/mobile layout, light/dark theme, role-specific pages and basic interactions. Если feature-chat не дал URL/screenshots, QA возвращает это как handoff gap.
-- Финал QA-чата должен содержать: findings by severity, что проверено, что не удалось проверить, release/blocker status, ссылки на screenshots/outputs if created, и список точечных follow-up задач.
-- Для большого эпика QA-чат не должен отправлять пользователя в onboarding-чат после каждой принятой фичи. Он должен копить onboarding backlog/impact и давать onboarding prompt только когда завершены все фичи эпика, фича релизится отдельно или пользователь явно попросил.
-- После полного QA/release review большого эпика и статуса `ready for merge/deploy` QA-чат должен дать временный production deploy runbook: server-side DB dump before deploy, git pull, install, migrations, client build, pm2 restart/logs, health and smoke commands.
+- Финал QA-чата содержит findings by severity, covered scope, exact evidence, gaps и verdict `blocked` / `needs fixes` / `accepted`.
+- Диспетчер копит onboarding impact эпика. Тимлид подключает onboarding service пакетно только при реальном impact и собирает production runbook после готовности общего release candidate.
 - Для production smoke используй email `egorsmi19@gmail.com`.
 - Не сохраняй production passwords или другие секреты в `AGENTS.md`/workflow docs.
 - Если production password уже был передан пользователем в проектном контексте, не проси пользователя вручную подставить `<пароль>`/`<prod-password>` и не пиши такие placeholder-команды в финале. Либо запускай smoke сам с известным секретом в защищенном контексте, либо показывай команду без раскрытия значения, например через уже установленную переменную `API_SMOKE_PASSWORD`.
@@ -152,16 +208,19 @@ Onboarding impact:
 
 ## Coordination workflow
 
-Этот чат может быть "штабом" проекта:
+Штаб обсуждает стратегию и неоднозначные продуктовые решения. Он не маршрутизирует routine execution и не является release gate.
 
-- держит `AGENTS.md` и `docs/CODEX_WORKFLOW.md` актуальными;
-- готовит короткие промпты для feature/instructions/QA чатов;
-- проверяет, что handoff между чатами содержит нужные данные;
-- помогает решить, нужен ли отдельный чат, отдельный worktree или сначала ТЗ;
-- не смешивает реализацию фичи и onboarding-обновление без явного запроса.
-- при явном запросе пользователя может читать другие Codex threads и отправлять им сообщения через thread tools, выступая диспетчером между feature, instructions and QA chats.
+Тимлид:
 
-Чаты не должны предполагать, что другие чаты автоматически узнают об их результате. Каждый feature/instructions/QA chat должен возвращать handoff в финале, а штабной чат может переслать этот handoff дальше, если пользователь попросит.
+- назначает эпики трем универсальным диспетчерам;
+- управляет межэпиковыми dependencies и shared foundation;
+- принимает только accepted epic candidates;
+- собирает release candidate, принимает решение о `main`, rollout и rollback;
+- обращается в штаб только за продуктовым или архитектурным смысловым выбором.
+
+Каждый диспетчер ведет полный цикл своего эпика: `Feature -> User Preview -> QA -> fix/re-QA -> epic integration`. Callback target QA всегда его диспетчер. Routine статусы и однозначные findings не уходят в штаб. Пользователь не переносит handoff вручную, кроме прямых визуальных замечаний в исходном Feature-чате.
+
+Подробные роли и границы описаны в `docs/CODEX_ORGANIZATION.md`.
 
 Подробная инструкция по использованию Codex в проекте: `docs/CODEX_WORKFLOW.md`.
 

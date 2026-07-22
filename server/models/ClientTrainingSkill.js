@@ -51,6 +51,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: true,
       type: DataTypes.INTEGER,
     },
+    trainingSessionId: { allowNull: true, type: DataTypes.UUID },
     updatedByAccountId: {
       allowNull: true,
       type: DataTypes.INTEGER,

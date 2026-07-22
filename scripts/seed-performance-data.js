@@ -4,6 +4,14 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const db = require(path.join(ROOT, 'server', 'models'));
+const accountLifecycle = require(path.join(
+  ROOT,
+  'server',
+  'src',
+  'services',
+  'account-lifecycle.service',
+));
+let fixtureContext = null;
 
 const DEFAULT_OPTIONS = {
   callTaskClientCount: 15000,
@@ -80,6 +88,24 @@ async function bulkCreateInChunks(model, rows, options = {}) {
   }
 }
 
+async function resolveFixtureContext() {
+  const foundation = await db.sequelize.transaction((transaction) =>
+    accountLifecycle._private.lockDefaultFoundation(transaction));
+  const membership = await db.Membership.findOne({
+    order: [['id', 'ASC']],
+    where: {
+      organizationId: foundation.organization.id,
+      status: 'active',
+    },
+  });
+  if (!membership) throw new Error('Performance fixture requires an active default Membership');
+  return Object.freeze({
+    accountId: Number(membership.accountId),
+    clubId: Number(foundation.club.id),
+    organizationId: Number(foundation.organization.id),
+  });
+}
+
 function dateFromIndex(index, hourOffset = 0) {
   const date = new Date(Date.UTC(2026, 4, 1, 6, 0, 0));
   date.setUTCDate(date.getUTCDate() + (index % 90));
@@ -87,47 +113,231 @@ function dateFromIndex(index, hourOffset = 0) {
   return date;
 }
 
-async function cleanup() {
+function ownershipLost(table, identity) {
+  const error = new Error(`Performance fixture ownership lost for ${table} ${identity}`);
+  error.code = 'TENANT_SEEDER_ARTIFACT_OWNERSHIP_LOST';
+  error.statusCode = 409;
+  return error;
+}
+
+function assertPerformanceUser(row, options) {
+  const match = /^\+7988(\d{6})$/.exec(row.phone || '');
+  const serial = match?.[1];
+  const index = Number(serial) - 1;
+  if (
+    !serial || index < 0 || index >= options.clients ||
+    row.name !== `[perf] Клиент ${serial}` ||
+    row.phoneNormalized !== `988${serial}` ||
+    row.telegramId !== `perf_tg_${serial}` ||
+    row.vkId !== `perf_vk_${serial}` ||
+    row.webId !== `perf_web_${serial}` ||
+    row.source !== SOURCES[index % SOURCES.length] ||
+    row.status !== (index % 23 === 0 ? 'archived' : 'active')
+  ) throw ownershipLost('Users', row.id);
+}
+
+function assertPerformanceReceipt(row, options) {
+  const match = /^perf-(\d+)$/.exec(row.evotorId || '');
+  const index = Number(match?.[1]) - 1;
+  if (!match || index < 0 || index >= options.receipts) {
+    throw ownershipLost('Receipts', row.id);
+  }
+  const first = RECEIPT_ITEMS[index % RECEIPT_ITEMS.length];
+  const second = RECEIPT_ITEMS[(index + 3) % RECEIPT_ITEMS.length];
+  const total = first[1] + second[1] * (1 + (index % 3));
+  const cash = index % 4 === 0;
+  if (
+    Number(row.organizationId) !== fixtureContext.organizationId ||
+    Number(row.clubId) !== fixtureContext.clubId ||
+    row.employeeId !== (index % 2 === 0 ? 'perf-admin-a' : 'perf-admin-b') ||
+    row.shiftId !== `perf-shift-${index % 60}` ||
+    row.type !== 'SELL' || Number(row.totalAmount) !== total ||
+    Number(row.cash) !== (cash ? total : 0) ||
+    Number(row.cashless) !== (cash ? 0 : total) ||
+    row.paymentSource !== (cash ? 'CASH' : 'PAY_CARD')
+  ) throw ownershipLost('Receipts', row.id);
+}
+
+async function inventoryOwnedArtifacts(options = DEFAULT_OPTIONS) {
   const users = await db.User.findAll({
-    attributes: ['id'],
+    attributes: [
+      'id', 'name', 'phone', 'phoneNormalized', 'source', 'status',
+      'telegramId', 'vkId', 'webId',
+    ],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
       phone: {
         [db.Sequelize.Op.like]: '+7988%',
       },
     },
   });
+  users.forEach((row) => assertPerformanceUser(row, options));
   const userIds = users.map((user) => user.id);
 
   const callTasks = await db.CallTask.findAll({
-    attributes: ['id'],
+    attributes: ['id', 'clientBaseId', 'description', 'title'],
     raw: true,
+    order: [['id', 'ASC']],
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       title: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
     },
   });
+  const expectedTaskTitles = new Set(
+    Array.from({ length: 30 }, (_, index) => `[perf] Обзвон ${String(index + 1).padStart(2, '0')}`),
+  );
+  for (const task of callTasks) {
+    if (!expectedTaskTitles.has(task.title) || task.description !== '[perf] Нагрузочная задача обзвона') {
+      throw ownershipLost('CallTasks', task.id);
+    }
+  }
   const callTaskIds = callTasks.map((task) => task.id);
 
   const clientBases = await db.ClientBase.findAll({
-    attributes: ['id'],
+    attributes: ['id', 'description', 'name'],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       name: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
     },
   });
+  const expectedBaseNames = new Set([
+    '[perf] Все активные', '[perf] Новички', '[perf] Постоянные',
+    '[perf] Instagram', '[perf] Без визитов',
+  ]);
+  for (const base of clientBases) {
+    if (!expectedBaseNames.has(base.name) || base.description !== '[perf] Нагрузочная база') {
+      throw ownershipLost('ClientBases', base.id);
+    }
+  }
   const clientBaseIds = clientBases.map((base) => base.id);
+  const clientBaseIdSet = new Set(clientBaseIds.map(Number));
+  for (const task of callTasks) {
+    if (!clientBaseIdSet.has(Number(task.clientBaseId))) {
+      throw ownershipLost('CallTasks.parent', task.id);
+    }
+  }
 
-  if (callTaskIds.length > 0) {
-    const taskClients = await db.CallTaskClient.findAll({
+  const visits = userIds.length === 0 ? [] : await db.Visit.findAll({
+    attributes: ['id', 'clientEventId', 'organizationId', 'clubId', 'userId'],
+    raw: true,
+    where: { userId: { [db.Sequelize.Op.in]: userIds } },
+  });
+  for (const visit of visits) {
+    if (
+      !/^perf-event-\d+$/.test(visit.clientEventId || '') ||
+      Number(visit.organizationId) !== fixtureContext.organizationId ||
+      Number(visit.clubId) !== fixtureContext.clubId
+    ) throw ownershipLost('Visits', visit.id);
+  }
+
+  const notes = userIds.length === 0 ? [] : await db.TrainingNote.findAll({
+    attributes: ['id', 'clubId', 'note', 'trainerAccountId', 'userId'],
+    raw: true,
+    where: { userId: { [db.Sequelize.Op.in]: userIds } },
+  });
+  for (const note of notes) {
+    if (
+      Number(note.clubId) !== fixtureContext.clubId ||
+      Number(note.trainerAccountId) !== fixtureContext.accountId ||
+      !/^\[perf\] Тренировочная заметка \d+$/.test(note.note || '')
+    ) throw ownershipLost('TrainingNotes', note.id);
+  }
+
+  const taskClients = callTaskIds.length === 0 ? [] : await db.CallTaskClient.findAll({
+    attributes: [
+      'id', 'callTaskId', 'clientName', 'clientPhone', 'source', 'status',
+      'summary', 'userId', 'visitCount',
+    ],
+    order: [['id', 'ASC']],
+    raw: true,
+    where: { callTaskId: { [db.Sequelize.Op.in]: callTaskIds } },
+  });
+  const activeUsers = users.filter((user) => user.status === 'active');
+  for (let index = 0; index < taskClients.length; index += 1) {
+    const taskClient = taskClients[index];
+    const task = callTasks[index % callTasks.length];
+    const user = activeUsers[index % activeUsers.length];
+    const status = index % 17 === 0 ? 'booked' : index % 13 === 0 ? 'refused'
+      : index % 5 === 0 ? 'callback' : index % 3 === 0 ? 'no_answer' : 'new';
+    if (index >= options.callTaskClientCount || Number(taskClient.callTaskId) !== Number(task.id) ||
+      Number(taskClient.userId) !== Number(user.id) || taskClient.clientName !== user.name ||
+      taskClient.clientPhone !== user.phone || taskClient.source !== user.source ||
+      taskClient.status !== status || Number(taskClient.visitCount) !== 1 + (index % 20) ||
+      taskClient.summary !== (status === 'new' ? null : '[perf] Короткое саммари звонка')) {
+      throw ownershipLost('CallTaskClients', taskClient.id);
+    }
+  }
+  const taskClientIds = taskClients.map((item) => item.id);
+  if (taskClientIds.length > 0) {
+    const attempt = await db.CallTaskAttempt.findOne({
       attributes: ['id'],
       raw: true,
-      where: { callTaskId: { [db.Sequelize.Op.in]: callTaskIds } },
+      where: { callTaskClientId: { [db.Sequelize.Op.in]: taskClientIds } },
     });
-    const taskClientIds = taskClients.map((item) => item.id);
+    if (attempt) throw ownershipLost('CallTaskAttempts', attempt.id);
+  }
+
+  const receipts = await db.Receipt.findAll({
+    attributes: [
+      'id', 'organizationId', 'clubId', 'evotorId', 'employeeId', 'shiftId',
+      'type', 'totalAmount', 'cash', 'cashless', 'paymentSource',
+    ],
+    raw: true,
+    where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
+      evotorId: { [db.Sequelize.Op.like]: 'perf-%' },
+    },
+  });
+  receipts.forEach((row) => assertPerformanceReceipt(row, options));
+  const receiptIds = receipts.map((receipt) => receipt.id);
+  const receiptItems = receiptIds.length === 0 ? [] : await db.ReceiptItem.findAll({
+    attributes: ['id', 'itemType', 'name', 'price', 'quantity', 'receiptId', 'sum', 'sumPrice'],
+    raw: true,
+    where: { receiptId: { [db.Sequelize.Op.in]: receiptIds } },
+  });
+  const receiptById = new Map(receipts.map((receipt) => [Number(receipt.id), receipt]));
+  const itemCount = new Map();
+  for (const item of receiptItems) {
+    const receipt = receiptById.get(Number(item.receiptId));
+    const index = Number(/^perf-(\d+)$/.exec(receipt?.evotorId || '')?.[1]) - 1;
+    const expected = [
+      [...RECEIPT_ITEMS[index % RECEIPT_ITEMS.length], 1],
+      [...RECEIPT_ITEMS[(index + 3) % RECEIPT_ITEMS.length], 1 + (index % 3)],
+    ];
+    const matches = expected.some(([name, price, type, quantity]) =>
+      item.name === name && Number(item.price) === price && item.itemType === type &&
+      Number(item.quantity) === quantity && Number(item.sum) === price * quantity &&
+      Number(item.sumPrice) === price * quantity);
+    if (!matches) throw ownershipLost('ReceiptItems', item.id);
+    itemCount.set(Number(item.receiptId), (itemCount.get(Number(item.receiptId)) || 0) + 1);
+  }
+  for (const receiptId of receiptIds) {
+    if (itemCount.get(Number(receiptId)) !== 2) throw ownershipLost('ReceiptItems.count', receiptId);
+  }
+
+  return {
+    callTaskIds,
+    clientBaseIds,
+    receiptIds,
+    taskClientIds,
+    userIds,
+  };
+}
+
+async function cleanup(options = DEFAULT_OPTIONS) {
+  const owned = await inventoryOwnedArtifacts(options);
+  const { callTaskIds, clientBaseIds, receiptIds, taskClientIds, userIds } = owned;
+
+  if (callTaskIds.length > 0) {
     if (taskClientIds.length > 0) {
       await db.CallTaskAttempt.destroy({
         where: { callTaskClientId: { [db.Sequelize.Op.in]: taskClientIds } },
@@ -149,7 +359,10 @@ async function cleanup() {
 
   if (userIds.length > 0) {
     await db.TrainingNote.destroy({
-      where: { userId: { [db.Sequelize.Op.in]: userIds } },
+      where: {
+        clubId: fixtureContext.clubId,
+        userId: { [db.Sequelize.Op.in]: userIds },
+      },
     });
     await db.Visit.destroy({
       where: { userId: { [db.Sequelize.Op.in]: userIds } },
@@ -158,18 +371,6 @@ async function cleanup() {
       where: { id: { [db.Sequelize.Op.in]: userIds } },
     });
   }
-
-  const receiptIds = (
-    await db.Receipt.findAll({
-      attributes: ['id'],
-      raw: true,
-      where: {
-        evotorId: {
-          [db.Sequelize.Op.like]: 'perf-%',
-        },
-      },
-    })
-  ).map((receipt) => receipt.id);
 
   if (receiptIds.length > 0) {
     await db.ReceiptItem.destroy({
@@ -188,6 +389,7 @@ async function seedClients(options) {
     const isArchived = index % 23 === 0;
     return {
       createdAt: dateFromIndex(index),
+      organizationId: fixtureContext.organizationId,
       name: `[perf] Клиент ${serial}`,
       phone: `+7988${serial}`,
       phoneNormalized: `988${serial}`,
@@ -207,6 +409,7 @@ async function seedClients(options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
       phone: {
         [db.Sequelize.Op.like]: '+7988%',
       },
@@ -221,6 +424,8 @@ async function seedVisits(users, options) {
     const scannedAt = dateFromIndex(index, index % 5);
     return {
       category: VISIT_CATEGORIES[index % VISIT_CATEGORIES.length],
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       clientEventId: `perf-event-${index + 1}`,
       createdAt: scannedAt,
       entrySource: index % 5 === 0 ? 'manual' : 'qr',
@@ -236,12 +441,13 @@ async function seedVisits(users, options) {
 
 async function seedTrainingNotes(users) {
   const activeUsers = users.filter((user) => user.status === 'active');
-  const account = await db.Account.findOne({ order: [['id', 'ASC']] });
+  const account = await db.Account.findByPk(fixtureContext.accountId);
   if (!account) return;
 
   const levels = ['D', 'D+', 'C', 'C+', 'B', 'B+', 'A'];
   const rows = activeUsers.slice(0, 2500).map((user, index) => ({
     createdAt: dateFromIndex(index),
+    clubId: fixtureContext.clubId,
     exercises: 'Разминка, удары справа/слева, игра на счет',
     level: levels[index % levels.length],
     note: `[perf] Тренировочная заметка ${index + 1}`,
@@ -269,6 +475,8 @@ async function seedReceipts(options) {
     const isCash = index % 4 === 0;
 
     receipts.push({
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       cash: isCash ? totalAmount : 0,
       cashless: isCash ? 0 : totalAmount,
       createdAt: dateTime,
@@ -321,6 +529,8 @@ async function seedReceipts(options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       evotorId: {
         [db.Sequelize.Op.like]: 'perf-%',
       },
@@ -345,7 +555,7 @@ async function seedReceipts(options) {
 async function seedCallTasks(users, options) {
   const now = new Date();
   const activeUsers = users.filter((user) => user.status === 'active');
-  const account = await db.Account.findOne({ order: [['id', 'ASC']] });
+  const account = await db.Account.findByPk(fixtureContext.accountId);
   const baseDefinitions = [
     ['[perf] Все активные', { status: 'active', segment: 'all' }],
     ['[perf] Новички', { status: 'active', segment: 'new' }],
@@ -357,6 +567,8 @@ async function seedCallTasks(users, options) {
   await db.ClientBase.bulkCreate(
     baseDefinitions.map(([name, filters], index) => ({
       createdAt: now,
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       createdByAccountId: account?.id || null,
       description: '[perf] Нагрузочная база',
       filters,
@@ -380,6 +592,8 @@ async function seedCallTasks(users, options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       name: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
@@ -390,6 +604,8 @@ async function seedCallTasks(users, options) {
     const base = bases[index % bases.length];
     tasks.push({
       assignedToAccountId: account?.id || null,
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       clientBaseId: base.id,
       createdAt: now,
       createdByAccountId: account?.id || null,
@@ -409,6 +625,8 @@ async function seedCallTasks(users, options) {
     order: [['id', 'ASC']],
     raw: true,
     where: {
+      organizationId: fixtureContext.organizationId,
+      clubId: fixtureContext.clubId,
       title: {
         [db.Sequelize.Op.like]: '[perf]%',
       },
@@ -472,8 +690,9 @@ async function seedCallTasks(users, options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  fixtureContext = await resolveFixtureContext();
   console.log('Cleaning previous [perf] data...');
-  await cleanup();
+  await cleanup(options);
   if (options.cleanupOnly) {
     console.log('Cleanup complete.');
     await db.sequelize.close();
@@ -506,10 +725,23 @@ async function main() {
   await db.sequelize.close();
 }
 
-main().catch(async (error) => {
-  console.error(error);
-  try {
-    await db.sequelize.close();
-  } catch {}
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(async (error) => {
+    console.error(error);
+    try {
+      await db.sequelize.close();
+    } catch {}
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  _private: {
+    cleanup,
+    inventoryOwnedArtifacts,
+    ownershipLost,
+    parseArgs,
+    resolveFixtureContext,
+    setFixtureContext: (context) => { fixtureContext = Object.freeze({ ...context }); },
+  },
+};

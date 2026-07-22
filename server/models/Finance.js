@@ -1,5 +1,17 @@
+const {
+  createNullableTenantAttributionHooks,
+} = require('../src/tenant-context/model-attribution');
+
 module.exports = (sequelize, DataTypes) => {
   const Finance = sequelize.define('Finance', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     date: {
       type: DataTypes.DATEONLY,
       allowNull: false,
@@ -36,9 +48,17 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    trainingSessionId: { type: DataTypes.UUID, allowNull: true },
+  }, {
+    hooks: createNullableTenantAttributionHooks(
+      ['organizationId', 'clubId'],
+      'Finance',
+    ),
   });
 
   Finance.associate = (models) => {
+    Finance.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    Finance.belongsTo(models.Club, { foreignKey: 'clubId' });
     Finance.belongsTo(models.Account, {
       as: 'createdBy',
       foreignKey: 'createdByAccountId',

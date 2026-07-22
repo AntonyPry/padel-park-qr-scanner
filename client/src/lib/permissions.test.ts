@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  ROUTE_ACCESS,
+  ROUTE_AUTHORIZATION,
   canAccessPath,
+  canAccessPathForAuthority,
   canManageBookingResources,
   canManageBookings,
   canManageClientBases,
@@ -12,7 +15,9 @@ import {
   canManagePrepaymentSales,
   canManagePrepaymentSettings,
   canManageShiftReportTemplates,
+  canManageStaff,
   canManageSubscriptionTypes,
+  canManageSystemUsers,
   canManageTelephony,
   canViewManagerControlDashboard,
   canRedeemCertificates,
@@ -26,8 +31,115 @@ import {
   canViewTrainingNotes,
   getDefaultPath,
 } from './permissions';
+import { selectAuthorizationRole, type RoleAuthority } from './authorization';
 
 describe('permissions', () => {
+  it('declares one audited authorization contract for every protected client route', () => {
+    expect(Object.keys(ROUTE_AUTHORIZATION).sort()).toEqual(
+      Object.keys(ROUTE_ACCESS).sort(),
+    );
+    expect(ROUTE_AUTHORIZATION['/admin/onboarding']).toMatchObject({
+      strategy: 'partial',
+      requirements: [{ scope: 'membership' }],
+    });
+    expect(ROUTE_AUTHORIZATION['/admin/staff']).toMatchObject({
+      strategy: 'partial',
+      requirements: [{ scope: 'organization' }],
+    });
+    expect(ROUTE_AUTHORIZATION['/admin/users']).toMatchObject({
+      strategy: 'single',
+      requirements: [{ scope: 'organization' }],
+    });
+    expect(
+      ROUTE_AUTHORIZATION['/admin/bookings'].requirements.map(({ scope }) => scope),
+    ).toEqual(['club', 'organization']);
+    expect(
+      ROUTE_AUTHORIZATION['/admin/finances'].requirements.map(({ scope }) => scope),
+    ).toEqual(['club', 'organization']);
+    expect(ROUTE_AUTHORIZATION['/admin/shift-cash']).toMatchObject({
+      strategy: 'single',
+      requirements: [{ scope: 'club' }],
+    });
+  });
+
+  it('requires both organization and club authority for inseparable mixed pages', () => {
+    const authority = (
+      membershipRole: 'manager' | 'trainer',
+      effectiveRole: 'manager' | 'trainer',
+    ): RoleAuthority => ({
+      accountRole: membershipRole,
+      tenantContext: {
+        clubId: 12,
+        effectiveRole,
+        membershipId: 21,
+        membershipRole,
+        organizationId: 11,
+      },
+      tenantContextEnabled: true,
+    });
+
+    const trainerManager = authority('trainer', 'manager');
+    expect(canAccessPathForAuthority(trainerManager, '/admin/motivation')).toBe(
+      false,
+    );
+    expect(canAccessPathForAuthority(trainerManager, '/admin/shift-reports')).toBe(
+      true,
+    );
+    expect(canAccessPathForAuthority(trainerManager, '/admin/finances')).toBe(
+      false,
+    );
+
+    const managerTrainer = authority('manager', 'trainer');
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/catalog')).toBe(false);
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/shift-reports')).toBe(
+      false,
+    );
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/finances')).toBe(
+      false,
+    );
+  });
+
+  it('separates organization management from club manager actions', () => {
+    const authority = (
+      accountRole: 'trainer' | 'manager',
+      membershipRole: 'trainer' | 'manager',
+      effectiveRole: 'trainer' | 'manager',
+    ): RoleAuthority => ({
+      accountRole,
+      tenantContext: {
+        clubId: 12,
+        effectiveRole,
+        membershipId: 21,
+        membershipRole,
+        organizationId: 11,
+      },
+      tenantContextEnabled: true,
+    });
+    const trainerManager = authority('trainer', 'trainer', 'manager');
+    const trainerOrganizationRole = selectAuthorizationRole(
+      trainerManager,
+      'organization',
+    );
+    const managerClubRole = selectAuthorizationRole(trainerManager, 'club');
+    expect(canManageStaff(trainerOrganizationRole)).toBe(false);
+    expect(canManageSystemUsers(trainerOrganizationRole)).toBe(false);
+    expect(canManageBookingResources(managerClubRole)).toBe(true);
+    expect(canAccessPathForAuthority(trainerManager, '/admin/staff')).toBe(false);
+    expect(canAccessPathForAuthority(trainerManager, '/admin/bookings')).toBe(true);
+
+    const managerTrainer = authority('manager', 'manager', 'trainer');
+    const managerOrganizationRole = selectAuthorizationRole(
+      managerTrainer,
+      'organization',
+    );
+    const trainerClubRole = selectAuthorizationRole(managerTrainer, 'club');
+    expect(canManageStaff(managerOrganizationRole)).toBe(true);
+    expect(canManageSystemUsers(managerOrganizationRole)).toBe(true);
+    expect(canManageBookingResources(trainerClubRole)).toBe(false);
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/users')).toBe(true);
+    expect(canAccessPathForAuthority(managerTrainer, '/admin/bookings')).toBe(false);
+  });
+
   it('routes accountants and trainers to their safe default sections', () => {
     expect(getDefaultPath('accountant')).toBe('/admin/finances');
     expect(getDefaultPath('trainer')).toBe('/admin/trainer');
@@ -44,6 +156,13 @@ describe('permissions', () => {
     expect(canManageMethodology('trainer')).toBe(false);
     expect(canViewMethodologyAnalytics('trainer')).toBe(false);
     expect(canViewTrainingNotes('trainer')).toBe(true);
+  });
+
+  it('keeps administrator operational client access without registry or references pages', () => {
+    expect(canAccessPath('admin', '/admin')).toBe(true);
+    expect(canAccessPath('admin', '/admin/clients')).toBe(false);
+    expect(canAccessPath('admin', '/admin/references')).toBe(false);
+    expect(canManageClients('admin')).toBe(true);
   });
 
   it('allows owners and managers to manage methodology approvals', () => {
@@ -129,18 +248,27 @@ describe('permissions', () => {
     expect(canManageBookings('viewer')).toBe(false);
   });
 
-  it('allows admins to process calls but keeps telephony setup for managers', () => {
-    expect(canAccessPath('admin', '/admin/telephony')).toBe(true);
-    expect(canWorkTelephony('admin')).toBe(true);
+  it('keeps telephony limited to owners and managers end to end', () => {
+    expect(canAccessPath('owner', '/admin/telephony')).toBe(true);
+    expect(canAccessPath('manager', '/admin/telephony')).toBe(true);
+    expect(canAccessPath('admin', '/admin/telephony')).toBe(false);
+    expect(canAccessPath('viewer', '/admin/telephony')).toBe(false);
+    expect(canWorkTelephony('admin')).toBe(false);
     expect(canManageTelephony('admin')).toBe(false);
     expect(canManageTelephony('manager')).toBe(true);
+    expect(canWorkTelephony('manager')).toBe(true);
     expect(canWorkTelephony('viewer')).toBe(false);
   });
 
   it('allows owners and managers to manage shift report templates', () => {
-    expect(canAccessPath('owner', '/admin/shift-reports')).toBe(true);
-    expect(canAccessPath('manager', '/admin/shift-reports')).toBe(true);
-    expect(canAccessPath('admin', '/admin/shift-reports')).toBe(false);
+    expect(canAccessPath('owner', '/admin/shift/reports')).toBe(true);
+    expect(canAccessPath('manager', '/admin/shift/reports')).toBe(true);
+    expect(canAccessPath('admin', '/admin/shift/reports')).toBe(true);
+    expect(canAccessPath('admin', '/admin/shift/cash')).toBe(true);
+    expect(canAccessPath('accountant', '/admin/shift/cash')).toBe(false);
+    expect(canAccessPath('owner', '/admin/shift-settings')).toBe(true);
+    expect(canAccessPath('manager', '/admin/shift-settings')).toBe(true);
+    expect(canAccessPath('admin', '/admin/shift-settings')).toBe(false);
     expect(canManageShiftReportTemplates('owner')).toBe(true);
     expect(canManageShiftReportTemplates('manager')).toBe(true);
     expect(canManageShiftReportTemplates('admin')).toBe(false);

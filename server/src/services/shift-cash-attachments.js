@@ -3,8 +3,29 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const {
+  isTenantFilesWorkersEnabled,
+  isTenantShiftsReportsEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  requireDefaultTenantContext,
+  resolveTrustedTenantAttribution,
+  tenantMatches,
+} = require('../files-workers/tenant-context');
+const {
+  atomicWriteStorageObject,
+  buildTenantStorageKey,
+  deleteStorageObject,
+  resolveExistingStoragePath,
+} = require('../storage/tenant-storage');
+const {
+  resolveShiftOperationsAccessContext,
+} = require('./shift-operations-access-context.service');
 
-const UPLOAD_ROOT = path.resolve(__dirname, '../../var/shift-cash-attachments');
+const LEGACY_UPLOAD_ROOT = path.resolve(__dirname, '../../var/shift-cash-attachments');
+const UPLOAD_ROOT = LEGACY_UPLOAD_ROOT;
+const ATTACHMENT_STORAGE_DOMAIN = 'shift-cash-attachments';
+const ATTACHMENT_STORAGE_SCHEMA_VERSION = 1;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const MAX_ATTACHMENTS_PER_EXPENSE = 10;
 const IMAGE_MIME_EXTENSIONS = new Map([
@@ -26,6 +47,17 @@ function normalizeString(value) {
   return String(value ?? '').trim();
 }
 
+async function resolveAttachmentTenant(requestTenant) {
+  if (!isTenantShiftsReportsEnabled()) {
+    return resolveTrustedTenantAttribution(requestTenant);
+  }
+  const context = await resolveShiftOperationsAccessContext(requestTenant);
+  return {
+    clubId: context.clubId,
+    organizationId: context.organizationId,
+  };
+}
+
 function parseDataUrl(data, mimeType) {
   const value = normalizeString(data);
   const match = value.match(/^data:([^;]+);base64,(.+)$/);
@@ -35,16 +67,102 @@ function parseDataUrl(data, mimeType) {
   return { buffer, mimeType: resolvedMimeType };
 }
 
-function resolveAbsolutePath(relativePath) {
-  const absolutePath = path.resolve(UPLOAD_ROOT, normalizeString(relativePath));
-  const relative = path.relative(UPLOAD_ROOT, absolutePath);
-  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-    throw makeError('Некорректный путь вложения', 400);
-  }
-  return absolutePath;
+function normalizeExpenseId(expenseId, attachment = null) {
+  const legacyExpenseId = normalizeString(attachment?.relativePath).split(/[\\/]/)[0];
+  const id = Number(expenseId ?? attachment?.record?.expenseId ?? legacyExpenseId);
+  if (!Number.isInteger(id) || id <= 0) throw makeError('Фото не найдено', 404);
+  return id;
 }
 
-async function storeAttachment(expenseId, payload, account) {
+function hasTenantAttachmentMetadata(attachment) {
+  return [
+    'storageSchemaVersion',
+    'storageKey',
+    'organizationId',
+    'clubId',
+    'domain',
+    'record',
+    'checksumSha256',
+  ].some((key) => attachment?.[key] !== undefined && attachment?.[key] !== null);
+}
+
+function assertTenantAttachmentMetadata(attachment, expenseId, tenant) {
+  const normalizedExpenseId = normalizeExpenseId(expenseId, attachment);
+  const record = attachment?.record || {};
+  let expectedStorageKey = null;
+  try {
+    expectedStorageKey = buildTenantStorageKey({
+      clubId: tenant?.clubId,
+      domain: ATTACHMENT_STORAGE_DOMAIN,
+      fileId: attachment?.id,
+      organizationId: tenant?.organizationId,
+      recordId: `expense:${normalizedExpenseId}`,
+    });
+  } catch (_error) {
+    // Invalid metadata is intentionally exposed as the same safe not-found response.
+  }
+  const valid =
+    Number(attachment?.storageSchemaVersion) === ATTACHMENT_STORAGE_SCHEMA_VERSION &&
+    attachment?.domain === ATTACHMENT_STORAGE_DOMAIN &&
+    attachment?.storageKey === expectedStorageKey &&
+    /^[a-f0-9]{64}$/.test(String(attachment?.checksumSha256 || '')) &&
+    tenantMatches(attachment, tenant) &&
+    Number(record.expenseId) === normalizedExpenseId &&
+    String(record.fileId || '') === String(attachment?.id || '');
+  if (!valid) throw makeError('Фото не найдено', 404);
+}
+
+function assertLegacyAttachmentMetadata(attachment, expenseId) {
+  if (hasTenantAttachmentMetadata(attachment)) throw makeError('Фото не найдено', 404);
+  const normalizedExpenseId = normalizeExpenseId(expenseId, attachment);
+  const attachmentId = normalizeString(attachment?.id);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(attachmentId)) {
+    throw makeError('Фото не найдено', 404);
+  }
+  const extension = IMAGE_MIME_EXTENSIONS.get(attachment?.mimeType);
+  const expectedPath = extension
+    ? path.join(String(normalizedExpenseId), `${attachmentId}.${extension}`)
+    : null;
+  if (!expectedPath || attachment?.relativePath !== expectedPath) {
+    throw makeError('Фото не найдено', 404);
+  }
+  return expectedPath;
+}
+
+async function resolveLegacyAttachmentPath(attachment, expenseId, requestTenant) {
+  await requireDefaultTenantContext(requestTenant);
+  const relativePath = assertLegacyAttachmentMetadata(attachment, expenseId);
+  const candidate = path.resolve(LEGACY_UPLOAD_ROOT, relativePath);
+  const lexicalRelative = path.relative(LEGACY_UPLOAD_ROOT, candidate);
+  if (lexicalRelative.startsWith('..') || path.isAbsolute(lexicalRelative)) {
+    throw makeError('Фото не найдено', 404);
+  }
+
+  try {
+    const rootRealPath = await fs.promises.realpath(LEGACY_UPLOAD_ROOT);
+    let current = LEGACY_UPLOAD_ROOT;
+    for (const component of relativePath.split(path.sep)) {
+      current = path.join(current, component);
+      const stat = await fs.promises.lstat(current);
+      const isLast = current === candidate;
+      if (stat.isSymbolicLink() || (isLast ? !stat.isFile() : !stat.isDirectory())) {
+        throw makeError('Фото не найдено', 404);
+      }
+    }
+    const candidateRealPath = await fs.promises.realpath(candidate);
+    const realRelative = path.relative(rootRealPath, candidateRealPath);
+    if (realRelative.startsWith('..') || path.isAbsolute(realRelative)) {
+      throw makeError('Фото не найдено', 404);
+    }
+    return candidateRealPath;
+  } catch (error) {
+    if (error.code === 'ENOENT') throw makeError('Фото не найдено', 404);
+    throw error;
+  }
+}
+
+async function storeAttachment(expenseId, payload, account, requestTenant = null) {
+  const normalizedExpenseId = normalizeExpenseId(expenseId);
   const parsed = parseDataUrl(payload.data, payload.mimeType);
   if (!IMAGE_MIME_EXTENSIONS.has(parsed.mimeType)) {
     throw makeError('Можно прикреплять только JPEG, PNG, WEBP, GIF или HEIC');
@@ -55,44 +173,92 @@ async function storeAttachment(expenseId, payload, account) {
 
   const id = crypto.randomUUID();
   const extension = IMAGE_MIME_EXTENSIONS.get(parsed.mimeType);
-  const relativePath = path.join(String(expenseId), `${id}.${extension}`);
-  const absolutePath = resolveAbsolutePath(relativePath);
-  await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
-  await fs.promises.writeFile(absolutePath, parsed.buffer);
-
-  return {
+  const commonMetadata = {
     id,
     mimeType: parsed.mimeType,
     originalName: normalizeString(payload.fileName) || `receipt.${extension}`,
-    relativePath,
-    size: parsed.buffer.length,
     uploadedAt: new Date().toISOString(),
     uploadedByAccountId: account?.id || null,
   };
-}
 
-async function deleteAttachmentFile(attachment) {
-  if (!attachment?.relativePath) return;
-  let absolutePath;
-  try {
-    absolutePath = resolveAbsolutePath(attachment.relativePath);
-  } catch {
-    return;
+  if (isTenantFilesWorkersEnabled()) {
+    const tenant = await resolveAttachmentTenant(requestTenant);
+    const storageKey = buildTenantStorageKey({
+      clubId: tenant.clubId,
+      domain: ATTACHMENT_STORAGE_DOMAIN,
+      fileId: id,
+      organizationId: tenant.organizationId,
+      recordId: `expense:${normalizedExpenseId}`,
+    });
+    const stored = await atomicWriteStorageObject({ storageKey, buffer: parsed.buffer });
+    return {
+      ...commonMetadata,
+      checksumSha256: stored.checksumSha256,
+      clubId: tenant.clubId,
+      domain: ATTACHMENT_STORAGE_DOMAIN,
+      organizationId: tenant.organizationId,
+      record: { expenseId: normalizedExpenseId, fileId: id },
+      size: stored.size,
+      storageKey: stored.storageKey,
+      storageSchemaVersion: ATTACHMENT_STORAGE_SCHEMA_VERSION,
+    };
   }
-  await fs.promises.unlink(absolutePath).catch(() => {});
+
+  const relativePath = path.join(String(normalizedExpenseId), `${id}.${extension}`);
+  const absolutePath = path.join(LEGACY_UPLOAD_ROOT, relativePath);
+  await fs.promises.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.promises.writeFile(absolutePath, parsed.buffer);
+  return { ...commonMetadata, relativePath, size: parsed.buffer.length };
 }
 
-async function deleteAttachmentFiles(attachments = []) {
-  await Promise.all(attachments.map(deleteAttachmentFile));
+async function resolveAttachmentPath(attachment, expenseId, requestTenant = null) {
+  const tenant = await resolveAttachmentTenant(requestTenant);
+  if (hasTenantAttachmentMetadata(attachment)) {
+    assertTenantAttachmentMetadata(attachment, expenseId, tenant);
+    try {
+      return await resolveExistingStoragePath({ storageKey: attachment.storageKey });
+    } catch (error) {
+      if (error.code === 'ENOENT') throw makeError('Фото не найдено', 404);
+      throw error;
+    }
+  }
+  return resolveLegacyAttachmentPath(attachment, expenseId, tenant);
+}
+
+async function deleteAttachmentFile(attachment, expenseId = null, requestTenant = null) {
+  if (!attachment) return false;
+  const tenant = await resolveAttachmentTenant(requestTenant);
+  if (hasTenantAttachmentMetadata(attachment)) {
+    assertTenantAttachmentMetadata(attachment, expenseId, tenant);
+    return deleteStorageObject({ storageKey: attachment.storageKey });
+  }
+  const absolutePath = await resolveLegacyAttachmentPath(attachment, expenseId, tenant);
+  await fs.promises.unlink(absolutePath);
+  return true;
+}
+
+async function deleteAttachmentFiles(attachments = [], requestTenant = null) {
+  await Promise.all(
+    attachments.map((attachment) =>
+      deleteAttachmentFile(attachment, null, requestTenant).catch(() => false),
+    ),
+  );
 }
 
 module.exports = {
+  ATTACHMENT_STORAGE_DOMAIN,
+  ATTACHMENT_STORAGE_SCHEMA_VERSION,
   IMAGE_MIME_EXTENSIONS,
+  LEGACY_UPLOAD_ROOT,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENTS_PER_EXPENSE,
   UPLOAD_ROOT,
+  assertLegacyAttachmentMetadata,
+  assertTenantAttachmentMetadata,
   deleteAttachmentFile,
   deleteAttachmentFiles,
-  resolveAbsolutePath,
+  hasTenantAttachmentMetadata,
+  resolveAttachmentPath,
+  resolveLegacyAttachmentPath,
   storeAttachment,
 };

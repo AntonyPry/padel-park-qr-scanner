@@ -52,6 +52,11 @@ import { apiFetch, getApiErrorMessage } from '@/lib/api';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
 import { useRealtimeRefresh } from '@/lib/realtime';
+import {
+  canManageSystemUsers,
+  canViewReferences,
+} from '@/lib/permissions';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 type ClientBaseStatus = 'active' | 'archived';
@@ -509,6 +514,9 @@ function getCallTaskBlockedReason(base: ClientBase) {
 }
 
 export default function ClientBasesPage() {
+  const organizationRole = useAuthorizationRole('organization');
+  const canLoadAccountOptions = canManageSystemUsers(organizationRole);
+  const canLoadOrganizationReferences = canViewReferences(organizationRole);
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const handledDeepLink = useRef('');
@@ -581,6 +589,12 @@ export default function ClientBasesPage() {
   }, [baseStatus]);
 
   const fetchReferencesData = useCallback(async () => {
+    if (!canLoadOrganizationReferences) {
+      setClientSources([]);
+      setVisitCategories([]);
+      return;
+    }
+
     try {
       const [sources, categories] = await Promise.all([
         fetchReferences('client-sources'),
@@ -592,9 +606,14 @@ export default function ClientBasesPage() {
       setClientSources([]);
       setVisitCategories([]);
     }
-  }, []);
+  }, [canLoadOrganizationReferences]);
 
   const fetchAccounts = useCallback(async () => {
+    if (!canLoadAccountOptions) {
+      setAccounts([]);
+      return;
+    }
+
     try {
       const res = await apiFetch('/api/accounts');
       if (!res.ok) return;
@@ -602,7 +621,7 @@ export default function ClientBasesPage() {
     } catch {
       setAccounts([]);
     }
-  }, []);
+  }, [canLoadAccountOptions]);
 
   useEffect(() => {
     void fetchBases();

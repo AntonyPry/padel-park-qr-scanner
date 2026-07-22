@@ -3,6 +3,16 @@ const db = require('../../models');
 const clientsService = require('./clients.service');
 const clientBasesService = require('./client-bases.service');
 const onboardingService = require('./onboarding.service');
+const {
+  BACKGROUND_COMPONENTS,
+  assertBackgroundComponentCanRun,
+} = require('../files-workers/background-run-context');
+const {
+  callTaskTenantWhere,
+  resolveCallTaskAccessContext,
+  resolveEligibleCallTaskAccount,
+  resolveStoredCallTaskContext,
+} = require('./call-task-access-context.service');
 
 const TASK_STATUSES = new Set(['backlog', 'in_progress', 'done', 'archived']);
 const TASK_SCOPE_TYPES = new Set(['snapshot', 'dynamic']);
@@ -158,7 +168,11 @@ function assertCanWorkTask(actor, task) {
   }
 }
 
-async function normalizeAssigneeId(assignedToAccountId, transaction = undefined) {
+async function normalizeAssigneeId(
+  assignedToAccountId,
+  context,
+  transaction = undefined,
+) {
   if (
     assignedToAccountId === null ||
     assignedToAccountId === undefined ||
@@ -172,29 +186,50 @@ async function normalizeAssigneeId(assignedToAccountId, transaction = undefined)
     throw appError('Некорректный исполнитель');
   }
 
-  const assignee = await db.Account.findByPk(accountId, { transaction });
-  if (!assignee || assignee.status !== 'active') {
+  let resolved = null;
+  try {
+    resolved = await resolveEligibleCallTaskAccount(accountId, context, {
+      roles: Array.from(WORKER_ROLES),
+      transaction,
+    });
+  } catch {
     throw appError('Исполнитель не найден или отключен', 404);
   }
-  if (!WORKER_ROLES.has(assignee.role)) {
-    throw appError('У этого пользователя нет доступа к задачам обзвона', 409);
-  }
-
-  return accountId;
+  if (!resolved) throw appError('Исполнитель не найден или отключен', 404);
+  return resolved;
 }
 
-async function resolveRecurringAssigneeId(accountId, transaction) {
+async function resolveRecurringAssigneeId(accountId, context, transaction) {
   if (!accountId) return null;
-
-  const assignee = await db.Account.findByPk(accountId, { transaction });
-  if (!assignee || assignee.status !== 'active' || !WORKER_ROLES.has(assignee.role)) {
-    return null;
-  }
-
-  return Number(accountId);
+  return resolveEligibleCallTaskAccount(accountId, context, {
+    allowInvalid: true,
+    roles: Array.from(WORKER_ROLES),
+    transaction,
+  });
 }
 
-function taskInclude() {
+function accountTenantInclude(context) {
+  return [
+    {
+      model: db.Membership,
+      attributes: ['id', 'staffId'],
+      required: false,
+      where: {
+        organizationId: context.organizationId,
+        status: 'active',
+      },
+      include: [
+        {
+          model: db.Staff,
+          attributes: ['id', 'name', 'organizationId', 'status'],
+          required: false,
+        },
+      ],
+    },
+  ];
+}
+
+function taskInclude(context) {
   return [
     {
       model: db.ClientBase,
@@ -205,13 +240,13 @@ function taskInclude() {
       model: db.Account,
       as: 'assignedToAccount',
       attributes: ['id', 'email', 'role', 'staffId'],
-      include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+      include: accountTenantInclude(context),
     },
     {
       model: db.Account,
       as: 'createdByAccount',
       attributes: ['id', 'email', 'role', 'staffId'],
-      include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+      include: accountTenantInclude(context),
     },
   ];
 }
@@ -219,11 +254,12 @@ function taskInclude() {
 function mapAccount(account) {
   if (!account) return null;
   const raw = account.toJSON ? account.toJSON() : account;
+  const staff = (raw.Memberships || [])[0]?.Staff;
 
   return {
     email: raw.email,
     id: raw.id,
-    name: raw.Staff?.name || raw.email,
+    name: staff?.name || raw.email,
     role: raw.role,
   };
 }
@@ -313,10 +349,10 @@ async function getTaskClientMetrics(taskIds) {
   return metricsByTask;
 }
 
-async function countCurrentBaseClients(task) {
+async function countCurrentBaseClients(task, tenant = null) {
   const raw = task.toJSON ? task.toJSON() : task;
   const filters = parseFilters(raw.clientBase?.filters);
-  return clientBasesService.countBaseClients(filters);
+  return clientBasesService.countBaseClients(filters, tenant);
 }
 
 async function mapTask(task, metricsByTask = new Map(), options = {}) {
@@ -328,7 +364,7 @@ async function mapTask(task, metricsByTask = new Map(), options = {}) {
   };
   const includeCurrentBaseCount = options.includeCurrentBaseCount === true;
   const currentBaseClientCount = includeCurrentBaseCount && raw.clientBase
-    ? await countCurrentBaseClients(raw)
+    ? await countCurrentBaseClients(raw, options.tenant || null)
     : null;
 
   return {
@@ -367,14 +403,23 @@ async function mapTask(task, metricsByTask = new Map(), options = {}) {
   };
 }
 
-async function getTaskOrFail(id) {
-  const task = await db.CallTask.findByPk(Number(id), { include: taskInclude() });
+async function getTaskOrFail(id, context, options = {}) {
+  const task = await db.CallTask.findOne({
+    include: taskInclude(context),
+    lock: options.lock,
+    transaction: options.transaction,
+    where: callTaskTenantWhere(context, { id: Number(id) }),
+  });
   if (!task) throw appError('Задача обзвона не найдена', 404);
   return task;
 }
 
-async function getBaseOrFail(id) {
-  const base = await db.ClientBase.findByPk(Number(id));
+async function getBaseOrFail(id, context, options = {}) {
+  const base = await db.ClientBase.findOne({
+    lock: options.lock,
+    transaction: options.transaction,
+    where: callTaskTenantWhere(context, { id: Number(id) }),
+  });
   if (!base) throw appError('База клиентов не найдена', 404);
   return base;
 }
@@ -404,14 +449,14 @@ function getClientDeadlineAt(base, from = new Date(), fallbackDueAt = null) {
   return fallbackDueAt || null;
 }
 
-async function getClientStatsForTask(clientId) {
+async function getClientStatsForTask(clientId, context) {
   const stats = await db.Visit.findOne({
     attributes: [
       [db.Sequelize.fn('COUNT', db.Sequelize.col('id')), 'visitCount'],
       [db.Sequelize.fn('MAX', db.Sequelize.col('scannedAt')), 'lastVisitAt'],
     ],
     raw: true,
-    where: { userId: clientId },
+    where: callTaskTenantWhere(context, { userId: clientId }),
   });
 
   return {
@@ -420,21 +465,18 @@ async function getClientStatsForTask(clientId) {
   };
 }
 
-async function getClientSnapshotOrFail(clientId) {
-  const client = await db.User.findOne({
-    where: {
-      id: Number(clientId),
-      mergedIntoUserId: null,
-    },
-  });
-  if (!client) throw appError('Клиент не найден', 404);
+async function getClientSnapshotOrFail(clientId, tenant = null, context = null) {
+  const client = await clientsService.findCanonicalById(clientId, tenant);
+  if (!client || Number(client.id) !== Number(clientId)) {
+    throw appError('Клиент не найден', 404);
+  }
   if (client.status !== 'active') {
     throw appError('Нельзя создать задачу по архивному клиенту', 409);
   }
 
   return {
     ...client.toJSON(),
-    stats: await getClientStatsForTask(client.id),
+    stats: await getClientStatsForTask(client.id, context),
   };
 }
 
@@ -462,9 +504,15 @@ async function getBaseSnapshotClients(base, options = {}) {
 
   const filters = parseFilters(base.filters);
   const clients = await clientBasesService.listBaseClientsForSnapshot(filters, {
+    context: options.context,
     limit: options.limit || 20000,
+    tenant: options.tenant || null,
   });
-  const total = await clientBasesService.countBaseClients(filters);
+  const total = await clientBasesService.countBaseClients(
+    filters,
+    options.tenant || null,
+    { context: options.context },
+  );
 
   if (clients.length < total) {
     throw appError(
@@ -476,21 +524,41 @@ async function getBaseSnapshotClients(base, options = {}) {
   return clients;
 }
 
-async function syncDynamicTask(task) {
-  const raw = task.toJSON ? task.toJSON() : task;
+async function syncDynamicTask(task, tenant = null, context = null) {
   const emptyResult = {
     addedCount: 0,
     keptRemovedCount: 0,
     removedCount: 0,
     updatedCount: 0,
   };
-  if (raw.scopeType !== 'dynamic' || !raw.clientBase) return emptyResult;
-  if (raw.status === 'archived' || raw.status === 'done') return emptyResult;
-  if (raw.clientBase.status !== 'active') return emptyResult;
-  if (!baseTargetsOnlyActiveClients(raw.clientBase)) return emptyResult;
 
   return db.sequelize.transaction(async (transaction) => {
-    const currentClients = await getBaseSnapshotClients(raw.clientBase);
+    const rawTask = task.toJSON ? task.toJSON() : task;
+    const lockedContext =
+      context?.authority === 'stored-root'
+        ? await resolveStoredCallTaskContext(rawTask, {
+            lock: true,
+            transaction,
+          })
+        : await resolveCallTaskAccessContext(tenant, {
+            accountId: context?.accountId,
+            lock: true,
+            transaction,
+          });
+    const lockedTask = await getTaskOrFail(rawTask.id, lockedContext, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    const raw = lockedTask.toJSON ? lockedTask.toJSON() : lockedTask;
+    if (raw.scopeType !== 'dynamic' || !raw.clientBase) return emptyResult;
+    if (raw.status === 'archived' || raw.status === 'done') return emptyResult;
+    if (raw.clientBase.status !== 'active') return emptyResult;
+    if (!baseTargetsOnlyActiveClients(raw.clientBase)) return emptyResult;
+
+    const currentClients = await getBaseSnapshotClients(raw.clientBase, {
+      context: lockedContext,
+      tenant,
+    });
     const currentById = new Map(
       currentClients.map((client) => [Number(client.id), client]),
     );
@@ -502,6 +570,7 @@ async function syncDynamicTask(task) {
           attributes: ['id'],
         },
       ],
+      lock: transaction.LOCK.UPDATE,
       transaction,
       where: { callTaskId: raw.id },
     });
@@ -544,6 +613,7 @@ async function syncDynamicTask(task) {
           isTraining: Boolean(raw.isTraining),
           trainingAccountId: raw.trainingAccountId || null,
           trainingRole: raw.trainingRole || null,
+          trainingSessionId: raw.trainingSessionId || null,
         })),
         {
           ignoreDuplicates: true,
@@ -555,7 +625,7 @@ async function syncDynamicTask(task) {
       transaction,
       where: { callTaskId: raw.id },
     });
-    await task.update(
+    await lockedTask.update(
       {
         snapshotClientCount: total,
       },
@@ -571,7 +641,7 @@ async function syncDynamicTask(task) {
   });
 }
 
-async function getTaskMembershipDiff(task) {
+async function getTaskMembershipDiff(task, tenant = null, context = null) {
   const raw = task.toJSON ? task.toJSON() : task;
   if (!raw.clientBase || raw.clientBase.status !== 'active') {
     return null;
@@ -580,7 +650,10 @@ async function getTaskMembershipDiff(task) {
     return null;
   }
 
-  const currentClients = await getBaseSnapshotClients(raw.clientBase);
+  const currentClients = await getBaseSnapshotClients(raw.clientBase, {
+    context,
+    tenant,
+  });
   const currentById = new Map(
     currentClients.map((client) => [Number(client.id), client]),
   );
@@ -618,11 +691,14 @@ async function createTaskForBase({
   actor = null,
   base,
   clients,
+  context,
   data = {},
+  tenant = null,
   transaction,
 }) {
   const now = new Date();
-  const snapshotClients = clients || (await getBaseSnapshotClients(base));
+  const snapshotClients =
+    clients || (await getBaseSnapshotClients(base, { context, tenant }));
   const title =
     normalizeText(data.title) ||
     `${base.name}: обзвон ${formatDateForTitle(now)}`;
@@ -631,6 +707,7 @@ async function createTaskForBase({
   const scopeType = normalizeScopeType(data.scopeType);
   const assignedToAccountId = await normalizeAssigneeId(
     data.assignedToAccountId,
+    context,
     transaction,
   );
   const trainingMarker = base.isTraining
@@ -638,16 +715,19 @@ async function createTaskForBase({
         isTraining: true,
         trainingAccountId: base.trainingAccountId || null,
         trainingRole: base.trainingRole || null,
+        trainingSessionId: base.trainingSessionId || null,
       }
-    : await onboardingService.getTrainingDataMarker(actor);
+    : await onboardingService.getTrainingDataMarker(actor, tenant);
 
   const createdTask = await db.CallTask.create(
     {
       assignedToAccountId,
+      clubId: context.clubId,
       clientBaseId: base.id,
       createdByAccountId: actor?.id || null,
       description: normalizeText(data.description),
       dueAt,
+      organizationId: context.organizationId,
       scriptText: normalizeText(data.scriptText),
       scopeType,
       snapshotClientCount: snapshotClients.length,
@@ -683,27 +763,37 @@ async function createTaskForBase({
   return createdTask;
 }
 
-async function createForClient(actor, clientId, data = {}) {
+async function createForClient(actor, clientId, data = {}, tenant = null) {
   assertCanManageTask(actor);
-
-  const client = await getClientSnapshotOrFail(clientId);
   const dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
-  const assignedToAccountId = await normalizeAssigneeId(data.assignedToAccountId);
-  const title = normalizeText(data.title) || `Обзвон: ${client.name}`;
-  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor, tenant);
 
-  if (title.length < 2) {
-    throw appError('Название задачи слишком короткое');
-  }
-
-  const createdTask = await db.sequelize.transaction(async (transaction) => {
+  const created = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    if (context.readScoped && Number(context.accountId) !== Number(actor?.id)) {
+      throw appError('Контекст клуба недоступен', 404);
+    }
+    const client = await getClientSnapshotOrFail(clientId, tenant, context);
+    const assignedToAccountId = await normalizeAssigneeId(
+      data.assignedToAccountId,
+      context,
+      transaction,
+    );
+    const title = normalizeText(data.title) || `Обзвон: ${client.name}`;
+    if (title.length < 2) throw appError('Название задачи слишком короткое');
     const task = await db.CallTask.create(
       {
         assignedToAccountId,
+        clubId: context.clubId,
         clientBaseId: null,
         createdByAccountId: actor?.id || null,
         description: normalizeText(data.description),
         dueAt,
+        organizationId: context.organizationId,
         scriptText: normalizeText(data.scriptText),
         scopeType: 'snapshot',
         snapshotClientCount: 1,
@@ -725,20 +815,21 @@ async function createForClient(actor, clientId, data = {}) {
       { transaction },
     );
 
-    return task;
+    return { clientId: Number(client.id), task };
   });
 
   await onboardingService.recordEventSafe(actor, 'call_task.created', {
-    entityId: createdTask.id,
+    entityId: created.task.id,
     entityType: 'call_task',
+    tenant,
     payload: {
-      clientId: client.id,
+      clientId: created.clientId,
       scopeType: 'snapshot',
-      taskId: createdTask.id,
+      taskId: created.task.id,
     },
   });
 
-  return getOne(actor, createdTask.id);
+  return getOne(actor, created.task.id, tenant);
 }
 
 function buildTaskWhere(actor, query = {}) {
@@ -766,12 +857,15 @@ function buildTaskWhere(actor, query = {}) {
   return where;
 }
 
-async function list(actor, query = {}) {
-  const where = buildTaskWhere(actor, query);
+async function list(actor, query = {}, tenant = null) {
+  const context = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
+  const where = callTaskTenantWhere(context, buildTaskWhere(actor, query));
 
   const tasks = await db.CallTask.findAll({
     where,
-    include: taskInclude(),
+    include: taskInclude(context),
     order: [
       [db.Sequelize.literal("CASE WHEN `CallTask`.`status` = 'in_progress' THEN 0 WHEN `CallTask`.`status` = 'backlog' THEN 1 WHEN `CallTask`.`status` = 'done' THEN 2 ELSE 3 END"), 'ASC'],
       ['dueAt', 'ASC'],
@@ -783,113 +877,155 @@ async function list(actor, query = {}) {
     tasks.map((task) => task.id),
   );
 
-  return Promise.all(tasks.map((task) => mapTask(task, metricsByTask)));
+  return Promise.all(
+    tasks.map((task) => mapTask(task, metricsByTask, { tenant })),
+  );
 }
 
-async function createFromBase(actor, baseId, data = {}) {
+async function createFromBase(actor, baseId, data = {}, tenant = null) {
   assertCanManageTask(actor);
 
-  const base = await getBaseOrFail(baseId);
-  if (base.status !== 'active') {
-    throw appError('Нельзя создать обзвон из архивной базы', 409);
-  }
-
   const task = await db.sequelize.transaction(async (transaction) => {
-    return createTaskForBase({ actor, base, data, transaction });
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    const base = await getBaseOrFail(baseId, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (base.status !== 'active') {
+      throw appError('Нельзя создать обзвон из архивной базы', 409);
+    }
+    return createTaskForBase({
+      actor,
+      base,
+      context,
+      data,
+      tenant,
+      transaction,
+    });
   });
 
   await onboardingService.recordEventSafe(actor, 'call_task.created', {
     entityId: task.id,
     entityType: 'call_task',
+    tenant,
     payload: {
-      baseId: base.id,
+      baseId: Number(baseId),
       scopeType: data.scopeType || 'snapshot',
       taskId: task.id,
     },
   });
 
-  return getOne(actor, task.id);
+  return getOne(actor, task.id, tenant);
 }
 
-async function getOne(actor, id) {
-  const task = await getTaskOrFail(id);
+async function getOne(actor, id, tenant = null) {
+  const context = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
+  const task = await getTaskOrFail(id, context);
   assertCanWorkTask(actor, task);
-  await syncDynamicTask(task);
+  await syncDynamicTask(task, tenant, context);
 
   const metricsByTask = await getTaskClientMetrics([task.id]);
-  const freshTask = await getTaskOrFail(id);
+  const freshTask = await getTaskOrFail(id, context);
   const mapped = await mapTask(freshTask, metricsByTask, {
     includeCurrentBaseCount: true,
+    tenant,
   });
-  mapped.membershipDiff = await getTaskMembershipDiff(freshTask);
+  mapped.membershipDiff = await getTaskMembershipDiff(
+    freshTask,
+    tenant,
+    context,
+  );
   return mapped;
 }
 
-async function update(actor, id, data = {}) {
-  const task = await getTaskOrFail(id);
+async function update(actor, id, data = {}, tenant = null) {
   assertCanManageTask(actor);
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    const task = await getTaskOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
 
-  const mutableFields = [
-    'assignedToAccountId',
-    'description',
-    'dueAt',
-    'scriptText',
-    'scopeType',
-    'status',
-    'title',
-  ];
-  const requestedFields = mutableFields.filter((field) => field in data);
-  const requestedNonStatusFields = requestedFields.filter(
-    (field) => field !== 'status',
-  );
-
-  if (
-    (task.status === 'archived' || task.status === 'done') &&
-    requestedNonStatusFields.length > 0
-  ) {
-    throw appError(
-      task.status === 'archived'
-        ? 'Архивную задачу можно только восстановить'
-        : 'Завершенную задачу можно только вернуть в работу или архивировать',
-      409,
+    const mutableFields = [
+      'assignedToAccountId',
+      'description',
+      'dueAt',
+      'scriptText',
+      'scopeType',
+      'status',
+      'title',
+    ];
+    const requestedFields = mutableFields.filter((field) => field in data);
+    const requestedNonStatusFields = requestedFields.filter(
+      (field) => field !== 'status',
     );
-  }
 
-  const payload = {};
-  if ('title' in data) {
-    const title = normalizeText(data.title);
-    if (!title || title.length < 2) {
-      throw appError('Название задачи слишком короткое');
+    if (
+      (task.status === 'archived' || task.status === 'done') &&
+      requestedNonStatusFields.length > 0
+    ) {
+      throw appError(
+        task.status === 'archived'
+          ? 'Архивную задачу можно только восстановить'
+          : 'Завершенную задачу можно только вернуть в работу или архивировать',
+        409,
+      );
     }
-    payload.title = title;
-  }
-  if ('description' in data) payload.description = normalizeText(data.description);
-  if ('scriptText' in data) payload.scriptText = normalizeText(data.scriptText);
-  if ('status' in data) payload.status = normalizeTaskStatus(data.status);
-  if (
-    task.status === 'archived' &&
-    payload.status &&
-    !['archived', 'backlog'].includes(payload.status)
-  ) {
-    throw appError('Архивную задачу можно вернуть только в бэклог', 409);
-  }
-  if (
-    task.status === 'done' &&
-    payload.status &&
-    !['done', 'in_progress', 'archived'].includes(payload.status)
-  ) {
-    throw appError('Завершенную задачу можно вернуть в работу или архивировать', 409);
-  }
-  if ('scopeType' in data) payload.scopeType = normalizeScopeType(data.scopeType);
-  if ('dueAt' in data) payload.dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
-  if ('assignedToAccountId' in data) {
-    payload.assignedToAccountId = await normalizeAssigneeId(
-      data.assignedToAccountId,
-    );
-  }
 
-  await task.update(payload);
-  return getOne(actor, id);
+    const payload = {};
+    if ('title' in data) {
+      const title = normalizeText(data.title);
+      if (!title || title.length < 2) {
+        throw appError('Название задачи слишком короткое');
+      }
+      payload.title = title;
+    }
+    if ('description' in data) payload.description = normalizeText(data.description);
+    if ('scriptText' in data) payload.scriptText = normalizeText(data.scriptText);
+    if ('status' in data) payload.status = normalizeTaskStatus(data.status);
+    if (
+      task.status === 'archived' &&
+      payload.status &&
+      !['archived', 'backlog'].includes(payload.status)
+    ) {
+      throw appError('Архивную задачу можно вернуть только в бэклог', 409);
+    }
+    if (
+      task.status === 'done' &&
+      payload.status &&
+      !['done', 'in_progress', 'archived'].includes(payload.status)
+    ) {
+      throw appError(
+        'Завершенную задачу можно вернуть в работу или архивировать',
+        409,
+      );
+    }
+    if ('scopeType' in data) payload.scopeType = normalizeScopeType(data.scopeType);
+    if ('dueAt' in data) {
+      payload.dueAt = normalizeDateTime(data.dueAt, 'дедлайн задачи');
+    }
+    if ('assignedToAccountId' in data) {
+      payload.assignedToAccountId = await normalizeAssigneeId(
+        data.assignedToAccountId,
+        context,
+        transaction,
+      );
+    }
+
+    await task.update(payload, { transaction });
+  });
+  return getOne(actor, id, tenant);
 }
 
 function parsePaging(query = {}) {
@@ -950,10 +1086,13 @@ function mapTaskClient(row) {
   };
 }
 
-async function listTaskClients(actor, taskId, query = {}) {
-  const task = await getTaskOrFail(taskId);
+async function listTaskClients(actor, taskId, query = {}, tenant = null) {
+  const context = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
+  const task = await getTaskOrFail(taskId, context);
   assertCanWorkTask(actor, task);
-  await syncDynamicTask(task);
+  await syncDynamicTask(task, tenant, context);
 
   const paging = parsePaging(query);
   const where = {
@@ -991,7 +1130,7 @@ async function listTaskClients(actor, taskId, query = {}) {
             model: db.Account,
             as: 'actorAccount',
             attributes: ['id', 'email', 'role', 'staffId'],
-            include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+            include: accountTenantInclude(context),
           },
         ],
       },
@@ -1015,32 +1154,49 @@ async function listTaskClients(actor, taskId, query = {}) {
   };
 }
 
-async function addAttempt(actor, taskClientId, data = {}) {
-  const taskClient = await db.CallTaskClient.findByPk(Number(taskClientId), {
-    include: [{ model: db.CallTask, as: 'callTask', include: taskInclude() }],
-  });
-  if (!taskClient) throw appError('Клиент в задаче не найден', 404);
-  assertCanWorkTask(actor, taskClient.callTask);
-  if (taskClient.callTask.status === 'archived') {
-    throw appError('Архивная задача доступна только для просмотра', 409);
-  }
-  if (taskClient.callTask.status === 'done') {
-    throw appError('Завершенная задача доступна только для просмотра', 409);
-  }
+async function addAttempt(actor, taskClientId, data = {}, tenant = null) {
+  const updated = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    const taskClient = await db.CallTaskClient.findOne({
+      include: [
+        {
+          model: db.CallTask,
+          as: 'callTask',
+          include: taskInclude(context),
+          required: true,
+          where: callTaskTenantWhere(context),
+        },
+      ],
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: { id: Number(taskClientId) },
+    });
+    if (!taskClient) throw appError('Клиент в задаче не найден', 404);
+    assertCanWorkTask(actor, taskClient.callTask);
+    if (taskClient.callTask.status === 'archived') {
+      throw appError('Архивная задача доступна только для просмотра', 409);
+    }
+    if (taskClient.callTask.status === 'done') {
+      throw appError('Завершенная задача доступна только для просмотра', 409);
+    }
 
-  const status = normalizeClientStatus(data.status || taskClient.status);
-  const summary = normalizeText(data.summary);
-  const deadlineAt = normalizeDateTime(data.deadlineAt, 'дедлайн клиента');
-  const now = new Date();
-  const trainingMarker = taskClient.isTraining
-    ? {
-        isTraining: true,
-        trainingAccountId: taskClient.trainingAccountId || null,
-        trainingRole: taskClient.trainingRole || null,
-      }
-    : await onboardingService.getTrainingDataMarker(actor);
+    const status = normalizeClientStatus(data.status || taskClient.status);
+    const summary = normalizeText(data.summary);
+    const deadlineAt = normalizeDateTime(data.deadlineAt, 'дедлайн клиента');
+    const now = new Date();
+    const trainingMarker = taskClient.isTraining
+      ? {
+          isTraining: true,
+          trainingAccountId: taskClient.trainingAccountId || null,
+          trainingRole: taskClient.trainingRole || null,
+          trainingSessionId: taskClient.trainingSessionId || null,
+        }
+      : await onboardingService.getTrainingDataMarker(actor, tenant);
 
-  await db.sequelize.transaction(async (transaction) => {
     await db.CallTaskAttempt.create(
       {
         actorAccountId: actor?.id || null,
@@ -1062,21 +1218,37 @@ async function addAttempt(actor, taskClientId, data = {}) {
       },
       { transaction },
     );
+    return {
+      callTaskId: Number(taskClient.callTaskId),
+      id: Number(taskClient.id),
+      status,
+    };
   });
 
   await onboardingService.recordEventSafe(actor, 'call_task.attempt_logged', {
-    entityId: taskClient.id,
+    entityId: updated.id,
     entityType: 'call_task_client',
+    tenant,
     payload: {
-      callTaskId: taskClient.callTaskId,
-      status,
-      taskClientId: taskClient.id,
+      callTaskId: updated.callTaskId,
+      status: updated.status,
+      taskClientId: updated.id,
     },
   });
 
+  const responseContext = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
   return mapTaskClient(
-    await db.CallTaskClient.findByPk(taskClient.id, {
+    await db.CallTaskClient.findOne({
       include: [
+        {
+          model: db.CallTask,
+          as: 'callTask',
+          attributes: ['id'],
+          required: true,
+          where: callTaskTenantWhere(responseContext),
+        },
         {
           model: db.User,
           as: 'client',
@@ -1093,11 +1265,12 @@ async function addAttempt(actor, taskClientId, data = {}) {
               model: db.Account,
               as: 'actorAccount',
               attributes: ['id', 'email', 'role', 'staffId'],
-              include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+              include: accountTenantInclude(responseContext),
             },
           ],
         },
       ],
+      where: { id: updated.id },
     }),
   );
 }
@@ -1122,16 +1295,7 @@ function normalizeTaskClientIds(value) {
   return normalized;
 }
 
-async function bulkUpdateClients(actor, taskId, data = {}) {
-  const task = await getTaskOrFail(taskId);
-  assertCanWorkTask(actor, task);
-  if (task.status === 'archived') {
-    throw appError('Архивная задача доступна только для просмотра', 409);
-  }
-  if (task.status === 'done') {
-    throw appError('Завершенная задача доступна только для просмотра', 409);
-  }
-
+async function bulkUpdateClients(actor, taskId, data = {}, tenant = null) {
   const taskClientIds = normalizeTaskClientIds(data.taskClientIds);
   const hasStatus = 'status' in data && data.status !== '' && data.status !== null;
   const hasDeadline = 'deadlineAt' in data;
@@ -1148,6 +1312,22 @@ async function bulkUpdateClients(actor, taskId, data = {}) {
   const now = new Date();
 
   const result = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    const task = await getTaskOrFail(taskId, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    assertCanWorkTask(actor, task);
+    if (task.status === 'archived') {
+      throw appError('Архивная задача доступна только для просмотра', 409);
+    }
+    if (task.status === 'done') {
+      throw appError('Завершенная задача доступна только для просмотра', 409);
+    }
     const rows = await db.CallTaskClient.findAll({
       lock: transaction.LOCK.UPDATE,
       transaction,
@@ -1198,8 +1378,11 @@ async function bulkUpdateClients(actor, taskId, data = {}) {
   };
 }
 
-async function getReport(actor, query = {}) {
-  const where = buildTaskWhere(actor, query);
+async function getReport(actor, query = {}, tenant = null) {
+  const context = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
+  const where = callTaskTenantWhere(context, buildTaskWhere(actor, query));
   where.isTraining = false;
   const createdFrom = normalizeDateTime(query.createdFrom, 'начало периода');
   const createdTo = normalizeDateTime(query.createdTo, 'конец периода');
@@ -1260,23 +1443,30 @@ async function getReport(actor, query = {}) {
   };
 }
 
-async function sync(actor, id) {
-  const task = await getTaskOrFail(id);
+async function sync(actor, id, tenant = null) {
   assertCanManageTask(actor);
-  const result = await syncDynamicTask(task);
+  const context = await resolveCallTaskAccessContext(tenant, {
+    accountId: actor?.id,
+  });
+  const task = await getTaskOrFail(id, context);
+  const result = await syncDynamicTask(task, tenant, context);
   return {
     ...result,
-    task: await getOne(actor, id),
+    task: await getOne(actor, id, tenant),
   };
 }
 
-async function runDueRecurringTasks(now = new Date()) {
+async function runDueRecurringTasks(now = new Date(), tenant = null, actor = null) {
+  assertBackgroundComponentCanRun(BACKGROUND_COMPONENTS.CALL_TASKS_RECURRING);
+  const requestContext = tenant
+    ? await resolveCallTaskAccessContext(tenant, { accountId: actor?.id })
+    : null;
   const bases = await db.ClientBase.findAll({
-    where: {
+    where: callTaskTenantWhere(requestContext, {
       recurringEnabled: true,
       recurringNextRunAt: { [Op.lte]: now },
       status: 'active',
-    },
+    }),
     order: [['recurringNextRunAt', 'ASC']],
   });
   const results = [];
@@ -1284,9 +1474,20 @@ async function runDueRecurringTasks(now = new Date()) {
   for (const base of bases) {
     try {
       const result = await db.sequelize.transaction(async (transaction) => {
-        const lockedBase = await db.ClientBase.findByPk(base.id, {
+        const storedContext = requestContext
+          ? await resolveCallTaskAccessContext(tenant, {
+              accountId: actor?.id,
+              lock: true,
+              transaction,
+            })
+          : await resolveStoredCallTaskContext(base, {
+              lock: true,
+              transaction,
+            });
+        const lockedBase = await db.ClientBase.findOne({
           lock: transaction.LOCK.UPDATE,
           transaction,
+          where: callTaskTenantWhere(storedContext, { id: base.id }, { force: true }),
         });
         if (
           !lockedBase ||
@@ -1309,6 +1510,7 @@ async function runDueRecurringTasks(now = new Date()) {
             : addDays(now, Number(lockedBase.recurringDueDays));
         const assignedToAccountId = await resolveRecurringAssigneeId(
           lockedBase.recurringAssignedToAccountId,
+          storedContext,
           transaction,
         );
         if (lockedBase.recurringAssignedToAccountId && !assignedToAccountId) {
@@ -1317,7 +1519,10 @@ async function runDueRecurringTasks(now = new Date()) {
             { transaction },
           );
         }
-        const clients = await getBaseSnapshotClients(lockedBase);
+        const clients = await getBaseSnapshotClients(lockedBase, {
+          context: storedContext,
+          tenant,
+        });
 
         if (clients.length === 0) {
           await lockedBase.update(
@@ -1341,6 +1546,7 @@ async function runDueRecurringTasks(now = new Date()) {
           actor: null,
           base: lockedBase,
           clients,
+          context: storedContext,
           data: {
             assignedToAccountId,
             description: lockedBase.recurringDescription,
@@ -1350,6 +1556,7 @@ async function runDueRecurringTasks(now = new Date()) {
               lockedBase.recurringTitle ||
               `${lockedBase.name}: обзвон ${formatDateForTitle(now)}`,
           },
+          tenant,
           transaction,
         });
         await lockedBase.update(
@@ -1384,45 +1591,67 @@ async function runDueRecurringTasks(now = new Date()) {
   };
 }
 
-async function removeArchived(actor, id) {
-  const task = await getTaskOrFail(id);
+async function removeArchived(actor, id, tenant = null) {
   assertCanManageTask(actor);
-  if (task.status !== 'archived') {
-    throw appError('Удалять безвозвратно можно только задачи из архива', 409);
-  }
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveCallTaskAccessContext(tenant, {
+      accountId: actor?.id,
+      lock: true,
+      transaction,
+    });
+    const task = await getTaskOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (task.status !== 'archived') {
+      throw appError('Удалять безвозвратно можно только задачи из архива', 409);
+    }
 
-  const taskClients = await db.CallTaskClient.findAll({
-    attributes: ['id', 'status', 'summary', 'contactedAt'],
-    where: { callTaskId: task.id },
-  });
-  const clientIds = taskClients.map((client) => client.id);
-  const attemptsCount =
-    clientIds.length === 0
-      ? 0
-      : await db.CallTaskAttempt.count({
-          where: {
-            callTaskClientId: {
-              [Op.in]: clientIds,
+    const taskClients = await db.CallTaskClient.findAll({
+      attributes: ['id', 'status', 'summary', 'contactedAt'],
+      transaction,
+      where: { callTaskId: task.id },
+    });
+    const clientIds = taskClients.map((client) => client.id);
+    const [attemptsCount, linkedCallsCount] = await Promise.all([
+      clientIds.length === 0
+        ? 0
+        : db.CallTaskAttempt.count({
+            transaction,
+            where: {
+              callTaskClientId: {
+                [Op.in]: clientIds,
+              },
             },
-          },
-        });
-  const hasCallHistory =
-    attemptsCount > 0 ||
-    taskClients.some(
-      (client) =>
-        client.status !== 'new' ||
-        Boolean(String(client.summary || '').trim()) ||
-        Boolean(client.contactedAt),
-    );
+          }),
+      db.TelephonyCall.count({
+        transaction,
+        where: callTaskTenantWhere(
+          context,
+          { followUpCallTaskId: task.id },
+          { force: true },
+        ),
+      }),
+    ]);
+    const hasCallHistory =
+      attemptsCount > 0 ||
+      linkedCallsCount > 0 ||
+      taskClients.some(
+        (client) =>
+          client.status !== 'new' ||
+          Boolean(String(client.summary || '').trim()) ||
+          Boolean(client.contactedAt),
+      );
 
-  if (hasCallHistory) {
-    throw appError(
-      'Задачу нельзя удалить безвозвратно: по ней уже есть история обзвона. Оставьте ее в архиве.',
-      409,
-    );
-  }
+    if (hasCallHistory) {
+      throw appError(
+        'Задачу нельзя удалить безвозвратно: по ней уже есть история обзвона. Оставьте ее в архиве.',
+        409,
+      );
+    }
 
-  await task.destroy();
+    await task.destroy({ transaction });
+  });
   return { success: true };
 }
 

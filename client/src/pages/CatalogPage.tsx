@@ -83,7 +83,7 @@ import {
   canManagePrepaymentSettings,
   canManageSubscriptionTypes,
 } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import { useRealtimeRefresh } from '@/lib/realtime';
 
 const PNL_GROUPS = [
@@ -346,13 +346,15 @@ function formatDateTime(value?: string | null) {
 }
 
 export default function CatalogPage() {
-  const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
+  const clubRole = useAuthorizationRole('club');
   const [searchParams] = useSearchParams();
-  const canEditCatalog = canManageCatalog(account?.role);
-  const canEditMotivation = canManageMotivation(account?.role);
-  const canEditSaleSettings = canManagePrepaymentSettings(account?.role);
-  const canEditPendingSales = canManagePrepaymentSales(account?.role);
-  const canEditSubscriptionTypes = canManageSubscriptionTypes(account?.role);
+  const canEditCategories = canManageCatalog(organizationRole);
+  const canEditRules = canManageCatalog(clubRole);
+  const canEditMotivation = canManageMotivation(organizationRole);
+  const canEditSaleSettings = canManagePrepaymentSettings(clubRole);
+  const canEditPendingSales = canManagePrepaymentSales(clubRole);
+  const canEditSubscriptionTypes = canManageSubscriptionTypes(organizationRole);
   const [unmapped, setUnmapped] = useState<string[]>([]);
   const [rules, setRules] = useState<CatalogRule[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -735,7 +737,7 @@ export default function CatalogPage() {
 
   const handleSaveUnmappedItem = async () => {
     if (!unmappedDialogItem || !unmappedItemForm.category) return;
-    if (!canEditCatalog) {
+    if (!canEditRules) {
       showPermissionDenied(permissionMessages.catalogManage);
       return;
     }
@@ -1201,7 +1203,7 @@ export default function CatalogPage() {
   };
 
   const handleAddCategory = categoryForm.handleSubmit(async (values) => {
-    if (!canEditCatalog) {
+    if (!canEditCategories) {
       showPermissionDenied(permissionMessages.catalogManage);
       return;
     }
@@ -1323,7 +1325,7 @@ export default function CatalogPage() {
     categoryId: number,
     newParentId: string,
   ) => {
-    if (!canEditCatalog) {
+    if (!canEditCategories) {
       showPermissionDenied(permissionMessages.catalogManage);
       return;
     }
@@ -1542,7 +1544,7 @@ export default function CatalogPage() {
         return catalogStatus === 'archived' ? (
           <div className="flex justify-end gap-1">
             <PermissionActionButton
-              allowed={canEditCatalog}
+              allowed={canEditRules}
               variant="ghost"
               size="icon"
               onClick={() => requestRestoreRule(rule)}
@@ -1553,7 +1555,7 @@ export default function CatalogPage() {
               <ArchiveRestore className="h-4 w-4" />
             </PermissionActionButton>
             <PermissionActionButton
-              allowed={canEditCatalog}
+              allowed={canEditRules}
               variant="ghost"
               size="icon"
               onClick={() => requestPermanentDeleteRule(rule)}
@@ -1566,7 +1568,7 @@ export default function CatalogPage() {
           </div>
         ) : (
           <PermissionActionButton
-            allowed={canEditCatalog}
+            allowed={canEditRules}
             variant="ghost"
             size="icon"
             onClick={() => requestArchiveRule(rule)}
@@ -1873,12 +1875,12 @@ export default function CatalogPage() {
         return (
           <Select
             value={category.parentId ? String(category.parentId) : 'none'}
-            disabled={!canEditCatalog}
+            disabled={!canEditCategories}
             onValueChange={(val) => handleUpdateParent(category.id, val)}
           >
             <SelectTrigger
               className="w-full border-dashed bg-transparent"
-              title={!canEditCatalog ? permissionMessages.catalogManage : undefined}
+              title={!canEditCategories ? permissionMessages.catalogManage : undefined}
             >
               <SelectValue />
             </SelectTrigger>
@@ -1907,7 +1909,7 @@ export default function CatalogPage() {
       cell: ({ row }) => {
         const category = row.original;
 
-        if (!canEditCatalog || category.isSystem) return null;
+        if (!canEditCategories || category.isSystem) return null;
 
         return (
           <div className="flex justify-end gap-1">
@@ -2197,7 +2199,7 @@ export default function CatalogPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {!canEditCatalog && (
+            {!canEditRules && (
               <PermissionHint className="mb-4">
                 {permissionMessages.catalogManage}
               </PermissionHint>
@@ -2219,7 +2221,7 @@ export default function CatalogPage() {
                       key={itemName}
                       type="button"
                       className="min-w-0 rounded-xl border bg-card p-4 text-left shadow-sm transition enabled:hover:border-primary/40 enabled:hover:bg-muted/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
-                      disabled={!canEditCatalog}
+                      disabled={!canEditRules}
                       onClick={() => openUnmappedItemDialog(itemName)}
                     >
                       <div className="break-words font-semibold">{itemName}</div>
@@ -2231,7 +2233,7 @@ export default function CatalogPage() {
                           </span>
                         )}
                       </div>
-                      {canEditCatalog && (
+                      {canEditRules && (
                         <div className="mt-3 text-xs font-medium text-primary">
                           Разобрать позицию
                         </div>
@@ -2294,7 +2296,7 @@ export default function CatalogPage() {
             <CardTitle>Сохраненные правила</CardTitle>
           </CardHeader>
           <CardContent>
-            {!canEditCatalog && (
+            {!canEditRules && (
               <PermissionHint className="mb-4">
                 {permissionMessages.catalogManage}
               </PermissionHint>
@@ -2451,10 +2453,10 @@ export default function CatalogPage() {
             <CardTitle>Управление категориями P&L</CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
-            {!canEditCatalog && (
+            {!canEditCategories && (
               <PermissionHint>{permissionMessages.catalogManage}</PermissionHint>
             )}
-            {canEditCatalog && catalogStatus === 'active' && (
+            {canEditCategories && catalogStatus === 'active' && (
               <form
                 onSubmit={handleAddCategory}
                 className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end bg-muted/30 p-4 rounded-lg border"

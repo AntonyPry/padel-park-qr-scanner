@@ -1,10 +1,19 @@
 const assert = require('node:assert/strict');
-const { test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const analyticsService = require('../../src/services/visits-analytics.service');
 const clientBasesService = require('../../src/services/client-bases.service');
 const callTasksService = require('../../src/services/call-tasks.service');
 const clientBasesController = require('../../src/controllers/client-bases.controller');
+const {
+  createActiveTrainingFixture,
+  getDefaultTenantIds,
+  mockExactSingletonDefault,
+} = require('../helpers/tenant-fixtures');
+
+let restoreSingleton;
+beforeEach(() => { restoreSingleton = mockExactSingletonDefault(db); });
+afterEach(() => { restoreSingleton(); });
 
 function createApiResponse() {
   return {
@@ -23,22 +32,23 @@ function createApiResponse() {
 
 test('DB-backed analytics → preview → client base → call task keeps count parity and canonical membership', async () => {
   await db.sequelize.authenticate();
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = `${Date.now()}`;
   const users = [];
   let source;
   let actor;
+  let actorMembership;
+  let trainingFixture;
   let base;
   let task;
   try {
-    source = await db.ClientSource.create({ name: `Segment source ${suffix}`, status: 'active' });
-    actor = await db.Account.create({
-      email: `visits-segment-${suffix}@example.test`,
-      passwordHash: 'not-used-in-test',
-      role: 'owner',
-      status: 'active',
-    });
+    source = await db.ClientSource.create({ organizationId, name: `Segment source ${suffix}`, status: 'active' });
+    trainingFixture = await createActiveTrainingFixture(db, { clubId, organizationId });
+    actor = trainingFixture.account;
+    actorMembership = trainingFixture.membership;
     const makeUser = async (name, extra = {}) => {
       const user = await db.User.create({
+        organizationId,
         name: `${name}-${suffix}`,
         phone: `79${suffix}${users.length}`.slice(-15),
         source: 'Legacy segment source',
@@ -54,22 +64,28 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     const leaf = await makeUser('leaf', { status: 'archived', mergedIntoUserId: middle.id });
     const active = await makeUser('active');
     const archived = await makeUser('archived', { status: 'archived' });
-    const training = await makeUser('training', { isTraining: true });
+    const training = await makeUser('training', trainingFixture.ownership);
     const cycleA = await makeUser('cycle-a');
     const cycleB = await makeUser('cycle-b');
     await cycleA.update({ mergedIntoUserId: cycleB.id });
     await cycleB.update({ mergedIntoUserId: cycleA.id });
 
-    const firstRootVisit = await db.Visit.create({ userId: leaf.id, scannedAt: '2091-01-05T10:00:00Z' });
+    const firstRootVisit = await db.Visit.create({ organizationId, clubId, userId: leaf.id, scannedAt: '2091-01-05T10:00:00Z' });
     await db.Visit.bulkCreate([
-      { userId: middle.id, scannedAt: '2091-02-10T10:00:00Z' },
-      { userId: root.id, scannedAt: '2091-03-10T10:00:00Z' },
-      { userId: active.id, scannedAt: '2091-01-12T10:00:00Z' },
-      { userId: archived.id, scannedAt: '2091-01-13T10:00:00Z' },
-      { userId: training.id, scannedAt: '2091-01-14T10:00:00Z', isTraining: true },
-      { userId: cycleA.id, scannedAt: '2091-01-15T10:00:00Z' },
-      { userId: cycleB.id, scannedAt: '2091-02-15T10:00:00Z' },
-      { userId: root.id, scannedAt: '2091-03-10T10:01:00Z', duplicateOfVisitId: firstRootVisit.id },
+      { organizationId, clubId, userId: middle.id, scannedAt: '2091-02-10T10:00:00Z' },
+      { organizationId, clubId, userId: root.id, scannedAt: '2091-03-10T10:00:00Z' },
+      { organizationId, clubId, userId: active.id, scannedAt: '2091-01-12T10:00:00Z' },
+      { organizationId, clubId, userId: archived.id, scannedAt: '2091-01-13T10:00:00Z' },
+      {
+        organizationId,
+        clubId,
+        userId: training.id,
+        scannedAt: '2091-01-14T10:00:00Z',
+        ...trainingFixture.ownership,
+      },
+      { organizationId, clubId, userId: cycleA.id, scannedAt: '2091-01-15T10:00:00Z' },
+      { organizationId, clubId, userId: cycleB.id, scannedAt: '2091-02-15T10:00:00Z' },
+      { organizationId, clubId, userId: root.id, scannedAt: '2091-03-10T10:01:00Z', duplicateOfVisitId: firstRootVisit.id },
     ]);
 
     const sourceQuality = await analyticsService.getSourceQuality('2091-01-01', '2091-01-31', {
@@ -258,7 +274,7 @@ test('DB-backed analytics → preview → client base → call task keeps count 
     assert.equal(new Set(taskClients.map((item) => Number(item.userId))).size, preview.count);
 
     const joinedLater = await makeUser('joined-later');
-    await db.Visit.create({ userId: joinedLater.id, scannedAt: '2091-01-20T10:00:00Z' });
+    await db.Visit.create({ organizationId, clubId, userId: joinedLater.id, scannedAt: '2091-01-20T10:00:00Z' });
     const syncResult = await callTasksService.sync(actor, task.id);
     assert.equal(syncResult.addedCount, 1);
     assert.equal(syncResult.task.snapshotClientCount, preview.count + 1);
@@ -286,7 +302,15 @@ test('DB-backed analytics → preview → client base → call task keeps count 
       await db.User.destroy({ force: true, where: { id: users.map((user) => user.id) } });
     }
     if (actor?.id) {
-      await db.OnboardingEvent.destroy({ where: { accountId: actor.id } });
+      await db.OnboardingEvent.destroy({
+        where: {
+          accountId: actor.id,
+          isTraining: true,
+          trainingSessionId: trainingFixture.ownership.trainingSessionId,
+        },
+      });
+      await trainingFixture.mode.destroy();
+      if (actorMembership?.id) await actorMembership.destroy();
       await db.Account.destroy({ force: true, where: { id: actor.id } });
     }
     if (source?.id) await source.destroy();

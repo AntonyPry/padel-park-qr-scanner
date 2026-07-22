@@ -9,7 +9,7 @@ function handleError(res, error, fallback) {
 class TrainingMethodologyController {
   async getAnalytics(req, res) {
     try {
-      res.json(await methodologyAnalyticsService.getAnalytics(req.query, req.account));
+      res.json(await methodologyAnalyticsService.getAnalytics(req.query, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения аналитики методики');
     }
@@ -17,7 +17,7 @@ class TrainingMethodologyController {
 
   async listSkills(req, res) {
     try {
-      res.json(await methodologyService.listSkills(req.query, req.account));
+      res.json(await methodologyService.listSkills(req.query, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения навыков');
     }
@@ -25,7 +25,7 @@ class TrainingMethodologyController {
 
   async createSkill(req, res) {
     try {
-      res.status(201).json(await methodologyService.createSkill(req.body, req.account));
+      res.status(201).json(await methodologyService.createSkill(req.body, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка создания навыка');
     }
@@ -34,7 +34,7 @@ class TrainingMethodologyController {
   async updateSkill(req, res) {
     try {
       res.json(
-        await methodologyService.updateSkill(req.params.id, req.body, req.account),
+        await methodologyService.updateSkill(req.params.id, req.body, req.account, req.tenant),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка обновления навыка');
@@ -43,7 +43,7 @@ class TrainingMethodologyController {
 
   async listExercises(req, res) {
     try {
-      res.json(await methodologyService.listExercises(req.query, req.account));
+      res.json(await methodologyService.listExercises(req.query, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения упражнений');
     }
@@ -53,7 +53,7 @@ class TrainingMethodologyController {
     try {
       res
         .status(201)
-        .json(await methodologyService.createExercise(req.body, req.account));
+        .json(await methodologyService.createExercise(req.body, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка создания упражнения');
     }
@@ -66,6 +66,7 @@ class TrainingMethodologyController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -75,7 +76,7 @@ class TrainingMethodologyController {
 
   async approveExercise(req, res) {
     try {
-      res.json(await methodologyService.approveExercise(req.params.id, req.account));
+      res.json(await methodologyService.approveExercise(req.params.id, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка утверждения упражнения');
     }
@@ -83,7 +84,7 @@ class TrainingMethodologyController {
 
   async archiveExercise(req, res) {
     try {
-      res.json(await methodologyService.archiveExercise(req.params.id, req.account));
+      res.json(await methodologyService.archiveExercise(req.params.id, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка архивирования упражнения');
     }
@@ -91,7 +92,7 @@ class TrainingMethodologyController {
 
   async restoreExercise(req, res) {
     try {
-      res.json(await methodologyService.restoreExercise(req.params.id, req.account));
+      res.json(await methodologyService.restoreExercise(req.params.id, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка восстановления упражнения');
     }

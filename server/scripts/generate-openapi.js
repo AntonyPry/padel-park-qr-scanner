@@ -141,18 +141,23 @@ function schemaAlias(endpoint, field, suffix) {
 function generateClientTypes() {
   const aliases = [];
   const requestMapLines = [];
+  const responseMapLines = [];
 
   for (const endpoint of endpointContracts) {
     const params = schemaAlias(endpoint, 'params', 'Params');
     const query = schemaAlias(endpoint, 'query', 'Query');
     const body = schemaAlias(endpoint, 'body', 'Body');
+    const response = schemaAlias(endpoint, 'response', 'Response');
 
-    for (const alias of [params, query, body].filter(Boolean)) {
+    for (const alias of [params, query, body, response].filter(Boolean)) {
       aliases.push(`export type ${alias.name} = ${alias.type};`);
     }
 
     requestMapLines.push(
       `  ${quote(endpoint.id)}: ApiEndpointRequest<${params?.name || 'undefined'}, ${query?.name || 'undefined'}, ${body?.name || 'undefined'}>;`,
+    );
+    responseMapLines.push(
+      `  ${quote(endpoint.id)}: ${response?.name || 'unknown'};`,
     );
   }
 
@@ -160,7 +165,7 @@ function generateClientTypes() {
     .map((endpoint) => {
       const clientResponseType =
         endpoint.responseType && endpoint.responseType !== 'json' ? 'blob' : 'json';
-      return `  ${quote(endpoint.id)}: { method: ${quote(endpoint.method.toUpperCase())}, path: ${quote(endpoint.path)}, responseType: ${quote(clientResponseType)} },`;
+      return `  ${quote(endpoint.id)}: { method: ${quote(endpoint.method.toUpperCase())}, path: ${quote(endpoint.path)}, responseType: ${quote(clientResponseType)}, tenantScope: ${quote(endpoint.tenantScope)} },`;
     })
     .join('\n');
 
@@ -173,6 +178,13 @@ function generateClientTypes() {
     '} as const;',
     '',
     'export type ApiEndpointId = keyof typeof apiEndpoints;',
+    "export type TenantScope = 'global' | 'installation' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';",
+    'export type TenantHeadersForScope<TScope extends TenantScope> =',
+    "  TScope extends 'club'",
+    "    ? { 'X-Organization-Id': number | string; 'X-Club-Id': number | string }",
+    "    : TScope extends 'membership' | 'organization'",
+    "      ? { 'X-Organization-Id': number | string }",
+    '      : Record<string, never>;',
     '',
     'export type ApiEndpointRequest<P = undefined, Q = undefined, B = undefined> =',
     '  (P extends undefined ? { params?: never } : { params: P }) &',
@@ -183,6 +195,10 @@ function generateClientTypes() {
     '',
     'export interface ApiEndpointRequestMap {',
     ...requestMapLines,
+    '}',
+    '',
+    'export interface ApiEndpointResponseMap {',
+    ...responseMapLines,
     '}',
     '',
   ].join('\n');

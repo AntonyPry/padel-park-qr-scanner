@@ -1,3 +1,7 @@
+const {
+  redactRequestTarget,
+} = require('../provider-integrations/beeline-callback');
+
 function requestTiming(req, res, next) {
   const startedAt = process.hrtime.bigint();
 
@@ -15,7 +19,7 @@ function requestTiming(req, res, next) {
       durationMs >= slowThresholdMs
     ) {
       console.warn(
-        `[slow-api] ${req.method} ${req.originalUrl} ${res.statusCode} ${durationMs.toFixed(1)}ms`,
+        `[slow-api] ${req.method} ${redactRequestTarget(req.originalUrl)} ${res.statusCode} ${durationMs.toFixed(1)}ms`,
       );
     }
 

@@ -1,3 +1,8 @@
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
+
 module.exports = (sequelize, DataTypes) => {
   const TelephonyTranscriptSegment = sequelize.define('TelephonyTranscriptSegment', {
     transcriptionJobId: {
@@ -37,6 +42,23 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false,
       defaultValue: 0,
+    },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkAuthorityFieldsAreMutable(
+          options,
+          ['transcriptionJobId', 'telephonyCallId'],
+          'Transcript segment ownership links are immutable',
+        );
+      },
+      beforeUpdate(segment) {
+        assertInstanceAuthorityFieldsAreMutable(
+          segment,
+          ['transcriptionJobId', 'telephonyCallId'],
+          'Transcript segment ownership links are immutable',
+        );
+      },
     },
   });
 

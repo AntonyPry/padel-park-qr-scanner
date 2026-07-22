@@ -1,0 +1,742 @@
+'use strict';
+
+const crypto = require('crypto');
+const db = require('../../models');
+const {
+  DEFAULT_CLUB_SLUG,
+  DEFAULT_ORGANIZATION_SLUG,
+  TENANT_FOUNDATION_STATES,
+} = require('../tenant-foundation/constants');
+const {
+  isTenantEnforcementEnabled,
+} = require('../tenant-context/capabilities');
+
+const DEFAULT_GATE_CACHE_TTL_MS = 250;
+const MAX_GATE_CACHE_TTL_MS = 1000;
+
+// Request middleware may reuse one strict snapshot briefly, so five full-table
+// parity reads stay bounded under load. Lifecycle commits invalidate by
+// generation; strict startup/status/socket assertions always bypass this cache.
+let gateCacheGeneration = 0;
+let gateClassificationCache = null;
+let gateClassificationInFlight = null;
+
+class TenantFoundationStateError extends Error {
+  constructor(message, classification, code = 'TENANT_FOUNDATION_INVALID') {
+    super(message);
+    this.name = 'TenantFoundationStateError';
+    this.statusCode = 503;
+    this.code = code;
+    this.classification = classification;
+    this.details = classification?.diagnostics || undefined;
+  }
+}
+
+function stableChecksum(snapshot) {
+  const value = JSON.stringify({
+    accesses: snapshot.accesses.map((row) => [
+      row.organizationId,
+      row.membershipId,
+      row.clubId,
+      row.roleOverride,
+      row.status,
+    ]),
+    accounts: snapshot.accounts.map((row) => [
+      row.id,
+      row.role,
+      row.status,
+      row.staffId ?? null,
+    ]),
+    clubs: snapshot.clubs.map((row) => [
+      row.id,
+      row.organizationId,
+      row.slug,
+      row.status,
+    ]),
+    memberships: snapshot.memberships.map((row) => [
+      row.id,
+      row.organizationId,
+      row.accountId,
+      row.role,
+      row.status,
+      row.staffId ?? null,
+    ]),
+    organizations: snapshot.organizations.map((row) => [
+      row.id,
+      row.slug,
+      row.status,
+    ]),
+    staffIdentitySchema: snapshot.staffIdentitySchema || 'legacy',
+    staffs: (snapshot.staffs || []).map((row) => [
+      row.id,
+      row.organizationId,
+      row.status,
+    ]),
+  });
+
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+async function selectRows(sequelize, sql, { transaction, lock = false } = {}) {
+  const [rows] = await sequelize.query(`${sql}${lock ? ' FOR UPDATE' : ''}`, {
+    transaction,
+  });
+  return rows;
+}
+
+async function loadTenantFoundationSnapshot({
+  sequelize = db.sequelize,
+  transaction,
+  lock = false,
+  afterRead,
+} = {}) {
+  const queryOptions = { lock: lock && Boolean(transaction), transaction };
+  const read = async (table, sql) => {
+    const rows = await selectRows(sequelize, sql, queryOptions);
+    if (afterRead) await afterRead({ rows, table, transaction });
+    return rows;
+  };
+  const [identityColumns] = await sequelize.query(
+    `SELECT TABLE_NAME AS tableName, COLUMN_NAME AS columnName
+       FROM INFORMATION_SCHEMA.COLUMNS
+      WHERE TABLE_SCHEMA = DATABASE()
+        AND ((TABLE_NAME = 'Staffs' AND COLUMN_NAME = 'organizationId')
+          OR (TABLE_NAME = 'Memberships' AND COLUMN_NAME = 'staffId'))
+      ORDER BY TABLE_NAME, COLUMN_NAME`,
+    { transaction },
+  );
+  const hasStaffOrganization = identityColumns.some(
+    (column) =>
+      column.tableName === 'Staffs' && column.columnName === 'organizationId',
+  );
+  const hasMembershipStaff = identityColumns.some(
+    (column) =>
+      column.tableName === 'Memberships' && column.columnName === 'staffId',
+  );
+  const staffIdentitySchema =
+    hasStaffOrganization && hasMembershipStaff
+      ? 'ready'
+      : hasStaffOrganization || hasMembershipStaff
+        ? 'partial'
+        : 'legacy';
+
+  const organizations = await read(
+    'Organizations',
+    'SELECT id, slug, name, status FROM Organizations ORDER BY id',
+  );
+  const clubs = await read(
+    'Clubs',
+    'SELECT id, organizationId, slug, name, timezone, status FROM Clubs ORDER BY id',
+  );
+  const accounts = await read(
+    'Accounts',
+    `SELECT id, role, status${staffIdentitySchema === 'ready' ? ', staffId' : ''}
+       FROM Accounts ORDER BY id`,
+  );
+  const memberships = await read(
+    'Memberships',
+    `SELECT id, organizationId, accountId, role, status${staffIdentitySchema === 'ready' ? ', staffId' : ''}
+       FROM Memberships ORDER BY id`,
+  );
+  const accesses = await read(
+    'MembershipClubAccesses',
+    'SELECT organizationId, membershipId, clubId, roleOverride, status FROM MembershipClubAccesses ORDER BY membershipId, clubId',
+  );
+
+  const staffs =
+    staffIdentitySchema === 'ready'
+      ? await read(
+          'Staffs',
+          'SELECT id, organizationId, status FROM Staffs ORDER BY id',
+        )
+      : [];
+
+  return {
+    accesses,
+    accounts,
+    clubs,
+    memberships,
+    organizations,
+    staffIdentitySchema,
+    staffs,
+  };
+}
+
+function classifyLegacySnapshot(snapshot) {
+  const reasons = [];
+  const staffIdentitySchema = snapshot.staffIdentitySchema || 'legacy';
+  const counts = {
+    accesses: snapshot.accesses.length,
+    accounts: snapshot.accounts.length,
+    clubs: snapshot.clubs.length,
+    memberships: snapshot.memberships.length,
+    organizations: snapshot.organizations.length,
+  };
+
+  const organization = snapshot.organizations[0] || null;
+  const club = snapshot.clubs[0] || null;
+
+  if (staffIdentitySchema === 'partial') {
+    reasons.push('Staff/Membership identity schema is only partially applied');
+  }
+
+  if (counts.organizations !== 1) {
+    reasons.push('exactly one Organization is required');
+  } else {
+    if (organization.slug !== DEFAULT_ORGANIZATION_SLUG) {
+      reasons.push('default Organization slug is missing or incompatible');
+    }
+    if (organization.status !== 'active') {
+      reasons.push('default Organization must be active');
+    }
+  }
+
+  if (counts.clubs !== 1) {
+    reasons.push('exactly one Club is required');
+  } else {
+    if (club.slug !== DEFAULT_CLUB_SLUG) {
+      reasons.push('default Club slug is missing or incompatible');
+    }
+    if (club.status !== 'active') {
+      reasons.push('default Club must be active');
+    }
+    if (!organization || Number(club.organizationId) !== Number(organization.id)) {
+      reasons.push('default Club must belong to default Organization');
+    }
+  }
+
+  const allIdentityEmpty =
+    counts.accounts === 0 && counts.memberships === 0 && counts.accesses === 0;
+  const partiallyEmpty =
+    (counts.accounts === 0 &&
+      (counts.memberships !== 0 || counts.accesses !== 0)) ||
+    (counts.accounts > 0 && counts.memberships === 0) ||
+    (counts.memberships === 0 && counts.accesses > 0);
+
+  if (partiallyEmpty) {
+    reasons.push('Account/Membership/access triple is partially empty');
+  }
+
+  if (
+    allIdentityEmpty &&
+    reasons.length === 0
+  ) {
+    return {
+      state: TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING,
+      bootstrapPending: true,
+      counts,
+      checksum: stableChecksum(snapshot),
+      defaultClubId: Number(club.id),
+      defaultOrganizationId: Number(organization.id),
+      diagnostics: { counts, reasons: [] },
+    };
+  }
+
+  const accountsById = new Map(
+    snapshot.accounts.map((row) => [Number(row.id), row]),
+  );
+  const membershipsById = new Map(
+    snapshot.memberships.map((row) => [Number(row.id), row]),
+  );
+  const membershipsByAccount = new Map();
+  const staffsById = new Map(
+    (snapshot.staffs || []).map((row) => [Number(row.id), row]),
+  );
+  const membershipByStaff = new Map();
+
+  for (const membership of snapshot.memberships) {
+    const accountId = Number(membership.accountId);
+    const list = membershipsByAccount.get(accountId) || [];
+    list.push(membership);
+    membershipsByAccount.set(accountId, list);
+
+    if (!organization || Number(membership.organizationId) !== Number(organization.id)) {
+      reasons.push(`Membership ${membership.id} is outside the default Organization`);
+    }
+    if (!accountsById.has(accountId)) {
+      reasons.push(`Membership ${membership.id} has no Account`);
+    }
+
+    if (staffIdentitySchema === 'ready' && membership.staffId !== null) {
+      const staffId = Number(membership.staffId);
+      const staff = staffsById.get(staffId);
+      const previous = membershipByStaff.get(staffId);
+      if (previous) {
+        reasons.push(
+          `Staff ${staffId} is linked to multiple Memberships ${previous.id} and ${membership.id}`,
+        );
+      }
+      membershipByStaff.set(staffId, membership);
+      if (!staff) {
+        reasons.push(`Membership ${membership.id} has stale Staff ${staffId}`);
+      } else if (
+        Number(staff.organizationId) !== Number(membership.organizationId)
+      ) {
+        reasons.push(`Membership ${membership.id} Staff Organization mismatch`);
+      }
+    }
+  }
+
+  if (staffIdentitySchema === 'ready') {
+    for (const staff of snapshot.staffs || []) {
+      if (
+        !organization ||
+        Number(staff.organizationId) !== Number(organization.id)
+      ) {
+        reasons.push(`Staff ${staff.id} is outside the default Organization`);
+      }
+    }
+  }
+
+  for (const account of snapshot.accounts) {
+    const memberships = membershipsByAccount.get(Number(account.id)) || [];
+    if (memberships.length !== 1) {
+      reasons.push(`Account ${account.id} must have exactly one default Membership`);
+      continue;
+    }
+    const membership = memberships[0];
+    if (membership.role !== account.role || membership.status !== account.status) {
+      reasons.push(`Account ${account.id} role/status parity mismatch`);
+    }
+    if (
+      staffIdentitySchema === 'ready' &&
+      Number(account.staffId || 0) !== Number(membership.staffId || 0)
+    ) {
+      reasons.push(`Account ${account.id} Staff link parity mismatch`);
+    }
+  }
+
+  const accessByMembership = new Map();
+  for (const access of snapshot.accesses) {
+    const membershipId = Number(access.membershipId);
+    const list = accessByMembership.get(membershipId) || [];
+    list.push(access);
+    accessByMembership.set(membershipId, list);
+
+    const membership = membershipsById.get(membershipId);
+    if (!membership) {
+      reasons.push(`Access for Membership ${membershipId} is orphaned`);
+      continue;
+    }
+    if (
+      !organization ||
+      Number(access.organizationId) !== Number(organization.id) ||
+      Number(access.organizationId) !== Number(membership.organizationId)
+    ) {
+      reasons.push(`Access for Membership ${membershipId} has Organization mismatch`);
+    }
+    if (!club || Number(access.clubId) !== Number(club.id)) {
+      reasons.push(`Access for Membership ${membershipId} is outside the default Club`);
+    }
+  }
+
+  let activeOwners = 0;
+  let expectedAccesses = 0;
+  for (const membership of snapshot.memberships) {
+    const accesses = accessByMembership.get(Number(membership.id)) || [];
+    if (membership.role === 'owner') {
+      if (membership.status === 'active') activeOwners += 1;
+      if (accesses.length !== 0) {
+        reasons.push(`Owner Membership ${membership.id} must not have Club access rows`);
+      }
+      continue;
+    }
+
+    expectedAccesses += 1;
+    if (accesses.length !== 1) {
+      reasons.push(`Non-owner Membership ${membership.id} must have exactly one Club access`);
+      continue;
+    }
+    const access = accesses[0];
+    if (access.status !== membership.status) {
+      reasons.push(`Membership ${membership.id} access status parity mismatch`);
+    }
+    if (access.roleOverride !== null && access.roleOverride !== undefined) {
+      reasons.push(`Membership ${membership.id} parity access must not override role`);
+    }
+  }
+
+  if (counts.memberships !== counts.accounts) {
+    reasons.push('Membership count must equal Account count');
+  }
+  if (counts.accesses !== expectedAccesses) {
+    reasons.push('Access count does not match non-owner Membership count');
+  }
+  if (counts.accounts > 0 && activeOwners < 1) {
+    reasons.push('at least one active owner Membership is required');
+  }
+
+  const diagnostics = {
+    activeOwners,
+    counts,
+    expectedAccesses,
+    reasons: Array.from(new Set(reasons)),
+  };
+
+  if (diagnostics.reasons.length > 0 || counts.accounts === 0) {
+    return {
+      state: TENANT_FOUNDATION_STATES.INVALID,
+      bootstrapPending: false,
+      counts,
+      checksum: stableChecksum(snapshot),
+      defaultClubId: club ? Number(club.id) : null,
+      defaultOrganizationId: organization ? Number(organization.id) : null,
+      diagnostics,
+    };
+  }
+
+  return {
+    state: TENANT_FOUNDATION_STATES.INITIALIZED,
+    bootstrapPending: false,
+    counts,
+    checksum: stableChecksum(snapshot),
+    defaultClubId: Number(club.id),
+    defaultOrganizationId: Number(organization.id),
+    diagnostics,
+  };
+}
+
+function classifyEnforcedSnapshot(snapshot) {
+  const reasons = [];
+  const staffIdentitySchema = snapshot.staffIdentitySchema || 'legacy';
+  const counts = {
+    accesses: snapshot.accesses.length,
+    accounts: snapshot.accounts.length,
+    clubs: snapshot.clubs.length,
+    memberships: snapshot.memberships.length,
+    organizations: snapshot.organizations.length,
+  };
+  const organization = snapshot.organizations.find(
+    (row) => row.slug === DEFAULT_ORGANIZATION_SLUG,
+  ) || null;
+  const club = snapshot.clubs.find(
+    (row) =>
+      row.slug === DEFAULT_CLUB_SLUG &&
+      Number(row.organizationId) === Number(organization?.id),
+  ) || null;
+
+  if (staffIdentitySchema !== 'ready') {
+    reasons.push('Staff/Membership identity schema must be fully applied');
+  }
+  if (!organization || organization.status !== 'active') {
+    reasons.push('active default Organization is required');
+  }
+  if (!club || club.status !== 'active') {
+    reasons.push('active default Club in default Organization is required');
+  }
+  if (counts.organizations < 1) reasons.push('at least one Organization is required');
+  if (counts.clubs < 1) reasons.push('at least one Club is required');
+
+  const organizationsById = new Map(
+    snapshot.organizations.map((row) => [Number(row.id), row]),
+  );
+  const clubsById = new Map(snapshot.clubs.map((row) => [Number(row.id), row]));
+  const accountsById = new Map(
+    snapshot.accounts.map((row) => [Number(row.id), row]),
+  );
+  const membershipsById = new Map(
+    snapshot.memberships.map((row) => [Number(row.id), row]),
+  );
+  const staffsById = new Map(
+    (snapshot.staffs || []).map((row) => [Number(row.id), row]),
+  );
+  const membershipsByAccount = new Map();
+  const membershipsByOrganization = new Map();
+  const accessesByMembership = new Map();
+  const membershipByStaff = new Map();
+
+  for (const candidate of snapshot.clubs) {
+    if (!organizationsById.has(Number(candidate.organizationId))) {
+      reasons.push(`Club ${candidate.id} has no Organization`);
+    }
+  }
+
+  for (const staff of snapshot.staffs || []) {
+    if (!organizationsById.has(Number(staff.organizationId))) {
+      reasons.push(`Staff ${staff.id} has no Organization`);
+    }
+  }
+
+  for (const membership of snapshot.memberships) {
+    const accountId = Number(membership.accountId);
+    const organizationId = Number(membership.organizationId);
+    const accountMemberships = membershipsByAccount.get(accountId) || [];
+    accountMemberships.push(membership);
+    membershipsByAccount.set(accountId, accountMemberships);
+    const organizationMemberships = membershipsByOrganization.get(organizationId) || [];
+    organizationMemberships.push(membership);
+    membershipsByOrganization.set(organizationId, organizationMemberships);
+
+    if (!accountsById.has(accountId)) {
+      reasons.push(`Membership ${membership.id} has no Account`);
+    }
+    if (!organizationsById.has(organizationId)) {
+      reasons.push(`Membership ${membership.id} has no Organization`);
+    }
+    if (membership.staffId !== null && membership.staffId !== undefined) {
+      const staffId = Number(membership.staffId);
+      const staff = staffsById.get(staffId);
+      const previous = membershipByStaff.get(staffId);
+      if (previous) {
+        reasons.push(
+          `Staff ${staffId} is linked to multiple Memberships ${previous.id} and ${membership.id}`,
+        );
+      }
+      membershipByStaff.set(staffId, membership);
+      if (!staff) {
+        reasons.push(`Membership ${membership.id} has stale Staff ${staffId}`);
+      } else if (Number(staff.organizationId) !== organizationId) {
+        reasons.push(`Membership ${membership.id} Staff Organization mismatch`);
+      }
+    }
+  }
+
+  for (const account of snapshot.accounts) {
+    const memberships = membershipsByAccount.get(Number(account.id)) || [];
+    if (memberships.length < 1) {
+      reasons.push(`Account ${account.id} has no Membership`);
+      continue;
+    }
+    const defaultMemberships = memberships.filter(
+      (membership) =>
+        Number(membership.organizationId) === Number(organization?.id),
+    );
+    if (defaultMemberships.length > 1) {
+      reasons.push(`Account ${account.id} has duplicate default Memberships`);
+    }
+    if (defaultMemberships.length === 1) {
+      const membership = defaultMemberships[0];
+      if (membership.role !== account.role || membership.status !== account.status) {
+        reasons.push(`Account ${account.id} default role/status parity mismatch`);
+      }
+      if (Number(account.staffId || 0) !== Number(membership.staffId || 0)) {
+        reasons.push(`Account ${account.id} default Staff link parity mismatch`);
+      }
+    }
+  }
+
+  for (const access of snapshot.accesses) {
+    const membershipId = Number(access.membershipId);
+    const membership = membershipsById.get(membershipId);
+    const candidateClub = clubsById.get(Number(access.clubId));
+    const list = accessesByMembership.get(membershipId) || [];
+    list.push(access);
+    accessesByMembership.set(membershipId, list);
+    if (!membership) {
+      reasons.push(`Access for Membership ${membershipId} is orphaned`);
+      continue;
+    }
+    if (!candidateClub) {
+      reasons.push(`Access for Membership ${membershipId} has no Club`);
+      continue;
+    }
+    if (
+      Number(access.organizationId) !== Number(membership.organizationId) ||
+      Number(access.organizationId) !== Number(candidateClub.organizationId)
+    ) {
+      reasons.push(`Access for Membership ${membershipId} has Organization mismatch`);
+    }
+    if (membership.role === 'owner') {
+      reasons.push(`Owner Membership ${membership.id} must not have Club access rows`);
+    }
+    if (access.roleOverride === 'owner') {
+      reasons.push(`Membership ${membership.id} Club access must not grant owner`);
+    }
+    if (access.status !== membership.status) {
+      reasons.push(`Membership ${membership.id} access status parity mismatch`);
+    }
+  }
+
+  let activeOwners = 0;
+  for (const candidateOrganization of snapshot.organizations) {
+    const memberships = membershipsByOrganization.get(Number(candidateOrganization.id)) || [];
+    const owners = memberships.filter(
+      (membership) => membership.role === 'owner' && membership.status === 'active',
+    );
+    activeOwners += owners.length;
+    if (candidateOrganization.status === 'active' && owners.length < 1) {
+      reasons.push(`Organization ${candidateOrganization.id} has no active owner Membership`);
+    }
+  }
+  for (const membership of snapshot.memberships) {
+    if (
+      membership.role !== 'owner' &&
+      membership.status === 'active' &&
+      (accessesByMembership.get(Number(membership.id)) || []).length < 1
+    ) {
+      reasons.push(`Active non-owner Membership ${membership.id} has no Club access`);
+    }
+  }
+
+  const diagnostics = {
+    activeOwners,
+    counts,
+    enforcementEnabled: true,
+    reasons: Array.from(new Set(reasons)),
+  };
+  const initialized = diagnostics.reasons.length === 0 && counts.accounts > 0;
+  return {
+    state: initialized
+      ? TENANT_FOUNDATION_STATES.INITIALIZED
+      : TENANT_FOUNDATION_STATES.INVALID,
+    bootstrapPending: false,
+    counts,
+    checksum: stableChecksum(snapshot),
+    defaultClubId: club ? Number(club.id) : null,
+    defaultOrganizationId: organization ? Number(organization.id) : null,
+    diagnostics,
+  };
+}
+
+function classifySnapshot(
+  snapshot,
+  { enforcementEnabled = isTenantEnforcementEnabled() } = {},
+) {
+  return enforcementEnabled
+    ? classifyEnforcedSnapshot(snapshot)
+    : classifyLegacySnapshot(snapshot);
+}
+
+async function classifyTenantFoundation(options = {}) {
+  try {
+    const sequelize = options.sequelize || db.sequelize;
+    const classifyInTransaction = async (transaction) => {
+      const snapshot = await loadTenantFoundationSnapshot({
+        ...options,
+        sequelize,
+        transaction,
+      });
+      return classifySnapshot(snapshot);
+    };
+
+    if (options.transaction) {
+      return await classifyInTransaction(options.transaction);
+    }
+
+    return await sequelize.transaction(
+      {
+        isolationLevel:
+          db.Sequelize.Transaction.ISOLATION_LEVELS.REPEATABLE_READ,
+      },
+      classifyInTransaction,
+    );
+  } catch (error) {
+    if (
+      ['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error?.original?.code) ||
+      ['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error?.parent?.code) ||
+      ['ER_NO_SUCH_TABLE', 'ER_BAD_FIELD_ERROR'].includes(error?.code)
+    ) {
+      return {
+        state: TENANT_FOUNDATION_STATES.INVALID,
+        bootstrapPending: false,
+        counts: null,
+        checksum: null,
+        defaultClubId: null,
+        defaultOrganizationId: null,
+        diagnostics: {
+          counts: null,
+          reasons: ['tenant foundation schema is missing or incompatible'],
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+function resolveGateCacheTtlMs(value = process.env.TENANT_FOUNDATION_GATE_CACHE_MS) {
+  if (value === undefined || value === null || value === '') {
+    return DEFAULT_GATE_CACHE_TTL_MS;
+  }
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return DEFAULT_GATE_CACHE_TTL_MS;
+  return Math.min(Math.max(Math.trunc(parsed), 0), MAX_GATE_CACHE_TTL_MS);
+}
+
+function invalidateTenantFoundationGateCache() {
+  gateCacheGeneration += 1;
+  gateClassificationCache = null;
+  gateClassificationInFlight = null;
+}
+
+async function getTenantFoundationGateState(options = {}) {
+  const classify = options.classify || classifyTenantFoundation;
+  const now = options.now || Date.now;
+  const ttlMs = resolveGateCacheTtlMs(options.ttlMs);
+  const currentTime = now();
+
+  if (
+    !options.force &&
+    gateClassificationCache &&
+    gateClassificationCache.expiresAt > currentTime
+  ) {
+    return gateClassificationCache.classification;
+  }
+  if (!options.force && gateClassificationInFlight) {
+    return gateClassificationInFlight;
+  }
+
+  const generation = gateCacheGeneration;
+  const promise = Promise.resolve().then(classify);
+  if (!options.force) gateClassificationInFlight = promise;
+
+  try {
+    const classification = await promise;
+    if (!options.force && generation === gateCacheGeneration && ttlMs > 0) {
+      gateClassificationCache = {
+        classification,
+        expiresAt: now() + ttlMs,
+      };
+    }
+    return classification;
+  } finally {
+    if (gateClassificationInFlight === promise) {
+      gateClassificationInFlight = null;
+    }
+  }
+}
+
+function stateError(classification, code = 'TENANT_FOUNDATION_INVALID') {
+  const reasons = classification?.diagnostics?.reasons || [];
+  const suffix = reasons.length > 0 ? `: ${reasons.join('; ')}` : '';
+  return new TenantFoundationStateError(
+    `Tenant foundation state is ${classification?.state || 'unknown'}${suffix}`,
+    classification,
+    code,
+  );
+}
+
+async function assertTenantFoundationOperational(options = {}) {
+  const classification = await classifyTenantFoundation(options);
+  if (classification.state === TENANT_FOUNDATION_STATES.INVALID) {
+    throw stateError(classification);
+  }
+  return classification;
+}
+
+async function assertTenantFoundationInitialized(options = {}) {
+  const classification = await classifyTenantFoundation(options);
+  if (classification.state !== TENANT_FOUNDATION_STATES.INITIALIZED) {
+    throw stateError(
+      classification,
+      classification.state === TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING
+        ? 'BOOTSTRAP_REQUIRED'
+        : 'TENANT_FOUNDATION_INVALID',
+    );
+  }
+  return classification;
+}
+
+module.exports = {
+  TenantFoundationStateError,
+  assertTenantFoundationInitialized,
+  assertTenantFoundationOperational,
+  classifySnapshot,
+  classifyEnforcedSnapshot,
+  classifyLegacySnapshot,
+  classifyTenantFoundation,
+  getTenantFoundationGateState,
+  invalidateTenantFoundationGateCache,
+  loadTenantFoundationSnapshot,
+  resolveGateCacheTtlMs,
+  stateError,
+};

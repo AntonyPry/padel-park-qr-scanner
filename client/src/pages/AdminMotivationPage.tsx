@@ -1,24 +1,17 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { format } from 'date-fns';
 import {
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  Copy,
-  FileCheck2,
   Pencil,
   Percent,
-  Play,
   Plus,
-  RotateCcw,
   Save,
-  Square,
   Tags,
   Trash2,
   Trophy,
   Wallet,
 } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,11 +21,13 @@ import {
 } from '@/components/confirm-action-dialog';
 import { DataTable } from '@/components/data-table';
 import { ErrorState } from '@/components/error-state';
-import { ShiftReportDialog } from '@/components/shift-report-dialog';
 import {
   ShiftCashCloseDialog,
-  ShiftCashPanel,
 } from '@/components/shift-cash-panel';
+import {
+  useShiftWorkspaceOptional,
+  type ShiftSession,
+} from '@/components/shift-workspace-state';
 import { toast } from '@/components/ui/toast';
 import {
   Dialog,
@@ -64,12 +59,8 @@ import {
 } from '@/lib/motivation';
 import { canManageMotivation } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
-import {
-  listActiveShiftReports,
-  type ShiftReport,
-  type ShiftReportStatus,
-} from '@/api/shift-reports';
+import { useAuthorizationRole } from '@/lib/useAuth';
+import { saveCompletedShiftReport } from '@/lib/completed-shift-report';
 import type {
   ShiftCashBalancePayload,
   ShiftCashSession,
@@ -107,23 +98,6 @@ type PendingAction = ConfirmAction & {
   onConfirm: () => Promise<boolean | void> | boolean | void;
 };
 
-const shiftReportStatusLabels: Record<ShiftReportStatus, string> = {
-  draft: 'Черновик',
-  overdue: 'Просрочен',
-  pending: 'Ожидается',
-  submitted: 'Сдан',
-};
-
-const shiftReportStatusVariants: Record<
-  ShiftReportStatus,
-  'default' | 'destructive' | 'outline' | 'secondary'
-> = {
-  draft: 'secondary',
-  overdue: 'destructive',
-  pending: 'outline',
-  submitted: 'default',
-};
-
 interface BonusRecord extends FinanceRecord {
   bonusRuleIds: number[];
   bonusRuleNames: string[];
@@ -131,21 +105,6 @@ interface BonusRecord extends FinanceRecord {
   qty: number;
   rate: number;
   value: number;
-}
-
-interface ShiftSession {
-  id: number;
-  date: string;
-  staffId?: number | null;
-  adminName: string;
-  startedAt: string;
-  endedAt?: string | null;
-  status: 'active' | 'closed' | 'draft' | 'approved';
-  Staff?: {
-    id: number;
-    name: string;
-    role: string;
-  } | null;
 }
 
 interface RuleBreakdown {
@@ -208,14 +167,6 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 function formatPaymentMethod(method?: string) {
   return PAYMENT_METHOD_LABELS[method || 'unknown'] || method || 'Не указано';
 }
-
-const formatDuration = (ms: number) => {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const h = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
-  const m = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
-  const s = String(totalSeconds % 60).padStart(2, '0');
-  return `${h}:${m}:${s}`;
-};
 
 const formatDateTime = (value?: string | null) =>
   value ? format(new Date(value), 'dd.MM.yyyy HH:mm') : '-';
@@ -847,9 +798,36 @@ function BonusRuleForm({
   );
 }
 
-export default function AdminMotivationPage() {
-  const { account } = useAuth();
-  const canEditMotivation = canManageMotivation(account?.role);
+type AdminMotivationPageProps = {
+  view?: 'operations' | 'settings';
+};
+
+const StableSalesTable = memo(function StableSalesTable({
+  columns,
+  data,
+}: {
+  columns: ColumnDef<BonusRecord>[];
+  data: BonusRecord[];
+}) {
+  return (
+    <DataTable
+      columns={columns}
+      data={data}
+      emptyText="В эту смену продаж пока не было."
+      minWidthClassName="min-w-[900px]"
+      getRowClassName={() => 'hover:bg-muted/50'}
+    />
+  );
+});
+
+export default function AdminMotivationPage({
+  view = 'operations',
+}: AdminMotivationPageProps) {
+  const shiftWorkspace = useShiftWorkspaceOptional();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const organizationRole = useAuthorizationRole('organization');
+  const canEditMotivation = canManageMotivation(organizationRole);
+  const isSettingsView = view === 'settings';
 
   const [records, setRecords] = useState<FinanceRecord[]>([]);
   const [paymentSummary, setPaymentSummary] =
@@ -861,7 +839,6 @@ export default function AdminMotivationPage() {
   const [settingsError, setSettingsError] = useState('');
   const [hourlyRulesError, setHourlyRulesError] = useState('');
   const [salesError, setSalesError] = useState('');
-  const [shiftStatusError, setShiftStatusError] = useState('');
   const [bonusDrafts, setBonusDrafts] = useState<Record<number, BonusRuleDraft>>(
     {},
   );
@@ -874,16 +851,8 @@ export default function AdminMotivationPage() {
   const [editingBonusRuleId, setEditingBonusRuleId] = useState<number | null>(
     null,
   );
-  const [activeShift, setActiveShift] = useState<ShiftSession | null>(null);
-  const [activeShiftReports, setActiveShiftReports] = useState<ShiftReport[]>([]);
-  const [shiftReportsError, setShiftReportsError] = useState('');
-  const [selectedShiftReport, setSelectedShiftReport] = useState<ShiftReport | null>(null);
-  const [shiftReportDialogOpen, setShiftReportDialogOpen] = useState(false);
-  const [shiftReport, setShiftReport] = useState('');
-  const [reportCopied, setReportCopied] = useState(false);
   const [loading, setLoading] = useState(false);
   const [rulesLoading, setRulesLoading] = useState(false);
-  const [now, setNow] = useState(Date.now());
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
   const [cashCloseOpen, setCashCloseOpen] = useState(false);
@@ -903,12 +872,11 @@ export default function AdminMotivationPage() {
     () => bonusRules.find((rule) => rule.id === editingBonusRuleId) || null,
     [bonusRules, editingBonusRuleId],
   );
+  const activeShift = isSettingsView ? null : shiftWorkspace?.activeShift || null;
   const isShiftActive = activeShift?.status === 'active';
   const shiftStart = activeShift?.startedAt
     ? new Date(activeShift.startedAt).getTime()
     : null;
-  const shiftDurationMs = shiftStart ? now - shiftStart : 0;
-  const isLongShift = isShiftActive && shiftDurationMs > 16 * 3600000;
 
   const fetchCurrentSalesSnapshot = useCallback(async () => {
     const res = await apiFetch(
@@ -948,36 +916,6 @@ export default function AdminMotivationPage() {
       setLoading(false);
     }
   }, [fetchCurrentSalesSnapshot]);
-
-  const fetchActiveShift = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/shifts/active');
-      if (res.ok) {
-        const data = (await res.json()) as { shift: ShiftSession | null };
-        setActiveShift(data.shift);
-        setShiftStatusError('');
-      } else {
-        setShiftStatusError(await readError(res, 'Не удалось проверить активную смену'));
-      }
-    } catch (e) {
-      console.error(e);
-      setShiftStatusError(getApiErrorMessage(e, 'Не удалось проверить активную смену'));
-    }
-  }, []);
-
-  const fetchActiveShiftReports = useCallback(async () => {
-    try {
-      const data = await listActiveShiftReports();
-      setActiveShiftReports(data.reports);
-      setShiftReportsError('');
-    } catch (error) {
-      console.error(error);
-      setActiveShiftReports([]);
-      setShiftReportsError(
-        getApiErrorMessage(error, 'Не удалось загрузить отчеты активной смены'),
-      );
-    }
-  }, []);
 
   const fetchMotivationSettings = useCallback(async () => {
     setRulesLoading(true);
@@ -1050,23 +988,40 @@ export default function AdminMotivationPage() {
 
   useEffect(() => {
     void fetchMotivationSettings();
-    void fetchActiveShift();
-    void fetchActiveShiftReports();
-    void fetchFinances();
-  }, [fetchActiveShift, fetchActiveShiftReports, fetchFinances, fetchMotivationSettings]);
+    if (!isSettingsView) {
+      void fetchFinances();
+    }
+  }, [fetchFinances, fetchMotivationSettings, isSettingsView]);
 
-  useRealtimeRefresh(['motivation', 'shifts', 'shiftReports', 'finance', 'catalog'], () => {
+  useRealtimeRefresh(['motivation', 'shifts', 'finance', 'catalog'], () => {
     void fetchMotivationSettings();
-    void fetchActiveShift();
-    void fetchActiveShiftReports();
-    void fetchFinances();
+    if (!isSettingsView) {
+      void fetchFinances();
+    }
   });
 
   useEffect(() => {
-    if (!isShiftActive) return;
-    const interval = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(interval);
-  }, [isShiftActive]);
+    if (
+      isSettingsView ||
+      searchParams.get('closeShift') !== '1' ||
+      !shiftWorkspace?.loaded
+    ) {
+      return;
+    }
+
+    if (isShiftActive) {
+      setCashCloseOpen(true);
+    }
+    const nextParams = new URLSearchParams(searchParams);
+    nextParams.delete('closeShift');
+    setSearchParams(nextParams, { replace: true });
+  }, [
+    isSettingsView,
+    isShiftActive,
+    searchParams,
+    setSearchParams,
+    shiftWorkspace?.loaded,
+  ]);
 
   useEffect(() => {
     if (!isShiftActive) return;
@@ -1076,40 +1031,31 @@ export default function AdminMotivationPage() {
     return () => clearInterval(interval);
   }, [fetchFinances, isShiftActive]);
 
-  const shiftStats = useMemo<ShiftStats | null>(() => {
+  const salesStats = useMemo<ShiftStats | null>(() => {
     if (!shiftStart) return null;
 
     return calculateShiftStatsSnapshot({
       bonusRules,
-      now,
+      now: shiftStart,
       paymentSummary,
       records,
       rulesMap,
       shiftStart,
     });
-  }, [bonusRules, now, paymentSummary, records, rulesMap, shiftStart]);
-
-  const handleStartShift = async () => {
-    try {
-      const res = await apiFetch('/api/shifts/start', { method: 'POST' });
-
-      if (!res.ok) {
-        toast.error(await readError(res, 'Не удалось начать смену'));
-        return;
-      }
-
-      const data = (await res.json()) as { shift: ShiftSession };
-      setActiveShift(data.shift);
-      setPaymentSummary(emptyPaymentSummary);
-      setShiftReport('');
-      setReportCopied(false);
-      toast.success('Смена начата');
-      void fetchFinances();
-      void fetchActiveShiftReports();
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, 'Не удалось начать смену'));
-    }
-  };
+  }, [bonusRules, paymentSummary, records, rulesMap, shiftStart]);
+  const liveDurationHours = shiftStart
+    ? Math.max(0, ((shiftWorkspace?.now || Date.now()) - shiftStart) / 3600000)
+    : 0;
+  const liveBasePay = calculateBasePay(liveDurationHours, rulesMap);
+  const shiftStats = useMemo<ShiftStats | null>(() => {
+    if (!salesStats) return null;
+    return {
+      ...salesStats,
+      basePay: liveBasePay,
+      durationHours: liveDurationHours,
+      totalPay: liveBasePay + salesStats.totalBonus,
+    };
+  }, [liveBasePay, liveDurationHours, salesStats]);
 
   const executeEndShift = async (
     cash: ShiftCashBalancePayload,
@@ -1153,13 +1099,13 @@ export default function AdminMotivationPage() {
         cash: ShiftCashSession;
         shift: ShiftSession;
       };
-      setShiftReport(
-        buildShiftReport(data.shift, latestStats, data.cash || cashSummary.session),
-      );
-      setReportCopied(false);
-      setActiveShift(null);
-      setActiveShiftReports([]);
-      toast.success('Смена завершена, отчет сформирован');
+      saveCompletedShiftReport({
+        createdAt: new Date().toISOString(),
+        shiftId: data.shift.id,
+        text: buildShiftReport(data.shift, latestStats, data.cash || cashSummary.session),
+      });
+      shiftWorkspace?.setActiveShift(null);
+      toast.success('Смена завершена, отчет доступен в разделе «Отчеты»');
       void fetchFinances();
       return true;
     } catch (error) {
@@ -1168,12 +1114,6 @@ export default function AdminMotivationPage() {
     } finally {
       setCashCloseLoading(false);
     }
-  };
-
-  const handleEndShift = async () => {
-    if (!activeShift || !shiftStart) return;
-
-    setCashCloseOpen(true);
   };
 
   const handleSaveRule = async (rule: MotivationRule) => {
@@ -1335,29 +1275,6 @@ export default function AdminMotivationPage() {
     }
   };
 
-  const handleCopyReport = async () => {
-    try {
-      await navigator.clipboard.writeText(shiftReport);
-      setReportCopied(true);
-      toast.success('Отчет скопирован');
-      window.setTimeout(() => setReportCopied(false), 1500);
-    } catch (error) {
-      toast.error(getApiErrorMessage(error, 'Не удалось скопировать отчет'));
-    }
-  };
-
-  const openShiftReport = (report: ShiftReport) => {
-    setSelectedShiftReport(report);
-    setShiftReportDialogOpen(true);
-  };
-
-  const handleShiftReportUpdated = (report: ShiftReport) => {
-    setActiveShiftReports((current) =>
-      current.map((item) => (item.id === report.id ? report : item)),
-    );
-    setSelectedShiftReport(report);
-  };
-
   const hourlyRuleColumns: ColumnDef<MotivationRule>[] = [
     {
       accessorKey: 'label',
@@ -1421,7 +1338,7 @@ export default function AdminMotivationPage() {
       },
     },
   ];
-  const salesColumns: ColumnDef<BonusRecord>[] = [
+  const salesColumns = useMemo<ColumnDef<BonusRecord>[]>(() => [
     {
       accessorKey: 'date',
       header: 'Время',
@@ -1525,143 +1442,11 @@ export default function AdminMotivationPage() {
         );
       },
     },
-  ];
+  ], []);
 
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex justify-end">
-        <div
-          className={`flex w-full items-center gap-4 rounded-lg border bg-card p-2 sm:w-auto ${
-            isLongShift ? 'border-amber-500/40 bg-amber-500/5' : ''
-          }`}
-        >
-          {isShiftActive ? (
-            <>
-              <div className="flex flex-col px-2">
-                <span className="text-xs text-muted-foreground">
-                  {activeShift?.adminName}
-                </span>
-                <span
-                  className={`flex items-center gap-2 font-mono text-lg tracking-widest ${
-                    isLongShift ? 'text-amber-500' : 'text-primary'
-                  }`}
-                >
-                  {isLongShift ? (
-                    <AlertTriangle className="h-5 w-5" />
-                  ) : (
-                    <Clock className="h-5 w-5 animate-pulse" />
-                  )}
-                  {shiftStart ? formatDuration(shiftDurationMs) : '00:00:00'}
-                </span>
-                {isLongShift && (
-                  <span className="text-xs text-amber-500">
-                    Смена длится больше 16 часов
-                  </span>
-                )}
-              </div>
-              <Button
-                onClick={() => void handleEndShift()}
-                variant="destructive"
-                className="w-full sm:w-auto"
-              >
-                <Square className="w-4 h-4 mr-2 fill-current" /> Завершить
-              </Button>
-            </>
-          ) : (
-            <Button
-              onClick={() => void handleStartShift()}
-              className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
-            >
-              <Play className="w-4 h-4 mr-2 fill-current" /> Начать смену
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {shiftStatusError && (
-        <ErrorState
-          compact
-          message={shiftStatusError}
-          onRetry={() => void fetchActiveShift()}
-          title="Статус смены не загрузился"
-        />
-      )}
-
-      {isShiftActive && activeShift && (
-        <ShiftCashPanel activeShiftId={activeShift.id} />
-      )}
-
-      {isShiftActive && (
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between gap-3 border-b pb-3">
-            <div>
-              <CardTitle className="text-lg">Отчеты смены</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {activeShiftReports.length > 0
-                  ? `${activeShiftReports.length} ожидаемых отчетов`
-                  : 'Нет ожидаемых отчетов'}
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void fetchActiveShiftReports()}
-            >
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Обновить
-            </Button>
-          </CardHeader>
-          <CardContent className="grid gap-3 pt-4">
-            {shiftReportsError ? (
-              <ErrorState
-                compact
-                message={shiftReportsError}
-                onRetry={() => void fetchActiveShiftReports()}
-                title="Отчеты смены не загрузились"
-              />
-            ) : activeShiftReports.length === 0 ? (
-              <div className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">
-                Для активной смены нет отчетов по включенным шаблонам.
-              </div>
-            ) : (
-              <div className="grid gap-3 xl:grid-cols-2">
-                {activeShiftReports.map((report) => (
-                  <button
-                    key={report.id}
-                    className="min-w-0 rounded-lg border p-3 text-left transition hover:bg-muted/50"
-                    type="button"
-                    onClick={() => openShiftReport(report)}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex min-w-0 items-center gap-2">
-                          <FileCheck2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          <span className="truncate font-medium">
-                            {report.templateSnapshot.name}
-                          </span>
-                        </div>
-                        {report.templateSnapshot.description && (
-                          <div className="mt-1 line-clamp-2 text-sm text-foreground">
-                            {report.templateSnapshot.description}
-                          </div>
-                        )}
-                        <div className="mt-1 text-xs text-muted-foreground">
-                          Дедлайн: {formatDateTime(report.deadlineAt)}
-                        </div>
-                      </div>
-                      <Badge variant={shiftReportStatusVariants[report.computedStatus]}>
-                        {shiftReportStatusLabels[report.computedStatus]}
-                      </Badge>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {canEditMotivation && (
+      {isSettingsView && canEditMotivation && (
         <>
           <Card>
             {rulesLoading && (
@@ -1860,28 +1645,7 @@ export default function AdminMotivationPage() {
         </>
       )}
 
-      {shiftReport && (
-        <Card className="border-primary/30">
-          <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-            <CardTitle className="text-lg">Отчет по завершенной смене</CardTitle>
-            <Button variant="outline" size="sm" onClick={handleCopyReport}>
-              {reportCopied ? (
-                <CheckCircle2 className="w-4 h-4 mr-2" />
-              ) : (
-                <Copy className="w-4 h-4 mr-2" />
-              )}
-              {reportCopied ? 'Скопировано' : 'Скопировать'}
-            </Button>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <pre className="whitespace-pre-wrap rounded-md bg-muted p-4 text-sm font-mono">
-              {shiftReport}
-            </pre>
-          </CardContent>
-        </Card>
-      )}
-
-      {!isShiftActive ? (
+      {!isSettingsView && (!isShiftActive ? (
         <Card className="border-dashed border-2 bg-muted/20">
           <CardContent className="flex flex-col items-center justify-center py-12 text-center space-y-3">
             <div className="p-3 rounded-full bg-primary/10">
@@ -1961,13 +1725,7 @@ export default function AdminMotivationPage() {
 
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2 border-b">
-              <div>
-                <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Что уже продано, какой бонус начислится и что осталось сделать
-                  до включения порога.
-                </p>
-              </div>
+              <CardTitle className="text-lg">Прогресс мотиваций</CardTitle>
               <div className="text-sm text-muted-foreground">
                 {loading && <span className="animate-pulse">Обновление...</span>}
               </div>
@@ -2142,12 +1900,9 @@ export default function AdminMotivationPage() {
                 </div>
               ) : !salesError ? (
                 <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                  <DataTable
+                  <StableSalesTable
                     columns={salesColumns}
                     data={shiftStats?.salesList || []}
-                    emptyText="В эту смену продаж пока не было."
-                    minWidthClassName="min-w-[900px]"
-                    getRowClassName={() => 'hover:bg-muted/50'}
                   />
                 </div>
               ) : null}
@@ -2155,21 +1910,16 @@ export default function AdminMotivationPage() {
           </Card>
 
         </>
+      ))}
+
+      {!isSettingsView && (
+        <ShiftCashCloseDialog
+          loading={cashCloseLoading}
+          onClose={() => setCashCloseOpen(false)}
+          onConfirm={executeEndShift}
+          open={cashCloseOpen}
+        />
       )}
-
-      <ShiftReportDialog
-        onOpenChange={setShiftReportDialogOpen}
-        onUpdated={handleShiftReportUpdated}
-        open={shiftReportDialogOpen}
-        report={selectedShiftReport}
-      />
-
-      <ShiftCashCloseDialog
-        loading={cashCloseLoading}
-        onClose={() => setCashCloseOpen(false)}
-        onConfirm={executeEndShift}
-        open={cashCloseOpen}
-      />
 
       <ConfirmActionDialog
         action={pendingAction}
@@ -2179,4 +1929,8 @@ export default function AdminMotivationPage() {
       />
     </div>
   );
+}
+
+export function AdminMotivationSettings() {
+  return <AdminMotivationPage view="settings" />;
 }

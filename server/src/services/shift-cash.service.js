@@ -2,14 +2,25 @@
 
 const db = require('../../models');
 const { resolveStoredReceiptPayments } = require('../utils/payments');
-const catalogService = require('./catalog.service');
 const financeService = require('./finance.service');
 const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
 const attachmentStorage = require('./shift-cash-attachments');
+const {
+  isTenantShiftsReportsEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
+  bindShiftOperationsActor,
+  resolveShiftOperationsAccessContext,
+  shiftOperationsTenantWhere,
+} = require('./shift-operations-access-context.service');
 
 const { Op } = db.Sequelize;
 const MANAGER_ROLES = new Set(['owner', 'manager']);
+const SHIFT_CASH_EXPENSE_CATEGORY = 'Расходы из кассы';
 
 function accountInclude(as) {
   return {
@@ -23,8 +34,7 @@ function accountInclude(as) {
 const EXPENSE_INCLUDE = [
   accountInclude('createdBy'),
   accountInclude('canceledBy'),
-  { as: 'category', model: db.Category, attributes: ['id', 'name', 'type', 'group'] },
-  { as: 'finance', model: db.Finance, attributes: ['id', 'date', 'category', 'amount', 'type'] },
+  { as: 'finance', model: db.Finance, attributes: ['id', 'date', 'amount', 'type'] },
 ];
 const SESSION_INCLUDE = [
   accountInclude('openingRecordedBy'),
@@ -39,6 +49,26 @@ function appError(message, statusCode = 400) {
 
 function toPlain(row) {
   return row?.toJSON ? row.toJSON() : row;
+}
+
+function withoutTenantFields(row) {
+  const plain = { ...(toPlain(row) || {}) };
+  delete plain.clubId;
+  delete plain.organizationId;
+  return plain;
+}
+
+async function resolveBoundary(account, tenant, options = {}) {
+  if (!isTenantShiftsReportsEnabled()) {
+    await requireExactSingletonDefault({ transaction: options.transaction });
+    return { account, context: null };
+  }
+  const context = await resolveShiftOperationsAccessContext(tenant, options);
+  return { account: bindShiftOperationsActor(account, context), context };
+}
+
+function tenantWhere(context, values = {}) {
+  return context ? shiftOperationsTenantWhere(context, values) : values;
 }
 
 function roundMoney(value) {
@@ -175,12 +205,6 @@ function serializeExpense(expense) {
     })),
     createdBy: serializeAccount(raw.createdBy),
     canceledBy: serializeAccount(raw.canceledBy),
-    category: raw.category ? {
-      group: raw.category.group,
-      id: raw.category.id,
-      name: raw.category.name,
-      type: raw.category.type,
-    } : null,
     finance: raw.finance ? {
       ...raw.finance,
       amount: roundMoney(raw.finance.amount),
@@ -190,11 +214,11 @@ function serializeExpense(expense) {
 
 function contextKeyForMarker(marker) {
   if (!marker?.isTraining) return 'production';
-  return `training:${Number(marker.trainingAccountId)}:${marker.trainingRole}`;
+  return `training:${marker.trainingSessionId}`;
 }
 
-async function getDataContext(account) {
-  const marker = await onboardingService.getTrainingDataMarker(account);
+async function getDataContext(account, tenant, options = {}) {
+  const marker = await onboardingService.getTrainingDataMarker(account, tenant, options);
   return { contextKey: contextKeyForMarker(marker), marker };
 }
 
@@ -212,7 +236,8 @@ function assertTrainingScopeMatches(row, marker) {
   if (
     marker.isTraining &&
     (Number(raw.trainingAccountId) !== Number(marker.trainingAccountId) ||
-      raw.trainingRole !== marker.trainingRole)
+      raw.trainingRole !== marker.trainingRole ||
+      raw.trainingSessionId !== marker.trainingSessionId)
   ) {
     throw appError('Кассовые данные не найдены', 404);
   }
@@ -224,7 +249,7 @@ async function findActiveShift(options = {}) {
     order: [['startedAt', 'DESC']],
     transaction: options.transaction,
     lock: options.lock,
-    where: { archivedAt: null, status: 'active' },
+    where: tenantWhere(options.context, { archivedAt: null, status: 'active' }),
   });
 }
 
@@ -288,7 +313,10 @@ async function getCashSalesForShift(shift, options = {}) {
   const receipts = await db.Receipt.findAll({
     attributes: ['cash', 'cashless', 'paymentDetails', 'paymentSource', 'totalAmount', 'type'],
     transaction: options.transaction,
-    where: { dateTime },
+    where: {
+      dateTime,
+      ...(isTenantShiftsReportsEnabled() ? { clubId: shift.clubId } : {}),
+    },
   });
   return roundMoney(
     receipts.reduce(
@@ -305,20 +333,6 @@ async function listExpenses(sessionId, options = {}) {
     transaction: options.transaction,
     where: { cashSessionId: sessionId },
   });
-}
-
-async function getExpenseCategories() {
-  const categories = await catalogService.getCategories({ status: 'active' });
-  return categories
-    .filter((category) => category.type === 'expense')
-    .map((category) => ({
-      group: category.group,
-      id: category.id,
-      name: category.name,
-      parentId: category.parentId || null,
-      type: category.type,
-    }))
-    .sort((left, right) => left.name.localeCompare(right.name, 'ru'));
 }
 
 async function buildCashSummary(shift, session, context, options = {}) {
@@ -347,22 +361,44 @@ async function buildCashSummary(shift, session, context, options = {}) {
   return {
     activeExpensesTotal,
     cashSales,
-    expenseCategories: options.includeCategories === false ? [] : await getExpenseCategories(),
     expenses: expenses.map(serializeExpense),
     expectedClosingCash,
     manualAdjustments,
     session: serializedSession,
-    shift: toPlain(shift),
+    shift: withoutTenantFields(shift),
   };
 }
 
-async function getActiveCash(account) {
-  const [shift, context] = await Promise.all([findActiveShift(), getDataContext(account)]);
+function hideReconciliationFromAdministrator(summary, account) {
+  if (account?.role !== 'admin') return summary;
+  return {
+    ...summary,
+    cashSales: null,
+    expectedClosingCash: null,
+    manualAdjustments: null,
+    session: summary.session
+      ? {
+          ...summary.session,
+          cashSalesSnapshot: null,
+          expectedClosingCash: null,
+          expensesSnapshot: null,
+          manualAdjustmentsSnapshot: null,
+          variance: null,
+        }
+      : null,
+  };
+}
+
+async function getActiveCash(account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  const [shift, context] = await Promise.all([
+    findActiveShift({ context: boundary.context }),
+    getDataContext(boundary.account, tenant),
+  ]);
   if (!shift) {
     return {
       activeExpensesTotal: 0,
       cashSales: 0,
-      expenseCategories: await getExpenseCategories(),
       expenses: [],
       expectedClosingCash: 0,
       manualAdjustments: 0,
@@ -370,19 +406,24 @@ async function getActiveCash(account) {
       shift: null,
     };
   }
-  assertShiftViewAccess(shift, account);
+  assertShiftViewAccess(shift, boundary.account);
   const session = await findSession(shift.id, context);
-  return buildCashSummary(shift, session, context);
+  return hideReconciliationFromAdministrator(
+    await buildCashSummary(shift, session, context),
+    boundary.account,
+  );
 }
 
-async function getShiftCash(shiftId, account) {
-  if (!MANAGER_ROLES.has(account?.role)) {
+async function getShiftCash(shiftId, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  if (!MANAGER_ROLES.has(boundary.account?.role)) {
     throw appError('Кассу закрытых смен могут проверять только владелец и менеджер', 403);
   }
-  const shift = await db.Shift.findByPk(shiftId, {
+  const shift = await db.Shift.findOne({
     include: [{ model: db.Staff, attributes: ['id', 'name', 'role'] }],
+    where: tenantWhere(boundary.context, { id: Number(shiftId) }),
   });
-  assertShiftViewAccess(shift, account);
+  assertShiftViewAccess(shift, boundary.account);
   const context = { contextKey: 'production', marker: {
     isTraining: false,
     trainingAccountId: null,
@@ -392,15 +433,26 @@ async function getShiftCash(shiftId, account) {
   return buildCashSummary(shift, session, context);
 }
 
-async function saveOpening(data, account) {
-  const context = await getDataContext(account);
+async function saveOpening(data, account, tenant) {
   const openingBanknotes = normalizeMoney(data.banknotes, 'Сумма купюр');
   const openingCoins = normalizeMoney(data.coins, 'Сумма мелочи');
   const openingComment = normalizeText(data.comment, 'Комментарий', { max: 1000 });
 
   const result = await db.sequelize.transaction(async (transaction) => {
-    const shift = await findActiveShift({ transaction, lock: transaction.LOCK.UPDATE });
-    assertShiftViewAccess(shift, account);
+    const boundary = await resolveBoundary(account, tenant, {
+      lock: true,
+      transaction,
+    });
+    const context = await getDataContext(boundary.account, tenant, {
+      lock: true,
+      transaction,
+    });
+    const shift = await findActiveShift({
+      context: boundary.context,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    assertShiftViewAccess(shift, boundary.account);
     await payrollService.assertDateEditable(shift.date, 'остаток кассы смены');
     const session = await getOrCreateSession(shift, context, transaction);
     if (session.status === 'closed') throw appError('Кассовая сверка уже закрыта', 409);
@@ -411,7 +463,7 @@ async function saveOpening(data, account) {
         openingCoins,
         openingComment,
         openingRecordedAt: new Date(),
-        openingRecordedByAccountId: account?.id || null,
+        openingRecordedByAccountId: boundary.account?.id || null,
       },
       { transaction },
     );
@@ -419,30 +471,27 @@ async function saveOpening(data, account) {
       action: beforeData.openingRecordedAt ? 'shift_cash.opening_updated' : 'shift_cash.opening_recorded',
       entityType: 'shift_cash_session',
       entityId: session.id,
-      account,
+      account: boundary.account,
       date: shift.date,
       reason: openingComment,
       beforeData,
       afterData: session.toJSON(),
       transaction,
     });
-    return { sessionId: session.id, shiftId: shift.id };
+    return { account: boundary.account, sessionId: session.id, shiftId: shift.id };
   });
 
-  await onboardingService.recordEventSafe(account, 'shift_cash.opening_recorded', {
+  await onboardingService.recordEventSafe(result.account, 'shift_cash.opening_recorded', {
     entityId: result.sessionId,
     entityType: 'shift_cash_session',
+    tenant,
     payload: { shiftId: result.shiftId },
   });
-  return getActiveCash(account);
+  return getActiveCash(account, tenant);
 }
 
 function normalizeExpensePayload(data, shift) {
   const amount = normalizePositiveMoney(data.amount);
-  const categoryId = Number(data.categoryId);
-  if (!Number.isInteger(categoryId) || categoryId <= 0) {
-    throw appError('Выберите категорию расхода');
-  }
   const description = normalizeText(data.description, 'Описание расхода', {
     max: 1000,
     required: true,
@@ -459,42 +508,51 @@ function normalizeExpensePayload(data, shift) {
   if (!endedAt && spentAt.getTime() > Date.now() + 5 * 60000) {
     throw appError('Время расхода не может быть в будущем');
   }
-  return { amount, categoryId, description, spentAt };
+  return { amount, description, spentAt };
 }
 
 function financeComment(shift, description) {
   return `Касса смены #${shift.id}: ${description}`;
 }
 
-async function createExpense(data, account) {
-  const context = await getDataContext(account);
+async function createExpense(data, account, tenant) {
   const result = await db.sequelize.transaction(async (transaction) => {
-    const shift = await findActiveShift({ transaction, lock: transaction.LOCK.UPDATE });
-    assertShiftViewAccess(shift, account);
+    const boundary = await resolveBoundary(account, tenant, {
+      lock: true,
+      transaction,
+    });
+    const context = await getDataContext(boundary.account, tenant, {
+      lock: true,
+      transaction,
+    });
+    const shift = await findActiveShift({
+      context: boundary.context,
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    assertShiftViewAccess(shift, boundary.account);
     await payrollService.assertDateEditable(shift.date, 'кассовый расход');
     const session = await getOrCreateSession(shift, context, transaction);
     if (!session.openingRecordedAt) {
       throw appError('Сначала зафиксируйте остаток кассы на начало смены', 409);
     }
     const normalized = normalizeExpensePayload(data, shift);
-    const { category, record: finance } = await financeService.createLinkedExpenseRecord(
+    const { record: finance } = await financeService.createLinkedExpenseRecord(
       {
         amount: normalized.amount,
-        categoryId: normalized.categoryId,
+        category: SHIFT_CASH_EXPENSE_CATEGORY,
         comment: financeComment(shift, normalized.description),
         date: shift.date,
       },
-      account,
-      { trainingMarker: context.marker, transaction },
+      boundary.account,
+      { tenant, trainingMarker: context.marker, transaction },
     );
     const expense = await db.ShiftCashExpense.create(
       {
         amount: normalized.amount,
         attachments: [],
         cashSessionId: session.id,
-        categoryId: category.id,
-        categoryName: category.name,
-        createdByAccountId: account?.id || null,
+        createdByAccountId: boundary.account?.id || null,
         description: normalized.description,
         financeId: finance.id,
         shiftId: shift.id,
@@ -508,38 +566,51 @@ async function createExpense(data, account) {
       action: 'shift_cash.expense_created',
       entityType: 'shift_cash_expense',
       entityId: expense.id,
-      account,
+      account: boundary.account,
       date: shift.date,
       reason: normalized.description,
       afterData: expense.toJSON(),
       transaction,
     });
-    return { expenseId: expense.id, shiftId: shift.id };
+    return {
+      account: boundary.account,
+      expenseId: expense.id,
+      shiftId: shift.id,
+    };
   });
 
-  await onboardingService.recordEventSafe(account, 'shift_cash.expense_created', {
+  await onboardingService.recordEventSafe(result.account, 'shift_cash.expense_created', {
     entityId: result.expenseId,
     entityType: 'shift_cash_expense',
+    tenant,
     payload: { shiftId: result.shiftId },
   });
   return {
-    ...(await getActiveCash(account)),
+    ...(await getActiveCash(account, tenant)),
     createdExpenseId: result.expenseId,
   };
 }
 
-async function loadExpenseForMutation(expenseId, account, transaction) {
+async function loadExpenseForMutation(expenseId, boundary, transaction, tenant) {
   const expense = await db.ShiftCashExpense.findByPk(expenseId, {
-    include: [{ as: 'shift', model: db.Shift }],
+    include: [{
+      as: 'shift',
+      model: db.Shift,
+      required: true,
+      where: boundary.context ? { clubId: boundary.context.clubId } : undefined,
+    }],
     lock: transaction?.LOCK?.UPDATE,
     transaction,
   });
   if (!expense) throw appError('Кассовый расход не найден', 404);
-  const context = await getDataContext(account);
+  const context = await getDataContext(boundary.account, tenant, {
+    lock: true,
+    transaction,
+  });
   assertTrainingScopeMatches(expense, context.marker);
   const shift = expense.shift || expense.Shift;
-  assertShiftViewAccess(shift, account);
-  assertExpenseWriteAccess(expense, shift, account);
+  assertShiftViewAccess(shift, boundary.account);
+  assertExpenseWriteAccess(expense, shift, boundary.account);
   return { context, expense, shift };
 }
 
@@ -569,33 +640,36 @@ async function recalculateClosedSession(sessionId, transaction) {
   );
 }
 
-async function updateExpense(expenseId, data, account) {
+async function updateExpense(expenseId, data, account, tenant) {
   const result = await db.sequelize.transaction(async (transaction) => {
+    const boundary = await resolveBoundary(account, tenant, {
+      lock: true,
+      transaction,
+    });
     const { context, expense, shift } = await loadExpenseForMutation(
       expenseId,
-      account,
+      boundary,
       transaction,
+      tenant,
     );
     if (expense.status !== 'active') throw appError('Отмененный расход нельзя менять', 409);
     await payrollService.assertDateEditable(shift.date, 'кассовый расход');
     const normalized = normalizeExpensePayload(data, shift);
     const beforeData = expense.toJSON();
-    const { category, record: finance } = await financeService.updateLinkedExpenseRecord(
+    const { record: finance } = await financeService.updateLinkedExpenseRecord(
       expense.financeId,
       {
         amount: normalized.amount,
-        categoryId: normalized.categoryId,
+        category: SHIFT_CASH_EXPENSE_CATEGORY,
         comment: financeComment(shift, normalized.description),
         date: shift.date,
       },
-      account,
-      { trainingMarker: context.marker, transaction },
+      boundary.account,
+      { tenant, trainingMarker: context.marker, transaction },
     );
     await expense.update(
       {
         amount: normalized.amount,
-        categoryId: category.id,
-        categoryName: category.name,
         description: normalized.description,
         financeId: finance.id,
         spentAt: normalized.spentAt,
@@ -607,38 +681,44 @@ async function updateExpense(expenseId, data, account) {
       action: 'shift_cash.expense_updated',
       entityType: 'shift_cash_expense',
       entityId: expense.id,
-      account,
+      account: boundary.account,
       date: shift.date,
       reason: normalized.description,
       beforeData,
       afterData: expense.toJSON(),
       transaction,
     });
-    return { shiftId: shift.id };
+    return { account: boundary.account, shiftId: shift.id };
   });
-  return getCashForMutationResult(result.shiftId, account);
+  return getCashForMutationResult(result.shiftId, account, tenant);
 }
 
-async function cancelExpense(expenseId, data, account) {
+async function cancelExpense(expenseId, data, account, tenant) {
   const reason = normalizeText(data.reason, 'Причина отмены', { max: 1000, required: true });
   const result = await db.sequelize.transaction(async (transaction) => {
+    const boundary = await resolveBoundary(account, tenant, {
+      lock: true,
+      transaction,
+    });
     const { context, expense, shift } = await loadExpenseForMutation(
       expenseId,
-      account,
+      boundary,
       transaction,
+      tenant,
     );
     if (expense.status === 'canceled') throw appError('Расход уже отменен', 409);
     await payrollService.assertDateEditable(shift.date, 'отмену кассового расхода');
     const beforeData = expense.toJSON();
-    await financeService.deleteLinkedExpenseRecord(expense.financeId, account, {
+    await financeService.deleteLinkedExpenseRecord(expense.financeId, boundary.account, {
       reason,
+      tenant,
       trainingMarker: context.marker,
       transaction,
     });
     await expense.update(
       {
         canceledAt: new Date(),
-        canceledByAccountId: account?.id || null,
+        canceledByAccountId: boundary.account?.id || null,
         cancelReason: reason,
         financeId: null,
         status: 'canceled',
@@ -650,35 +730,48 @@ async function cancelExpense(expenseId, data, account) {
       action: 'shift_cash.expense_canceled',
       entityType: 'shift_cash_expense',
       entityId: expense.id,
-      account,
+      account: boundary.account,
       date: shift.date,
       reason,
       beforeData,
       afterData: expense.toJSON(),
       transaction,
     });
-    return { shiftId: shift.id };
+    return { account: boundary.account, shiftId: shift.id };
   });
-  return getCashForMutationResult(result.shiftId, account);
+  return getCashForMutationResult(result.shiftId, account, tenant);
 }
 
-async function getCashForMutationResult(shiftId, account) {
-  const active = await findActiveShift();
-  if (active && Number(active.id) === Number(shiftId)) return getActiveCash(account);
-  return getShiftCash(shiftId, account);
+async function getCashForMutationResult(shiftId, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  const active = await findActiveShift({ context: boundary.context });
+  if (active && Number(active.id) === Number(shiftId)) {
+    return getActiveCash(account, tenant);
+  }
+  return getShiftCash(shiftId, account, tenant);
 }
 
-async function loadExpenseForAttachment(expenseId, account, { write = false } = {}) {
+async function loadExpenseForAttachment(
+  expenseId,
+  boundary,
+  tenant,
+  { write = false } = {},
+) {
   const expense = await db.ShiftCashExpense.findByPk(expenseId, {
-    include: [{ as: 'shift', model: db.Shift }],
+    include: [{
+      as: 'shift',
+      model: db.Shift,
+      required: true,
+      where: boundary.context ? { clubId: boundary.context.clubId } : undefined,
+    }],
   });
   if (!expense) throw appError('Кассовый расход не найден', 404);
-  const context = await getDataContext(account);
+  const context = await getDataContext(boundary.account, tenant);
   assertTrainingScopeMatches(expense, context.marker);
   const shift = expense.shift || expense.Shift;
-  assertShiftViewAccess(shift, account);
+  assertShiftViewAccess(shift, boundary.account);
   if (write) {
-    assertExpenseWriteAccess(expense, shift, account);
+    assertExpenseWriteAccess(expense, shift, boundary.account);
     if (shift.status !== 'active') {
       throw appError('Фото можно менять только во время активной смены', 409);
     }
@@ -687,35 +780,47 @@ async function loadExpenseForAttachment(expenseId, account, { write = false } = 
   return { expense, shift };
 }
 
-async function uploadAttachment(expenseId, payload, account) {
-  const { expense, shift } = await loadExpenseForAttachment(expenseId, account, { write: true });
+async function uploadAttachment(expenseId, payload, account, requestTenant = null) {
+  const boundary = await resolveBoundary(account, requestTenant);
+  const { expense, shift } = await loadExpenseForAttachment(
+    expenseId,
+    boundary,
+    requestTenant,
+    { write: true },
+  );
   const attachments = readJson(expense.attachments, []);
   if (attachments.length >= attachmentStorage.MAX_ATTACHMENTS_PER_EXPENSE) {
     throw appError(
       `К одному расходу можно прикрепить до ${attachmentStorage.MAX_ATTACHMENTS_PER_EXPENSE} фото`,
     );
   }
-  const attachment = await attachmentStorage.storeAttachment(expense.id, payload, account);
+  const attachment = await attachmentStorage.storeAttachment(
+    expense.id,
+    payload,
+    boundary.account,
+    requestTenant,
+  );
   try {
     await expense.update({ attachments: [...attachments, attachment] });
   } catch (error) {
-    await attachmentStorage.deleteAttachmentFile(attachment);
+    await attachmentStorage.deleteAttachmentFile(attachment, expense.id, requestTenant);
     throw error;
   }
   await payrollService.recordChange({
     action: 'shift_cash.attachment_uploaded',
     entityType: 'shift_cash_expense',
     entityId: expense.id,
-    account,
+    account: boundary.account,
     date: shift.date,
     afterData: { attachmentId: attachment.id, fileName: attachment.originalName },
   });
   const result = serializeExpense(
     await db.ShiftCashExpense.findByPk(expense.id, { include: EXPENSE_INCLUDE }),
   );
-  await onboardingService.recordEventSafe(account, 'shift_cash.attachment_uploaded', {
+  await onboardingService.recordEventSafe(boundary.account, 'shift_cash.attachment_uploaded', {
     entityId: attachment.id,
     entityType: 'shift_cash_attachment',
+    tenant: requestTenant,
     payload: {
       attachmentId: attachment.id,
       expenseId: expense.id,
@@ -725,32 +830,47 @@ async function uploadAttachment(expenseId, payload, account) {
   return result;
 }
 
-async function removeAttachment(expenseId, attachmentId, account) {
-  const { expense, shift } = await loadExpenseForAttachment(expenseId, account, { write: true });
+async function removeAttachment(expenseId, attachmentId, account, requestTenant = null) {
+  const boundary = await resolveBoundary(account, requestTenant);
+  const { expense, shift } = await loadExpenseForAttachment(
+    expenseId,
+    boundary,
+    requestTenant,
+    { write: true },
+  );
   const attachments = readJson(expense.attachments, []);
   const attachment = attachments.find((item) => item.id === attachmentId);
   if (!attachment) throw appError('Фото не найдено', 404);
   await expense.update({ attachments: attachments.filter((item) => item.id !== attachmentId) });
-  await attachmentStorage.deleteAttachmentFile(attachment);
+  await attachmentStorage.deleteAttachmentFile(attachment, expense.id, requestTenant);
   await payrollService.recordChange({
     action: 'shift_cash.attachment_removed',
     entityType: 'shift_cash_expense',
     entityId: expense.id,
-    account,
+    account: boundary.account,
     date: shift.date,
     beforeData: { attachmentId: attachment.id, fileName: attachment.originalName },
   });
   return serializeExpense(await db.ShiftCashExpense.findByPk(expense.id, { include: EXPENSE_INCLUDE }));
 }
 
-async function getAttachment(expenseId, attachmentId, account) {
-  const { expense } = await loadExpenseForAttachment(expenseId, account);
+async function getAttachment(expenseId, attachmentId, account, requestTenant = null) {
+  const boundary = await resolveBoundary(account, requestTenant);
+  const { expense } = await loadExpenseForAttachment(
+    expenseId,
+    boundary,
+    requestTenant,
+  );
   const attachment = readJson(expense.attachments, []).find(
     (item) => item.id === attachmentId,
   );
   if (!attachment) throw appError('Фото не найдено', 404);
   return {
-    absolutePath: attachmentStorage.resolveAbsolutePath(attachment.relativePath),
+    absolutePath: await attachmentStorage.resolveAttachmentPath(
+      attachment,
+      expense.id,
+      requestTenant,
+    ),
     attachment,
   };
 }
@@ -787,7 +907,9 @@ async function closeCashSession({ shift, endedAt, data, account, transaction }) 
     openingBanknotes: session.openingBanknotes,
     openingCoins: session.openingCoins,
   });
-  assertVarianceComment(variance, closingComment);
+  if (MANAGER_ROLES.has(account?.role)) {
+    assertVarianceComment(variance, closingComment);
+  }
 
   const beforeData = session.toJSON();
   await session.update(
@@ -820,6 +942,7 @@ async function closeCashSession({ shift, endedAt, data, account, transaction }) 
 }
 
 module.exports = {
+  __testing: { getDataContext },
   accountInclude,
   buildCashSummary,
   calculateCashReconciliation,
@@ -833,8 +956,10 @@ module.exports = {
   getAttachment,
   getCashSalesForShift,
   getShiftCash,
+  hideReconciliationFromAdministrator,
   removeAttachment,
   roundMoney,
+  SHIFT_CASH_EXPENSE_CATEGORY,
   saveOpening,
   serializeExpense,
   serializeSession,

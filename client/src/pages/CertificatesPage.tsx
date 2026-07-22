@@ -36,7 +36,7 @@ import { toast } from '@/components/ui/toast';
 import { apiFetch, getApiErrorMessage, readApiError } from '@/lib/api';
 import { canRedeemCertificates } from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 type CertificateType = 'money' | 'service';
 type CertificateStatus = 'active' | 'canceled' | 'expired' | 'redeemed';
@@ -190,9 +190,9 @@ function redemptionValueText(redemption: CertificateRedemption, type: Certificat
 }
 
 export default function CertificatesPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
   const [searchParams] = useSearchParams();
-  const canRedeem = canRedeemCertificates(account?.role);
+  const canRedeem = canRedeemCertificates(clubRole);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [selectedCertificate, setSelectedCertificate] =
     useState<Certificate | null>(null);

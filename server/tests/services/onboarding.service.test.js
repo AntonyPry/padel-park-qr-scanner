@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
-const { after, test } = require('node:test');
+const { after, beforeEach, test } = require('node:test');
 const db = require('../../models');
+const onboardingAccess = require('../../src/services/onboarding-access-context.service');
 const {
   buildOnboardingResponse,
   cleanupTrainingData,
@@ -27,9 +28,11 @@ const originalEventModel = db.OnboardingEvent;
 const originalProgressModel = db.OnboardingProgress;
 const originalTrainingModeModel = db.OnboardingTrainingMode;
 const originalAccountModel = db.Account;
+const originalMembershipModel = db.Membership;
 const originalSequelize = db.sequelize;
 const originalBookingChangeLogModel = db.BookingChangeLog;
 const originalVisitCategoryAssignmentModel = db.VisitCategoryAssignment;
+const originalScannerEventModel = db.ScannerEvent;
 const originalTrainingPlanExerciseModel = db.TrainingPlanExercise;
 const originalTrainingPlanParticipantModel = db.TrainingPlanParticipant;
 const trainingModelNames = [
@@ -55,6 +58,23 @@ const originalTrainingModels = new Map(
   trainingModelNames.map((name) => [name, db[name]]),
 );
 
+beforeEach(() => {
+  onboardingAccess._private.setAuthorityResolverOverride(
+    async (actor, tenant, scope, _options, freezeContext) => freezeContext({
+      accountId: Number(actor.id),
+      clubId: scope === 'club' ? Number(tenant?.clubId || 101) : null,
+      effectiveRole: actor.role,
+      membershipId: Number(tenant?.membershipId || actor.id),
+      membershipRole: actor.role,
+      organizationId: Number(tenant?.organizationId || 10),
+      scope,
+    }),
+  );
+  db.sequelize = {
+    transaction: async (callback) => callback({ LOCK: { UPDATE: 'UPDATE' } }),
+  };
+});
+
 function findResponseTask(response, taskKey) {
   for (const mission of response.path.missions) {
     const task = mission.tasks.find((item) => item.key === taskKey);
@@ -64,13 +84,16 @@ function findResponseTask(response, taskKey) {
 }
 
 after(() => {
+  onboardingAccess._private.setAuthorityResolverOverride(null);
   db.OnboardingEvent = originalEventModel;
   db.OnboardingProgress = originalProgressModel;
   db.OnboardingTrainingMode = originalTrainingModeModel;
   db.Account = originalAccountModel;
+  db.Membership = originalMembershipModel;
   db.sequelize = originalSequelize;
   db.BookingChangeLog = originalBookingChangeLogModel;
   db.VisitCategoryAssignment = originalVisitCategoryAssignmentModel;
+  db.ScannerEvent = originalScannerEventModel;
   db.TrainingPlanExercise = originalTrainingPlanExerciseModel;
   db.TrainingPlanParticipant = originalTrainingPlanParticipantModel;
   for (const [name, model] of originalTrainingModels) {
@@ -177,6 +200,53 @@ test('completed onboarding task shows when instruction was updated afterwards', 
   );
 });
 
+test('knowledge motivation freshness is published for manager and owner', () => {
+  for (const [role, taskKey] of [
+    ['manager', 'manager.knowledge.motivation'],
+    ['owner', 'owner.knowledge.motivation'],
+  ]) {
+    const outdated = buildOnboardingResponse(
+      { id: 1, role },
+      role,
+      [
+        {
+          completedAt: new Date('2026-07-15T10:00:00.000Z'),
+          metadata: {},
+          status: 'completed',
+          taskKey,
+        },
+      ],
+    );
+    const outdatedTask = findResponseTask(outdated, taskKey);
+
+    assert.equal(Boolean(outdatedTask.progress.lesson.updatedAt), true);
+    assert.equal(outdatedTask.progress.lesson.isUpdatedAfterCompletion, true);
+
+    const acknowledged = buildOnboardingResponse(
+      { id: 1, role },
+      role,
+      [
+        {
+          completedAt: new Date('2026-07-15T10:00:00.000Z'),
+          metadata: {
+            lesson: {
+              contentReviewedAt: '2026-07-17T12:30:00.000+03:00',
+            },
+          },
+          status: 'completed',
+          taskKey,
+        },
+      ],
+    );
+    const acknowledgedTask = findResponseTask(acknowledged, taskKey);
+
+    assert.equal(
+      acknowledgedTask.progress.lesson.isUpdatedAfterCompletion,
+      false,
+    );
+  }
+});
+
 test('training mode persists account role and can be disabled', async () => {
   const rows = new Map();
   db.OnboardingTrainingMode = {
@@ -188,11 +258,11 @@ test('training mode persists account role and can be disabled', async () => {
           return row;
         },
       };
-      rows.set(payload.accountId, row);
+      rows.set(payload.membershipId, row);
       return row;
     },
     async findOne({ where }) {
-      return rows.get(where.accountId) || null;
+      return rows.get(where.membershipId) || null;
     },
   };
 
@@ -207,6 +277,7 @@ test('training mode persists account role and can be disabled', async () => {
   assert.equal(enabled.role, 'admin');
   assert.equal(Boolean(enabled.enabledAt), true);
   assert.deepEqual(current, enabled);
+  const sessionId = rows.get(10).sessionId;
 
   const disabled = await setTrainingMode(actor, {
     isEnabled: false,
@@ -216,12 +287,23 @@ test('training mode persists account role and can be disabled', async () => {
   assert.equal(disabled.isEnabled, false);
   assert.equal(disabled.role, 'admin');
   assert.equal(Boolean(disabled.disabledAt), true);
+
+  const reenabled = await setTrainingMode(actor, {
+    isEnabled: true,
+    role: 'admin',
+  });
+  assert.equal(reenabled.isEnabled, true);
+  assert.equal(rows.get(10).sessionId, sessionId);
+  await assert.rejects(
+    setTrainingMode(actor, { isEnabled: true, role: 'manager' }),
+    /Сначала очистите сохранённую учебную сессию/,
+  );
 });
 
 test('training data marker mirrors the active training role', async () => {
   db.OnboardingTrainingMode = {
     async findOne() {
-      return { isEnabled: true, role: 'trainer' };
+      return { isEnabled: true, role: 'trainer', sessionId: 'session-trainer' };
     },
   };
 
@@ -231,7 +313,68 @@ test('training data marker mirrors the active training role', async () => {
     isTraining: true,
     trainingAccountId: 10,
     trainingRole: 'trainer',
+    trainingSessionId: 'session-trainer',
   });
+});
+
+test('expired Organization training mode is disabled before stale Club authority is checked', async () => {
+  const expiredMode = {
+    accountId: 10,
+    clubId: 999,
+    expiresAt: new Date(Date.now() - 60_000),
+    isEnabled: true,
+    membershipId: 10,
+    organizationId: 10,
+    role: 'owner',
+    sessionId: 'expired-session',
+    async update(payload) {
+      Object.assign(this, payload);
+      return this;
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return expiredMode;
+    },
+  };
+  onboardingAccess._private.setAuthorityResolverOverride(
+    async (actor, tenant, scope, _options, freezeContext) => {
+      if (scope === 'club') {
+        const error = new Error('stale Club authority must not be resolved');
+        error.code = 'TENANT_CONTEXT_NOT_FOUND';
+        throw error;
+      }
+      return freezeContext({
+        accountId: Number(actor.id),
+        clubId: null,
+        effectiveRole: actor.role,
+        membershipId: Number(tenant.membershipId),
+        membershipRole: actor.role,
+        organizationId: Number(tenant.organizationId),
+        scope,
+      });
+    },
+  );
+
+  const marker = await getTrainingDataMarker(
+    { id: 10, role: 'owner' },
+    Object.freeze({
+      accountId: 10,
+      clubId: null,
+      membershipId: 10,
+      organizationId: 10,
+      scope: 'organization',
+    }),
+  );
+
+  assert.deepEqual(marker, {
+    isTraining: false,
+    trainingAccountId: null,
+    trainingRole: null,
+    trainingSessionId: null,
+  });
+  assert.equal(expiredMode.isEnabled, false);
+  assert.ok(expiredMode.disabledAt instanceof Date);
 });
 
 test('guided task requires lesson, practice and quiz before completion', async () => {
@@ -397,6 +540,11 @@ test('re-completing an updated instruction acknowledges the current content vers
 
 test('owner can inspect training data summary by role', async () => {
   const seen = [];
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return { sessionId: 'session-admin', isEnabled: false, role: 'admin' };
+    },
+  };
   for (const name of trainingModelNames) {
     db[name] = {
       async count({ where }) {
@@ -426,25 +574,43 @@ test('owner can inspect training data summary by role', async () => {
   );
   assert.deepEqual(
     seen.find((item) => item.name === 'User').where,
-    { isTraining: true, trainingRole: 'admin' },
+    {
+      isTraining: true,
+      trainingAccountId: 1,
+      trainingRole: 'admin',
+      trainingSessionId: 'session-admin',
+    },
   );
   assert.deepEqual(
     seen.find((item) => item.name === 'OnboardingEvent').where,
-    { isTraining: true, role: 'admin' },
+    {
+      accountId: 1,
+      isTraining: true,
+      role: 'admin',
+      trainingSessionId: 'session-admin',
+    },
   );
 });
 
-test('non-owner cannot inspect training data summary', async () => {
+test('non-owner can inspect only the effective-role training session', async () => {
+  const summary = await getTrainingDataSummary(
+    { id: 2, role: 'manager' },
+    { role: 'manager' },
+  );
+  assert.equal(summary.role, 'manager');
   await assert.rejects(
-    () => getTrainingDataSummary({ id: 2, role: 'manager' }),
-    /Учебными данными может управлять только владелец/,
+    () => getTrainingDataSummary(
+      { id: 2, role: 'manager' },
+      { role: 'viewer' },
+    ),
+    /Учебная сессия принадлежит другой роли/,
   );
 });
 
 test('owner can inspect onboarding completion metrics by role', async () => {
-  db.Account = {
+  db.Membership = {
     async findAll({ where }) {
-      assert.deepEqual(where, { status: 'active' });
+      assert.deepEqual(where, { organizationId: 10, status: 'active' });
       return [
         { id: 1, role: 'admin', status: 'active' },
         { id: 2, role: 'admin', status: 'active' },
@@ -455,7 +621,7 @@ test('owner can inspect onboarding completion metrics by role', async () => {
   };
   db.OnboardingProgress = {
     async findAll({ where }) {
-      assert.deepEqual(where, { status: 'completed' });
+      assert.deepEqual(where, { organizationId: 10, status: 'completed' });
       return [
         {
           accountId: 1,
@@ -548,6 +714,7 @@ test('recordClientEvent progresses matching review task from a safe client event
     },
   };
   db.OnboardingEvent = {
+    async findOne() { return null; },
     async create(payload) {
       return payload;
     },
@@ -597,7 +764,7 @@ test('recordClientEvent rejects action events from the browser', async () => {
 });
 
 test('owner cleanup removes dependent training data without touching progress', async () => {
-  const transaction = { id: 'training-cleanup' };
+  const transaction = { id: 'training-cleanup', LOCK: { UPDATE: 'UPDATE' } };
   const operations = [];
   const opIn = db.Sequelize.Op.in;
 
@@ -609,6 +776,17 @@ test('owner cleanup removes dependent training data without touching progress', 
   db.OnboardingProgress = {
     async destroy() {
       throw new Error('progress should not be cleaned with training data');
+    },
+  };
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return {
+        disabledAt: new Date(),
+        isEnabled: false,
+        role: 'admin',
+        sessionId: 'session-cleanup',
+        async update(payload) { Object.assign(this, payload); },
+      };
     },
   };
   db.BookingChangeLog = {
@@ -631,6 +809,17 @@ test('owner cleanup removes dependent training data without touching progress', 
         where,
       });
       return 1;
+    },
+  };
+  db.ScannerEvent = {
+    async destroy({ transaction: currentTransaction, where }) {
+      operations.push({
+        action: 'destroy',
+        model: 'ScannerEvent',
+        transaction: currentTransaction,
+        where,
+      });
+      return 2;
     },
   };
   db.TrainingPlanExercise = {
@@ -669,12 +858,14 @@ test('owner cleanup removes dependent training data without touching progress', 
 
         if (name === 'Booking') return [{ id: 10 }, { id: '11' }];
         if (name === 'Visit') return [{ id: 20 }];
+        if (name === 'User') return [{ id: 30 }];
         return [];
       },
     };
   }
 
   db.OnboardingEvent = {
+    async findOne() { return null; },
     async count({ where }) {
       operations.push({ action: 'count', model: 'OnboardingEvent', where });
       return 0;
@@ -698,6 +889,7 @@ test('owner cleanup removes dependent training data without touching progress', 
   assert.equal(result.role, 'admin');
   assert.equal(result.deleted.bookingChangeLogs, 2);
   assert.equal(result.deleted.visitCategoryAssignments, 1);
+  assert.equal(result.deleted.scannerEvents, 2);
   assert.equal(result.deleted.onboardingEvents, 4);
   assert.equal(result.deleted.trainingPlans, 1);
   assert.equal(result.deleted.clients, 3);
@@ -707,7 +899,12 @@ test('owner cleanup removes dependent training data without touching progress', 
     operations.find(
       (item) => item.model === 'Booking' && item.action === 'findAll',
     ).where,
-    { isTraining: true, trainingRole: 'admin' },
+    {
+      isTraining: true,
+      trainingAccountId: 1,
+      trainingRole: 'admin',
+      trainingSessionId: 'session-cleanup',
+    },
   );
   assert.deepEqual(
     operations.find((item) => item.model === 'BookingChangeLog').where,
@@ -718,21 +915,44 @@ test('owner cleanup removes dependent training data without touching progress', 
     { visitId: { [opIn]: [20] } },
   );
   assert.deepEqual(
+    operations.find((item) => item.model === 'ScannerEvent').where,
+    {
+      [db.Sequelize.Op.or]: [
+        { visitId: { [opIn]: [20] } },
+        { userId: { [opIn]: [30] } },
+      ],
+    },
+  );
+  assert.deepEqual(
     operations.find(
       (item) => item.model === 'OnboardingEvent' && item.action === 'destroy',
     ).where,
-    { isTraining: true, role: 'admin' },
+    {
+      accountId: 1,
+      isTraining: true,
+      role: 'admin',
+      trainingSessionId: 'session-cleanup',
+    },
   );
   assert.deepEqual(
     operations.find((item) => item.model === 'User' && item.action === 'destroy').where,
-    { isTraining: true, trainingRole: 'admin' },
+    {
+      isTraining: true,
+      trainingAccountId: 1,
+      trainingRole: 'admin',
+      trainingSessionId: 'session-cleanup',
+    },
   );
   assert.deepEqual(
     operations
       .filter(
         (item) =>
           item.action === 'destroy' &&
-          !['BookingChangeLog', 'VisitCategoryAssignment'].includes(item.model),
+          ![
+            'BookingChangeLog',
+            'VisitCategoryAssignment',
+            'ScannerEvent',
+          ].includes(item.model),
       )
       .map((item) => item.model),
     [
@@ -863,6 +1083,32 @@ test('manager control route checkpoint requires active task context', () => {
   );
 });
 
+test('shift report templates route checkpoint requires active task context', () => {
+  assert.deepEqual(
+    listMatchingTasks('manager', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+    }).map((task) => task.key),
+    [],
+  );
+  assert.deepEqual(
+    listMatchingTasks('manager', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+      taskKey: 'manager.shift-report-templates.manage',
+    }).map((task) => task.key),
+    ['manager.shift-report-templates.manage'],
+  );
+  assert.deepEqual(
+    listMatchingTasks('owner', 'report.viewed', {
+      report: 'shift_report_templates',
+      route: '/admin/shift-settings',
+      taskKey: 'owner.shift-report-templates.manage',
+    }).map((task) => task.key),
+    ['owner.shift-report-templates.manage'],
+  );
+});
+
 test('pilot client create card task does not match ordinary client creation', () => {
   assert.deepEqual(
     listMatchingTasks('admin', 'client.created', {
@@ -880,11 +1126,12 @@ test('pilot client create card task does not match ordinary client creation', ()
   );
 });
 
-test('recordEvent stores event and progresses matching tasks for training role', async () => {
+test('recordEvent binds product action to exact request quest context only', async () => {
   const progressRows = new Map();
+  const events = [];
   db.OnboardingTrainingMode = {
     async findOne() {
-      return { isEnabled: true, role: 'admin' };
+      return null;
     },
   };
   db.OnboardingProgress = {
@@ -897,6 +1144,69 @@ test('recordEvent stores event and progresses matching tasks for training role',
     },
   };
   db.OnboardingEvent = {
+    async findOne() { return null; },
+    async create(payload) {
+      events.push(payload);
+      return payload;
+    },
+  };
+
+  const ordinary = await recordEvent(
+    { id: 10, role: 'admin' },
+    'client.created',
+    { payload: { id: 100, name: 'Обычный клиент' } },
+  );
+  const sibling = await recordEvent(
+    { id: 10, role: 'admin' },
+    'client.created',
+    {
+      onboardingContext: {
+        role: 'admin',
+        taskKey: 'admin.booking.review-schedule',
+      },
+      payload: { id: 101, name: 'Клиент с соседним заданием' },
+    },
+  );
+  const exact = await recordEvent(
+    { id: 10, role: 'owner' },
+    'client.created',
+    {
+      onboardingContext: {
+        role: 'admin',
+        taskKey: 'admin.client.create',
+      },
+      payload: { id: 102, name: 'Клиент из задания' },
+    },
+  );
+
+  assert.deepEqual(ordinary.progressedTaskKeys, []);
+  assert.deepEqual(sibling.progressedTaskKeys, []);
+  assert.deepEqual(exact.progressedTaskKeys, ['admin.client.create']);
+  assert.equal(exact.role, 'admin');
+  assert.equal(progressRows.size, 1);
+  assert.equal(events[0].payload.taskKey, undefined);
+  assert.equal(events[1].payload.taskKey, 'admin.booking.review-schedule');
+  assert.equal(events[2].payload.taskKey, 'admin.client.create');
+});
+
+test('recordEvent stores event and progresses matching tasks for training role', async () => {
+  const progressRows = new Map();
+  db.OnboardingTrainingMode = {
+    async findOne() {
+      return { isEnabled: true, role: 'admin', sessionId: 'session-admin' };
+    },
+  };
+  db.OnboardingProgress = {
+    async create(payload) {
+      progressRows.set(payload.taskKey, payload);
+      return payload;
+    },
+    async findOne({ where }) {
+      return progressRows.get(where.taskKey) || null;
+    },
+  };
+  db.OnboardingEvent = {
+    async findOne() { return null; },
     async create(payload) {
       return payload;
     },
@@ -925,4 +1235,18 @@ test('recordEvent stores event and progresses matching tasks for training role',
     true,
   );
   assert.equal(result.event.isTraining, true);
+  assert.equal(result.event.trainingSessionId, 'session-admin');
+
+  const productionResult = await recordEvent(
+    { id: 10, role: 'owner' },
+    'booking.created',
+    {
+      entityId: 43,
+      entityType: 'booking',
+      onboardingContext: { role: 'manager' },
+      payload: { id: 43, source: 'phone' },
+    },
+  );
+  assert.equal(productionResult.event.isTraining, false);
+  assert.equal(productionResult.event.trainingSessionId, null);
 });

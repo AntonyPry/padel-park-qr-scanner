@@ -1,0 +1,147 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('node:fs');
+const path = require('node:path');
+
+const ROOT = path.resolve(__dirname, '..');
+
+function read(relative) {
+  return fs.readFileSync(path.join(ROOT, relative), 'utf8');
+}
+
+function auditTenantProviderIntegrations() {
+  const failures = [];
+  const requireText = (file, patterns) => {
+    const source = read(file);
+    for (const pattern of patterns) {
+      if (!pattern.test(source)) failures.push(`${file} is missing ${pattern}`);
+    }
+  };
+
+  requireText('models/IntegrationConnection.js', [
+    /defaultScope/u,
+    /exclude:[\s\S]*'credentialFingerprint'[\s\S]*'fingerprintKeyVersion'[\s\S]*'providerIdentityFingerprint'[\s\S]*'secretCiphertext'[\s\S]*'secretKeyVersion'/u,
+    /INTEGRATION_CONNECTION_IDENTITY_IMMUTABLE/u,
+  ]);
+  requireText('src/app.js', [
+    /webhooks\/evotor\/:connectionPublicId/u,
+    /integrations\/beeline\/events\/:connectionPublicId\/:callbackToken/u,
+    /beelineCapabilityIngress[\s\S]*beelineCapabilityCutoverGate[\s\S]*express\.text/u,
+  ]);
+  requireText('src/middleware/provider-ingress.js', [
+    /resolveIngressConnection/u,
+    /assertCapabilityConnection/u,
+    /assertSharedHeaderConnection/u,
+    /assertLegacyDownstreamReady/u,
+    /req\.providerConnection = connection/u,
+    /createAuthenticatedIngressContext/u,
+  ]);
+  requireText('src/controllers/webhook.controller.js', [
+    /parseEvotorBody/u,
+    /withProviderConnectionLock/u,
+  ]);
+  requireText('src/services/telephony.service.js', [
+    /buildProviderIdempotencyKey/u,
+    /requireAuthenticatedIngressContext/u,
+    /ingestTrustedStatisticsRow/u,
+    /maintainAllEventSubscriptions/u,
+    /withProviderConnectionLock/u,
+    /syncStatistics[\s\S]*withProviderConnectionLock/u,
+    /syncRecordings[\s\S]*withProviderConnectionLock/u,
+  ]);
+  const telephonySource = read('src/services/telephony.service.js');
+  if (/skipSecret/u.test(telephonySource)) {
+    failures.push('src/services/telephony.service.js still exposes caller-controlled skipSecret');
+  }
+  requireText('src/provider-integrations/beeline-callback.js', [
+    /randomBytes\(32\)/u,
+    /secretMatches/u,
+    /CAPABILITY_PATH_PATTERN/u,
+    /redactCapabilityValue/u,
+  ]);
+  requireText('src/provider-integrations/ingress-context.js', [
+    /WeakSet/u,
+    /requireAuthenticatedIngressContext/u,
+  ]);
+  requireText('src/provider-integrations/credential-keys.js', [
+    /apiKey|apikey/u,
+    /privatekey/u,
+    /signingkey/u,
+    /accesskey/u,
+    /clientsecret/u,
+  ]);
+  requireText('src/provider-integrations/secrets.js', [
+    /aes-256-gcm/u,
+    /setAAD/u,
+    /setAuthTag/u,
+  ]);
+  requireText('src/provider-integrations/connection-service.js', [
+    /normalizeSafeObject/u,
+    /recordRejectedIngress/u,
+    /PROVIDER_CONNECTION_REJECTED/u,
+  ]);
+  requireText('src/provider-integrations/locks.js', [
+    /AsyncLocalStorage/u,
+    /buildProviderNamespace/u,
+    /GET_LOCK/u,
+  ]);
+  requireText('src/provider-integrations/rollout.js', [
+    /resolveLegacyProviderContext/u,
+    /reconcileLegacyProviderRows/u,
+    /integrationConnectionId IS NULL/u,
+    /IntegrationConnection\.unscoped\(\)\.findByPk/u,
+    /PROVIDER_PURPOSE\[authoritative\.provider\] !== authoritative\.purpose/u,
+    /authoritative\.connectionKey !== 'default'/u,
+    /PROVIDER_RECONCILIATION_AUTHORITY_MISMATCH/u,
+  ]);
+  requireText('migrations/20260716100000-harden-tenant-provider-integrations.js', [
+    /BEFORE UPDATE ON IntegrationConnections/u,
+    /BEFORE UPDATE ON TelephonyCalls/u,
+    /BEFORE UPDATE ON TelephonyRawEvents/u,
+    /BEFORE UPDATE ON TelephonySubscriptions/u,
+    /BEFORE UPDATE ON Receipts/u,
+    /replaceForeignKeys\(queryInterface, 'RESTRICT'\)/u,
+  ]);
+  requireText('migrations/20260716120000-validate-provider-reconciliation-connections.js', [
+    /authoritativeConnection\.organizationId = NEW\.organizationId/u,
+    /authoritativeConnection\.clubId = NEW\.clubId/u,
+    /provider: 'beeline'[\s\S]*purpose: 'telephony'/u,
+    /provider: 'evotor'[\s\S]*purpose: 'point_of_sale'/u,
+    /authoritativeConnection\.connectionKey = 'default'/u,
+    /EXISTS \(/u,
+  ]);
+  requireText('src/provider-integrations/runner.js', [
+    /Promise\.all/u,
+    /Provider connection task failed/u,
+  ]);
+  requireText('src/files-workers/background-run-context.js', [
+    /CALL_TASKS_RECURRING[\s\S]*classification: 'tenant-routed'/u,
+    /CALL_TASKS_RECURRING[\s\S]*isTenantClientBasesCallTasksEnabled/u,
+    /TELEPHONY_SUBSCRIPTION[\s\S]*classification: 'provider-routed'/u,
+  ]);
+
+  const connectionSource = read('src/provider-integrations/connection-service.js');
+  const serializationBody = connectionSource.match(
+    /function serializeConnection\(row\) \{([\s\S]*?)\n\}/u,
+  )?.[1] || '';
+  for (const sensitive of ['secretCiphertext', 'secretKeyVersion', 'secrets']) {
+    if (new RegExp(`\\b${sensitive}\\b`, 'u').test(serializationBody)) {
+      failures.push(`serializeConnection exposes ${sensitive}`);
+    }
+  }
+
+  return { failures, ok: failures.length === 0 };
+}
+
+if (require.main === module) {
+  const result = auditTenantProviderIntegrations();
+  if (!result.ok) {
+    console.error(JSON.stringify(result, null, 2));
+    process.exitCode = 1;
+  } else {
+    console.log('Tenant provider integrations audit passed');
+  }
+}
+
+module.exports = { auditTenantProviderIntegrations };

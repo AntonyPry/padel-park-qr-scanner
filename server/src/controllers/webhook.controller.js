@@ -1,14 +1,21 @@
 // src/controllers/webhook.controller.js
 const evotorService = require('../services/evotor.service');
+const { markConnectionActivity } = require('../provider-integrations/activity');
+const {
+  isTenantProviderIntegrationsEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  withProviderConnectionLock,
+} = require('../provider-integrations/locks');
+const {
+  isProviderCredentialKey,
+} = require('../provider-integrations/credential-keys');
 
 const SENSITIVE_LOG_KEYS = new Set([
-  'authorization',
   'client_email',
   'client_phone',
   'email',
   'phone',
-  'token',
-  'x-evotor-token',
 ]);
 const PAYMENT_LOG_KEY_PATTERN =
   /(payment|pay|cash|cashless|card|electron|sbp|amount|sum|total)/i;
@@ -16,7 +23,9 @@ const RAW_PAYLOAD_LOG_LIMIT = 20000;
 
 function sanitizeForLog(value, key = '', depth = 0) {
   const normalizedKey = String(key).toLowerCase();
-  if (SENSITIVE_LOG_KEYS.has(normalizedKey)) return '[redacted]';
+  if (SENSITIVE_LOG_KEYS.has(normalizedKey) || isProviderCredentialKey(key)) {
+    return '[redacted]';
+  }
   if (value === null || value === undefined) return value;
   if (typeof value === 'string') {
     return value.length > 300 ? `${value.slice(0, 300)}...` : value;
@@ -82,6 +91,20 @@ function getReceiptData(payload) {
     : payload;
 }
 
+function parseEvotorBody(body) {
+  if (body && typeof body === 'object' && !Buffer.isBuffer(body)) return body;
+  try {
+    const parsed = JSON.parse(Buffer.isBuffer(body) ? body.toString('utf8') : String(body || ''));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid');
+    return parsed;
+  } catch {
+    const error = new Error('Invalid provider payload');
+    error.code = 'PROVIDER_PAYLOAD_INVALID';
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 function logEvotorPaymentDiagnostic({ payload, receipt }) {
   const receiptData = getReceiptData(payload);
   const diagnostic = {
@@ -116,6 +139,24 @@ function logEvotorPaymentDiagnostic({ payload, receipt }) {
 class WebhookController {
   async handleEvotor(req, res) {
     try {
+      if (isTenantProviderIntegrationsEnabled()) {
+        const connection = req.providerConnection;
+        if (!connection) {
+          const error = new Error('Provider connection was not found');
+          error.code = 'PROVIDER_CONNECTION_REJECTED';
+          error.statusCode = 404;
+          throw error;
+        }
+        const payload = parseEvotorBody(req.body);
+        const result = await withProviderConnectionLock(
+          connection,
+          () => evotorService.processReceipt(payload, { connection }),
+        );
+        await markConnectionActivity(connection);
+        if (result.alreadyProcessed) return res.status(200).send('Already processed');
+        return res.status(200).send('OK');
+      }
+
       const secret = process.env.EVOTOR_WEBHOOK_SECRET || '';
       const token =
         req.headers['x-evotor-token'] || req.headers['authorization'] || '';
@@ -125,7 +166,8 @@ class WebhookController {
       }
 
       // Вся тяжелая логика парсинга и сохранения ушла в сервис
-      const result = await evotorService.processReceipt(req.body);
+      const payload = parseEvotorBody(req.body);
+      const result = await evotorService.processReceipt(payload);
 
       if (result.alreadyProcessed) {
         return res.status(200).send('Already processed');
@@ -135,14 +177,16 @@ class WebhookController {
         `✅ [NEW] Сохранен чек Эвотор: ${result.receipt.evotorId} на сумму ${result.receipt.totalAmount} ₽`,
       );
       logEvotorPaymentDiagnostic({
-        payload: req.body,
+        payload,
         receipt: result.receipt,
       });
 
       res.status(200).send('OK');
     } catch (error) {
-      console.error('Ошибка вебхука Эвотор:', error);
-      res.status(500).send('Server Error');
+      console.error('EVOTOR_INGRESS_FAILED', error.code || 'PROVIDER_REQUEST_FAILED');
+      res.status(Number(error.statusCode) || 500).send(
+        error.statusCode && error.statusCode < 500 ? 'Rejected' : 'Server Error',
+      );
     }
   }
 }

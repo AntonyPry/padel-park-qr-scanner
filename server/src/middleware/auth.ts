@@ -6,6 +6,9 @@ const authService = require('../services/auth.service') as {
   verifyToken: (token: string) => { accountId?: number } | null;
   getAccountById: (accountId: number) => Promise<Request['account'] | null>;
 };
+const { isTenantContextEnabled } = require('./tenant-context') as {
+  isTenantContextEnabled: () => boolean;
+};
 const { sendError } = require('../utils/api-error') as {
   sendError: (res: Response, error: { statusCode: number }, fallback: string) => void;
 };
@@ -38,7 +41,22 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 function requireRole(...roles: AccountRole[]): RequestHandler {
   return (req, res, next) => {
-    if (!req.account || !roles.includes(req.account.role)) {
+    let authorizationRole = req.account?.role;
+    if (isTenantContextEnabled() && req.tenantRoute?.classification !== 'global') {
+      if (!req.tenant) {
+        return sendError(
+          res,
+          { statusCode: 403 },
+          'Tenant context is required for authorization',
+        );
+      }
+      authorizationRole =
+        req.tenant.scope === 'club'
+          ? req.tenant.effectiveRole || undefined
+          : req.tenant.membershipRole || undefined;
+    }
+
+    if (!authorizationRole || !roles.includes(authorizationRole)) {
       return sendError(res, { statusCode: 403 }, 'Forbidden');
     }
 

@@ -1,14 +1,21 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const db = require('../../models');
 const auditService = require('../../src/services/audit.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalModels = {
   AuditLog: db.AuditLog,
 };
+let restoreSingleton;
+
+beforeEach(() => {
+  restoreSingleton = mockExactSingletonDefault(db);
+});
 
 afterEach(() => {
   Object.assign(db, originalModels);
+  restoreSingleton();
 });
 
 test('audit logs corporate deposit create on corporate client id', async () => {

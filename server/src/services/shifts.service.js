@@ -3,8 +3,22 @@ const onboardingService = require('./onboarding.service');
 const payrollService = require('./payroll.service');
 const shiftReportsService = require('./shift-reports.service');
 const shiftCashService = require('./shift-cash.service');
+const {
+  isTenantShiftsReportsEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  requireExactSingletonDefault,
+} = require('../tenant-enforcement/legacy-singleton');
+const {
+  bindShiftOperationsActor,
+  resolveShiftOperationsAccessContext,
+  shiftOperationsTenantValues,
+  shiftOperationsTenantWhere,
+} = require('./shift-operations-access-context.service');
 
 const SHIFT_INCLUDE = [{ model: db.Staff, attributes: ['id', 'name', 'role'] }];
+const SHIFT_MANAGE_ROLES = new Set(['owner', 'manager']);
+const SHIFT_OPERATE_ROLES = new Set(['owner', 'manager', 'admin']);
 
 function getMoscowDateString(date = new Date()) {
   return new Intl.DateTimeFormat('en-CA', {
@@ -27,29 +41,114 @@ function normalizeHours(hours) {
   return normalized;
 }
 
-async function getActive() {
+async function resolveBoundary(account, tenant, options = {}) {
+  if (!isTenantShiftsReportsEnabled()) {
+    await requireExactSingletonDefault({ transaction: options.transaction });
+    return { account, context: null };
+  }
+  const context = await resolveShiftOperationsAccessContext(tenant, options);
+  return { account: bindShiftOperationsActor(account, context), context };
+}
+
+function tenantWhere(context, values = {}) {
+  return context ? shiftOperationsTenantWhere(context, values) : values;
+}
+
+function tenantValues(context) {
+  return context ? shiftOperationsTenantValues(context) : {};
+}
+
+function assertBoundaryRole(boundary, roles) {
+  if (!boundary.context || roles.has(boundary.account?.role)) return;
+  const error = new Error('Недостаточно прав');
+  error.statusCode = 403;
+  throw error;
+}
+
+function serializeShift(value) {
+  if (!value) return value;
+  const plain = value.toJSON ? value.toJSON() : { ...value };
+  delete plain.clubId;
+  delete plain.organizationId;
+  return plain;
+}
+
+async function getActive(account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, SHIFT_OPERATE_ROLES);
   return db.Shift.findOne({
-    where: { status: 'active', archivedAt: null },
+    where: tenantWhere(boundary.context, { status: 'active', archivedAt: null }),
     include: SHIFT_INCLUDE,
     order: [['startedAt', 'DESC']],
   });
 }
 
-async function getStaffForAccount(account) {
-  if (account.Staff) return account.Staff;
-  if (account.staffId) return db.Staff.findByPk(account.staffId);
+async function getStaffForAccount(account, context, transaction) {
+  if (!context && account.Staff) return account.Staff;
+  if (account.staffId) {
+    const staff = await db.Staff.findOne({
+      transaction,
+      where: {
+        id: account.staffId,
+        ...(context ? { organizationId: context.organizationId } : {}),
+      },
+    });
+    await assertStaffClubAccess(staff, context, transaction);
+    return staff;
+  }
   return null;
 }
 
-async function resolveShiftOwner({ staffId, adminName }) {
+async function assertStaffClubAccess(staff, context, transaction) {
+  if (!context || !staff) return;
+  const membership = await db.Membership.findOne({
+    attributes: ['id', 'role'],
+    transaction,
+    where: {
+      organizationId: context.organizationId,
+      staffId: staff.id,
+      status: 'active',
+    },
+  });
+  if (!membership) {
+    const error = new Error('Сотрудник не имеет активного доступа к клубу');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (membership.role === 'owner') return;
+  const clubAccess = await db.MembershipClubAccess.findOne({
+    attributes: ['membershipId'],
+    transaction,
+    where: {
+      clubId: context.clubId,
+      membershipId: membership.id,
+      organizationId: context.organizationId,
+      status: 'active',
+    },
+  });
+  if (!clubAccess) {
+    const error = new Error('Сотрудник не имеет активного доступа к клубу');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
+async function resolveShiftOwner({ staffId, adminName }, context, transaction) {
   if (staffId) {
-    const staff = await db.Staff.findByPk(Number(staffId));
+    const staff = await db.Staff.findOne({
+      transaction,
+      where: {
+        id: Number(staffId),
+        ...(context ? { organizationId: context.organizationId } : {}),
+      },
+    });
 
     if (!staff || staff.status !== 'active') {
       const error = new Error('Активный сотрудник не найден');
       error.statusCode = 400;
       throw error;
     }
+    await assertStaffClubAccess(staff, context, transaction);
 
     return {
       staffId: staff.id,
@@ -81,16 +180,19 @@ function assertManualAdjustmentReason(data) {
   }
 }
 
-async function create(data, account) {
+async function create(data, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, SHIFT_MANAGE_ROLES);
   const { date, hours, manualAdjustment, comment } = data;
   await payrollService.assertDateEditable(date, 'смену');
   assertManualAdjustmentReason(data);
 
-  const owner = await resolveShiftOwner(data);
+  const owner = await resolveShiftOwner(data, boundary.context);
   const normalizedHours = normalizeHours(hours);
 
   const shift = await db.Shift.create({
     date,
+    ...tenantValues(boundary.context),
     ...owner,
     hours: normalizedHours,
     actualHours: normalizedHours,
@@ -102,16 +204,18 @@ async function create(data, account) {
   await payrollService.recordChange({
     action: 'shift.create',
     entityType: 'shift',
+    tenant,
     entityId: shift.id,
-    account,
+    account: boundary.account,
     date,
     reason: comment,
     afterData: shift.toJSON(),
   });
 
-  await onboardingService.recordEventSafe(account, 'shift.approved', {
+  await onboardingService.recordEventSafe(boundary.account, 'shift.approved', {
     entityId: shift.id,
     entityType: 'shift',
+    tenant,
     payload: {
       date,
       shiftId: shift.id,
@@ -119,14 +223,18 @@ async function create(data, account) {
     },
   });
 
-  await shiftReportsService.ensureReportsForShift(shift);
+  await shiftReportsService.ensureReportsForShift(shift, tenant);
 
   return shift;
 }
 
-async function update(data, account) {
+async function update(data, account, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, SHIFT_MANAGE_ROLES);
   const { id, date, hours, manualAdjustment, comment } = data;
-  const shift = await db.Shift.findByPk(id);
+  const shift = await db.Shift.findOne({
+    where: tenantWhere(boundary.context, { id: Number(id) }),
+  });
 
   if (!shift) return null;
   if (shift.archivedAt) {
@@ -141,7 +249,7 @@ async function update(data, account) {
   }
   assertManualAdjustmentReason(data);
 
-  const owner = await resolveShiftOwner(data);
+  const owner = await resolveShiftOwner(data, boundary.context);
   const normalizedHours = normalizeHours(hours);
   const before = shift.toJSON();
 
@@ -158,17 +266,19 @@ async function update(data, account) {
   await payrollService.recordChange({
     action: 'shift.update',
     entityType: 'shift',
+    tenant,
     entityId: shift.id,
-    account,
+    account: boundary.account,
     date: shift.date,
     reason: comment,
     beforeData: before,
     afterData: shift.toJSON(),
   });
 
-  await onboardingService.recordEventSafe(account, 'shift.approved', {
+  await onboardingService.recordEventSafe(boundary.account, 'shift.approved', {
     entityId: shift.id,
     entityType: 'shift',
+    tenant,
     payload: {
       date: shift.date,
       shiftId: shift.id,
@@ -179,8 +289,12 @@ async function update(data, account) {
   return shift;
 }
 
-async function remove(id, account, reason) {
-  const shift = await db.Shift.findByPk(id);
+async function remove(id, account, reason, tenant) {
+  const boundary = await resolveBoundary(account, tenant);
+  assertBoundaryRole(boundary, SHIFT_MANAGE_ROLES);
+  const shift = await db.Shift.findOne({
+    where: tenantWhere(boundary.context, { id: Number(id) }),
+  });
   if (!shift) return null;
   if (shift.archivedAt) return shift;
 
@@ -188,7 +302,7 @@ async function remove(id, account, reason) {
   const before = shift.toJSON();
   await shift.update({
     archivedAt: new Date(),
-    archivedByAccountId: account?.id || null,
+    archivedByAccountId: boundary.account?.id || null,
     archiveReason: reason ? String(reason).trim() : null,
   });
 
@@ -196,7 +310,7 @@ async function remove(id, account, reason) {
     action: 'shift.archive',
     entityType: 'shift',
     entityId: shift.id,
-    account,
+    account: boundary.account,
     date: shift.date,
     reason,
     beforeData: before,
@@ -206,50 +320,75 @@ async function remove(id, account, reason) {
   return shift;
 }
 
-async function startActive(account) {
-  const activeShift = await getActive();
-  if (activeShift) {
-    const error = new Error('В клубе уже идет активная смена');
-    error.statusCode = 409;
-    throw error;
-  }
-
-  const staff = await getStaffForAccount(account);
-  if (!staff || staff.status !== 'active') {
-    const error = new Error('Активный сотрудник аккаунта не найден');
-    error.statusCode = 400;
-    throw error;
-  }
-
+async function startActive(account, tenant) {
   const date = getMoscowDateString();
   await payrollService.assertDateEditable(date, 'смену');
+  const result = await db.sequelize.transaction(async (transaction) => {
+    const boundary = await resolveBoundary(account, tenant, {
+      lock: true,
+      transaction,
+    });
+    assertBoundaryRole(boundary, SHIFT_OPERATE_ROLES);
+    if (boundary.context) {
+      await db.Club.findOne({
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: { id: boundary.context.clubId },
+      });
+    }
+    const activeShift = await db.Shift.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: tenantWhere(boundary.context, {
+        archivedAt: null,
+        status: 'active',
+      }),
+    });
+    if (activeShift) {
+      const error = new Error('В клубе уже идет активная смена');
+      error.statusCode = 409;
+      throw error;
+    }
 
-  const shift = await db.Shift.create({
-    date,
-    staffId: staff.id,
-    adminName: staff.name,
-    hours: 0,
-    actualHours: null,
-    startedAt: new Date(),
-    status: 'active',
-    manualAdjustment: 0,
-    comment: 'Смена начата через трекер администратора',
+    const staff = await getStaffForAccount(
+      boundary.account,
+      boundary.context,
+      transaction,
+    );
+    if (!staff || staff.status !== 'active') {
+      const error = new Error('Активный сотрудник аккаунта не найден');
+      error.statusCode = 400;
+      throw error;
+    }
+    const shift = await db.Shift.create({
+      date,
+      ...tenantValues(boundary.context),
+      staffId: staff.id,
+      adminName: staff.name,
+      hours: 0,
+      actualHours: null,
+      startedAt: new Date(),
+      status: 'active',
+      manualAdjustment: 0,
+      comment: 'Смена начата через трекер администратора',
+    }, { transaction });
+    return { account: boundary.account, shift };
   });
 
   await payrollService.recordChange({
     action: 'shift.start',
     entityType: 'shift',
-    entityId: shift.id,
-    account,
+    entityId: result.shift.id,
+    account: result.account,
     date,
-    afterData: shift.toJSON(),
+    afterData: result.shift.toJSON(),
   });
 
-  return shift;
+  return result.shift;
 }
 
-async function endActive(account, data = {}) {
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+async function endActive(account, data = {}, tenant) {
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
   if (trainingMarker.isTraining) {
     const error = new Error(
       'Завершение реальной смены недоступно в режиме тренировки. Выключите режим тренировки и повторите действие.',
@@ -259,11 +398,16 @@ async function endActive(account, data = {}) {
   }
 
   const result = await db.sequelize.transaction(async (transaction) => {
+    const boundary = await resolveBoundary(account, tenant, {
+      lock: true,
+      transaction,
+    });
+    assertBoundaryRole(boundary, SHIFT_OPERATE_ROLES);
     const activeShift = await db.Shift.findOne({
       lock: transaction.LOCK.UPDATE,
       order: [['startedAt', 'DESC']],
       transaction,
-      where: { status: 'active', archivedAt: null },
+      where: tenantWhere(boundary.context, { status: 'active', archivedAt: null }),
     });
     if (!activeShift) {
       const error = new Error('Активная смена не найдена');
@@ -280,7 +424,7 @@ async function endActive(account, data = {}) {
         Math.max(0, (endedAt.getTime() - startedAt.getTime()) / 3600000) * 10,
       ) / 10;
     const cash = await shiftCashService.closeCashSession({
-      account,
+      account: boundary.account,
       data: data.cash || {},
       endedAt,
       shift: activeShift,
@@ -294,7 +438,7 @@ async function endActive(account, data = {}) {
         hours: actualHours,
         actualHours,
         status: 'closed',
-        approvedByAccountId: account.id,
+        approvedByAccountId: boundary.account.id,
       },
       { transaction },
     );
@@ -303,23 +447,26 @@ async function endActive(account, data = {}) {
       action: 'shift.close',
       entityType: 'shift',
       entityId: activeShift.id,
-      account,
+      account: boundary.account,
       date: activeShift.date,
       beforeData: before,
       afterData: activeShift.toJSON(),
       transaction,
     });
 
-    return { cash, shiftId: activeShift.id };
+    return { account: boundary.account, cash, shiftId: activeShift.id };
   });
 
-  const activeShift = await db.Shift.findByPk(result.shiftId, {
+  const responseBoundary = await resolveBoundary(account, tenant);
+  const activeShift = await db.Shift.findOne({
     include: SHIFT_INCLUDE,
+    where: tenantWhere(responseBoundary.context, { id: result.shiftId }),
   });
 
-  await onboardingService.recordEventSafe(account, 'shift.approved', {
+  await onboardingService.recordEventSafe(result.account, 'shift.approved', {
     entityId: activeShift.id,
     entityType: 'shift',
+    tenant,
     payload: {
       date: activeShift.date,
       shiftId: activeShift.id,
@@ -327,16 +474,17 @@ async function endActive(account, data = {}) {
     },
   });
 
-  await onboardingService.recordEventSafe(account, 'shift_cash.closed', {
+  await onboardingService.recordEventSafe(result.account, 'shift_cash.closed', {
     entityId: result.cash.id,
     entityType: 'shift_cash_session',
+    tenant,
     payload: {
       shiftId: activeShift.id,
       variance: result.cash.variance,
     },
   });
 
-  await shiftReportsService.ensureReportsForShift(activeShift);
+  await shiftReportsService.ensureReportsForShift(activeShift, tenant);
 
   return { cash: result.cash, shift: activeShift };
 }
@@ -348,4 +496,5 @@ module.exports = {
   update,
   remove,
   startActive,
+  serializeShift,
 };

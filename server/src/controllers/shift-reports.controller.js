@@ -6,7 +6,9 @@ const { sendError } = require('../utils/api-error');
 class ShiftReportsController {
   async listTemplates(req, res) {
     try {
-      res.json(await shiftReportsService.listTemplates(req.query));
+      res.json(
+        await shiftReportsService.listTemplates(req.query, req.account, req.tenant),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка загрузки шаблонов отчетов смены');
     }
@@ -14,7 +16,11 @@ class ShiftReportsController {
 
   async createTemplate(req, res) {
     try {
-      const template = await shiftReportsService.createTemplate(req.body, req.account);
+      const template = await shiftReportsService.createTemplate(
+        req.body,
+        req.account,
+        req.tenant,
+      );
       res.status(201).json(template);
     } catch (error) {
       sendError(res, error, 'Ошибка создания шаблона отчета');
@@ -24,7 +30,12 @@ class ShiftReportsController {
   async updateTemplate(req, res) {
     try {
       res.json(
-        await shiftReportsService.updateTemplate(req.params.id, req.body, req.account),
+        await shiftReportsService.updateTemplate(
+          req.params.id,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       sendError(res, error, 'Ошибка обновления шаблона отчета');
@@ -38,6 +49,7 @@ class ShiftReportsController {
           req.params.id,
           'archived',
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -52,6 +64,7 @@ class ShiftReportsController {
           req.params.id,
           'active',
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -65,6 +78,7 @@ class ShiftReportsController {
         req.params.templateId,
         req.body,
         req.account,
+        req.tenant,
       );
       res.status(201).json(template);
     } catch (error) {
@@ -79,6 +93,7 @@ class ShiftReportsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -93,6 +108,7 @@ class ShiftReportsController {
           req.params.id,
           'archived',
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -107,6 +123,7 @@ class ShiftReportsController {
           req.params.id,
           'active',
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -116,7 +133,9 @@ class ShiftReportsController {
 
   async getActiveShiftReports(req, res) {
     try {
-      res.json(await shiftReportsService.getActiveShiftReports(req.account));
+      res.json(
+        await shiftReportsService.getActiveShiftReports(req.account, req.tenant),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка загрузки отчетов активной смены');
     }
@@ -124,7 +143,9 @@ class ShiftReportsController {
 
   async listReports(req, res) {
     try {
-      res.json(await shiftReportsService.listReports(req.query, req.account));
+      res.json(
+        await shiftReportsService.listReports(req.query, req.account, req.tenant),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка загрузки отчетов смены');
     }
@@ -132,7 +153,9 @@ class ShiftReportsController {
 
   async getReport(req, res) {
     try {
-      res.json(await shiftReportsService.getReport(req.params.id, req.account));
+      res.json(
+        await shiftReportsService.getReport(req.params.id, req.account, req.tenant),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка загрузки отчета смены');
     }
@@ -143,6 +166,7 @@ class ShiftReportsController {
       res.json(
         await shiftReportsService.saveReport(req.params.id, req.body, req.account, {
           submit: false,
+          tenant: req.tenant,
         }),
       );
     } catch (error) {
@@ -155,6 +179,7 @@ class ShiftReportsController {
       res.json(
         await shiftReportsService.saveReport(req.params.id, req.body, req.account, {
           submit: true,
+          tenant: req.tenant,
         }),
       );
     } catch (error) {
@@ -170,6 +195,7 @@ class ShiftReportsController {
           req.params.answerId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -185,6 +211,7 @@ class ShiftReportsController {
           req.params.answerId,
           req.params.attachmentId,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -199,6 +226,7 @@ class ShiftReportsController {
         req.params.answerId,
         req.params.attachmentId,
         req.account,
+        req.tenant,
       );
       res.setHeader('Content-Type', attachment.mimeType);
       res.setHeader(

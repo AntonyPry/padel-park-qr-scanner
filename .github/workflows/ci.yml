@@ -10,7 +10,7 @@ jobs:
   server:
     name: Server checks
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 30
     env:
       DB_NAME: padel_park_test
       DB_PASSWORD: root
@@ -86,6 +86,7 @@ jobs:
           path: client/dist
           retention-days: 7
           if-no-files-found: error
+
   server-image:
     name: Server image smoke
     runs-on: ubuntu-latest

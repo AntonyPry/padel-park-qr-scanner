@@ -2,10 +2,16 @@ const { ACCESS_MATRIX } = require('../constants/access-matrix');
 const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 
 const REALTIME_DOMAIN_ROOM_PREFIX = 'crm:domain:';
+const TENANT_ROOM_PREFIXES = Object.freeze({
+  club: 'club',
+  membership: 'membership',
+  organization: 'org',
+});
 
 const DOMAIN_ACCESS_KEYS = {
   access: ['accessOperate'],
   accounts: ['systemUsersManage'],
+  audit: ['auditView'],
   bookings: ['bookingsView'],
   booking_resources: ['bookingsView'],
   call_tasks: ['callTasksView'],
@@ -63,11 +69,74 @@ function getRealtimeRoomsForRole(role) {
     .map(getRealtimeDomainRoom);
 }
 
+function positiveTenantId(value, label) {
+  const normalized = Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized <= 0) {
+    const error = new Error(`Validated tenant ${label} is required for realtime`);
+    error.code = 'TENANT_REALTIME_CONTEXT_REQUIRED';
+    throw error;
+  }
+  return normalized;
+}
+
+function getTenantBaseRoom(scope, tenant) {
+  if (scope === 'organization') {
+    return `${TENANT_ROOM_PREFIXES.organization}:${positiveTenantId(tenant?.organizationId, 'organizationId')}`;
+  }
+  if (scope === 'club') {
+    positiveTenantId(tenant?.organizationId, 'organizationId');
+    return `${TENANT_ROOM_PREFIXES.club}:${positiveTenantId(tenant?.clubId, 'clubId')}`;
+  }
+  if (scope === 'membership') {
+    positiveTenantId(tenant?.organizationId, 'organizationId');
+    return `${TENANT_ROOM_PREFIXES.membership}:${positiveTenantId(tenant?.membershipId, 'membershipId')}`;
+  }
+
+  const error = new Error(`Unsupported tenant realtime scope: ${scope}`);
+  error.code = 'TENANT_REALTIME_SCOPE_INVALID';
+  throw error;
+}
+
+function getTenantDomainRoom(scope, tenant, domain) {
+  const normalizedDomain = String(domain || '').trim();
+  if (!normalizedDomain) {
+    const error = new Error('Realtime domain is required');
+    error.code = 'TENANT_REALTIME_DOMAIN_REQUIRED';
+    throw error;
+  }
+  if (scope === 'membership') return getTenantBaseRoom(scope, tenant);
+  return `${getTenantBaseRoom(scope, tenant)}:domain:${normalizedDomain}`;
+}
+
+function getTenantRoomsForContext(tenant) {
+  const organizationRoom = getTenantBaseRoom('organization', tenant);
+  const clubRoom = getTenantBaseRoom('club', tenant);
+  const membershipRoom = getTenantBaseRoom('membership', tenant);
+  const organizationDomains = getRealtimeRoomsForRole(tenant?.membershipRole)
+    .map((room) => room.slice(REALTIME_DOMAIN_ROOM_PREFIX.length))
+    .map((domain) => getTenantDomainRoom('organization', tenant, domain));
+  const clubDomains = getRealtimeRoomsForRole(tenant?.effectiveRole)
+    .map((room) => room.slice(REALTIME_DOMAIN_ROOM_PREFIX.length))
+    .map((domain) => getTenantDomainRoom('club', tenant, domain));
+
+  return uniq([
+    organizationRoom,
+    clubRoom,
+    membershipRoom,
+    ...organizationDomains,
+    ...clubDomains,
+  ]);
+}
+
 module.exports = {
   DOMAIN_ACCESS_KEYS,
   REALTIME_DOMAIN_ROOM_PREFIX,
+  TENANT_ROOM_PREFIXES,
   canReceiveDomain,
   getRealtimeDomainRoom,
   getRealtimeRoomsForRole,
   getRolesForDomain,
+  getTenantBaseRoom,
+  getTenantDomainRoom,
+  getTenantRoomsForContext,
 };

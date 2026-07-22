@@ -3,8 +3,6 @@ module.exports = (sequelize, DataTypes) => {
     shiftId: { allowNull: false, type: DataTypes.INTEGER },
     cashSessionId: { allowNull: false, type: DataTypes.INTEGER },
     amount: { allowNull: false, type: DataTypes.DECIMAL(12, 2) },
-    categoryId: { allowNull: true, type: DataTypes.INTEGER },
-    categoryName: { allowNull: false, type: DataTypes.STRING },
     description: { allowNull: false, type: DataTypes.TEXT },
     spentAt: { allowNull: false, type: DataTypes.DATE },
     createdByAccountId: { allowNull: true, type: DataTypes.INTEGER },
@@ -17,6 +15,7 @@ module.exports = (sequelize, DataTypes) => {
     isTraining: { allowNull: false, defaultValue: false, type: DataTypes.BOOLEAN },
     trainingRole: { allowNull: true, type: DataTypes.STRING },
     trainingAccountId: { allowNull: true, type: DataTypes.INTEGER },
+    trainingSessionId: { allowNull: true, type: DataTypes.UUID },
   });
 
   ShiftCashExpense.associate = (models) => {
@@ -24,10 +23,6 @@ module.exports = (sequelize, DataTypes) => {
     ShiftCashExpense.belongsTo(models.ShiftCashSession, {
       as: 'cashSession',
       foreignKey: 'cashSessionId',
-    });
-    ShiftCashExpense.belongsTo(models.Category, {
-      as: 'category',
-      foreignKey: 'categoryId',
     });
     ShiftCashExpense.belongsTo(models.Finance, {
       as: 'finance',

@@ -1,14 +1,15 @@
 import { lazy, Suspense } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/toast';
 import { PrepaymentsPageShell } from '@/components/prepayments-page-shell';
 import { AuthGate } from './components/AuthGate';
 import { Layout } from './components/Layout';
+import { LegacyShiftRedirect } from './components/legacy-shift-redirect';
+import { OnboardingQuestRouteObserver } from './components/onboarding-quest-route-observer';
 import { OnboardingRouteEvents } from './components/onboarding-route-events';
 import { HomeRedirect, RequireRoles } from './components/RequireRoles';
-import { ROUTE_ACCESS } from './lib/permissions';
 import { AuthProvider } from './lib/auth';
 import { queryClient } from './lib/query-client';
 import { RealtimeProvider } from './lib/realtime-provider';
@@ -29,6 +30,11 @@ const UtilizationPage = lazy(() => import('./pages/UtilizationPage'));
 const CatalogPage = lazy(() => import('./pages/CatalogPage'));
 const AdminMotivationPage = lazy(() => import('./pages/AdminMotivationPage'));
 const ShiftReportsPage = lazy(() => import('./pages/ShiftReportsPage'));
+const ShiftCashPage = lazy(() => import('./pages/ShiftCashPage'));
+const ShiftSettingsPage = lazy(() => import('./pages/ShiftSettingsPage'));
+const ShiftWorkspaceLayout = lazy(
+  () => import('./components/shift-workspace-layout'),
+);
 const SystemUsersPage = lazy(() => import('./pages/SystemUsersPage'));
 const ClientBasesPage = lazy(() => import('./pages/ClientBasesPage'));
 const CallTasksPage = lazy(() => import('./pages/CallTasksPage'));
@@ -41,6 +47,10 @@ const AuditLogPage = lazy(() => import('./pages/AuditLogPage'));
 const TrainerPage = lazy(() => import('./pages/TrainerPage'));
 const MethodologyPage = lazy(() => import('./pages/MethodologyPage'));
 const MethodologyAnalyticsPage = lazy(() => import('./pages/MethodologyAnalyticsPage'));
+const InstallationProvisioningPage = lazy(
+  () => import('./pages/InstallationProvisioningPage'),
+);
+const OwnerActivationPage = lazy(() => import('./pages/OwnerActivationPage'));
 
 function PageLoader() {
   return (
@@ -50,16 +60,35 @@ function PageLoader() {
   );
 }
 
-function App() {
+function ApplicationContent() {
+  const location = useLocation();
+
+  if (
+    location.pathname === '/installation' ||
+    location.pathname === '/installation/provisioning' ||
+    location.pathname.startsWith('/installation/organizations/')
+  ) {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <InstallationProvisioningPage />
+      </Suspense>
+    );
+  }
+
+  if (location.pathname === '/activate-owner') {
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <OwnerActivationPage />
+      </Suspense>
+    );
+  }
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider>
-        <BrowserRouter>
-          <AuthProvider>
-            <TooltipProvider delayDuration={0}>
-              <AuthGate>
+    <AuthProvider>
+      <AuthGate>
                 <RealtimeProvider>
                 <TrainingModeProvider>
+                <OnboardingQuestRouteObserver />
                 <OnboardingRouteEvents />
                 <Suspense fallback={<PageLoader />}>
                   <Routes>
@@ -68,7 +97,7 @@ function App() {
                     <Route
                       path="/admin"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin']}>
+                        <RequireRoles path="/admin">
                           <AdminPage />
                         </RequireRoles>
                       }
@@ -76,7 +105,7 @@ function App() {
                     <Route
                       path="/admin/manager-control"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/manager-control']}>
+                        <RequireRoles path="/admin/manager-control">
                           <ManagerControlDashboardPage />
                         </RequireRoles>
                       }
@@ -84,7 +113,7 @@ function App() {
                     <Route
                       path="/admin/clients"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/clients']}>
+                        <RequireRoles path="/admin/clients">
                           <ClientsPage />
                         </RequireRoles>
                       }
@@ -92,7 +121,7 @@ function App() {
                     <Route
                       path="/admin/onboarding"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/onboarding']}>
+                        <RequireRoles path="/admin/onboarding">
                           <OnboardingPage />
                         </RequireRoles>
                       }
@@ -100,7 +129,7 @@ function App() {
                     <Route
                       path="/admin/onboarding/:taskKey"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/onboarding']}>
+                        <RequireRoles path="/admin/onboarding">
                           <OnboardingPage />
                         </RequireRoles>
                       }
@@ -108,7 +137,7 @@ function App() {
                     <Route
                       path="/admin/bookings"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/bookings']}>
+                        <RequireRoles path="/admin/bookings">
                           <BookingsPage />
                         </RequireRoles>
                       }
@@ -116,7 +145,7 @@ function App() {
                     <Route
                       path="/admin/trainer"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/trainer']}>
+                        <RequireRoles path="/admin/trainer">
                           <TrainerPage />
                         </RequireRoles>
                       }
@@ -124,7 +153,7 @@ function App() {
                     <Route
                       path="/admin/methodology"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/methodology']}>
+                        <RequireRoles path="/admin/methodology">
                           <MethodologyPage />
                         </RequireRoles>
                       }
@@ -132,9 +161,7 @@ function App() {
                     <Route
                       path="/admin/methodology-analytics"
                       element={
-                        <RequireRoles
-                          roles={ROUTE_ACCESS['/admin/methodology-analytics']}
-                        >
+                        <RequireRoles path="/admin/methodology-analytics">
                           <MethodologyAnalyticsPage />
                         </RequireRoles>
                       }
@@ -142,7 +169,7 @@ function App() {
                     <Route
                       path="/admin/client-bases"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/client-bases']}>
+                        <RequireRoles path="/admin/client-bases">
                           <ClientBasesPage />
                         </RequireRoles>
                       }
@@ -150,7 +177,7 @@ function App() {
                     <Route
                       path="/admin/call-tasks"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/call-tasks']}>
+                        <RequireRoles path="/admin/call-tasks">
                           <CallTasksPage />
                         </RequireRoles>
                       }
@@ -158,7 +185,7 @@ function App() {
                     <Route
                       path="/admin/prepayments"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/prepayments']}>
+                        <RequireRoles path="/admin/prepayments">
                           <Suspense fallback={<PrepaymentsPageShell />}>
                             <PrepaymentsPage />
                           </Suspense>
@@ -168,7 +195,7 @@ function App() {
                     <Route
                       path="/admin/certificates"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/certificates']}>
+                        <RequireRoles path="/admin/certificates">
                           <CertificatesPage />
                         </RequireRoles>
                       }
@@ -176,9 +203,7 @@ function App() {
                     <Route
                       path="/admin/corporate-clients"
                       element={
-                        <RequireRoles
-                          roles={ROUTE_ACCESS['/admin/corporate-clients']}
-                        >
+                        <RequireRoles path="/admin/corporate-clients">
                           <CorporateClientsPage />
                         </RequireRoles>
                       }
@@ -186,7 +211,7 @@ function App() {
                     <Route
                       path="/admin/telephony"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/telephony']}>
+                        <RequireRoles path="/admin/telephony">
                           <TelephonyPage />
                         </RequireRoles>
                       }
@@ -194,7 +219,7 @@ function App() {
                     <Route
                       path="/admin/staff"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/staff']}>
+                        <RequireRoles path="/admin/staff">
                           <StaffPage />
                         </RequireRoles>
                       }
@@ -202,7 +227,7 @@ function App() {
                     <Route
                       path="/admin/finances"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/finances']}>
+                        <RequireRoles path="/admin/finances">
                           <FinancePage />
                         </RequireRoles>
                       }
@@ -210,7 +235,7 @@ function App() {
                     <Route
                       path="/admin/users"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/users']}>
+                        <RequireRoles path="/admin/users">
                           <SystemUsersPage />
                         </RequireRoles>
                       }
@@ -218,7 +243,7 @@ function App() {
                     <Route
                       path="/admin/audit"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/audit']}>
+                        <RequireRoles path="/admin/audit">
                           <AuditLogPage />
                         </RequireRoles>
                       }
@@ -226,9 +251,7 @@ function App() {
                     <Route
                       path="/admin/visits-analytics"
                       element={
-                        <RequireRoles
-                          roles={ROUTE_ACCESS['/admin/visits-analytics']}
-                        >
+                        <RequireRoles path="/admin/visits-analytics">
                           <VisitsAnalyticsPage />
                         </RequireRoles>
                       }
@@ -236,7 +259,7 @@ function App() {
                     <Route
                       path="/admin/utilization"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/utilization']}>
+                        <RequireRoles path="/admin/utilization">
                           <UtilizationPage />
                         </RequireRoles>
                       }
@@ -244,7 +267,7 @@ function App() {
                     <Route
                       path="/admin/catalog"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/catalog']}>
+                        <RequireRoles path="/admin/catalog">
                           <CatalogPage />
                         </RequireRoles>
                       }
@@ -252,24 +275,77 @@ function App() {
                     <Route
                       path="/admin/references"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/references']}>
+                        <RequireRoles path="/admin/references">
                           <ReferencesPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift"
+                      element={
+                        <RequireRoles path="/admin/shift">
+                          <ShiftWorkspaceLayout />
+                        </RequireRoles>
+                      }
+                    >
+                      <Route
+                        index
+                        element={<Navigate to="/admin/shift/motivation" replace />}
+                      />
+                      <Route
+                        path="/admin/shift/motivation"
+                        element={
+                          <RequireRoles path="/admin/shift/motivation">
+                            <AdminMotivationPage />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/shift/reports"
+                        element={
+                          <RequireRoles path="/admin/shift/reports">
+                            <ShiftReportsPage />
+                          </RequireRoles>
+                        }
+                      />
+                      <Route
+                        path="/admin/shift/cash"
+                        element={
+                          <RequireRoles path="/admin/shift/cash">
+                            <ShiftCashPage />
+                          </RequireRoles>
+                        }
+                      />
+                    </Route>
+                    <Route
+                      path="/admin/shift-settings"
+                      element={
+                        <RequireRoles path="/admin/shift-settings">
+                          <ShiftSettingsPage />
                         </RequireRoles>
                       }
                     />
                     <Route
                       path="/admin/motivation"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/motivation']}>
-                          <AdminMotivationPage />
+                        <RequireRoles path="/admin/motivation">
+                          <LegacyShiftRedirect to="/admin/shift/motivation" />
                         </RequireRoles>
                       }
                     />
                     <Route
                       path="/admin/shift-reports"
                       element={
-                        <RequireRoles roles={ROUTE_ACCESS['/admin/shift-reports']}>
-                          <ShiftReportsPage />
+                        <RequireRoles path="/admin/shift-reports">
+                          <LegacyShiftRedirect to="/admin/shift/reports" />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/shift-cash"
+                      element={
+                        <RequireRoles path="/admin/shift-cash">
+                          <LegacyShiftRedirect to="/admin/shift/cash" />
                         </RequireRoles>
                       }
                     />
@@ -279,10 +355,20 @@ function App() {
                 </Suspense>
                 </TrainingModeProvider>
                 </RealtimeProvider>
-              </AuthGate>
-              <Toaster />
-            </TooltipProvider>
-          </AuthProvider>
+      </AuthGate>
+    </AuthProvider>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ThemeProvider>
+        <BrowserRouter>
+          <TooltipProvider delayDuration={0}>
+            <ApplicationContent />
+            <Toaster />
+          </TooltipProvider>
         </BrowserRouter>
       </ThemeProvider>
     </QueryClientProvider>

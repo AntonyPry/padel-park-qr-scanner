@@ -58,7 +58,7 @@ import {
   canPayPayroll,
   canReviewPayroll,
 } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import {
   ConfirmActionDialog,
   type ConfirmAction,
@@ -228,12 +228,13 @@ function formatShiftTimeRange(shift: ShiftRecord) {
 }
 
 export default function StaffPage() {
-  const { account } = useAuth();
-  const canEditStaff = canManageStaff(account?.role);
-  const canEditShifts = canManageShifts(account?.role);
-  const canReview = canReviewPayroll(account?.role);
-  const canApprove = canApprovePayroll(account?.role);
-  const canPay = canPayPayroll(account?.role);
+  const organizationRole = useAuthorizationRole('organization');
+  const clubRole = useAuthorizationRole('club');
+  const canEditStaff = canManageStaff(organizationRole);
+  const canEditShifts = canManageShifts(clubRole);
+  const canReview = canReviewPayroll(organizationRole);
+  const canApprove = canApprovePayroll(organizationRole);
+  const canPay = canPayPayroll(organizationRole);
   const [admins, setAdmins] = useState<AdminStat[]>([]);
   const [shifts, setShifts] = useState<ShiftRecord[]>([]);
   const [staff, setStaff] = useState<StaffMember[]>([]);
@@ -333,6 +334,7 @@ export default function StaffPage() {
   }, [errorMessage]);
 
   const handleSaveShift = shiftForm.handleSubmit(async (values) => {
+    if (!canEditShifts) return;
     if (payrollLocked) {
       setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
       return;
@@ -382,6 +384,7 @@ export default function StaffPage() {
   });
 
   const handleDelete = async (id: number | string) => {
+    if (!canEditShifts) return;
     if (String(id).startsWith('draft-')) return;
     if (payrollLocked) {
       setErrorMessage('Payroll-период закрыт. Смены внутри него менять нельзя.');
@@ -1177,21 +1180,21 @@ export default function StaffPage() {
       </div>
 
       <div className="rounded-md border bg-card">
-        <div className="px-4 py-3 border-b flex items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col items-stretch gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <div className="font-semibold">Сотрудники</div>
             <div className="text-xs text-muted-foreground">
               Рабочие смены привязываются к этой базе.
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex w-full min-w-0 items-center gap-2 sm:w-auto">
             <Select
               value={staffStatus}
               onValueChange={(value) =>
                 setStaffStatus(value as 'active' | 'archived' | 'all')
               }
             >
-              <SelectTrigger className="w-[150px]">
+              <SelectTrigger className="min-w-0 flex-1 sm:w-[150px] sm:flex-none">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -1202,6 +1205,7 @@ export default function StaffPage() {
             </Select>
             {canEditStaff && (
               <Button
+                className="shrink-0"
                 variant="outline"
                 size="sm"
                 onClick={() => openStaffForm()}

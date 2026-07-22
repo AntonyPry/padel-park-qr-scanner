@@ -1,5 +1,8 @@
 const { z } = require('zod');
 const { apiSchemas } = require('./api-schemas');
+const {
+  getEndpointTenantScope,
+} = require('../tenant-context/route-scope-declarations');
 
 type HttpMethod = 'delete' | 'get' | 'patch' | 'post' | 'put';
 
@@ -12,10 +15,12 @@ interface EndpointContract {
   path: string;
   public?: boolean;
   query?: unknown;
+  response?: unknown;
   responseType?: 'binary' | 'json' | 'xlsx';
   successStatus?: number;
   summary: string;
   tags: string[];
+  tenantScope?: 'global' | 'installation' | 'membership' | 'organization' | 'club' | 'provider_ingress' | 'worker';
 }
 
 const responseOk = z.object({}).passthrough();
@@ -37,8 +42,14 @@ const apiError = z.object({
   error: z.string(),
   status: z.number(),
 });
+const integrationConnectionParams = z.object({
+  connectionPublicId: z.string().regex(/^ic_[a-f0-9]{32}$/u),
+});
+const beelineCapabilityParams = integrationConnectionParams.extend({
+  callbackToken: z.string().regex(/^[a-f0-9]{64}$/u),
+});
 
-const endpointContracts: EndpointContract[] = [
+const rawEndpointContracts: EndpointContract[] = [
   { id: 'system.health', method: 'get', path: '/health', public: true, summary: 'Service health check', tags: ['System'] },
   { id: 'system.openapi', method: 'get', path: '/openapi.json', public: true, summary: 'OpenAPI document', tags: ['System'] },
 
@@ -46,6 +57,37 @@ const endpointContracts: EndpointContract[] = [
   { ...apiSchemas.auth.bootstrap, id: 'auth.bootstrap', method: 'post', path: '/auth/bootstrap', public: true, summary: 'Bootstrap owner account', tags: ['Auth'] },
   { ...apiSchemas.auth.login, id: 'auth.login', method: 'post', path: '/auth/login', public: true, summary: 'Login', tags: ['Auth'] },
   { id: 'auth.me', method: 'get', path: '/auth/me', summary: 'Current account', tags: ['Auth'] },
+  { id: 'auth.memberships', method: 'get', path: '/auth/me/memberships', response: apiSchemas.auth.membershipsResponse, summary: 'Current account tenant memberships', tags: ['Auth'] },
+  { id: 'installationProvisioning.status', method: 'get', path: '/installation/provisioning/status', public: true, response: apiSchemas.installationProvisioning.statusResponse, summary: 'Installation provisioning status', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.session, id: 'installationProvisioning.session', method: 'post', path: '/installation/provisioning/session', public: true, summary: 'Create installation operator session', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.sessionRevoke, id: 'installationProvisioning.sessionRevoke', method: 'post', path: '/installation/provisioning/session/revoke', summary: 'Revoke current installation operator session', tags: ['Installation Provisioning'] },
+  { id: 'installationProvisioning.snapshot', method: 'get', path: '/installation/provisioning/snapshot', response: apiSchemas.installationProvisioning.snapshotResponse, summary: 'Read installation tenant graph', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.organization, id: 'installationProvisioning.organization', method: 'get', path: '/installation/provisioning/organizations/{organizationId}', summary: 'Read one installation Organization, its Clubs and redacted integration states', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.organizationUpdate, id: 'installationProvisioning.organizationUpdate', method: 'put', path: '/installation/provisioning/organizations/{organizationId}', summary: 'Update installation Organization settings', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.organizationLifecycle, id: 'installationProvisioning.organizationArchive', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/archive', summary: 'Archive an installation Organization', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.organizationLifecycle, id: 'installationProvisioning.organizationReactivate', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/reactivate', summary: 'Reactivate an installation Organization', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.clubUpdate, id: 'installationProvisioning.clubUpdate', method: 'put', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}', summary: 'Update exact Club settings', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.clubLifecycle, id: 'installationProvisioning.clubArchive', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/archive', summary: 'Archive an exact Club', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.clubLifecycle, id: 'installationProvisioning.clubReactivate', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/reactivate', summary: 'Reactivate an exact Club', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.integrationConfigureTelegram, id: 'installationProvisioning.telegramConfigure', method: 'put', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/telegram', summary: 'Configure exact Club Telegram integration', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.integrationConfigureVk, id: 'installationProvisioning.vkConfigure', method: 'put', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/vk', summary: 'Configure exact Club VK integration', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.integrationConfigureEvotor, id: 'installationProvisioning.evotorConfigure', method: 'put', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/evotor', summary: 'Configure exact Club Evotor integration', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.integrationConfigureBeeline, id: 'installationProvisioning.beelineConfigure', method: 'put', path: '/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline', summary: 'Configure exact Club Beeline integration', tags: ['Installation Provisioning'] },
+  ...(['telegram', 'vk', 'evotor', 'beeline'] as const).flatMap((provider) => [
+    { ...(provider === 'telegram' ? apiSchemas.installationProvisioning.integrationRotateTelegram : apiSchemas.installationProvisioning.integrationRotate), id: `installationProvisioning.${provider}Rotate`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/${provider}/credentials`, summary: `Rotate exact Club ${provider} credentials`, tags: ['Installation Provisioning'] },
+    { ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.${provider}Validate`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/${provider}/validate`, summary: `Validate exact Club ${provider} integration`, tags: ['Installation Provisioning'] },
+    { ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.${provider}Activate`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/${provider}/activate`, summary: `Activate exact Club ${provider} integration`, tags: ['Installation Provisioning'] },
+    { ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.${provider}Disable`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/${provider}/disable`, summary: `Disable exact Club ${provider} integration`, tags: ['Installation Provisioning'] },
+    { ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.${provider}Revoke`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/${provider}/revoke`, summary: `Revoke exact Club ${provider} integration`, tags: ['Installation Provisioning'] },
+  ]),
+  ...(['telegram', 'vk'] as const).map((provider) => ({ ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.${provider}Restart`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/${provider}/restart`, summary: `Restart exact Club ${provider} runner`, tags: ['Installation Provisioning'] })),
+  ...(['check', 'renew', 'cutover'] as const).map((action) => ({ ...apiSchemas.installationProvisioning.integrationAction, id: `installationProvisioning.beeline${action[0].toUpperCase()}${action.slice(1)}`, method: 'post' as const, path: `/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/integrations/beeline/${action}`, summary: `${action} exact Club Beeline subscription`, tags: ['Installation Provisioning'] })),
+  { ...apiSchemas.installationProvisioning.create, id: 'installationProvisioning.create', method: 'post', path: '/installation/provisioning/organizations', successStatus: 201, summary: 'Atomically provision an Organization and first owner activation', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.reissue, id: 'installationProvisioning.reissue', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/activation/reissue', summary: 'Reissue first owner activation link', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.activationStatus, id: 'installationProvisioning.activationStatus', method: 'post', path: '/installation/provisioning/activation/status', public: true, summary: 'Inspect first owner activation link', tags: ['Installation Provisioning'] },
+  { ...apiSchemas.installationProvisioning.activate, id: 'installationProvisioning.activate', method: 'post', path: '/installation/provisioning/activation/consume', public: true, summary: 'Activate first owner account', tags: ['Installation Provisioning'] },
+  { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
+  { id: 'webhooks.evotorConnection', method: 'post', params: integrationConnectionParams, path: '/webhooks/evotor/{connectionPublicId}', public: true, summary: 'Receive Evotor webhook through an integration connection', tags: ['Integrations'] },
 
   { id: 'access.search', method: 'get', path: '/search', query: apiSchemas.access.searchQuery, summary: 'Search clients for access monitor', tags: ['Access'] },
   { ...apiSchemas.access.manualVisit, id: 'access.manualVisit', method: 'post', path: '/manual-visit', summary: 'Create manual visit', tags: ['Access'] },
@@ -142,6 +184,7 @@ const endpointContracts: EndpointContract[] = [
   { id: 'subscriptions.types.restore', method: 'post', path: '/subscriptions/types/{id}/restore', params: apiSchemas.subscriptions.withId.params, summary: 'Restore subscription type', tags: ['Subscriptions'] },
   { id: 'subscriptions.types.deletePermanent', method: 'delete', path: '/subscriptions/types/{id}/permanent', params: apiSchemas.subscriptions.withId.params, summary: 'Delete archived subscription type permanently', tags: ['Subscriptions'] },
   { id: 'subscriptions.client.list', method: 'get', path: '/clients/{clientId}/subscriptions', params: apiSchemas.subscriptions.clientParams, query: apiSchemas.subscriptions.clientListQuery, summary: 'List client subscriptions', tags: ['Subscriptions'] },
+  { id: 'subscriptions.client.issue', method: 'post', path: '/clients/{clientId}/subscriptions', body: apiSchemas.subscriptions.manualIssueBody, params: apiSchemas.subscriptions.clientParams, successStatus: 201, summary: 'Manually issue an existing subscription type to a client', tags: ['Subscriptions'] },
   { id: 'subscriptions.client.get', method: 'get', path: '/client-subscriptions/{id}', params: apiSchemas.subscriptions.withId.params, summary: 'Get client subscription', tags: ['Subscriptions'] },
   { id: 'subscriptions.client.redemptions', method: 'get', path: '/client-subscriptions/{id}/redemptions', params: apiSchemas.subscriptions.withId.params, summary: 'List client subscription redemption history', tags: ['Subscriptions'] },
   { id: 'subscriptions.client.redeem', method: 'post', path: '/client-subscriptions/{id}/redemptions', body: apiSchemas.subscriptions.redemptionBody, params: apiSchemas.subscriptions.withId.params, successStatus: 201, summary: 'Redeem one or more training sessions from client subscription', tags: ['Subscriptions'] },
@@ -149,6 +192,7 @@ const endpointContracts: EndpointContract[] = [
 
   { id: 'certificates.list', method: 'get', path: '/certificates', query: apiSchemas.certificates.listQuery, summary: 'Search certificates by code, client and status', tags: ['Certificates'] },
   { id: 'certificates.client.list', method: 'get', path: '/clients/{clientId}/certificates', params: apiSchemas.certificates.clientParams, query: apiSchemas.certificates.clientListQuery, summary: 'List client certificates', tags: ['Certificates'] },
+  { id: 'certificates.client.issue', method: 'post', path: '/clients/{clientId}/certificates', body: apiSchemas.certificates.manualIssueBody, params: apiSchemas.certificates.clientParams, successStatus: 201, summary: 'Manually issue a certificate to a client', tags: ['Certificates'] },
   { id: 'certificates.get', method: 'get', path: '/certificates/{id}', params: apiSchemas.certificates.withId.params, summary: 'Get certificate details', tags: ['Certificates'] },
   { id: 'certificates.redemptions', method: 'get', path: '/certificates/{id}/redemptions', params: apiSchemas.certificates.withId.params, summary: 'List certificate redemption history', tags: ['Certificates'] },
   { id: 'certificates.redeem', method: 'post', path: '/certificates/{id}/redemptions', body: apiSchemas.certificates.redemptionBody, params: apiSchemas.certificates.withId.params, successStatus: 201, summary: 'Redeem certificate balance or package unit', tags: ['Certificates'] },
@@ -210,7 +254,7 @@ const endpointContracts: EndpointContract[] = [
   { id: 'telephony.getTranscriptionJob', method: 'get', path: '/telephony/transcription-jobs/{id}', params: apiSchemas.telephony.withId.params, summary: 'Get transcription job', tags: ['Telephony'] },
   { id: 'telephony.workerTranscriptionQueue', method: 'get', path: '/telephony/transcription-jobs/worker-queue', query: apiSchemas.telephony.transcriptionJobsQuery, public: true, summary: 'Get worker transcription queue snapshot', tags: ['Telephony'] },
   { id: 'telephony.claimTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/claim', body: apiSchemas.telephony.transcriptionClaimBody, public: true, summary: 'Claim queued transcription job', tags: ['Telephony'] },
-  { id: 'telephony.transcriptionAudioReference', method: 'post', path: '/telephony/transcription-jobs/{id}/audio-reference', params: apiSchemas.telephony.withId.params, public: true, summary: 'Get transcription audio reference', tags: ['Telephony'] },
+  { id: 'telephony.transcriptionAudioReference', method: 'post', path: '/telephony/transcription-jobs/{id}/audio-reference', body: apiSchemas.telephony.transcriptionAudioReference.body, params: apiSchemas.telephony.transcriptionAudioReference.params, public: true, summary: 'Get transcription audio reference', tags: ['Telephony'] },
   { id: 'telephony.updateTranscriptionProgress', method: 'post', path: '/telephony/transcription-jobs/{id}/progress', body: apiSchemas.telephony.transcriptionProgress.body, params: apiSchemas.telephony.transcriptionProgress.params, public: true, summary: 'Update transcription progress heartbeat', tags: ['Telephony'] },
   { id: 'telephony.completeTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/result', body: apiSchemas.telephony.transcriptionResult.body, params: apiSchemas.telephony.transcriptionResult.params, public: true, summary: 'Submit transcription result', tags: ['Telephony'] },
   { id: 'telephony.failTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/fail', body: apiSchemas.telephony.transcriptionFail.body, params: apiSchemas.telephony.transcriptionFail.params, public: true, summary: 'Fail transcription job', tags: ['Telephony'] },
@@ -222,9 +266,12 @@ const endpointContracts: EndpointContract[] = [
   { id: 'telephony.checkSubscription', method: 'post', path: '/telephony/beeline/subscription/check', summary: 'Check Beeline XSI subscription', tags: ['Telephony'] },
   { id: 'telephony.rawEvents', method: 'get', path: '/telephony/raw-events', query: apiSchemas.telephony.rawEventsQuery, summary: 'List raw Beeline events', tags: ['Telephony'] },
   { id: 'telephony.reprocessRawEvent', method: 'post', path: '/telephony/raw-events/{id}/reprocess', params: apiSchemas.telephony.withId.params, summary: 'Reprocess raw Beeline event', tags: ['Telephony'] },
-  { id: 'telephony.beelineWebhook', method: 'post', path: '/integrations/beeline/events', public: true, summary: 'Receive Beeline webhook event', tags: ['Telephony'] },
+  { id: 'telephony.beelineWebhook', method: 'post', path: '/integrations/beeline/events', public: true, summary: 'Reject legacy Beeline webhook route', tags: ['Telephony'] },
+  { id: 'telephony.beelineConnectionWebhook', method: 'post', params: integrationConnectionParams, path: '/integrations/beeline/events/{connectionPublicId}', public: true, summary: 'Receive Beeline webhook through an integration connection', tags: ['Telephony'] },
+  { id: 'telephony.beelineCapabilityWebhook', method: 'post', params: beelineCapabilityParams, path: '/integrations/beeline/events/{connectionPublicId}/{callbackToken}', public: true, summary: 'Receive Beeline webhook through an encrypted callback capability', tags: ['Telephony'] },
 
   { id: 'clients.list', method: 'get', path: '/clients', query: apiSchemas.clients.listQuery, summary: 'List clients', tags: ['Clients'] },
+  { id: 'clients.search', method: 'get', path: '/clients/search', query: apiSchemas.clients.listQuery, summary: 'Search clients for operational workflows', tags: ['Clients'] },
   { id: 'clients.lookup', method: 'get', path: '/clients/lookup', query: apiSchemas.clients.lookupQuery, summary: 'Lookup client by phone', tags: ['Clients'] },
   { id: 'clients.duplicates', method: 'get', path: '/clients/duplicates', summary: 'Find duplicate client groups', tags: ['Clients'] },
   { id: 'clients.views.list', method: 'get', path: '/clients/views', summary: 'List saved client views', tags: ['Clients'] },
@@ -271,6 +318,7 @@ const endpointContracts: EndpointContract[] = [
 
   { id: 'staff.list', method: 'get', path: '/staff', query: apiSchemas.staff.listQuery, summary: 'List staff', tags: ['Staff'] },
   { id: 'staff.create', method: 'post', path: '/staff', body: apiSchemas.staff.body, summary: 'Create staff member', tags: ['Staff'] },
+  { id: 'staff.get', method: 'get', path: '/staff/{id}', params: apiSchemas.staff.params, summary: 'Get staff member', tags: ['Staff'] },
   { id: 'staff.update', method: 'put', path: '/staff/{id}', body: apiSchemas.staff.body, params: apiSchemas.staff.params, summary: 'Update staff member', tags: ['Staff'] },
   { id: 'staff.restore', method: 'post', path: '/staff/{id}/restore', params: apiSchemas.staff.params, summary: 'Restore staff member', tags: ['Staff'] },
   { id: 'staff.deletePermanent', method: 'delete', path: '/staff/{id}/permanent', params: apiSchemas.staff.params, summary: 'Delete archived staff member permanently', tags: ['Staff'] },
@@ -346,6 +394,14 @@ const endpointContracts: EndpointContract[] = [
   { id: 'visitsAnalytics.sourceQualityExport', method: 'get', path: '/export/visits/source-quality', query: apiSchemas.visitsAnalytics.sourceQualityQuery, responseType: 'xlsx', summary: 'Export visits source quality', tags: ['Reports'] },
 ];
 
+const endpointContracts: EndpointContract[] = rawEndpointContracts.map((endpoint) => {
+  const tenantScope = getEndpointTenantScope(endpoint.id);
+  if (!tenantScope) {
+    throw new Error(`Tenant scope is not declared for endpoint ${endpoint.id}`);
+  }
+  return Object.freeze({ ...endpoint, tenantScope });
+});
+
 function schemaToJsonSchema(schema: unknown) {
   if (!schema) return undefined;
   try {
@@ -368,6 +424,28 @@ function getPathParamNames(path: string) {
 
 function buildParameters(endpoint: EndpointContract) {
   const parameters = [];
+  if (
+    endpoint.tenantScope === 'membership' ||
+    endpoint.tenantScope === 'organization' ||
+    endpoint.tenantScope === 'club'
+  ) {
+    parameters.push({
+      description: 'Verified organization context. Body, query and JWT tenant IDs are not authoritative.',
+      in: 'header',
+      name: 'X-Organization-Id',
+      required: true,
+      schema: { minimum: 1, type: 'integer' },
+    });
+  }
+  if (endpoint.tenantScope === 'club') {
+    parameters.push({
+      description: 'Verified club context within X-Organization-Id.',
+      in: 'header',
+      name: 'X-Club-Id',
+      required: true,
+      schema: { minimum: 1, type: 'integer' },
+    });
+  }
   for (const name of getPathParamNames(endpoint.path)) {
     parameters.push({
       in: 'path',
@@ -394,9 +472,13 @@ function buildParameters(endpoint: EndpointContract) {
 
 function buildOperation(endpoint: EndpointContract) {
   const successStatus = endpoint.successStatus || 200;
+  const tenantScoped =
+    endpoint.tenantScope === 'membership' ||
+    endpoint.tenantScope === 'organization' ||
+    endpoint.tenantScope === 'club';
   let successContent: Record<string, unknown> = {
     'application/json': {
-      schema: schemaToJsonSchema(responseOk),
+      schema: schemaToJsonSchema(endpoint.response || responseOk),
     },
   };
   if (endpoint.responseType === 'xlsx') {
@@ -413,41 +495,70 @@ function buildOperation(endpoint: EndpointContract) {
       },
     };
   }
+  const responses: Record<number, unknown> = {
+    [successStatus]: {
+      content: successContent,
+      description: 'Success',
+    },
+    400: {
+      content: {
+        'application/json': {
+          schema: tenantScoped
+            ? {
+                oneOf: [
+                  schemaToJsonSchema(validationError),
+                  { $ref: '#/components/schemas/ApiError' },
+                ],
+              }
+            : schemaToJsonSchema(validationError),
+        },
+      },
+      description: tenantScoped
+        ? 'Validation or tenant context error'
+        : 'Validation error',
+    },
+    401: {
+      content: {
+        'application/json': {
+          schema: schemaToJsonSchema(apiError),
+        },
+      },
+      description: 'Unauthorized',
+    },
+    500: {
+      content: {
+        'application/json': {
+          schema: schemaToJsonSchema(apiError),
+        },
+      },
+      description: 'Server error',
+    },
+  };
+  if (tenantScoped) {
+    responses[403] = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiError' },
+        },
+      },
+      description: 'Forbidden tenant context',
+    };
+    responses[404] = {
+      content: {
+        'application/json': {
+          schema: { $ref: '#/components/schemas/ApiError' },
+        },
+      },
+      description: 'Tenant or resource not found',
+    };
+  }
   const operation: Record<string, unknown> = {
     operationId: endpoint.id,
-    responses: {
-      [successStatus]: {
-        content: successContent,
-        description: 'Success',
-      },
-      400: {
-        content: {
-          'application/json': {
-            schema: schemaToJsonSchema(validationError),
-          },
-        },
-        description: 'Validation error',
-      },
-      401: {
-        content: {
-          'application/json': {
-            schema: schemaToJsonSchema(apiError),
-          },
-        },
-        description: 'Unauthorized',
-      },
-      500: {
-        content: {
-          'application/json': {
-            schema: schemaToJsonSchema(apiError),
-          },
-        },
-        description: 'Server error',
-      },
-    },
+    responses,
     security: endpoint.public ? [] : [{ bearerAuth: [] }],
     summary: endpoint.summary,
     tags: endpoint.tags,
+    'x-tenant-scope': endpoint.tenantScope,
   };
 
   if (endpoint.description) operation.description = endpoint.description;
@@ -492,6 +603,9 @@ function getOpenApiDocument() {
     servers: [{ url: '/api' }],
     tags,
     components: {
+      schemas: {
+        ApiError: schemaToJsonSchema(apiError),
+      },
       securitySchemes: {
         bearerAuth: {
           bearerFormat: 'JWT',

@@ -1,5 +1,8 @@
 const { matchRealtimeChange } = require('./route-map');
 const { publishRealtimeChange } = require('./publisher');
+const {
+  isTenantCacheRealtimeEnabled,
+} = require('../tenant-context/capabilities');
 
 const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
@@ -79,9 +82,12 @@ function realtimeMutations() {
 
       const change = matchRealtimeChange(req, responseBody);
       if (!change) return;
+      // Provider/worker tenant routing belongs to Features 4.2/4.3. Until those
+      // surfaces own a validated context, isolation mode must not fan them out.
+      if (isTenantCacheRealtimeEnabled() && !req.tenant) return;
 
       const io = req.app.get('io');
-      publishRealtimeChange(
+      void publishRealtimeChange(
         io,
         {
           ...change,
@@ -90,9 +96,14 @@ function realtimeMutations() {
           trainingRole: req.trainingMode?.role || null,
         },
         req.account,
-      );
+        req.tenant,
+      ).catch((error) => {
+        console.error('[realtime] scoped publish failed', error.code || error.message);
+      });
       buildRealtimeFanoutChanges(change).forEach((fanout) => {
-        publishRealtimeChange(io, fanout, null);
+        void publishRealtimeChange(io, fanout, null, req.tenant).catch((error) => {
+          console.error('[realtime] scoped fanout failed', error.code || error.message);
+        });
       });
     });
 

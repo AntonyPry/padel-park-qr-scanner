@@ -105,11 +105,13 @@ import { queryKeys } from '@/api/query-keys';
 import { fetchReferences } from '@/lib/references';
 import {
   canManageTelephony,
+  canViewClients,
+  canViewReferences,
   canWorkTelephony,
 } from '@/lib/permissions';
 import { getApiErrorMessage } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 const PAGE_SIZE = 20;
 const RECORDING_LINK_REFRESH_MS = 2 * 60 * 1000;
@@ -449,7 +451,8 @@ function getClientVisitSummary(client: ClientListItem) {
 }
 
 export default function TelephonyPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
+  const organizationRole = useAuthorizationRole('organization');
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const initialQuery = searchParams.get('q') || '';
@@ -477,8 +480,10 @@ export default function TelephonyPage() {
   const [clientForm, setClientForm] = useState<ClientCallForm>(EMPTY_CLIENT_FORM);
   const [integrationDialogOpen, setIntegrationDialogOpen] = useState(false);
 
-  const canManage = canManageTelephony(account?.role);
-  const canWork = canWorkTelephony(account?.role);
+  const canManage = canManageTelephony(clubRole);
+  const canWork = canWorkTelephony(clubRole);
+  const canSearchOrganizationClients = canViewClients(organizationRole);
+  const canLoadOrganizationReferences = canViewReferences(organizationRole);
   const canAccessCallRecordings = canWork;
   const callsTableColumnCount = canWork ? 7 : 5;
 
@@ -532,7 +537,10 @@ export default function TelephonyPage() {
     queryFn: () => getTelephonyRawEvents({ page: 1, pageSize: 5, status: 'all' }),
   });
   const clientSourcesQuery = useQuery({
-    enabled: canWork && Boolean(clientDialogCall),
+    enabled:
+      canWork &&
+      canLoadOrganizationReferences &&
+      Boolean(clientDialogCall),
     queryKey: queryKeys.references.list('client-sources', 'active'),
     queryFn: () => fetchReferences('client-sources', 'active'),
   });
@@ -546,7 +554,11 @@ export default function TelephonyPage() {
     [clientSearch],
   );
   const clientSearchQuery = useQuery({
-    enabled: canWork && Boolean(clientDialogCall) && clientSearch.trim().length > 0,
+    enabled:
+      canWork &&
+      canSearchOrganizationClients &&
+      Boolean(clientDialogCall) &&
+      clientSearch.trim().length > 0,
     queryKey: queryKeys.clients.list(clientSearchParams),
     queryFn: () => listClients(clientSearchParams),
   });
@@ -645,7 +657,7 @@ export default function TelephonyPage() {
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.telephony.all });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clients.all });
-    void queryClient.invalidateQueries({ queryKey: ['callTasks'] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.callTasks.all });
   };
 
   const completeMutation = useMutation({
@@ -732,7 +744,7 @@ export default function TelephonyPage() {
   const queueMissingTranscriptionsMutation = useMutation({
     mutationFn: () => queueMissingTelephonyTranscriptionJobs(50),
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ['telephony'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.telephony.all });
       toast.success(`Поставлено в очередь: ${result.queued}${result.hasMore ? '. Есть еще звонки — повторите батч.' : ''}`);
     },
     onError: (error: Error) => toast.error(error.message),

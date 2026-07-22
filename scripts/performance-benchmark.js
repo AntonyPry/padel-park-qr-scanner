@@ -171,10 +171,18 @@ async function login(options) {
     );
   }
 
-  return response.data.token;
+  const token = response.data.token;
+  const discovery = await fetchJson(
+    `${options.baseUrl}/api/auth/me/memberships`,
+    { headers: { authorization: `Bearer ${token}` }, timeoutMs: options.timeoutMs },
+  );
+  if (!discovery.ok || !discovery.data?.recommendedContext?.clubId) {
+    throw new Error('Performance account has no exact recommended Organization/Club');
+  }
+  return { context: discovery.data.recommendedContext, token };
 }
 
-async function measureEndpoint({ endpoint, options, token }) {
+async function measureEndpoint({ endpoint, options, session }) {
   const samples = [];
   let error = null;
   let status = null;
@@ -185,7 +193,9 @@ async function measureEndpoint({ endpoint, options, token }) {
       appendCacheBust(`${options.baseUrl}${endpoint.path}`, index),
       {
         headers: {
-          authorization: `Bearer ${token}`,
+          authorization: `Bearer ${session.token}`,
+          'x-organization-id': String(session.context.organizationId),
+          'x-club-id': String(session.context.clubId),
         },
         timeoutMs: options.timeoutMs,
       },
@@ -352,12 +362,12 @@ async function main() {
 
   fs.mkdirSync(outputDir, { recursive: true });
 
-  const token = await login(options);
+  const session = await login(options);
   const endpoints = [];
 
   for (const endpoint of ENDPOINTS) {
     process.stdout.write(`Measuring ${endpoint.name}... `);
-    const result = await measureEndpoint({ endpoint, options, token });
+    const result = await measureEndpoint({ endpoint, options, session });
     endpoints.push(result);
     if (result.error) {
       process.stdout.write(`failed: ${result.error}, ${result.p95Ms}ms\n`);

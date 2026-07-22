@@ -20,6 +20,11 @@ function getTaskVisibleText(task) {
       block.text,
       ...(block.items || []),
     ]),
+    ...(task.lesson?.cards || []).flatMap((card) => [
+      card.title,
+      card.text,
+      ...(card.items || []),
+    ]),
     ...(task.requirements || []),
   ]
     .filter(Boolean)
@@ -343,6 +348,33 @@ test('screenshot-backed lessons start with a concrete open-screen card', () => {
   }
 });
 
+test('all taskKey checkpoints are classified and only product actions bypass route-view events', () => {
+  const taskKeyTasks = listOnboardingPaths().flatMap((pathConfig) =>
+    pathConfig.missions.flatMap((mission) =>
+      mission.tasks.filter((task) => task.checkpoint?.conditions?.taskKey),
+    ),
+  );
+  const productActionTasks = taskKeyTasks.filter(
+    (task) => !ONBOARDING_CLIENT_CHECKPOINT_EVENTS.includes(task.checkpoint.event),
+  );
+
+  assert.equal(taskKeyTasks.length, 28);
+  assert.deepEqual(
+    productActionTasks.map((task) => ({
+      event: task.checkpoint.event,
+      key: task.key,
+      route: task.route,
+    })),
+    [
+      {
+        event: 'client.created',
+        key: 'admin.client.create',
+        route: '/admin/clients',
+      },
+    ],
+  );
+});
+
 test('visits analytics onboarding covers deep analytics epic without new checkpoint events', () => {
   const manager = findOnboardingTask('manager', 'manager.visits-analytics.review').task;
   const owner = findOnboardingTask('owner', 'owner.operations.review-visits').task;
@@ -461,10 +493,10 @@ test('manager and owner have knowledge guides for every CRM section', () => {
     '/admin/manager-control',
     '/admin/methodology',
     '/admin/methodology-analytics',
-    '/admin/motivation',
     '/admin/onboarding',
     '/admin/prepayments',
     '/admin/references',
+    '/admin/shift-settings',
     '/admin/staff',
     '/admin/telephony',
     '/admin/trainer',
@@ -838,7 +870,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'admin',
     'admin.shift-cash.opening-record',
   ).task;
-  assert.equal(adminOpening.route, '/admin/motivation');
+  assert.equal(adminOpening.route, '/admin/shift/cash');
   assert.equal(adminOpening.kind, 'action');
   assert.equal(adminOpening.checkpoint.event, 'shift_cash.opening_recorded');
   assert.equal(adminOpening.trainingMode.recommended, true);
@@ -847,7 +879,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'admin',
     'admin.shift-cash.expense-with-photo',
   ).task;
-  assert.equal(adminExpense.route, '/admin/motivation');
+  assert.equal(adminExpense.route, '/admin/shift/cash');
   assert.equal(adminExpense.kind, 'action');
   assert.equal(adminExpense.checkpoint.event, 'shift_cash.attachment_uploaded');
   assert.equal(
@@ -859,7 +891,7 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'manager',
     'manager.shift-cash.reconciliation-review',
   ).task;
-  assert.equal(managerClose.route, '/admin/motivation');
+  assert.equal(managerClose.route, '/admin/shift/cash');
   assert.equal(managerClose.checkpoint.event, 'shift_cash.closed');
   assert.equal(managerClose.trainingMode.recommended, false);
 
@@ -867,12 +899,50 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     'owner',
     'owner.shift-cash.control-review',
   ).task;
-  assert.equal(ownerControl.route, '/admin/motivation');
+  assert.equal(ownerControl.route, '/admin/shift/cash');
   assert.equal(ownerControl.checkpoint.event, 'shift_cash.closed');
   assert.equal(
     getTaskVisibleText(ownerControl).includes('Владелец может проходить обучение за роли'),
     true,
   );
+
+  const managerMotivation = findOnboardingTask(
+    'manager',
+    'manager.motivation.update',
+  ).task;
+  assert.equal(managerMotivation.route, '/admin/shift-settings');
+
+  const ownerMotivation = findOnboardingTask(
+    'owner',
+    'owner.motivation.review',
+  ).task;
+  assert.equal(ownerMotivation.route, '/admin/shift-settings');
+
+  const managerTemplates = findOnboardingTask(
+    'manager',
+    'manager.shift-report-templates.manage',
+  ).task;
+  assert.equal(managerTemplates.route, '/admin/shift-settings');
+  assert.equal(managerTemplates.kind, 'review');
+  assert.equal(managerTemplates.checkpoint.event, 'report.viewed');
+  assert.deepEqual(managerTemplates.checkpoint.conditions, {
+    report: 'shift_report_templates',
+    taskKey: 'manager.shift-report-templates.manage',
+  });
+  assert.equal(managerTemplates.trainingMode.recommended, false);
+
+  const ownerTemplates = findOnboardingTask(
+    'owner',
+    'owner.shift-report-templates.manage',
+  ).task;
+  assert.equal(ownerTemplates.route, '/admin/shift-settings');
+  assert.equal(ownerTemplates.kind, 'review');
+  assert.equal(ownerTemplates.checkpoint.event, 'report.viewed');
+  assert.deepEqual(ownerTemplates.checkpoint.conditions, {
+    report: 'shift_report_templates',
+    taskKey: 'owner.shift-report-templates.manage',
+  });
+  assert.equal(ownerTemplates.trainingMode.recommended, false);
 
   const accountantReview = findOnboardingTask(
     'accountant',
@@ -891,8 +961,11 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
     adminExpense,
     managerClose,
     ownerControl,
+    managerTemplates,
+    ownerTemplates,
     accountantReview,
   ]) {
+    const taskText = getTaskVisibleText(task).toLowerCase();
     assert.equal(task.lesson.format, 'section-first-cards');
     assertFirstOpenScreenBlock(task);
     assert.equal(task.lesson.screenshots.length >= 2, true, task.key);
@@ -902,6 +975,11 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
       ),
       true,
       task.key,
+    );
+    assert.equal(
+      taskText.includes('категори'),
+      false,
+      `${task.key} should not ask to choose or reconcile expense category`,
     );
   }
 
@@ -915,5 +993,72 @@ test('shift cash onboarding is wired by role with backend checkpoints', () => {
       false,
       `${eventKey} should require a backend product event`,
     );
+  }
+});
+
+test('shift report template onboarding matches post-scope-fields UI', () => {
+  const tasks = [
+    findOnboardingTask('manager', 'manager.shift-report-templates.manage').task,
+    findOnboardingTask('owner', 'owner.shift-report-templates.manage').task,
+  ];
+  const forbiddenPatterns = [
+    /роль сотрудника/i,
+    /тип смены/i,
+    /роль:/i,
+    /тип смены:/i,
+  ];
+
+  for (const task of tasks) {
+    const visibleText = getTaskVisibleText(task);
+    const screenshotText = getTaskScreenshotText(task);
+
+    assert.equal(task.lesson.format, 'section-first-cards');
+    assertFirstOpenScreenBlock(task);
+    assert.equal(task.lesson.screenshots.length, 4);
+    assert.equal(
+      task.lesson.screenshots.every((screenshot) =>
+        screenshot.src.startsWith('/onboarding/shift-report-templates/'),
+      ),
+      true,
+      task.key,
+    );
+    assert.equal(visibleText.includes('Создать шаблон'), true, task.key);
+    assert.equal(visibleText.includes('Сохранить'), true, task.key);
+    assert.equal(visibleText.includes('Архивировать шаблон'), true, task.key);
+    assert.equal(visibleText.includes('Восстановить шаблон'), true, task.key);
+    assert.equal(visibleText.includes('read-only') || visibleText.includes('disabled'), true, task.key);
+    assert.doesNotMatch(
+      visibleText,
+      /карточк[^\n.]*пункт/i,
+      `${task.key} should not say template cards show report items`,
+    );
+    assert.doesNotMatch(
+      screenshotText,
+      /карточк[^\n.]*пункт/i,
+      `${task.key} screenshots should not say template cards show report items`,
+    );
+    assert.match(
+      visibleText,
+      /пункт[^\n.]*внутри модал/i,
+      `${task.key} should explain report items are inside the modal`,
+    );
+    assert.match(
+      visibleText,
+      /сотрудник определяется (самой )?сменой/i,
+      task.key,
+    );
+
+    for (const pattern of forbiddenPatterns) {
+      assert.doesNotMatch(
+        visibleText,
+        pattern,
+        `${task.key} should not mention legacy template scope field ${pattern}`,
+      );
+      assert.doesNotMatch(
+        screenshotText,
+        pattern,
+        `${task.key} screenshots should not mention legacy template scope field ${pattern}`,
+      );
+    }
   }
 });

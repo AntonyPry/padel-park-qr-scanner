@@ -29,10 +29,10 @@ test('manager can view finances but cannot manage finance operations', () => {
   assert.equal(ACCESS_MATRIX.financeManage.includes('manager'), false);
 });
 
-test('accountant can read payroll-related motivation data without managing motivation', () => {
+test('accountant keeps finance and payroll access without Shift motivation access', () => {
   assert.equal(ACCESS_MATRIX.financeView.includes('accountant'), true);
   assert.equal(ACCESS_MATRIX.payrollView.includes('accountant'), true);
-  assert.equal(ACCESS_MATRIX.motivationView.includes('accountant'), true);
+  assert.equal(ACCESS_MATRIX.motivationView.includes('accountant'), false);
   assert.equal(ACCESS_MATRIX.motivationManage.includes('accountant'), false);
 });
 
@@ -71,9 +71,9 @@ test('prepayment sale settings stay separate from catalog management', () => {
   assert.equal(ACCESS_MATRIX.prepaymentsDashboardView.includes('trainer'), false);
 });
 
-test('subscription type management stays owner manager while trainers do not see balances', () => {
+test('subscription type management stays owner manager while admins can issue existing types', () => {
   assert.deepEqual(ACCESS_MATRIX.subscriptionTypesManage, ['owner', 'manager']);
-  assert.deepEqual(ACCESS_MATRIX.subscriptionTypesView, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.subscriptionTypesView, ['owner', 'manager', 'admin']);
   assert.deepEqual(ACCESS_MATRIX.clientSubscriptionsRedeem, ['owner', 'manager', 'admin']);
   assert.equal(ACCESS_MATRIX.clientSubscriptionsView.includes('admin'), true);
   assert.equal(ACCESS_MATRIX.clientSubscriptionsRedeem.includes('admin'), true);
@@ -99,6 +99,7 @@ test('certificate redemption is available to admins without trainer or accountan
 test('admins can manage phone bookings without finance or catalog access', () => {
   assert.equal(ACCESS_MATRIX.bookingsView.includes('admin'), true);
   assert.equal(ACCESS_MATRIX.bookingsManage.includes('admin'), true);
+  assert.equal(ACCESS_MATRIX.trainingNotesView.includes('admin'), false);
   assert.equal(ACCESS_MATRIX.financeView.includes('admin'), false);
   assert.equal(ACCESS_MATRIX.catalogManage.includes('admin'), false);
 });
@@ -110,13 +111,10 @@ test('admins can operate shift cash without receiving finance management', () =>
   assert.equal(ACCESS_MATRIX.financeView.includes('admin'), false);
 });
 
-test('telephony separates setup from call processing', () => {
-  assert.equal(ACCESS_MATRIX.telephonyManage.includes('owner'), true);
-  assert.equal(ACCESS_MATRIX.telephonyManage.includes('manager'), true);
-  assert.equal(ACCESS_MATRIX.telephonyManage.includes('admin'), false);
-  assert.equal(ACCESS_MATRIX.telephonyWork.includes('admin'), true);
-  assert.equal(ACCESS_MATRIX.telephonyView.includes('viewer'), true);
-  assert.equal(ACCESS_MATRIX.telephonyWork.includes('viewer'), false);
+test('telephony is available only to owners and managers', () => {
+  assert.deepEqual(ACCESS_MATRIX.telephonyManage, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.telephonyWork, ['owner', 'manager']);
+  assert.deepEqual(ACCESS_MATRIX.telephonyView, ['owner', 'manager']);
 });
 
 test('access key correction keeps the existing access operator roles', () => {

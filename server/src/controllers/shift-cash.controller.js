@@ -6,7 +6,7 @@ const { sendError } = require('../utils/api-error');
 class ShiftCashController {
   async getActive(req, res) {
     try {
-      res.json(await shiftCashService.getActiveCash(req.account));
+      res.json(await shiftCashService.getActiveCash(req.account, req.tenant));
     } catch (error) {
       sendError(res, error, 'Ошибка загрузки кассы смены');
     }
@@ -14,7 +14,13 @@ class ShiftCashController {
 
   async getByShift(req, res) {
     try {
-      res.json(await shiftCashService.getShiftCash(req.params.shiftId, req.account));
+      res.json(
+        await shiftCashService.getShiftCash(
+          req.params.shiftId,
+          req.account,
+          req.tenant,
+        ),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка загрузки кассы смены');
     }
@@ -22,7 +28,9 @@ class ShiftCashController {
 
   async saveOpening(req, res) {
     try {
-      res.json(await shiftCashService.saveOpening(req.body, req.account));
+      res.json(
+        await shiftCashService.saveOpening(req.body, req.account, req.tenant),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка сохранения начального остатка');
     }
@@ -30,7 +38,9 @@ class ShiftCashController {
 
   async createExpense(req, res) {
     try {
-      res.status(201).json(await shiftCashService.createExpense(req.body, req.account));
+      res.status(201).json(
+        await shiftCashService.createExpense(req.body, req.account, req.tenant),
+      );
     } catch (error) {
       sendError(res, error, 'Ошибка добавления кассового расхода');
     }
@@ -39,7 +49,12 @@ class ShiftCashController {
   async updateExpense(req, res) {
     try {
       res.json(
-        await shiftCashService.updateExpense(req.params.expenseId, req.body, req.account),
+        await shiftCashService.updateExpense(
+          req.params.expenseId,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       sendError(res, error, 'Ошибка обновления кассового расхода');
@@ -49,7 +64,12 @@ class ShiftCashController {
   async cancelExpense(req, res) {
     try {
       res.json(
-        await shiftCashService.cancelExpense(req.params.expenseId, req.body, req.account),
+        await shiftCashService.cancelExpense(
+          req.params.expenseId,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       sendError(res, error, 'Ошибка отмены кассового расхода');
@@ -63,6 +83,7 @@ class ShiftCashController {
           req.params.expenseId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -77,6 +98,7 @@ class ShiftCashController {
           req.params.expenseId,
           req.params.attachmentId,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -90,6 +112,7 @@ class ShiftCashController {
         req.params.expenseId,
         req.params.attachmentId,
         req.account,
+        req.tenant,
       );
       res.setHeader('Content-Type', attachment.mimeType);
       res.setHeader(

@@ -1,6 +1,15 @@
 // src/services/evotor.service.js
 const db = require('../../models');
 const pendingSaleService = require('./pending-sale.service');
+const {
+  buildProviderIdempotencyKey,
+} = require('../provider-integrations/idempotency');
+const {
+  resolveLegacyProviderContext,
+} = require('../provider-integrations/rollout');
+const {
+  isTenantProviderIntegrationsEnabled,
+} = require('../tenant-context/capabilities');
 
 function normalizePaymentType(value) {
   const normalized = String(value || '').trim().toUpperCase();
@@ -225,7 +234,14 @@ class EvotorService {
    * @param {Object} payload - req.body от Эвотора
    * @returns {Object} { alreadyProcessed: boolean, receipt: Object }
    */
-  async processReceipt(payload) {
+  async processReceipt(payload, { connection } = {}) {
+    if (isTenantProviderIntegrationsEnabled() && !connection) {
+      const error = new Error('Provider connection is not configured');
+      error.code = 'PROVIDER_CONNECTION_REQUIRED';
+      error.statusCode = 503;
+      throw error;
+    }
+    const writeContext = connection || await resolveLegacyProviderContext('evotor');
     // 1. Извлекаем данные чека
     const receiptData =
       payload.data && payload.type?.toLowerCase().includes('receipt')
@@ -236,11 +252,14 @@ class EvotorService {
     const evotorId = String(
       receiptData.id || receiptData.receiptId || receiptData.uuid || Date.now(),
     );
+    const idempotencyKey = buildProviderIdempotencyKey(writeContext, evotorId);
 
     // 2. Проверяем дубликаты
-    const existing = await db.Receipt.findOne({ where: { evotorId } });
+    const existing = await db.Receipt.findOne({
+      where: { idempotencyKey },
+    });
     if (existing) {
-      return { alreadyProcessed: true };
+      return { alreadyProcessed: true, receipt: existing };
     }
 
     return db.sequelize.transaction(async (transaction) => {
@@ -258,6 +277,10 @@ class EvotorService {
       // 4. Сохраняем заголовок чека
       const newReceipt = await db.Receipt.create(
         {
+          organizationId: writeContext.organizationId,
+          clubId: writeContext.clubId,
+          integrationConnectionId: writeContext.connectionId || null,
+          idempotencyKey,
           evotorId,
           dateTime: receiptData.dateTime || receiptData.closeDate || new Date(),
           type: receiptData.type || 'SELL',
@@ -321,7 +344,7 @@ class EvotorService {
 
       const pendingSales = await pendingSaleService.createPendingSalesForReceipt(
         newReceipt.id,
-        { transaction },
+        { connection: writeContext, transaction },
       );
 
       return {

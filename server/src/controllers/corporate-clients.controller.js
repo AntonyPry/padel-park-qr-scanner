@@ -14,7 +14,11 @@ class CorporateClientsController {
   async list(req, res) {
     try {
       res.json(
-        await corporateClientsService.listCorporateClients(req.query, req.account),
+        await corporateClientsService.listCorporateClients(
+          req.query,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       sendError(res, error, 'Ошибка списка корпоративных клиентов');
@@ -29,6 +33,7 @@ class CorporateClientsController {
           await corporateClientsService.createCorporateClient(
             req.body,
             req.account,
+            req.tenant,
           ),
         );
     } catch (error) {
@@ -42,6 +47,7 @@ class CorporateClientsController {
         await corporateClientsService.getCorporateClient(
           req.params.id,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -56,6 +62,7 @@ class CorporateClientsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -70,6 +77,7 @@ class CorporateClientsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -83,6 +91,7 @@ class CorporateClientsController {
         await corporateClientsService.restoreCorporateClient(
           req.params.id,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -97,6 +106,7 @@ class CorporateClientsController {
           req.params.id,
           req.query,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -112,6 +122,7 @@ class CorporateClientsController {
           req.params.id,
           req.query,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -128,6 +139,7 @@ class CorporateClientsController {
             req.params.id,
             req.body,
             req.account,
+            req.tenant,
           ),
         );
     } catch (error) {
@@ -143,6 +155,7 @@ class CorporateClientsController {
           req.params.entryId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -159,6 +172,7 @@ class CorporateClientsController {
             req.params.id,
             req.body,
             req.account,
+            req.tenant,
           ),
         );
     } catch (error) {
@@ -174,6 +188,7 @@ class CorporateClientsController {
           req.params.entryId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

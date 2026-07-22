@@ -1,7 +1,7 @@
 # Статус спринтов CRM
 
 Дата фиксации: 2026-05-28.
-Последнее обновление: 2026-07-15.
+Последнее обновление: 2026-07-17.
 
 Этот файл - единый источник правды по спринтам. Перед началом нового спринта сначала обновляем этот документ: что уже сделано, что частично, что осталось, какие критерии приемки.
 
@@ -2221,17 +2221,50 @@ Product source:
 - screenshots являются реальными CRM screenshots из feature UI, без generated assets;
 - `server npm run onboarding:audit:strict` проходит без warnings.
 
+## Epic - Multi-tenant CRM
+
+Статус: `Features 1–10.2 accepted and integrated; Feature 10.3 implementation awaiting permanent SaaS QA`.
+
+Promotion rule выполнено для Features 1–5.5. Feature 5.5 принята независимым QA точным SHA `d9ff18c27bb663203c5713ce27b8a9e513f67770` без P0–P3 findings и fast-forwarded без rewrite от integration base `31a46794303c2be9603eeb8c6413ab985884e0a8`; retained history содержит implementation `4b80521a756109d76380d87389d44a02e7eaf21c` и accepted fix `d9ff18c27bb663203c5713ce27b8a9e513f67770`. Fresh `origin/main` `bf902a7bf476b2a68e7bf0aff8ba83abea644912` уже является ancestor accepted Feature 5.5, поэтому reconciliation merge не потребовался. Merge в `main` и deploy не выполнялись.
+
+- Принята целевая модель `Organization → Clubs → Memberships`; текущий Padel Park станет default organization/club без изменения UX.
+- Inventory всех 67 Sequelize models и ключевых HTTP/realtime/worker/file/integration поверхностей зафиксирован в [`TENANT_INVENTORY_V1.md`](./TENANT_INVENTORY_V1.md).
+- ADR, backfill strategy и зависимые feature-срезы зафиксированы в [`MULTI_TENANCY_ARCHITECTURE_V1.md`](./MULTI_TENANCY_ARCHITECTURE_V1.md).
+- Feature 1 не содержит migrations/runtime/product changes и принята точным SHA `fa183d850ad01b075e49f8ef787ffc10c3b378be`.
+- QA findings Feature 1 добавили формальный bootstrap-pending contract, split Account writer contract, seeder parity и DB-backed lifecycle/concurrency acceptance.
+- Повторный независимый QA Feature 1 завершен без P0–P3 findings; Feature 1 стала принятой SaaS integration base.
+- Feature 2 реализована в `codex/multi-tenant-foundation-v2` строго от accepted Feature 1 SHA `fa183d850ad01b075e49f8ef787ffc10c3b378be`: additive Organization/Club/Membership/access foundation, deterministic backfill/rollback, bootstrap-pending gate и compatibility Account lifecycle bridge.
+- Feature 2 принята точным SHA `f1e925229321521f9a02bf5aebc78b4723aca176`; независимый QA завершен без P0–P3 findings. После merge актуального `origin/main` integration gate подтвердил migrations `down → up`, DB-backed lifecycle/migration/concurrency `22/22`, targeted gate `32/32`, полный server suite `310/310`, server typecheck, Account AST write audit, strict onboarding audit, OpenAPI no-drift, client lint, `85/85` client tests и production build. Fresh-install pending/bootstrap API и Socket.IO smoke green; owner/manager/admin/accountant/trainer/viewer login smoke green без console/network/page errors, desktop overflow и mobile `390px` overflow.
+- Feature 3 реализована в `codex/multi-tenant-context-v3` строго от integration SHA `75ad6b62294c49ce5606160635f9930fc2dd0f06`: immutable request tenant context, explicit header contract, audited route scopes, global membership discovery, Membership/effective-role authorization, server-owned capability и frontend bootstrap без switcher. Gate green: route inventory `272/272`, targeted unit/contract `22/22`, DB-backed tenant context `10/10`, полный server suite `342/342`, client `121/121`, typecheck/lint/build, Account write audit, strict onboarding audit и OpenAPI generation. Flag-on/off API, Socket.IO и browser smoke по шести ролям green; desktop/mobile `390px` без overflow, console/network/page errors; visible permissions идентичны. Accepted exact SHA: `a79f83281130ca9476e02d0d70b7fdec307e665f`.
+- Independent SaaS QA ранее нашел P2: frontend схлопывал `Membership.role` и club `effectiveRole` в `Account.role`. Fix сохраняет обе роли в immutable `ActiveTenantContext`, оставляет `Account.role` только legacy authority при выключенном capability и добавляет audited client route scopes: membership/organization используют `membershipRole`, club — `effectiveRole`. Смешанные страницы выбирают scope отдельно для каждого permission action. Mismatch-role, owner/parity, flag-off, logout/401/reselection tests green; повторный gate: client `109/109`, server `342/342`, route digest/OpenAPI без drift и flag-on/off browser parity по шести ролям green. Finding закрыт последующим повторным независимым QA; merge в `main` и deploy не выполнялись.
+- Оставшийся P2 mixed-page mount закрыт поверх accepted fix SHA `c49989ab1cbd8db4b778753e73070d7825fa6384`: все `24` protected client routes имеют `single`, `composite` или `partial` authorization contract. Неразделимые bookings, clients, trainer workspace, motivation, catalog, shift reports и finances требуют все organization/club authority до mount; reception, call tasks, client bases, corporate clients, staff, onboarding и telephony оставляют основной flow доступным, но не монтируют cross-scope query/section/mutation без role authority её server `tenantScope`. Typed inventory и audit покрывают `14` mixed pages, generated endpoint scopes, named partial guards и exhaustive non-owner override matrix обязательных страниц. Повторный независимый SaaS QA завершён без P0–P3 findings.
+- Integration promotion fast-forwarded accepted Feature 3 history, затем объединил актуальный `origin/main` `11a051a6664afb8dce0aca695699baa9946f5bf4` merge commit `ba290fc3b42280420e870e1a4e3bec5aa0b2a46b` с parents `a79f83281130ca9476e02d0d70b7fdec307e665f` и `11a051a6664afb8dce0aca695699baa9946f5bf4`. Integration gate: migrations `80 down → 80 up` на чистой test DB, client `121/121`, server unit/contract `22/22`, DB-backed override/IDOR `10/10`, full server `342/342`, typecheck, Account/route/strict onboarding audits, OpenAPI no-drift, lint/build и six-role flag-on/off API/Socket.IO/browser smoke — green. Merge в `main` и deploy не выполнялись.
+- Feature 4.1 принята в `codex/multi-tenant-cache-realtime-v4-1` точным SHA `a3129af5bab40864a4dd62f04b0203874277902f` после реализации от integration SHA `7d2185b15f31213babca4aa42f829bc313a205b6`: typed tenant TanStack Query keys/lifecycle cleanup, namespaced Redis для реальных references/catalog call sites, validated Socket.IO rooms/envelopes/revalidation и AST cache/realtime audit. Server-owned `TENANT_CACHE_REALTIME_ENABLED` зависит от `TENANT_CONTEXT_ENABLED`; flag off сохраняет legacy path. Files/workers/provider routing остаются в Features 4.2/4.3; production hard-rollout gate не снят. Merge в `main` и deploy не выполнялись.
+- Feature 4.2 принята точным SHA `8d1e3140b25f44348e84f663fa15d104db7cebe6` в `codex/multi-tenant-files-workers-v4-2` и fast-forwarded в SaaS integration от base `a3129af5bab40864a4dd62f04b0203874277902f`: opaque atomic tenant storage для shift-report attachments, controlled legacy dual-read/backfill manifest, immutable transcription job attribution, audited platform-worker protocol v2 с expiring claim lease, parity Node/Python temp/state/logging и fail-closed classification unscoped background loops. `TENANT_FILES_WORKERS_ENABLED` зависит от Feature 3 и Feature 4.1 capabilities; parent `ShiftReport`/`TelephonyCall`, provider routing и hard single-default gate не переписаны. После reconciliation с `origin/main` Shift Cash endpoints объявлены club-scoped, а receipt attachments используют тот же tenant storage/metadata contract с default-tenant legacy fallback. Итоговый integration gate green: fresh DB `82 up → 81 down → 82 up`, full server `408/408`, Node worker `34/34`, Python worker `21/21`, client `142/142`, typecheck/lint/build, tenant audits, strict onboarding и OpenAPI no-drift. Merge в `main` и deploy не выполнялись.
+- Feature 4.3 принята точным SHA `b5542d7a82df2712607a297cae5126cdd125fa78` в `codex/multi-tenant-providers-v4-3` после независимого QA без P0–P3 findings: encrypted `IntegrationConnection`, connection-first Beeline/Evotor middleware до body parser, tenant/connection idempotency namespaces, per-connection advisory locks и isolated Beeline renewal, encrypted Telegram/VK bootstrap, server-owned capability dependency и fail-closed exact-default downstream boundary. QA fixes закрыли canonical Beeline lock bypass, bulk/raw-SQL/cascade mutation attribution, flag-off post-migration attribution/reconciliation, camel/snake/kebab credential redaction и legacy `NULL → connection` transition: forward migrations и runtime reconciliation сверяют authoritative tenant/provider/purpose/`connectionKey=default`, запрещая cross-provider и same-provider non-default attribution. Collision rollback/retry/repeatability green. Accepted history fast-forwarded без rewrite; merge в `main` и deploy не выполнялись. Recurring call-task остаётся deferred к Feature 5.
+- Feature 4.3 integration promotion сохранила accepted history и объединила текущий `main` только отдельным reconciliation merge. Fresh DB имеет `85/85` migrations; validation migration data-aware `down → up` сохраняет `2` connections, `4` provider roots и неизменный checksum. Targeted provider/security/audit `20/20`, независимая raw-SQL identity matrix `12/12` rejects + `4/4` valid-default accepts, full server `433/433` с concurrency `1`, client `156/156`, server typecheck, client lint/build, Account/route/cache-realtime/files-workers/provider/strict-onboarding audits и OpenAPI no-drift — green. Flag-off/flag-on HTTP ingress smoke остался локальным и не вызывал реальные Beeline/Evotor endpoints. Hard single-default rollout, deferred downstream Telephony/Finance/User tenant safety и отсутствие provisioning второго production tenant сохранены.
+- Feature 5.1 принята точным SHA `e494b2d0fab00b18eea67d04cd9a5998a52c06d2` в `codex/multi-tenant-staff-access-v5-1` и fast-forwarded в SaaS integration от SHA `882aa24399186f660efc7d78113185f88ceef2ac`: nullable-first `Staff.organizationId` backfill, затем `Membership.staffId` compatibility backfill и composite FK/unique; `Account.staffId` сохранён, но переведён из metadata writer в атомарный lifecycle dual-write. Staff/account reads становятся organization-scoped только при server-owned `TENANT_STAFF_ACCESS_ENABLED`, который зависит от Features 3–4.3; flag off сохраняет single-default UX. Добавлены Staff detail/search, forged/stale-context и cross-org IDOR denial, Staff/Membership AST writer audit, deterministic migration rollback preflight и DB-suite с двумя Organizations/тремя Clubs. После SaaS QA P1 исправлен last-owner guard: archive/inactive/remove считают только auth-usable owners, concurrent deactivation сериализуется Organization lock, nullable Staff owner остаётся валидной compatibility веткой, а rejected transaction сохраняет статусы. Integration gate: fresh DB `86/86`, data-aware `86 → 85 → 86` с неизменным identity checksum, targeted lifecycle `11/11`, full server `448/448`, client `156/156`, typecheck/lint/build, tenant audits, strict onboarding, OpenAPI no-drift и six-role flag-on/off API smoke — green. Feature 5.2 и production second tenant не начаты; merge в `main` и deploy не выполнялись. Контракт: [`MULTI_TENANCY_STAFF_ACCESS_V5_1.md`](./MULTI_TENANCY_STAFF_ACCESS_V5_1.md).
+- Feature 5.2 принята точным SHA `3fa5795fc79d5d47a4673a0d7970c7702283481c` в `codex/multi-tenant-clients-references-v5-2` и fast-forwarded в SaaS integration от exact base `1c5fcea05a8e4bc05e804a0073feb88e435ba2f2`: `User`, `ClientSource`, `VisitCategory` получили immutable Organization attribution, per-Organization identity/name uniqueness, composite source/merge FKs и tenant-leading indexes. Server-owned `TENANT_CLIENTS_REFERENCES_ENABLED` зависит от Feature 5.1; flag on повторно валидирует request Membership либо authoritative provider connection, flag off сохраняет global legacy reads и default-Organization writes. Client/reference CRUD, lookup, merge, permanent delete, tenant cache, reception, booking selection, Telegram/VK и telephony client links передают проверенный tenant; AST writer audit закрывает неутверждённые mutations. DB regression coverage закрепляет same-Organization phone/messenger races (`1` success + safe `409` + `1` row), concurrent cross-Organization identity parity, raw-SQL attribution immutability, authoritative Telegram/VK reload denial и single-default data-aware migration down→up с неизменными counts/checksum/FK graph. Reconciled integration gate: fresh migrations `87/87`, latest migration `87 → 86 → 87`, targeted DB/security/writer `15/15`, full server `464/464`, client `185/185`, server typecheck, client lint/build, all tenant audits, strict onboarding и OpenAPI no-drift green. Flag-on/off six-role API/security smoke и role-aware Shift browser smoke на desktop/mobile `390px` прошли без overflow и browser errors. Visits/training/bookings/telephony/call-task/prepayment aggregate roots остаются hard boundary следующих waves. Feature 5.3, merge в `main` и deploy не выполнялись. Контракт: [`MULTI_TENANCY_CLIENTS_REFERENCES_V5_2.md`](./MULTI_TENANCY_CLIENTS_REFERENCES_V5_2.md).
+- Feature 5.3 принята точным SHA `8d265764340e88738b4a6c400b41a5d11c47ee49` в `codex/multi-tenant-visits-scanner-v5-3` и fast-forwarded в SaaS integration от exact base `e727ab95e69804b94cb2d1c65f3d3f49b99dee9f`: `Visit`, `ScannerEvent` и `VisitCategoryAssignment` получили immutable Organization/Club attribution; сервер повторно валидирует Membership/Club authority, scanner ingress игнорирует forged tenant/device поля, а Visit→User/VisitCategory/self-link graph ограничен authoritative Organization/Club. Scanner history, monitor/reception operations, visit key/category mutations, analytics/segments/Excel exports, training cleanup и realtime `access:scan` стали club-scoped; клиентская карточка сохраняет organization-wide visit history policy Feature 5.2. Data-aware migration покрывает fresh install, production-shaped backfill, forced-current-invocation cleanup, mutation-free refusal pre-existing partial schema, deterministic down/up/reapply, raw-SQL/ORM immutability, ScannerEvent nullable reference `SET NULL` lifecycle и legacy `duplicateOfVisitId ON DELETE SET NULL`. Reconciled integration gate: fresh migrations `88/88`, Feature 5.3 DB/security/concurrency/IDOR/realtime/flag `17/17`, historical analytics/XLSX `10/10`, conflict regression `52/52`, full server `482/482` с concurrency `1`, client `205/205`, server typecheck, client lint/build, all tenant audits, tenant foundation assertion, strict onboarding и OpenAPI no-drift green. Flag-on/off six-role API/scanner/analytics/export smoke и reconciled browser role matrix прошли на desktop/mobile `390px` без document overflow и browser errors. Второй production tenant и downstream bookings/training/telephony/call-task/prepayment/certificate/finance roots остаются hard boundary; Feature 5.4 вынесена в следующий отдельный slice, merge в `main` и deploy не выполнялись. Контракт: [`MULTI_TENANCY_VISITS_SCANNER_V5_3.md`](./MULTI_TENANCY_VISITS_SCANNER_V5_3.md).
+- Feature 5.4 принята точным SHA `8b70e9df8edbb113d593b059a4d2280f2c2b9dea` в `codex/multi-tenant-client-bases-call-tasks-v5-4` и fast-forwarded в SaaS integration от exact base `3b2ac656c0e861ca9bf0d2898b7866f1539f8161` с сохранением всех трёх feature commits: `ClientSavedView` получил Membership/Club attribution, `ClientBase` и `CallTask` стали club-local roots, а analytics provenance хранит immutable source Organization/Club. QA remediation закрыла full-definition `INFORMATION_SCHEMA` classification/mutation-free cleanup, строгий `Account/Membership/Staff` invariant, Telephony follow-up `NULL` bypass и wrong-table reserved pair classification. Integration gate: fresh/status `89/89`, definition + comprehensive DB/security/concurrency/IDOR/training `22/22`, analytics preview→base→task `1/1`, full server `507/507`, client `205/205`, typecheck/lint/build, all tenant audits, strict onboarding, tenant foundation и OpenAPI no-drift green. Six-role flag-on/off HTTP matrix прошла; client/UI/routes не менялись, поэтому accepted browser evidence остаётся применимой и User Preview Gate `N/A`. Второй production tenant, Telephony root, downstream bookings/training/finance roots и billing остаются hard boundaries; merge в `main` и deploy не выполнялись. Контракт: [`MULTI_TENANCY_CLIENT_BASES_CALL_TASKS_V5_4.md`](./MULTI_TENANCY_CLIENT_BASES_CALL_TASKS_V5_4.md).
+- Feature 5.5 принята точным SHA `d9ff18c27bb663203c5713ce27b8a9e513f67770` в `codex/multi-tenant-bookings-courts-v5-5` после независимого re-review без P0–P3 findings и fast-forwarded в SaaS integration от exact base `31a46794303c2be9603eeb8c6413ab985884e0a8` без reconciliation merge. `Court`, `BookingSettings`, `BookingPriceRule`, `BookingScheduleException`, `BookingSeries`, `Booking` и manual `Utilization` имеют immutable Organization/Club attribution; `User` остаётся organization-wide. Public booking/court/rules/utilization boundaries принимают только branded Feature 3 TenantContext и на каждом входе заново подтверждают active Account→Membership→Organization→Club/access; cloned, forged и stale contexts отклоняются без чтения или мутации rows/history. Migration ready-state сравнивает полный canonical column/index/FK/trigger definition, включая defaults/EXTRA/charset/collation, prefix/direction/index type. Forced cleanup предварительно сверяет captured INFORMATION_SCHEMA signatures всех artifacts и отказывается удалять same-name definition, изменённый после создания. Independent re-review воспроизвёл definition/cleanup и booking tenant DB regressions `2/2`, realtime DB `7/7`, direct-write/capability/middleware contracts `19/19` и server typecheck; ранее принятые full server `513/513`, client `205/205`, lint/build, tenant audits, tenant foundation, strict onboarding и OpenAPI no-drift не повторялись. UI/routes/actions/statuses/response shapes не менялись, User Preview Gate и Onboarding impact остаются `N/A`/`none`; полный SaaS regression перенесён на единый release-candidate gate. Полная trainer/training tenancy, finance/certificates/subscriptions/prepayments, production second tenant, merge в `main` и deploy остаются out of scope. Контракт: [`MULTI_TENANCY_BOOKINGS_COURTS_V5_5.md`](./MULTI_TENANCY_BOOKINGS_COURTS_V5_5.md).
+- Feature 9 реализована в `codex/multi-tenant-enforcement-rc-v9` от exact integration base `2178e0964dd8775f42f31ecb5395527150ad5831`: additive final enforcement migration, definition/data-aware classifier, centralized exact-singleton legacy guard, read-only broad detector, consolidated 11-domain writer/alias/route audit, test-only two-Organization/two-Club/six-role fixture и installation-wide backup/restore rehearsal. Targeted RC после accepted-schema harness reconciliation: static audit `0` findings, provider ingress/reconciliation matrix `13/13`, enforcement + restore DB `2/2`, capability/foundation/manifest `31/31`; latest artifacts сохранены под `/private/tmp/setly-f9-rc-targeted-providerfix-20260718`. Historical accepted DB slices client bases, client money, methodology, training и visits повторно green. Published exact SHA должен сопровождаться единым full serialized server/client/OpenAPI/onboarding RC report и independent SaaS QA; merge в `main`, production/deploy, второй production tenant, provisioning, Feature 10 и billing не выполнялись. Visible UI/routes/roles/public response shapes не менялись, поэтому User Preview Gate `N/A`; onboarding impact `none`.
+- Feature 10.1 club switcher принята и integrated exact SHA `9ff6f7c33ba40a010450fd527a813e647e8bb8cd`; permanent SaaS QA и полный User Preview green. Feature 10.2 installation-operator provisioning принята и integrated exact SHA `7504a3380b6f37e92fed9aedf93ef618f5f3880c`; отдельная protected surface, atomic Organization/initial Clubs/first-owner authority graph и single-use owner activation сохранили контракт, permanent SaaS QA и User Preview green.
+- Feature 10.3 реализуется в `codex/multi-tenant-rollout-v10-3` от exact integration base `7504a3380b6f37e92fed9aedf93ef618f5f3880c`: full-stop API/provider/worker/socket barrier, clean exact-SHA rollout gate, immutable before/restore/post/stage evidence, preservation counts/PK/historical-value digests, staged capability prefix, rollback/second-tenant boundary и production-day operator runbook. Реальный domain contract: product `setly.tech`, operator `ops.setly.tech`; explicit FirstVDS `A 155.212.163.43` TTL `3600` уже создан и публично подтверждён, поэтому DNS complete. Live HTTP пока ошибочно отдаёт ordinary CRM default SPA, а TLS certificate SAN не содержит `ops.setly.tech`: dedicated Nginx vhost и корректный TLS остаются обязательными отдельно разрешёнными production-day blockers. Никаких DNS/Nginx/TLS/production mutations в feature implementation не выполнялось. Visible CRM UI/routes/actions не меняются; User Preview Gate `N/A`, onboarding impact Feature 10.3 `none`. Permanent SaaS QA, promotion, `main`, deploy, flags и второй production tenant остаются отдельными gates.
+- Production-shaped Beeline amendment для Feature 10.3 закрывает active-provider cutover без выдуманного webhook secret и без небезопасного legacy fallback: 256-bit encrypted callback capability проверяется timing-safe до parser/write; bare route закрыт, manual statistics использует private trusted boundary, а узкое full-stop exception доступно только exact capability route. Root-aware preflight и общий bootstrap transaction fail-closed обрабатывают production baseline `1,467 Calls + 8,607 RawEvents + 1,509 Subscriptions = 11,583`, сохраняют fingerprint/token при rerun и не печатают secrets. Provider URI switch вынесен в redacted explicit dry-run/apply CLI и честный maintenance-only runbook с pre-switch abort и post-switch recovery; permanent SaaS QA и новый fresh compatibility rehearsal обязательны до production.
+- SaaS-тарифы, подписки на Setly, usage billing и SaaS invoices остаются out of scope.
+
 ## Sprint 50 - Shift Cash onboarding sync
 
 Цель: обновить onboarding после feature branch `codex/shift-cash` до feature freeze, не мержить в `main` и не деплоить продуктовую ветку.
 
-Общий статус: `ready for release` - onboarding sync, runtime checkpoint и repeat QA подтверждены в merged temp; `main` и deploy в этом срезе не менялись.
+Общий статус: `partial` - onboarding sync обновляется под product commits `7168744` ... `67f8684` нового раздела «Смена»; `main` и deploy в этом срезе не менялись.
 
 Product source:
 
-- branch `origin/codex/shift-cash`;
-- commits `6a4b1ae feat: add shift cash reconciliation`, `f5f47c9 fix: resolve shift cash QA findings`, `ca8348f fix: emit shift cash attachment checkpoint`;
-- QA outcome: repeat QA PASS, без Blocker/P1/P2/P3, mobile 390 без overflow по KPI/dialog.
+- branch `origin/codex/shift-section-settings-fix`;
+- commits `7168744 fix: restructure shift workspace navigation`, `c9d20c4 fix: tighten shift workspace header`, `927b7a6 fix: refine shift workspace density`, `5ad5ec0 fix: prevent shift report filter overlap`, `67f8684 fix: preserve legacy shift redirect state`;
+- QA outcome: Product QA PASS, без P1/P2/P3; User Preview Gate пройден.
 
 Сделано:
 
@@ -2247,7 +2280,11 @@ Product source:
   - `shift_cash.attachment_uploaded`;
   - `shift_cash.closed`;
 - `shift_cash.*` не добавлены в client checkpoint allowlist, чтобы браузер не мог засчитать кассовые действия без реального backend-события;
-- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью `origin/codex/shift-cash`; в instructions-diff это не дублируется;
+- training data summary/cleanup для `ShiftCashSession`, `ShiftCashExpense`, attachments и linked `Finance` остается product-owned частью product branches; в instructions-diff это не дублируется;
+- admin/manager/owner Shift Cash задачи ведут на `/admin/shift/cash` внутри workspace «Смена»; бухгалтерский read-only сценарий остается на `/admin/finances`;
+- связанные Shift Reports уроки проверяются отдельно и должны вести на `/admin/shift/reports`; отдельных Shift Reports onboarding-задач в catalog на момент sync нет;
+- задачи и knowledge по правилам мотивации ведут на `/admin/shift-settings` под названием «Настройки смены»;
+- из Shift Cash инструкций убраны выбор и сверка категории расхода; исходная migration `20260714100000-create-shift-cash.js` создает чистую схему без `categoryId` и `categoryName` после согласованного production rollback/reapply;
 - обновлены реальные CRM screenshots из feature QA в dark/light наборах:
   - `/onboarding/shift-cash/full-cash-metrics.png`;
   - `/onboarding/shift-cash/opening-form.png`;
@@ -2265,23 +2302,23 @@ Product source:
   - `/onboarding-light/shift-cash/close-dialog-variance-comment.png`;
   - `/onboarding-light/shift-cash/accountant-period-export.png`;
   - `/onboarding-light/shift-cash/accountant-linked-row-history.png`;
-- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/motivation`;
+- бухгалтерский сценарий оставлен read-only через `/admin/finances`; бухгалтер не получает управление кассой на `/admin/shift/cash`;
 - owner role override сохранен: владелец может проходить роль, но права владельца не снижаются.
 
-Repeat QA 15.07.2026:
+Repeat QA 16.07.2026:
 
 - реальный PNG-чек загружен через backend: upload `201`, protected attachment GET `200 image/png`;
 - карточка расхода показывает настоящее `<img>` `600x820` через blob URL, lightbox открывает то же фото;
 - backend checkpoint `shift_cash.attachment_uploaded` записан ровно один раз для загруженного `attachmentId`;
 - dark/light `expense-result-attached.png` пересняты после upload и показывают реальное превью чека без графических аннотаций;
-- targeted onboarding tests: `42/42`; server typecheck: PASS; client tests: `22/22`; client build: PASS;
-- merged temp с `origin/codex/shift-cash`: strict audit PASS;
+- targeted onboarding tests: `35/35`; server typecheck: PASS; client lint: PASS; client tests: `22/22`; client build: PASS;
+- merged product worktree с product commits `7168744` ... `67f8684`: `npm run onboarding:audit:strict` PASS;
 - browser QA: `20/20` onboarding cases и `4/4` DB-backed product cases в dark/light на desktop `1440px` и mobile `390px`; broken images, console/page errors и horizontal overflow отсутствуют;
-- DB-backed `/admin/motivation` показывает активную смену и настоящее превью чека; `/admin/finances` показывает связанный расход `Касса смены #56: Оплата помещения`.
+- DB-backed `/admin/shift/cash` должен показывать активную смену, горизонтальную навигацию «Мотивация / Отчеты / Касса» и настоящее превью чека; `/admin/finances` должен показывать связанный расход `Касса смены ...`; `/admin/shift/reports` должен открывать отчеты смен; `/admin/shift-settings` должен открывать настройки правил мотивации и шаблонов отчетов.
 
 Осталось до release:
 
-- выполнить штатный merge проверенных `codex/shift-cash` и `codex/crm-instructions` в release target, затем production deploy/smoke по отдельному разрешению; незакрытых code/onboarding QA gates в Sprint 50 нет.
+- повторить strict audit, client build и browser QA по 5 Shift Cash задачам в dark/light desktop/mobile после переснятия screenshots; затем выполнить штатный merge проверенных product/onboarding веток в release target по отдельному разрешению.
 
 Критерии приемки:
 
@@ -2291,24 +2328,51 @@ Repeat QA 15.07.2026:
 - учебные кассовые сессии, расходы, фото и linked Finance очищаются без production-данных;
 - screenshots являются реальными CRM screenshots, без generated/mock assets.
 
-## Backlog - SaaS-фундамент
+## Sprint 51 - Shift Report Templates onboarding sync
+
+Цель: синхронизировать owner/manager onboarding по шаблонам отчетов смены после удаления устаревших полей области действия шаблона.
+
+Общий статус: `done` - onboarding-diff готов к final merged QA отдельным isolated commit; product branch `origin/codex/remove-shift-report-scope-fields` не менялся.
+
+Product source:
+
+- branch `origin/codex/remove-shift-report-scope-fields`;
+- commit `2472eb2147b68a50726d1147382fdbb18cd9f5eb`;
+- accepted product QA: server `301/301`, client `160/160`, migration `up/down/up`, OpenAPI/generated, owner/manager browser QA desktop/mobile.
+
+Сделано:
+
+- добавлены owner/manager onboarding tasks для управления шаблонами отчетов смены на `/admin/shift-settings`;
+- инструкции покрывают: открыть «Настройки смены» -> «Шаблоны отчетов», создать шаблон, открыть карточку, сохранить активный шаблон, архивировать, открыть archived read-only modal, восстановить и проверить список;
+- тексты объясняют, что отчет создается для конкретной смены, сотрудник определяется самой сменой, активные шаблоны применяются по расписанию;
+- из owner/manager lessons и screenshots исключены устаревшие поля области действия шаблона;
+- добавлены реальные CRM screenshots dark/light:
+  - `/onboarding/shift-report-templates/templates-list.png`;
+  - `/onboarding/shift-report-templates/create-modal.png`;
+  - `/onboarding/shift-report-templates/active-edit-modal.png`;
+  - `/onboarding/shift-report-templates/archived-readonly-modal.png`;
+  - `/onboarding-light/shift-report-templates/templates-list.png`;
+  - `/onboarding-light/shift-report-templates/create-modal.png`;
+  - `/onboarding-light/shift-report-templates/active-edit-modal.png`;
+  - `/onboarding-light/shift-report-templates/archived-readonly-modal.png`.
+
+Критерии приемки:
+
+- owner/manager lessons совпадают с create/edit/archive/read-only/restore UI product HEAD;
+- screenshots являются реальными CRM screenshots, без generated/mock assets, стрелок, номеров и рамок;
+- route остается `/admin/shift-settings`;
+- route-view checkpoint использует существующий безопасный `report.viewed` только при активном onboarding task;
+- product code, API/contracts, permissions, migrations и training data не менялись.
+
+## Backlog - SaaS billing
 
 Статус: `postponed`.
 
-SaaS-фундамент временно отложен по решению владельца продукта. Вернемся к нему после текущего этапа производительности, контрактов, QA и обсуждения модуля бронирования вместо Лунды.
+Коммерческая SaaS-модель Setly временно отложена по решению владельца продукта и не входит в multi-tenant CRM epic.
 
 Пункт про тренерский кабинет пока убран из ближайшего плана.
 
-Когда вернемся:
-
-- модель организации/клуба;
-- привязка всех бизнес-сущностей к клубу;
-- изоляция данных по клубам;
-- пользователь с доступом к одному или нескольким клубам;
-- роли внутри конкретного клуба;
-- миграция существующих данных в default club;
-- подготовка тарифов и ограничений;
-- техническая стратегия деплоя нескольких клубов.
+Когда вернемся: отдельно спроектировать тарифы, подписки организации на Setly, usage metering, SaaS invoices и коммерческие ограничения, не смешивая их с CRM-финансами, P&L, сертификатами, абонементами и предоплатами.
 
 ## Backlog - AI Telephony
 

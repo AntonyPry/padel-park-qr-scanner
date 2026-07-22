@@ -1,7 +1,18 @@
 'use strict';
 
+const {
+  createCapabilityTenantAttributionHooks,
+} = require('../src/tenant-context/model-attribution');
+const {
+  isTenantShiftsReportsEnabled,
+} = require('../src/tenant-context/capabilities');
+
 module.exports = (sequelize, DataTypes) => {
   const ShiftReportTemplate = sequelize.define('ShiftReportTemplate', {
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     name: {
       type: DataTypes.STRING,
       allowNull: false,
@@ -22,14 +33,6 @@ module.exports = (sequelize, DataTypes) => {
     },
     scheduleConfig: {
       type: DataTypes.JSON,
-      allowNull: true,
-    },
-    appliesToRole: {
-      type: DataTypes.STRING,
-      allowNull: true,
-    },
-    appliesToShiftType: {
-      type: DataTypes.STRING,
       allowNull: true,
     },
     gracePeriodMinutes: {
@@ -59,9 +62,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+  }, {
+    hooks: createCapabilityTenantAttributionHooks(
+      ['clubId'],
+      'ShiftReportTemplate',
+      isTenantShiftsReportsEnabled,
+    ),
   });
 
   ShiftReportTemplate.associate = (models) => {
+    ShiftReportTemplate.belongsTo(models.Club, { foreignKey: 'clubId' });
     ShiftReportTemplate.hasMany(models.ShiftReportTemplateItem, {
       as: 'items',
       foreignKey: 'templateId',

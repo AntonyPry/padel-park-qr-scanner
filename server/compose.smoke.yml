@@ -33,8 +33,8 @@ services:
       DB_HOST: mysql
       DB_PORT: "3306"
       DB_NAME: setly_smoke
-      DB_USER: setly_smoke
-      DB_PASSWORD: local-smoke-db-only
+      DB_USER: root
+      DB_PASSWORD: local-smoke-root-only
     command:
       - ./node_modules/.bin/sequelize-cli
       - db:migrate

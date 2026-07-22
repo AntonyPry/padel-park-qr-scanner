@@ -9,8 +9,28 @@ const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const clientSkillMapService = require('./client-skill-map.service');
 const certificatesService = require('./certificates.service');
+const {
+  buildClientPrepaymentSummary,
+  getOrganizationLookupPrepaymentSummary,
+} = require('./client-lookup-prepayment-summary.service');
 const subscriptionsService = require('./subscriptions.service');
 const trainingNotesService = require('./training-notes.service');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
+const {
+  resolveCallTaskAccessContext,
+} = require('./call-task-access-context.service');
+const {
+  isTenantBookingsCourtsEnabled,
+  isTenantClientBasesCallTasksEnabled,
+  isTenantClientMoneyInstrumentsEnabled,
+  isTenantAuditLogEnabled,
+} = require('../tenant-context/capabilities');
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 
 const CLIENT_ATTRIBUTES = [
@@ -21,6 +41,7 @@ const CLIENT_ATTRIBUTES = [
   'name',
   'phone',
   'phoneNormalized',
+  'birthDate',
   'source',
   'sourceId',
   'note',
@@ -157,6 +178,27 @@ function normalizeNote(note) {
   return value || null;
 }
 
+function normalizeBirthDate(value) {
+  if (value === undefined) return undefined;
+  if (value === null || String(value).trim() === '') return null;
+
+  const normalized = String(value).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw appError('Дата рождения должна быть в формате YYYY-MM-DD');
+  }
+
+  const parsed = new Date(`${normalized}T00:00:00.000Z`);
+  if (
+    Number.isNaN(parsed.getTime()) ||
+    parsed.toISOString().slice(0, 10) !== normalized ||
+    parsed.getTime() > Date.now()
+  ) {
+    throw appError('Укажите корректную дату рождения');
+  }
+
+  return normalized;
+}
+
 function normalizeOptionalIdentity(value) {
   const normalized = String(value || '').trim();
   return normalized || null;
@@ -211,6 +253,7 @@ function getClientSegment(stats) {
 function mapClient(row) {
   if (!row) return null;
   const raw = row.toJSON ? row.toJSON() : row;
+  const { organizationId: _organizationId, ...publicRaw } = raw;
   const visitCount = Number(raw.visitCount || 0);
   const stats = {
     firstVisitAt: raw.firstVisitAt || null,
@@ -224,12 +267,18 @@ function mapClient(row) {
   };
 
   return {
-    ...raw,
+    ...publicRaw,
     statusLabel: getClientStatus(raw),
     segment: getClientSegment(stats),
     stats,
     training,
   };
+}
+
+function clientWhere(context, where = {}) {
+  return context.scoped
+    ? { ...where, organizationId: context.organizationId }
+    : where;
 }
 
 function isTrainer(account) {
@@ -248,145 +297,6 @@ function canViewCertificates(account) {
   return ACCESS_MATRIX.certificatesView.includes(account?.role);
 }
 
-function toDate(value) {
-  if (!value) return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
-
-function daysUntil(value, now = new Date()) {
-  const date = toDate(value);
-  if (!date) return null;
-  return Math.ceil((date.getTime() - now.getTime()) / 86400000);
-}
-
-function formatShortDate(value) {
-  const date = toDate(value);
-  if (!date) return 'без даты';
-  return date.toLocaleDateString('ru-RU');
-}
-
-function buildSubscriptionWarning(subscription, now = new Date()) {
-  if (!subscription) return null;
-  if (subscription.status === 'expired') {
-    return {
-      id: `subscription-${subscription.id}-expired`,
-      level: 'danger',
-      text: `${subscription.typeName} истек ${formatShortDate(subscription.expiresAt)}`,
-      type: 'expired',
-    };
-  }
-  if (subscription.status === 'used') {
-    return {
-      id: `subscription-${subscription.id}-used`,
-      level: 'danger',
-      text: `${subscription.typeName} закончился`,
-      type: 'used',
-    };
-  }
-  if (subscription.status === 'canceled') {
-    return {
-      id: `subscription-${subscription.id}-canceled`,
-      level: 'muted',
-      text: `${subscription.typeName} отменен`,
-      type: 'canceled',
-    };
-  }
-
-  const daysLeft = daysUntil(subscription.expiresAt, now);
-  if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 14) {
-    return {
-      id: `subscription-${subscription.id}-expiring`,
-      level: 'warning',
-      text: `${subscription.typeName} истекает через ${daysLeft} дн.`,
-      type: 'expiring_soon',
-    };
-  }
-
-  if (
-    subscription.remainingSessions !== null &&
-    subscription.remainingSessions !== undefined &&
-    Number(subscription.remainingSessions) <= 1
-  ) {
-    return {
-      id: `subscription-${subscription.id}-low`,
-      level: 'warning',
-      text: `${subscription.typeName}: осталось ${subscription.remainingSessions} занятий`,
-      type: 'low_remaining',
-    };
-  }
-
-  return null;
-}
-
-function buildCertificateWarning(certificate, now = new Date()) {
-  if (!certificate) return null;
-  if (certificate.status === 'expired') {
-    return {
-      id: `certificate-${certificate.id}-expired`,
-      level: 'danger',
-      text: `Сертификат ${certificate.code} истек ${formatShortDate(certificate.expiresAt)}`,
-      type: 'expired',
-    };
-  }
-  if (certificate.status === 'redeemed') {
-    return {
-      id: `certificate-${certificate.id}-redeemed`,
-      level: 'muted',
-      text: `Сертификат ${certificate.code} погашен`,
-      type: 'redeemed',
-    };
-  }
-  if (certificate.status === 'canceled') {
-    return {
-      id: `certificate-${certificate.id}-canceled`,
-      level: 'muted',
-      text: `Сертификат ${certificate.code} отменен`,
-      type: 'canceled',
-    };
-  }
-
-  const daysLeft = daysUntil(certificate.expiresAt, now);
-  if (daysLeft !== null && daysLeft >= 0 && daysLeft <= 14) {
-    return {
-      id: `certificate-${certificate.id}-expiring`,
-      level: 'warning',
-      text: `Сертификат ${certificate.code} истекает через ${daysLeft} дн.`,
-      type: 'expiring_soon',
-    };
-  }
-
-  return null;
-}
-
-function buildClientPrepaymentSummary({
-  certificates = [],
-  subscriptions = [],
-} = {}) {
-  const now = new Date();
-  const activeSubscriptions = subscriptions.filter(
-    (subscription) => subscription.status === 'active',
-  );
-  const activeCertificates = certificates.filter(
-    (certificate) => certificate.status === 'active',
-  );
-  const subscriptionWarnings = subscriptions
-    .map((subscription) => buildSubscriptionWarning(subscription, now))
-    .filter(Boolean);
-  const certificateWarnings = certificates
-    .map((certificate) => buildCertificateWarning(certificate, now))
-    .filter(Boolean);
-
-  return {
-    activeCertificatesCount: activeCertificates.length,
-    activeSubscriptionsCount: activeSubscriptions.length,
-    certificateWarnings,
-    hasActiveCertificate: activeCertificates.length > 0,
-    hasActiveSubscription: activeSubscriptions.length > 0,
-    subscriptionWarnings,
-  };
-}
-
 function buildEmptyClientPrepaymentContext() {
   return {
     clientCertificates: [],
@@ -395,17 +305,21 @@ function buildEmptyClientPrepaymentContext() {
   };
 }
 
-async function getClientPrepaymentContext(clientId, account = null) {
+async function getClientPrepaymentContext(
+  clientId,
+  account = null,
+  tenant = null,
+) {
   const canSubscriptions = canViewClientSubscriptions(account);
   const canCertificates = canViewCertificates(account);
   const [clientSubscriptions, clientCertificates] = await Promise.all([
     canSubscriptions
-      ? subscriptionsService.listClientSubscriptions(clientId)
+      ? subscriptionsService.listClientSubscriptions(clientId, {}, tenant)
       : [],
     canCertificates
       ? certificatesService.listClientCertificates(clientId, {
           withRedemptions: true,
-        })
+        }, tenant)
       : [],
   ]);
 
@@ -489,6 +403,11 @@ function getClientIdentityLockKeys(data = {}, phoneNormalized = null) {
   });
 
   return Array.from(new Set(keys));
+}
+
+function scopeClientIdentityLockKeys(keys, context) {
+  if (!context.scoped) return keys;
+  return keys.map((key) => `organization:${context.organizationId}:${key}`);
 }
 
 async function withClientIdentityLocks(keys, callback) {
@@ -693,6 +612,11 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
 
   where.push('COALESCE(u.isTraining, 0) = 0');
 
+  if (options.context?.scoped) {
+    where.push('u.organizationId = :organizationId');
+    replacements.organizationId = options.context.organizationId;
+  }
+
   // Merged rows are technical tombstones. They never represent clients in list/search.
   where.push('u.mergedIntoUserId IS NULL');
 
@@ -760,6 +684,7 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
       SELECT 1
       FROM Users merged_alias
       WHERE merged_alias.mergedIntoUserId = u.id
+        AND merged_alias.organizationId = u.organizationId
         AND (
           merged_alias.name LIKE :q
           ${includePhoneSearch ? 'OR merged_alias.phone LIKE :q' : ''}
@@ -777,6 +702,7 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
         SELECT phoneNormalized
       FROM Users
         WHERE status = 'active'
+          AND organizationId = u.organizationId
           AND COALESCE(isTraining, 0) = 0
           AND mergedIntoUserId IS NULL
           AND phoneNormalized IS NOT NULL
@@ -900,9 +826,13 @@ function buildClientListSql(query, paging, countOnly = false, options = {}) {
   };
 }
 
-async function listClients(query = {}, account = null) {
+async function listClients(query = {}, account = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const paging = parsePaging(query);
-  const sqlOptions = { includePhoneSearch: !isTrainer(account) };
+  const sqlOptions = {
+    context,
+    includePhoneSearch: !isTrainer(account),
+  };
   const [listQuery, countQuery] = [
     buildClientListSql(query, paging, false, sqlOptions),
     buildClientListSql(query, paging, true, sqlOptions),
@@ -917,7 +847,7 @@ async function listClients(query = {}, account = null) {
       replacements: countQuery.replacements,
       type: db.Sequelize.QueryTypes.SELECT,
     }),
-    getSources(),
+    getSources(tenant),
   ]);
 
   const total = Number(countRows[0]?.total || 0);
@@ -932,11 +862,14 @@ async function listClients(query = {}, account = null) {
 }
 
 async function listClientsForSnapshot(query = {}, options = {}) {
+  const context = options.context || await resolveClientAccessContext(options.tenant || null);
   const limit = Math.min(
     20000,
     Math.max(1, Number.parseInt(options.limit, 10) || 5000),
   );
-  const listQuery = buildClientListSql(query, { limit, offset: 0 });
+  const listQuery = buildClientListSql(query, { limit, offset: 0 }, false, {
+    context,
+  });
   const rows = await db.sequelize.query(listQuery.sql, {
     replacements: listQuery.replacements,
     type: db.Sequelize.QueryTypes.SELECT,
@@ -945,9 +878,10 @@ async function listClientsForSnapshot(query = {}, options = {}) {
   return rows.map(mapClient);
 }
 
-async function countClients(query = {}) {
+async function countClients(query = {}, tenant = null, options = {}) {
+  const context = options.context || await resolveClientAccessContext(tenant);
   const paging = parsePaging({ ...query, page: 1, pageSize: 10 });
-  const countQuery = buildClientListSql(query, paging, true);
+  const countQuery = buildClientListSql(query, paging, true, { context });
   const rows = await db.sequelize.query(countQuery.sql, {
     replacements: countQuery.replacements,
     type: db.Sequelize.QueryTypes.SELECT,
@@ -985,39 +919,81 @@ function mapSavedView(row) {
   };
 }
 
-async function listSavedViews(account) {
+async function resolveSavedViewContext(account, tenant, options = {}) {
   assertSavedViewsAccount(account);
+  const context = await resolveCallTaskAccessContext(tenant, {
+    ...options,
+    accountId: account.id,
+  });
+  if (context.readScoped && Number(context.accountId) !== Number(account.id)) {
+    throw appError('Представление клиентов не найдено', 404);
+  }
+  if (!context.membershipId) {
+    throw appError('Представление клиентов недоступно', 404);
+  }
+  return context;
+}
+
+function savedViewWhere(account, context, values = {}) {
+  const where = { ...values, accountId: account.id };
+  if (!context.readScoped) return where;
+  return {
+    ...where,
+    clubId: context.clubId,
+    membershipId: context.membershipId,
+    organizationId: context.organizationId,
+  };
+}
+
+async function listSavedViews(account, tenant = null) {
+  assertSavedViewsAccount(account);
+  const context = await resolveSavedViewContext(account, tenant);
   const views = await db.ClientSavedView.findAll({
     order: [['name', 'ASC']],
-    where: { accountId: account.id },
+    where: savedViewWhere(account, context),
   });
 
   return views.map(mapSavedView);
 }
 
-async function getSavedViewOrFail(account, id) {
+async function getSavedViewOrFail(account, id, tenant = null, options = {}) {
   assertSavedViewsAccount(account);
+  const context = options.context || await resolveSavedViewContext(
+    account,
+    tenant,
+    options,
+  );
   const view = await db.ClientSavedView.findOne({
-    where: {
-      accountId: account.id,
+    lock: options.lock,
+    transaction: options.transaction,
+    where: savedViewWhere(account, context, {
       id: Number(id),
-    },
+    }),
   });
 
   if (!view) throw appError('Представление клиентов не найдено', 404);
   return view;
 }
 
-async function createSavedView(account, data) {
+async function createSavedView(account, data, tenant = null) {
   assertSavedViewsAccount(account);
   const name = normalizeSavedViewName(data.name);
   const filters = normalizeClientViewFilters(data.filters);
 
   try {
-    const view = await db.ClientSavedView.create({
-      accountId: account.id,
-      filters,
-      name,
+    const view = await db.sequelize.transaction(async (transaction) => {
+      const context = await resolveSavedViewContext(account, tenant, {
+        lock: true,
+        transaction,
+      });
+      return db.ClientSavedView.create({
+        accountId: account.id,
+        clubId: context.clubId,
+        filters,
+        membershipId: context.membershipId,
+        name,
+        organizationId: context.organizationId,
+      }, { transaction });
     });
 
     return mapSavedView(view);
@@ -1029,15 +1005,27 @@ async function createSavedView(account, data) {
   }
 }
 
-async function updateSavedView(account, id, data) {
-  const view = await getSavedViewOrFail(account, id);
-  const payload = {};
-
-  if ('name' in data) payload.name = normalizeSavedViewName(data.name);
-  if ('filters' in data) payload.filters = normalizeClientViewFilters(data.filters);
-
+async function updateSavedView(account, id, data, tenant = null) {
   try {
-    await view.update(payload);
+    const view = await db.sequelize.transaction(async (transaction) => {
+      const context = await resolveSavedViewContext(account, tenant, {
+        lock: true,
+        transaction,
+      });
+      const lockedView = await getSavedViewOrFail(account, id, tenant, {
+        context,
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+      });
+      const payload = {};
+      if ('name' in data) payload.name = normalizeSavedViewName(data.name);
+      if ('filters' in data) {
+        payload.filters = normalizeClientViewFilters(data.filters);
+      }
+      await lockedView.update(payload, { transaction });
+      return lockedView;
+    });
+    return mapSavedView(view);
   } catch (error) {
     if (error.name === 'SequelizeUniqueConstraintError') {
       throw appError('Представление с таким названием уже существует', 409);
@@ -1045,19 +1033,28 @@ async function updateSavedView(account, id, data) {
     throw error;
   }
 
-  return mapSavedView(view);
 }
 
-async function deleteSavedView(account, id) {
-  const view = await getSavedViewOrFail(account, id);
-  await view.destroy();
+async function deleteSavedView(account, id, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveSavedViewContext(account, tenant, {
+      lock: true,
+      transaction,
+    });
+    const view = await getSavedViewOrFail(account, id, tenant, {
+      context,
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    await view.destroy({ transaction });
+  });
   return { success: true };
 }
 
-async function getSources() {
+async function getSources(tenant = null) {
   const rows = await referencesService.list('client-sources', {
     status: 'active',
-  });
+  }, tenant);
 
   return rows.map((row) => row.name).filter(Boolean);
 }
@@ -1080,12 +1077,14 @@ async function getClientStats(clientId) {
   };
 }
 
-async function getClientOrFail(id) {
-  const where = { id };
+async function getClientOrFail(id, context, options = {}) {
+  const where = clientWhere(context, { id });
   where.mergedIntoUserId = null;
 
   const client = await db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
+    lock: options.lock,
+    transaction: options.transaction,
     where,
   });
 
@@ -1093,7 +1092,7 @@ async function getClientOrFail(id) {
   return client;
 }
 
-async function getDuplicateCandidates(client) {
+async function getDuplicateCandidates(client, context) {
   const conditions = [];
   if (client.phoneNormalized) conditions.push({ phoneNormalized: client.phoneNormalized });
   CLIENT_IDENTITY_FIELDS.forEach((field) => {
@@ -1103,14 +1102,14 @@ async function getDuplicateCandidates(client) {
 
   const candidates = await db.User.findAll({
     attributes: CLIENT_ATTRIBUTES,
-    where: {
+    where: clientWhere(context, {
       id: {
         [Op.ne]: client.id,
       },
       [Op.or]: conditions,
       status: { [Op.in]: ['active', 'archived'] },
       mergedIntoUserId: null,
-    },
+    }),
     order: [
       [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
       ['createdAt', 'DESC'],
@@ -1175,10 +1174,12 @@ async function getStatsByClientIds(ids) {
   );
 }
 
-async function listTrainingNotes(clientId) {
+async function listTrainingNotes(clientId, actor, tenant = null) {
   return trainingNotesService.listByClient(clientId, {
+    actor,
     limit: 50,
     skipClientCheck: true,
+    tenant,
   });
 }
 
@@ -1254,12 +1255,21 @@ async function listClientTelephonyCalls(clientId, account, options = {}) {
   });
 }
 
-async function getClientDetails(id, account = null) {
-  const client = await getClientOrFail(id);
+async function getClientDetails(id, account = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
+  const includeClubDetails = tenant?.scope === 'club';
+  let bookingContext = null;
+  if (isTenantBookingsCourtsEnabled()) {
+    if (tenant?.scope === 'club') {
+      bookingContext = await resolveBookingAccessContext(tenant);
+    }
+  }
+  const client = await getClientOrFail(id, context);
 
   await onboardingService.recordEventSafe(account, 'client.viewed', {
     entityId: client.id,
     entityType: 'client',
+    tenant,
     payload: {
       clientId: client.id,
       isMerged: Boolean(client.mergedIntoUserId),
@@ -1282,18 +1292,28 @@ async function getClientDetails(id, account = null) {
   ] = await Promise.all([
     getClientStats(client.id),
     includeOperationalHistory ? listClientVisits(client.id, { limit: 50 }) : [],
-    isTrainer(account) ? [] : getDuplicateCandidates(client),
-    canViewTrainingNotes(account) ? listTrainingNotes(client.id) : [],
-    canViewTrainingNotes(account)
-      ? clientSkillMapService.listForClient(client.id, account)
+    isTrainer(account) ? [] : getDuplicateCandidates(client, context),
+    canViewTrainingNotes(account) && includeClubDetails
+      ? listTrainingNotes(client.id, account, tenant)
       : [],
-    includeOperationalHistory ? listClientBookings(client.id, { limit: 50 }) : [],
-    includeOperationalHistory ? listClientBookingSeries(client.id, { limit: 30 }) : [],
-    includeOperationalHistory ? getClientBookingStats(client.id) : getEmptyBookingStats(),
-    includeOperationalHistory ? listClientActiveCallTasks(client.id, account) : [],
-    includeOperationalHistory ? listClientTelephonyCalls(client.id, account, { limit: 30 }) : [],
+    canViewTrainingNotes(account)
+      ? clientSkillMapService.listForClient(client.id, account, { tenant })
+      : [],
+    includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
+      ? listClientBookings(client.id, { limit: 50 }, bookingContext)
+      : [],
+    includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
+      ? listClientBookingSeries(client.id, { limit: 30 }, bookingContext)
+      : [],
+    includeOperationalHistory && (!isTenantBookingsCourtsEnabled() || bookingContext)
+      ? getClientBookingStats(client.id, bookingContext)
+      : getEmptyBookingStats(),
     includeOperationalHistory
-      ? getClientPrepaymentContext(client.id, account)
+      ? listClientActiveCallTasks(client.id, account, context)
+      : [],
+    [],
+    includeOperationalHistory && includeClubDetails
+      ? getClientPrepaymentContext(client.id, account, tenant)
       : buildEmptyClientPrepaymentContext(),
   ]);
   const { clientCertificates, clientSubscriptions, prepaymentSummary } =
@@ -1332,6 +1352,7 @@ async function getClientDetails(id, account = null) {
           trainingNotes,
           telephonyCalls,
           visits,
+          clientContext: context,
         })
       : [],
     telephonyCalls,
@@ -1373,18 +1394,24 @@ async function listClientVisits(clientId, options = {}) {
   });
 }
 
-async function getClientBookingStats(clientId) {
+async function getClientBookingStats(clientId, context = null) {
   if (!db.Booking) return getEmptyBookingStats();
 
   const now = new Date();
-  const activeWhere = {
+  const activeWhere = bookingTenantWhere(context, {
     isTraining: false,
     userId: clientId,
     status: { [Op.ne]: 'canceled' },
-  };
+  }, { force: Boolean(context) });
   const [totalCount, activeCount, upcomingCount, canceledCount, paidAmount, plannedAmount, nextBooking] =
     await Promise.all([
-      db.Booking.count({ where: { userId: clientId, isTraining: false } }),
+      db.Booking.count({
+        where: bookingTenantWhere(
+          context,
+          { userId: clientId, isTraining: false },
+          { force: Boolean(context) },
+        ),
+      }),
       db.Booking.count({ where: activeWhere }),
       db.Booking.count({
         where: {
@@ -1393,15 +1420,16 @@ async function getClientBookingStats(clientId) {
         },
       }),
       db.Booking.count({
-        where: {
+        where: bookingTenantWhere(context, {
           userId: clientId,
           status: 'canceled',
           isTraining: false,
-        },
+        }, { force: Boolean(context) }),
       }),
       db.Booking.sum('paidAmount', { where: activeWhere }),
       db.Booking.sum('price', { where: activeWhere }),
       db.Booking.findOne({
+        attributes: ['startsAt'],
         where: {
           ...activeWhere,
           startsAt: { [Op.gte]: now },
@@ -1421,14 +1449,31 @@ async function getClientBookingStats(clientId) {
   };
 }
 
-async function listClientBookings(clientId, options = {}) {
+async function listClientBookings(clientId, options = {}, context = null) {
   if (!db.Booking) return [];
 
   const limit = Math.min(200, Number(options.limit) || 50);
   const bookings = await db.Booking.findAll({
-    where: { userId: clientId },
+    attributes: {
+      exclude: [
+        'organizationId',
+        'clubId',
+        'creationKeyHash',
+        'creationPayloadHash',
+        'lastMutationKeyHash',
+        'lastMutationPayloadHash',
+      ],
+    },
+    where: bookingTenantWhere(
+      context,
+      { userId: clientId },
+      { force: Boolean(context) },
+    ),
     include: [
-      db.Court,
+      {
+        attributes: { exclude: ['organizationId', 'clubId'] },
+        model: db.Court,
+      },
       {
         as: 'series',
         model: db.BookingSeries,
@@ -1442,13 +1487,30 @@ async function listClientBookings(clientId, options = {}) {
   return bookings.map(mapClientBooking);
 }
 
-async function listClientBookingSeries(clientId, options = {}) {
+async function listClientBookingSeries(clientId, options = {}, context = null) {
   if (!db.BookingSeries) return [];
 
   const limit = Math.min(100, Number(options.limit) || 30);
   const rows = await db.BookingSeries.findAll({
-    where: { userId: clientId },
-    include: [db.Court],
+    attributes: {
+      exclude: [
+        'organizationId',
+        'clubId',
+        'creationKeyHash',
+        'creationPayloadHash',
+        'lastMutationKeyHash',
+        'lastMutationPayloadHash',
+      ],
+    },
+    where: bookingTenantWhere(
+      context,
+      { userId: clientId },
+      { force: Boolean(context) },
+    ),
+    include: [{
+      attributes: { exclude: ['organizationId', 'clubId'] },
+      model: db.Court,
+    }],
     order: [
       ['status', 'ASC'],
       ['weekday', 'ASC'],
@@ -1522,15 +1584,108 @@ function summarizeClientAudit(raw) {
   return `Изменены поля: ${Array.from(new Set(fields)).join(', ')}`;
 }
 
-async function listClientCallTimeline(clientId, account) {
+async function resolveClientCallTaskWhere(clientContext) {
+  if (!isTenantClientBasesCallTasksEnabled()) return {};
+  if (!clientContext?.scoped || !clientContext.membershipId) {
+    const error = appError('Контекст организации недоступен', 404);
+    error.code = 'TENANT_CONTEXT_DENIED';
+    throw error;
+  }
+
+  const membership = await db.Membership.findOne({
+    attributes: ['id', 'role'],
+    where: {
+      id: clientContext.membershipId,
+      organizationId: clientContext.organizationId,
+      status: 'active',
+    },
+  });
+  if (!membership) throw appError('Контекст организации недоступен', 404);
+
+  let clubIds = [];
+  if (membership.role === 'owner') {
+    const clubs = await db.Club.findAll({
+      attributes: ['id'],
+      raw: true,
+      where: {
+        organizationId: clientContext.organizationId,
+        status: 'active',
+      },
+    });
+    clubIds = clubs.map((club) => Number(club.id));
+  } else {
+    const accesses = await db.MembershipClubAccess.findAll({
+      attributes: ['clubId'],
+      include: [
+        {
+          as: 'Club',
+          attributes: [],
+          model: db.Club,
+          required: true,
+          where: {
+            organizationId: clientContext.organizationId,
+            status: 'active',
+          },
+        },
+      ],
+      raw: true,
+      where: {
+        membershipId: membership.id,
+        organizationId: clientContext.organizationId,
+        status: 'active',
+      },
+    });
+    clubIds = accesses.map((access) => Number(access.clubId));
+  }
+
+  return {
+    clubId: { [Op.in]: clubIds.length > 0 ? clubIds : [-1] },
+    organizationId: clientContext.organizationId,
+  };
+}
+
+function accountMembershipInclude(organizationId) {
+  return [
+    {
+      model: db.Membership,
+      attributes: ['id', 'staffId'],
+      required: false,
+      where: { organizationId, status: 'active' },
+      include: [
+        {
+          model: db.Staff,
+          attributes: ['id', 'name'],
+          required: false,
+        },
+      ],
+    },
+  ];
+}
+
+function mapTenantAccount(account) {
+  if (!account) return null;
+  const raw = account.toJSON ? account.toJSON() : account;
+  const staff = (raw.Memberships || [])[0]?.Staff || null;
+  return mapAccount({ ...raw, Staff: staff });
+}
+
+async function listClientCallTimeline(clientId, account, clientContext = null) {
   if (!canViewCallTimeline(account)) return [];
+  const taskWhere = await resolveClientCallTaskWhere(clientContext);
 
   const rows = await db.CallTaskClient.findAll({
     include: [
       {
         model: db.CallTask,
         as: 'callTask',
-        attributes: ['id', 'title', 'status', 'dueAt', 'updatedAt'],
+        attributes: [
+          'id',
+          'clientBaseId',
+          'title',
+          'status',
+          'dueAt',
+          'updatedAt',
+        ],
         include: [
           {
             model: db.ClientBase,
@@ -1538,25 +1693,27 @@ async function listClientCallTimeline(clientId, account) {
             attributes: ['id', 'name'],
           },
         ],
+        required: true,
+        where: taskWhere,
       },
       {
         model: db.CallTaskAttempt,
         as: 'attempts',
+        separate: true,
+        order: [['createdAt', 'DESC']],
         include: [
           {
             model: db.Account,
             as: 'actorAccount',
             attributes: ['id', 'email', 'role', 'staffId'],
-            include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+            include: accountMembershipInclude(clientContext?.organizationId),
           },
         ],
       },
     ],
     limit: 25,
-    order: [
-      ['updatedAt', 'DESC'],
-      [{ model: db.CallTaskAttempt, as: 'attempts' }, 'createdAt', 'DESC'],
-    ],
+    order: [['updatedAt', 'DESC']],
+    subQuery: false,
     where: { userId: clientId },
   });
 
@@ -1582,7 +1739,7 @@ async function listClientCallTimeline(clientId, account) {
     (raw.attempts || []).forEach((attempt) => {
       items.push(
         createTimelineItem({
-          actor: mapAccount(attempt.actorAccount),
+          actor: mapTenantAccount(attempt.actorAccount),
           description: attempt.summary || '',
           id: `call-attempt-${attempt.id}`,
           meta: {
@@ -1601,8 +1758,9 @@ async function listClientCallTimeline(clientId, account) {
   });
 }
 
-async function listClientActiveCallTasks(clientId, account) {
+async function listClientActiveCallTasks(clientId, account, clientContext = null) {
   if (!canViewCallTimeline(account)) return [];
+  const taskWhere = await resolveClientCallTaskWhere(clientContext);
 
   const rows = await db.CallTaskClient.findAll({
     include: [
@@ -1629,11 +1787,12 @@ async function listClientActiveCallTasks(clientId, account) {
             model: db.Account,
             as: 'assignedToAccount',
             attributes: ['id', 'email', 'role', 'staffId'],
-            include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+            include: accountMembershipInclude(clientContext?.organizationId),
           },
         ],
         required: true,
         where: {
+          ...taskWhere,
           status: { [Op.in]: ['backlog', 'in_progress'] },
         },
       },
@@ -1660,7 +1819,7 @@ async function listClientActiveCallTasks(clientId, account) {
     const task = raw.callTask;
 
     return {
-      assignedTo: mapAccount(task?.assignedToAccount),
+      assignedTo: mapTenantAccount(task?.assignedToAccount),
       clientBase: task?.clientBase
         ? {
             id: task.clientBase.id,
@@ -1681,8 +1840,15 @@ async function listClientActiveCallTasks(clientId, account) {
   });
 }
 
-async function listClientAuditTimeline(clientId, account) {
+async function listClientAuditTimeline(clientId, account, clientContext = null) {
   if (!canViewClientAuditTimeline(account)) return [];
+
+  const organizationId = isTenantAuditLogEnabled()
+    ? Number(clientContext?.organizationId)
+    : null;
+  if (isTenantAuditLogEnabled() && !Number.isSafeInteger(organizationId)) {
+    throw appError('Контекст организации недоступен', 404);
+  }
 
   const logs = await db.AuditLog.findAll({
     include: [
@@ -1690,7 +1856,12 @@ async function listClientAuditTimeline(clientId, account) {
         model: db.Account,
         as: 'account',
         attributes: ['id', 'email', 'role', 'staffId'],
-        include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+        include: [{
+          model: db.Staff,
+          attributes: ['id', 'name'],
+          required: false,
+          where: organizationId ? { organizationId } : undefined,
+        }],
       },
     ],
     limit: 25,
@@ -1698,13 +1869,16 @@ async function listClientAuditTimeline(clientId, account) {
     where: {
       entityId: String(clientId),
       entityType: 'client',
+      ...(organizationId ? { organizationId } : {}),
     },
   });
 
   return logs.map((log) => {
     const raw = log.toJSON();
     return createTimelineItem({
-      actor: mapAccount(raw.account),
+      actor: mapAccount(raw.account
+        ? { ...raw.account, role: raw.role || raw.account.role }
+        : null),
       description: summarizeClientAudit(raw),
       id: `audit-${raw.id}`,
       meta: {
@@ -1903,11 +2077,12 @@ async function listClientTimeline(
     visits,
     trainingNotes,
     telephonyCalls,
+    clientContext,
   } = {},
 ) {
   const [callItems, auditItems] = await Promise.all([
-    listClientCallTimeline(clientId, account),
-    listClientAuditTimeline(clientId, account),
+    listClientCallTimeline(clientId, account, clientContext),
+    listClientAuditTimeline(clientId, account, clientContext),
   ]);
   const visitItems = (visits || []).map((visit) =>
     createTimelineItem({
@@ -2048,10 +2223,19 @@ async function mapClientWithCurrentStats(client, account = null, options = {}) {
   );
   if (!options.includePrepaymentSummary) return mappedClient;
 
-  const { prepaymentSummary } = await getClientPrepaymentContext(
-    client.id,
-    account,
-  );
+  const prepaymentSummary =
+    options.tenant?.scope === 'organization' &&
+    isTenantClientMoneyInstrumentsEnabled()
+      ? await getOrganizationLookupPrepaymentSummary({
+          account,
+          clientId: client.id,
+          tenant: options.tenant,
+        })
+      : (await getClientPrepaymentContext(
+          client.id,
+          account,
+          options.tenant,
+        )).prepaymentSummary;
   return {
     ...mappedClient,
     prepaymentSummary,
@@ -2063,6 +2247,7 @@ async function lookupByPhone(
   excludeClientId = null,
   account = null,
   options = {},
+  tenant = null,
 ) {
   if (isTrainer(account)) {
     throw appError('Тренеру недоступен поиск клиентов по телефону', 403);
@@ -2070,12 +2255,13 @@ async function lookupByPhone(
 
   const phoneNormalized = getPhoneLookupDigits(phone);
   if (phoneNormalized.length !== 10) return null;
+  const context = await resolveClientAccessContext(tenant);
 
-  const where = {
+  const where = clientWhere(context, {
     isTraining: false,
     phoneNormalized,
     mergedIntoUserId: null,
-  };
+  });
   if (options.includeArchived) {
     where.status = { [Op.in]: ['active', 'archived'] };
   } else {
@@ -2097,24 +2283,32 @@ async function lookupByPhone(
   if (!client) return null;
   return mapClientWithCurrentStats(client, account, {
     includePrepaymentSummary: true,
+    tenant,
   });
 }
 
-async function findExistingByIdentity(field, value, excludeClientId = null) {
+async function findExistingByIdentity(
+  field,
+  value,
+  excludeClientId = null,
+  context,
+  transaction = undefined,
+) {
   const normalizedValue = normalizeOptionalIdentity(value);
   if (!normalizedValue) return null;
 
-  const where = {
+  const where = clientWhere(context, {
     [field]: normalizedValue,
     isTraining: false,
     mergedIntoUserId: null,
-  };
+  });
   if (excludeClientId) {
     where.id = { [Op.ne]: Number(excludeClientId) };
   }
 
   const client = await db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
+    transaction,
     where,
     order: [
       [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
@@ -2122,21 +2316,29 @@ async function findExistingByIdentity(field, value, excludeClientId = null) {
     ],
   });
 
-  return client ? resolveCanonicalClient(client) : null;
+  return client
+    ? resolveCanonicalClient(client, context, { transaction })
+    : null;
 }
 
-async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
-  const where = {
+async function findExistingByPhone(
+  phoneNormalized,
+  excludeClientId = null,
+  context,
+  transaction = undefined,
+) {
+  const where = clientWhere(context, {
     isTraining: false,
     phoneNormalized,
     mergedIntoUserId: null,
-  };
+  });
   if (excludeClientId) {
     where.id = { [Op.ne]: Number(excludeClientId) };
   }
 
   return db.User.findOne({
     attributes: CLIENT_ATTRIBUTES,
+    transaction,
     where,
     order: [
       [db.Sequelize.literal("CASE WHEN status = 'active' THEN 0 ELSE 1 END"), 'ASC'],
@@ -2145,13 +2347,24 @@ async function findExistingByPhone(phoneNormalized, excludeClientId = null) {
   });
 }
 
-async function assertIdentityAvailable(data, excludeClientId = null) {
+async function assertIdentityAvailable(
+  data,
+  excludeClientId = null,
+  context,
+  transaction = undefined,
+) {
   for (const field of CLIENT_IDENTITY_FIELDS) {
     if (!(field in data)) continue;
     const value = normalizeOptionalIdentity(data[field]);
     if (!value) continue;
 
-    const existing = await findExistingByIdentity(field, value, excludeClientId);
+    const existing = await findExistingByIdentity(
+      field,
+      value,
+      excludeClientId,
+      context,
+      transaction,
+    );
     if (!existing) continue;
 
     const isArchived = existing.status === 'archived';
@@ -2173,26 +2386,83 @@ async function assertIdentityAvailable(data, excludeClientId = null) {
   }
 }
 
-async function generateWebId() {
+async function generateWebId(context, transaction = undefined) {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const webId = `web_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
-    const existing = await findExistingByIdentity('webId', webId);
+    const existing = await findExistingByIdentity(
+      'webId',
+      webId,
+      null,
+      context,
+      transaction,
+    );
     if (!existing) return webId;
   }
 
   throw appError('Не удалось сгенерировать уникальный WEB ID клиента');
 }
 
-async function createClient(data, actor = null) {
+async function resolveClientSourceForMutation(
+  data,
+  context,
+  transaction,
+  { allowArchived = false } = {},
+) {
+  const where = { organizationId: context.organizationId };
+  if (data.sourceId) {
+    where.id = Number(data.sourceId);
+  } else {
+    where.name = String(data.source || 'Ресепшн (Админ)')
+      .trim()
+      .replace(/\s+/g, ' ');
+  }
+  if (!allowArchived) where.status = 'active';
+
+  const source = await db.ClientSource.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where,
+  });
+  if (!source) throw appError('Источник клиента не найден в справочнике', 404);
+  return source;
+}
+
+async function createClientWithEventResult(
+  data,
+  actor = null,
+  { onboardingContext, tenant = null } = {},
+) {
+  const context = await resolveClientAccessContext(tenant);
   const name = normalizeClientName(data.name);
-  const sourceRef = await referencesService.getClientSourceByInput(data);
   const { phone, phoneNormalized } = normalizePhonePayload(data.phone);
-  const trainingMarker = await onboardingService.getTrainingDataMarker(actor);
-  return withClientIdentityLocks(
-    getClientIdentityLockKeys(data, phoneNormalized),
-    async () => {
-      const existing = await findExistingByPhone(phoneNormalized);
-      await assertIdentityAvailable(data);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(actor, tenant);
+  const client = await withClientIdentityLocks(
+    scopeClientIdentityLockKeys(
+      getClientIdentityLockKeys(data, phoneNormalized),
+      context,
+    ),
+    () => db.sequelize.transaction(async (transaction) => {
+      const writeContext = await resolveClientAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
+      const sourceRef = await resolveClientSourceForMutation(
+        data,
+        writeContext,
+        transaction,
+      );
+      const existing = await findExistingByPhone(
+        phoneNormalized,
+        null,
+        writeContext,
+        transaction,
+      );
+      await assertIdentityAvailable(
+        data,
+        null,
+        writeContext,
+        transaction,
+      );
 
       if (existing) {
         const isArchived = existing.status === 'archived';
@@ -2214,32 +2484,48 @@ async function createClient(data, actor = null) {
       CLIENT_IDENTITY_FIELDS.forEach((field) => {
         if (field in data) identityPayload[field] = normalizeOptionalIdentity(data[field]);
       });
-      if (!identityPayload.webId) identityPayload.webId = await generateWebId();
+      if (!identityPayload.webId) {
+        identityPayload.webId = await generateWebId(writeContext, transaction);
+      }
 
-      const client = await db.User.create({
-        ...identityPayload,
-        name,
-        phone,
-        phoneNormalized,
-        source: sourceRef.name,
-        sourceId: sourceRef.id,
-        note: normalizeNote(data.note),
-        status: 'active',
-        ...trainingMarker,
-      });
+      return db.User.create(
+        {
+          ...identityPayload,
+          organizationId: writeContext.organizationId,
+          name,
+          phone,
+          phoneNormalized,
+          birthDate: normalizeBirthDate(data.birthDate) ?? null,
+          source: sourceRef.name,
+          sourceId: sourceRef.id,
+          note: normalizeNote(data.note),
+          status: 'active',
+          ...trainingMarker,
+        },
+        { transaction },
+      );
+    }),
+  );
 
-      await clientSkillMapService.syncActiveSkillsForClient(client);
-
-      const result = await getClientDetails(client.id, actor);
-      await onboardingService.recordEventSafe(actor, 'client.created', {
-        entityId: result.client?.id || client.id,
-        entityType: 'client',
-        payload: result.client || result,
-      });
-
-      return result;
+  await clientSkillMapService.syncActiveSkillsForClient(client, { tenant });
+  const result = await getClientDetails(client.id, actor, tenant);
+  const onboardingEventResult = await onboardingService.recordEventSafe(
+    actor,
+    'client.created',
+    {
+      entityId: result.client?.id || client.id,
+      entityType: 'client',
+      onboardingContext,
+      tenant,
+      payload: result.client || result,
     },
   );
+  return { onboardingEventResult, result };
+}
+
+async function createClient(data, actor = null, tenant = null) {
+  const outcome = await createClientWithEventResult(data, actor, { tenant });
+  return outcome.result;
 }
 
 async function registerClientFromMessenger({
@@ -2248,31 +2534,54 @@ async function registerClientFromMessenger({
   name,
   phone: rawPhone,
   source,
+  tenant = null,
 }) {
+  const context = await resolveClientAccessContext(tenant);
   const messengerField = messenger === 'telegram' ? 'telegramId' : 'vkId';
   if (!externalId) throw appError('Не указан идентификатор мессенджера');
 
   const fullName = normalizeClientName(name);
-  const sourceRef = await referencesService.getClientSourceByInput({ source });
   const { phone, phoneNormalized } = normalizePhonePayload(rawPhone);
   const externalIdValue = String(externalId);
 
-  return withClientIdentityLocks(
-    getClientIdentityLockKeys(
-      { [messengerField]: externalIdValue },
-      phoneNormalized,
+  const result = await withClientIdentityLocks(
+    scopeClientIdentityLockKeys(
+      getClientIdentityLockKeys(
+        { [messengerField]: externalIdValue },
+        phoneNormalized,
+      ),
+      context,
     ),
-    async () => {
+    () => db.sequelize.transaction(async (transaction) => {
+      const writeContext = await resolveClientAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
+      const sourceRef = await resolveClientSourceForMutation(
+        { source },
+        writeContext,
+        transaction,
+      );
       const [byPhone, byMessengerRaw] = await Promise.all([
-        findExistingByPhone(phoneNormalized),
+        findExistingByPhone(
+          phoneNormalized,
+          null,
+          writeContext,
+          transaction,
+        ),
         db.User.findOne({
           attributes: CLIENT_ATTRIBUTES,
-          where: { [messengerField]: externalIdValue },
+          transaction,
+          where: clientWhere(writeContext, {
+            [messengerField]: externalIdValue,
+          }),
           order: [['createdAt', 'DESC']],
         }),
       ]);
       const byMessenger = byMessengerRaw
-        ? await resolveCanonicalClient(byMessengerRaw)
+        ? await resolveCanonicalClient(byMessengerRaw, writeContext, {
+          transaction,
+        })
         : null;
 
       if (byMessenger?.status === 'archived') {
@@ -2322,68 +2631,110 @@ async function registerClientFromMessenger({
           );
         }
 
-        await existing.update({
+        await existing.update(
+          {
+            [messengerField]: externalIdValue,
+            name: fullName,
+            phone,
+            phoneNormalized,
+            source: sourceRef.name,
+            sourceId: sourceRef.id,
+            status: 'active',
+          },
+          { transaction },
+        );
+
+        return { client: existing, created: false };
+      }
+
+      const client = await db.User.create(
+        {
           [messengerField]: externalIdValue,
+          organizationId: writeContext.organizationId,
           name: fullName,
           phone,
           phoneNormalized,
           source: sourceRef.name,
           sourceId: sourceRef.id,
           status: 'active',
-        });
+        },
+        { transaction },
+      );
 
-        return getClientDetails(existing.id);
-      }
-
-      const client = await db.User.create({
-        [messengerField]: externalIdValue,
-        name: fullName,
-        phone,
-        phoneNormalized,
-        source: sourceRef.name,
-        sourceId: sourceRef.id,
-        status: 'active',
-      });
-
-      await clientSkillMapService.syncActiveSkillsForClient(client);
-
-      return getClientDetails(client.id);
-    },
+      return { client, created: true };
+    }),
   );
+
+  if (result.created) {
+    await clientSkillMapService.syncActiveSkillsForClientFromProvider(
+      result.client,
+      { tenant },
+    );
+  }
+  return getClientDetails(result.client.id, null, tenant);
 }
 
-async function updateClient(id, data, actor = null) {
+async function updateClient(id, data, actor = null, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const normalizedPhonePayload = 'phone' in data ? normalizePhonePayload(data.phone) : null;
 
-  return withClientIdentityLocks(
-    getClientIdentityLockKeys(data, normalizedPhonePayload?.phoneNormalized),
-    async () => updateClientAfterIdentityLock(id, data, normalizedPhonePayload, actor),
+  const clientId = await withClientIdentityLocks(
+    scopeClientIdentityLockKeys(
+      getClientIdentityLockKeys(data, normalizedPhonePayload?.phoneNormalized),
+      context,
+    ),
+    () => db.sequelize.transaction(async (transaction) => {
+      const writeContext = await resolveClientAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
+      return updateClientAfterIdentityLock(
+        id,
+        data,
+        normalizedPhonePayload,
+        writeContext,
+        transaction,
+      );
+    }),
   );
+  return getClientDetails(clientId, actor, tenant);
 }
 
 async function updateClientAfterIdentityLock(
   id,
   data,
   normalizedPhonePayload = null,
-  actor = null,
+  context,
+  transaction,
 ) {
-  const client = await getClientOrFail(id);
+  const client = await getClientOrFail(id, context, {
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+  });
   const payload = {};
 
   if ('name' in data) payload.name = normalizeClientName(data.name);
   if ('source' in data || 'sourceId' in data) {
     const allowArchived = isSameClientSource(client, data);
-    const sourceRef = await referencesService.getClientSourceByInput({
-      ...data,
-      allowArchived,
-    });
+    const sourceRef = await resolveClientSourceForMutation(
+      data,
+      context,
+      transaction,
+      { allowArchived },
+    );
     payload.source = sourceRef.name;
     payload.sourceId = sourceRef.id;
   }
   if ('note' in data) payload.note = normalizeNote(data.note);
+  if ('birthDate' in data) payload.birthDate = normalizeBirthDate(data.birthDate);
   if ('status' in data) payload.status = normalizeStatus(data.status);
 
-  await assertIdentityAvailable(data, client.id);
+  await assertIdentityAvailable(
+    data,
+    client.id,
+    context,
+    transaction,
+  );
   CLIENT_IDENTITY_FIELDS.forEach((field) => {
     if (field in data) payload[field] = normalizeOptionalIdentity(data[field]);
   });
@@ -2391,7 +2742,12 @@ async function updateClientAfterIdentityLock(
   if ('phone' in data) {
     const { phone, phoneNormalized } =
       normalizedPhonePayload || normalizePhonePayload(data.phone);
-    const existing = await findExistingByPhone(phoneNormalized, client.id);
+    const existing = await findExistingByPhone(
+      phoneNormalized,
+      client.id,
+      context,
+      transaction,
+    );
     if (existing) {
       const isArchived = existing.status === 'archived';
       throw appError(
@@ -2417,7 +2773,12 @@ async function updateClientAfterIdentityLock(
     !payload.phoneNormalized &&
     client.phoneNormalized
   ) {
-    const existing = await findExistingByPhone(client.phoneNormalized, client.id);
+    const existing = await findExistingByPhone(
+      client.phoneNormalized,
+      client.id,
+      context,
+      transaction,
+    );
     if (existing) {
       const isArchived = existing.status === 'archived';
       throw appError(
@@ -2435,46 +2796,78 @@ async function updateClientAfterIdentityLock(
     }
   }
 
-  await client.update(payload);
-  return getClientDetails(client.id, actor);
+  await client.update(payload, { transaction });
+  return client.id;
 }
 
-async function resolveCanonicalClient(client) {
+async function resolveCanonicalClient(client, context, options = {}) {
   if (!client) return null;
   if (!client.mergedIntoUserId) return client;
 
-  return db.User.findByPk(client.mergedIntoUserId);
+  return db.User.findOne({
+    transaction: options.transaction,
+    where: clientWhere(context, { id: client.mergedIntoUserId }),
+  });
 }
 
-async function findActiveByPhone(phone) {
+async function findActiveByPhone(phone, tenant = null) {
   const phoneNormalized = getPhoneLookupDigits(phone);
   if (phoneNormalized.length !== 10) return null;
+  const context = await resolveClientAccessContext(tenant);
 
   return db.User.findOne({
-    where: { phoneNormalized, status: 'active', isTraining: false, mergedIntoUserId: null },
+    where: clientWhere(context, {
+      phoneNormalized,
+      status: 'active',
+      isTraining: false,
+      mergedIntoUserId: null,
+    }),
     order: [['createdAt', 'DESC']],
   });
 }
 
-async function findCanonicalByQr(qr) {
+async function findCanonicalById(id, tenant = null, options = {}) {
+  const context = await resolveClientAccessContext(tenant, {
+    lock: Boolean(options.lock),
+    transaction: options.transaction,
+  });
+  let client = await db.User.findOne({
+    lock: options.lock,
+    transaction: options.transaction,
+    where: clientWhere(context, { id: Number(id) }),
+  });
+  if (!client) return null;
+  if (client.mergedIntoUserId) {
+    client = await resolveCanonicalClient(client, context);
+  }
+  return client;
+}
+
+async function findCanonicalByQr(qr, tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   let client = null;
 
   if (qr.startsWith('vk_')) {
     client = await db.User.findOne({
-      where: { vkId: qr.replace('vk_', ''), isTraining: false },
+      where: clientWhere(context, {
+        vkId: qr.replace('vk_', ''),
+        isTraining: false,
+      }),
     });
   } else if (qr.startsWith('web_')) {
-    client = await db.User.findOne({ where: { webId: qr, isTraining: false } });
+    client = await db.User.findOne({
+      where: clientWhere(context, { webId: qr, isTraining: false }),
+    });
   } else {
     client = await db.User.findOne({
-      where: {
+      where: clientWhere(context, {
         isTraining: false,
         [Op.or]: [{ telegramId: qr }, { telegramId: `@${qr}` }],
-      },
+      }),
     });
   }
 
-  return resolveCanonicalClient(client);
+  return resolveCanonicalClient(client, context);
 }
 
 function chooseCallTaskClientStatus(currentStatus, duplicateStatus) {
@@ -2614,10 +3007,19 @@ function shouldUseDuplicateSkillMapText(primaryRow, duplicateRow) {
   return false;
 }
 
-async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction) {
+async function mergeSkillMapForDuplicate(
+  primary,
+  duplicate,
+  actor,
+  transaction,
+  tenant,
+) {
   if (!db.ClientTrainingSkill) return;
 
-  await clientSkillMapService.syncActiveSkillsForClient(primary, { transaction });
+  await clientSkillMapService.syncActiveSkillsForClient(primary, {
+    tenant,
+    transaction,
+  });
   const duplicateRows = await db.ClientTrainingSkill.findAll({
     transaction,
     where: { userId: duplicate.id },
@@ -2641,6 +3043,15 @@ async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction)
         },
         { transaction },
       );
+      if (db.ClientTrainingSkillHistory) {
+        await db.ClientTrainingSkillHistory.update(
+          { userId: primary.id },
+          {
+            transaction,
+            where: { clientTrainingSkillId: duplicateRow.id },
+          },
+        );
+      }
       continue;
     }
 
@@ -2670,11 +3081,29 @@ async function mergeSkillMapForDuplicate(primary, duplicate, actor, transaction)
       { transaction },
     );
 
+    if (db.ClientTrainingSkillHistory) {
+      await db.ClientTrainingSkillHistory.update(
+        {
+          clientTrainingSkillId: primaryRow.id,
+          userId: primary.id,
+        },
+        {
+          transaction,
+          where: { clientTrainingSkillId: duplicateRow.id },
+        },
+      );
+    }
+
     await duplicateRow.destroy({ transaction });
   }
 }
 
-async function mergeClients(primaryClientId, duplicateClientIds, actor) {
+async function mergeClients(
+  primaryClientId,
+  duplicateClientIds,
+  actor,
+  tenant = null,
+) {
   const primaryId = Number(primaryClientId);
   const duplicateIds = Array.from(
     new Set((duplicateClientIds || []).map((id) => Number(id))),
@@ -2685,19 +3114,28 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
   }
 
   await db.sequelize.transaction(async (transaction) => {
-    const primary = await db.User.findByPk(primaryId, { transaction });
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const primary = await db.User.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: clientWhere(context, { id: primaryId }),
+    });
     if (!primary || primary.status !== 'active' || primary.mergedIntoUserId) {
       throw appError('Основной клиент не найден', 404);
     }
 
     const duplicates = await db.User.findAll({
-      where: {
+      lock: transaction.LOCK.UPDATE,
+      where: clientWhere(context, {
         id: {
           [Op.in]: duplicateIds,
         },
         status: 'active',
         mergedIntoUserId: null,
-      },
+      }),
       transaction,
     });
 
@@ -2728,7 +3166,12 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
             userId: primary.id,
           },
           {
-            where: { userId: duplicate.id },
+            where: {
+              userId: duplicate.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
             transaction,
           },
         );
@@ -2741,9 +3184,40 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
             userId: primary.id,
           },
           {
-            where: { userId: duplicate.id },
+            where: {
+              userId: duplicate.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
             transaction,
           },
+        );
+      }
+      if (db.BookingParticipant && isTenantBookingsCourtsEnabled()) {
+        const bookingRows = await db.Booking.findAll({
+          attributes: ['id'],
+          raw: true,
+          transaction,
+          where: { organizationId: context.organizationId },
+        });
+        const bookingIds = bookingRows.map((row) => Number(row.id)).filter(Boolean);
+        if (bookingIds.length > 0) {
+          await db.BookingParticipant.update(
+            { userId: primary.id },
+            {
+              transaction,
+              where: {
+                bookingId: { [Op.in]: bookingIds },
+                userId: duplicate.id,
+              },
+            },
+          );
+        }
+      } else if (db.BookingParticipant) {
+        await db.BookingParticipant.update(
+          { userId: primary.id },
+          { transaction, where: { userId: duplicate.id } },
         );
       }
       if (db.TelephonyCall) {
@@ -2756,12 +3230,10 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
         );
       }
       const directClientRelations = [
-        ['BookingParticipant', 'userId'],
         ['Certificate', 'clientId'],
         ['CertificateRedemption', 'clientId'],
         ['ClientSubscription', 'clientId'],
         ['ClientSubscriptionRedemption', 'clientId'],
-        ['ClientTrainingSkillHistory', 'userId'],
         ['PendingSale', 'clientId'],
         ['ScannerEvent', 'userId'],
         ['TrainingPlanParticipant', 'userId'],
@@ -2773,7 +3245,13 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
           { where: { [foreignKey]: duplicate.id }, transaction },
         );
       }
-      await mergeSkillMapForDuplicate(primary, duplicate, actor, transaction);
+      await mergeSkillMapForDuplicate(
+        primary,
+        duplicate,
+        actor,
+        transaction,
+        tenant,
+      );
       await mergeCallTaskClientsForDuplicate(primary, duplicate, transaction);
 
       const primaryUpdates = {};
@@ -2800,11 +3278,15 @@ async function mergeClients(primaryClientId, duplicateClientIds, actor) {
     }
   });
 
-  return getClientDetails(primaryId, actor);
+  return getClientDetails(primaryId, actor, tenant);
 }
 
-async function getDuplicateGroups() {
+async function getDuplicateGroups(tenant = null) {
+  const context = await resolveClientAccessContext(tenant);
   const duplicateGroups = [];
+  const tenantPredicate = context.scoped
+    ? 'AND organizationId = :organizationId'
+    : '';
 
   for (const group of DUPLICATE_GROUPS) {
     const rows = await db.sequelize.query(
@@ -2812,6 +3294,7 @@ async function getDuplicateGroups() {
         SELECT ${group.field} AS value, COUNT(*) AS count
         FROM Users
         WHERE status = 'active'
+          ${tenantPredicate}
           AND COALESCE(isTraining, 0) = 0
           AND mergedIntoUserId IS NULL
           AND ${group.field} IS NOT NULL
@@ -2820,7 +3303,12 @@ async function getDuplicateGroups() {
         HAVING COUNT(*) > 1
         ORDER BY count DESC, ${group.field} ASC
       `,
-      { type: db.Sequelize.QueryTypes.SELECT },
+      {
+        replacements: context.scoped
+          ? { organizationId: context.organizationId }
+          : {},
+        type: db.Sequelize.QueryTypes.SELECT,
+      },
     );
 
     for (const row of rows) {
@@ -2843,12 +3331,12 @@ async function getDuplicateGroups() {
   }));
   const clients = await db.User.findAll({
     attributes: CLIENT_ATTRIBUTES,
-    where: {
+    where: clientWhere(context, {
       [Op.or]: conditions,
       status: 'active',
       isTraining: false,
       mergedIntoUserId: null,
-    },
+    }),
     order: [['createdAt', 'DESC']],
   });
   const statsByClientId = await getStatsByClientIds(
@@ -2873,64 +3361,104 @@ async function getDuplicateGroups() {
     .sort((a, b) => b.clients.length - a.clients.length || a.key.localeCompare(b.key));
 }
 
-async function removeArchivedClient(id) {
-  const client = await getClientOrFail(id);
-  if (client.status !== 'archived') {
-    throw appError('Удалять безвозвратно можно только клиентов из архива', 409);
-  }
+async function removeArchivedClient(id, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const client = await getClientOrFail(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (client.status !== 'archived') {
+      throw appError('Удалять безвозвратно можно только клиентов из архива', 409);
+    }
 
-  const [
-    visitsCount,
-    trainingNotesCount,
-    callTaskClientsCount,
-    telephonyCallsCount,
-    bookingCount,
-    bookingSeriesCount,
-    clientSubscriptionsCount,
-    certificatesCount,
-    mergedClientsCount,
-  ] =
-    await Promise.all([
-      db.Visit.count({ where: { userId: client.id } }),
-      db.TrainingNote.count({ where: { userId: client.id } }),
-      db.CallTaskClient.count({ where: { userId: client.id } }),
-      db.TelephonyCall ? db.TelephonyCall.count({ where: { userId: client.id } }) : 0,
-      db.Booking ? db.Booking.count({ where: { userId: client.id } }) : 0,
-      db.BookingSeries ? db.BookingSeries.count({ where: { userId: client.id } }) : 0,
-      db.ClientSubscription
-        ? db.ClientSubscription.count({ where: { clientId: client.id } })
+    const [
+      visitsCount,
+      trainingNotesCount,
+      callTaskClientsCount,
+      telephonyCallsCount,
+      bookingCount,
+      bookingSeriesCount,
+      clientSubscriptionsCount,
+      certificatesCount,
+      mergedClientsCount,
+    ] = await Promise.all([
+      db.Visit.count({ transaction, where: { userId: client.id } }),
+      db.TrainingNote.count({ transaction, where: { userId: client.id } }),
+      db.CallTaskClient.count({ transaction, where: { userId: client.id } }),
+      db.TelephonyCall
+        ? db.TelephonyCall.count({ transaction, where: { userId: client.id } })
         : 0,
-      db.Certificate ? db.Certificate.count({ where: { clientId: client.id } }) : 0,
-      db.User.count({ where: { mergedIntoUserId: client.id } }),
+      db.Booking
+        ? db.Booking.count({
+            transaction,
+            where: {
+              userId: client.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
+          })
+        : 0,
+      db.BookingSeries
+        ? db.BookingSeries.count({
+            transaction,
+            where: {
+              userId: client.id,
+              ...(isTenantBookingsCourtsEnabled()
+                ? { organizationId: context.organizationId }
+                : {}),
+            },
+          })
+        : 0,
+      db.ClientSubscription
+        ? db.ClientSubscription.count({
+            transaction,
+            where: { clientId: client.id },
+          })
+        : 0,
+      db.Certificate
+        ? db.Certificate.count({ transaction, where: { clientId: client.id } })
+        : 0,
+      db.User.count({
+        transaction,
+        where: clientWhere(context, { mergedIntoUserId: client.id }),
+      }),
     ]);
 
-  if (
-    visitsCount > 0 ||
-    trainingNotesCount > 0 ||
-    callTaskClientsCount > 0 ||
-    telephonyCallsCount > 0 ||
-    bookingCount > 0 ||
-    bookingSeriesCount > 0 ||
-    clientSubscriptionsCount > 0 ||
-    certificatesCount > 0 ||
-    mergedClientsCount > 0
-  ) {
-    throw appError(
-      'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, сертификаты, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
-      409,
-    );
-  }
+    if (
+      visitsCount > 0 ||
+      trainingNotesCount > 0 ||
+      callTaskClientsCount > 0 ||
+      telephonyCallsCount > 0 ||
+      bookingCount > 0 ||
+      bookingSeriesCount > 0 ||
+      clientSubscriptionsCount > 0 ||
+      certificatesCount > 0 ||
+      mergedClientsCount > 0
+    ) {
+      throw appError(
+        'Клиента нельзя удалить безвозвратно: есть визиты, бронирования, постоянки, абонементы, сертификаты, дневник тренировок, задачи обзвона, звонки или связанные дубли. Оставьте его в архиве.',
+        409,
+      );
+    }
 
-  await client.destroy();
+    await client.destroy({ transaction });
+  });
   return { success: true };
 }
 
 module.exports = {
   countClients,
   createClient,
+  createClientWithEventResult,
   createSavedView,
   deleteSavedView,
   findActiveByPhone,
+  findCanonicalById,
   findCanonicalByQr,
   getClientDetails,
   getDuplicateGroups,
@@ -2948,7 +3476,10 @@ module.exports = {
     buildClientListSql,
     buildClientPrepaymentSummary,
     buildTrainerClientDetailsResponse,
+    clientWhere,
+    listClientAuditTimeline,
     listClientPrepaymentTimeline,
+    normalizeBirthDate,
     sanitizeClientForAccount,
   },
 };

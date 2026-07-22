@@ -1,5 +1,17 @@
+const {
+  createTenantAttributionHooks,
+} = require('../src/tenant-context/model-attribution');
+
 module.exports = (sequelize, DataTypes) => {
   const PendingSale = sequelize.define('PendingSale', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     receiptId: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -66,9 +78,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       allowNull: true,
     },
+  }, {
+    hooks: createTenantAttributionHooks(
+      ['organizationId', 'clubId'],
+      'PendingSale',
+    ),
   });
 
   PendingSale.associate = (models) => {
+    PendingSale.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    PendingSale.belongsTo(models.Club, { foreignKey: 'clubId' });
     PendingSale.belongsTo(models.Receipt, {
       as: 'receipt',
       foreignKey: 'receiptId',

@@ -2,9 +2,11 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const db = require('../../models');
 const { getRevenueLtv } = require('../../src/services/visits-analytics.service');
+const { getDefaultTenantIds } = require('../helpers/tenant-fixtures');
 
 test('DB-backed production-size revenue fixture stays aggregated and bounded', async () => {
   await db.sequelize.authenticate();
+  const { clubId, organizationId } = await getDefaultTenantIds(db);
   const suffix = String(Date.now());
   let source;
   let users = [];
@@ -13,18 +15,23 @@ test('DB-backed production-size revenue fixture stays aggregated and bounded', a
   let items = [];
   let pendingSales = [];
   try {
-    source = await db.ClientSource.create({ name: `Revenue perf ${suffix}`, status: 'active' });
+    source = await db.ClientSource.create({ organizationId, name: `Revenue perf ${suffix}`, status: 'active' });
     users = await db.User.bulkCreate(Array.from({ length: 100 }, (_, index) => ({
+      organizationId,
       name: `revenue-perf-${index}-${suffix}`,
       phone: `7${suffix}${index}`.slice(-15),
       source: 'Revenue perf fallback',
       sourceId: source.id,
     })));
     visits = await db.Visit.bulkCreate(users.map((user, index) => ({
+      clubId,
+      organizationId,
       userId: user.id,
       scannedAt: new Date(Date.UTC(2086, 0, 1 + (index % 10), 10, 0)),
     })));
     receipts = await db.Receipt.bulkCreate(Array.from({ length: 1000 }, (_, index) => ({
+      organizationId,
+      clubId,
       evotorId: `revenue-perf-${suffix}-${index}`,
       dateTime: new Date(Date.UTC(2086, 0, 11 + (index % 10), 10, 0)),
       type: 'SELL',
@@ -41,6 +48,8 @@ test('DB-backed production-size revenue fixture stays aggregated and bounded', a
       sumPrice: 10,
     })));
     pendingSales = await db.PendingSale.bulkCreate(items.map((item, index) => ({
+      organizationId,
+      clubId,
       receiptId: receipts[index].id,
       receiptItemId: item.id,
       itemName: item.name,

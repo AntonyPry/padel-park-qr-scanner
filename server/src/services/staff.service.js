@@ -1,10 +1,21 @@
+'use strict';
+
 const db = require('../../models');
+const {
+  countAuthUsableOwners,
+  isAuthUsableOwnerMembership,
+} = require('./owner-access-invariant.service');
+const { resolveStaffAccessContext } = require('./staff-access-context.service');
+const {
+  invalidateTenantFoundationGateCache,
+} = require('./tenant-foundation.service');
 
 const STAFF_STATUS_VALUES = ['active', 'inactive', 'archived'];
 
-function appError(message, statusCode = 400) {
+function appError(message, statusCode = 400, code) {
   const error = new Error(message);
   error.statusCode = statusCode;
+  if (code) error.code = code;
   return error;
 }
 
@@ -12,8 +23,9 @@ function serializeStaff(staff) {
   if (!staff) return null;
 
   const raw = staff.toJSON ? staff.toJSON() : staff;
+  const { organizationId: _organizationId, ...publicStaff } = raw;
   return {
-    ...raw,
+    ...publicStaff,
     position: raw.position || raw.role,
   };
 }
@@ -39,85 +51,203 @@ function normalizePayload(data) {
   };
 }
 
-async function getStaffById(id) {
-  return serializeStaff(await db.Staff.findByPk(id));
+function staffWhere(id, context) {
+  const where = { id: Number(id) };
+  if (context.scoped) where.organizationId = context.organizationId;
+  return where;
 }
 
-async function getAll(query = {}) {
-  const where = {};
+async function findStaff(id, context, options = {}) {
+  if (!Number.isSafeInteger(Number(id)) || Number(id) <= 0) {
+    throw appError('Сотрудник не найден', 404, 'STAFF_NOT_FOUND');
+  }
+  const staff = await db.Staff.findOne({
+    ...options,
+    where: staffWhere(id, context),
+  });
+  if (!staff) throw appError('Сотрудник не найден', 404, 'STAFF_NOT_FOUND');
+  return staff;
+}
+
+async function getStaffById(id, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
+  return serializeStaff(await findStaff(id, context));
+}
+
+async function getAll(query = {}, tenant = null) {
+  const context = await resolveStaffAccessContext(tenant);
+  const where = context.scoped
+    ? { organizationId: context.organizationId }
+    : {};
   if (query.status && query.status !== 'all') {
     if (!STAFF_STATUS_VALUES.includes(query.status)) {
       throw appError('Неизвестный статус сотрудника');
     }
     where.status = query.status;
   }
+  const search = String(query.q || '').trim();
+  if (search) {
+    where[db.Sequelize.Op.or] = ['name', 'role', 'phone'].map((field) => ({
+      [field]: { [db.Sequelize.Op.like]: `%${search}%` },
+    }));
+  }
 
   const staff = await db.Staff.findAll({
     where,
-    order: [['createdAt', 'DESC']],
+    order: [['createdAt', 'DESC'], ['id', 'DESC']],
   });
 
   return staff.map(serializeStaff);
 }
 
-async function create(data) {
-  const staff = await db.Staff.create(normalizePayload(data));
-
-  return getStaffById(staff.id);
+async function create(data, tenant = null) {
+  const staff = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveStaffAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    return db.Staff.create(
+      { ...normalizePayload(data), organizationId: context.organizationId },
+      { transaction },
+    );
+  });
+  invalidateTenantFoundationGateCache();
+  return serializeStaff(staff);
 }
 
-async function update(id, data) {
-  const staff = await db.Staff.findByPk(id);
-  if (!staff) throw appError('Сотрудник не найден', 404);
-
-  await staff.update(normalizePayload(data));
-
-  return getStaffById(staff.id);
-}
-
-async function remove(id) {
-  const staff = await db.Staff.findByPk(id);
-  if (!staff) throw appError('Сотрудник не найден', 404);
-
-  await staff.update({ status: 'archived' });
-
-  return getStaffById(staff.id);
-}
-
-async function restore(id) {
-  const staff = await db.Staff.findByPk(id);
-  if (!staff) throw appError('Сотрудник не найден', 404);
-
-  await staff.update({ status: 'active' });
-  return getStaffById(staff.id);
-}
-
-async function removeArchived(id) {
-  const staff = await db.Staff.findByPk(id);
-  if (!staff) throw appError('Сотрудник не найден', 404);
-  if (staff.status !== 'archived') {
-    throw appError('Удалять безвозвратно можно только сотрудника из архива', 409);
+async function assertStaffOwnerCanBecomeInactive(staff, transaction) {
+  const membership = await db.Membership.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: {
+      organizationId: staff.organizationId,
+      staffId: staff.id,
+    },
+  });
+  if (
+    !membership ||
+    membership.role !== 'owner' ||
+    membership.status !== 'active'
+  ) {
+    return;
   }
+  const removesUsableOwner = await isAuthUsableOwnerMembership({
+    membershipId: membership.id,
+    organizationId: staff.organizationId,
+    transaction,
+  });
+  if (!removesUsableOwner) return;
 
-  const references = await Promise.all([
-    db.Account.count({ where: { staffId: staff.id } }),
-    db.Shift.count({ where: { staffId: staff.id } }),
-  ]);
-  if (references.some((count) => count > 0)) {
+  const remainingOwners = await countAuthUsableOwners({
+    excludeMembershipId: membership.id,
+    organizationId: staff.organizationId,
+    transaction,
+  });
+  if (remainingOwners < 1) {
     throw appError(
-      'Сотрудника нельзя удалить безвозвратно: по нему уже есть аккаунт или смены. Оставьте его в архиве.',
+      'Нельзя удалить или отключить последнего владельца',
       409,
+      'LAST_ACTIVE_OWNER',
     );
   }
+}
 
-  await staff.destroy();
+async function mutateStatus(id, status, tenant) {
+  const staff = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveStaffAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const locked = await findStaff(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (status !== 'active' && locked.status === 'active') {
+      await assertStaffOwnerCanBecomeInactive(locked, transaction);
+    }
+    await locked.update({ status }, { transaction });
+    return locked;
+  });
+  invalidateTenantFoundationGateCache();
+  return serializeStaff(staff);
+}
+
+async function update(id, data, tenant = null) {
+  const staff = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveStaffAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const locked = await findStaff(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    const payload = normalizePayload(data);
+    if (payload.status !== 'active' && locked.status === 'active') {
+      await assertStaffOwnerCanBecomeInactive(locked, transaction);
+    }
+    await locked.update(payload, { transaction });
+    return locked;
+  });
+  invalidateTenantFoundationGateCache();
+  return serializeStaff(staff);
+}
+
+async function remove(id, tenant = null) {
+  return mutateStatus(id, 'archived', tenant);
+}
+
+async function restore(id, tenant = null) {
+  return mutateStatus(id, 'active', tenant);
+}
+
+async function removeArchived(id, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveStaffAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const staff = await findStaff(id, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (staff.status !== 'archived') {
+      throw appError(
+        'Удалять безвозвратно можно только сотрудника из архива',
+        409,
+      );
+    }
+
+    const references = await Promise.all([
+      db.Account.count({ transaction, where: { staffId: staff.id } }),
+      db.Membership.count({
+        transaction,
+        where: { organizationId: staff.organizationId, staffId: staff.id },
+      }),
+      db.Shift.count({ transaction, where: { staffId: staff.id } }),
+    ]);
+    if (references.some((count) => count > 0)) {
+      throw appError(
+        'Сотрудника нельзя удалить безвозвратно: по нему уже есть аккаунт, доступ или смены. Оставьте его в архиве.',
+        409,
+      );
+    }
+
+    await staff.destroy({ transaction });
+  });
+  invalidateTenantFoundationGateCache();
   return { success: true };
 }
 
 module.exports = {
-  getStaffById,
-  getAll,
+  _private: {
+    assertStaffOwnerCanBecomeInactive,
+    findStaff,
+    staffWhere,
+  },
   create,
+  getAll,
+  getStaffById,
   remove,
   removeArchived,
   restore,

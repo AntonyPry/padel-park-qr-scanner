@@ -1,6 +1,9 @@
 const { Op } = require('sequelize');
 const db = require('../../models');
 const cacheService = require('./cache.service');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
 
 const REFERENCE_CONFIG = {
   'client-sources': {
@@ -62,13 +65,33 @@ function mapReference(row) {
   };
 }
 
-function getListCacheKey(type, query = {}) {
+function getListCacheKey(type, query = {}, tenant = null) {
+  if (cacheService.isTenantIsolationEnabled()) {
+    return cacheService.tenantCacheKey(
+      {
+        domain: 'references',
+        scope: 'organization',
+        suffix: `${type}:list`,
+        tenant,
+      },
+      { status: query.status || 'active' },
+    );
+  }
   return cacheService.cacheKey(`references:${type}:list`, {
     status: query.status || 'active',
   });
 }
 
-async function invalidateReferenceCache(type) {
+async function invalidateReferenceCache(type, tenant = null) {
+  if (cacheService.isTenantIsolationEnabled()) {
+    await cacheService.deleteTenantByPrefix({
+      domain: 'references',
+      scope: 'organization',
+      suffix: type,
+      tenant,
+    });
+    return;
+  }
   await cacheService.deleteByPrefix(`references:${type}:`);
 }
 
@@ -85,23 +108,35 @@ function parseFilters(filters) {
   return filters;
 }
 
-async function assertNameAvailable(type, name, id = null) {
+function referenceWhere(context, where = {}) {
+  return context.scoped
+    ? { ...where, organizationId: context.organizationId }
+    : where;
+}
+
+async function assertNameAvailable(
+  type,
+  name,
+  id = null,
+  context,
+  transaction = undefined,
+) {
   const Model = getModel(type);
-  const where = { name };
+  const where = referenceWhere(context, { name });
 
   if (id) {
     where.id = { [Op.ne]: Number(id) };
   }
 
-  const existing = await Model.findOne({ where });
+  const existing = await Model.findOne({ transaction, where });
   if (existing) {
     throw appError('Такое значение уже есть в справочнике', 409);
   }
 }
 
-async function listFromDb(type, query = {}) {
+async function listFromDb(type, query = {}, context) {
   const Model = getModel(type);
-  const where = {};
+  const where = referenceWhere(context);
 
   if (query.status && query.status !== 'all') {
     where.status = normalizeStatus(query.status);
@@ -120,70 +155,109 @@ async function listFromDb(type, query = {}) {
   return rows.map(mapReference);
 }
 
-async function list(type, query = {}) {
+async function list(type, query = {}, tenant = null) {
   getConfig(type);
+  const context = await resolveClientAccessContext(tenant);
+  if (cacheService.isTenantIsolationEnabled()) {
+    return cacheService.rememberTenantJson(
+      {
+        domain: 'references',
+        scope: 'organization',
+        suffix: `${type}:list`,
+        tenant: context,
+      },
+      { status: query.status || 'active' },
+      () => listFromDb(type, query, context),
+      { ttlSeconds: 300 },
+    );
+  }
   return cacheService.rememberJson(
-    getListCacheKey(type, query),
-    () => listFromDb(type, query),
+    getListCacheKey(type, query, tenant),
+    () => listFromDb(type, query, context),
     { ttlSeconds: 300 },
   );
 }
 
-async function create(type, data) {
+async function create(type, data, tenant = null) {
   const config = getConfig(type);
   const Model = getModel(type);
   const name = normalizeName(data.name, config.label);
-  await assertNameAvailable(type, name);
-
-  const maxSortOrder = await Model.max('sortOrder');
-  const row = await Model.create({
-    name,
-    status: normalizeStatus(data.status || 'active'),
-    sortOrder:
-      data.sortOrder === undefined || data.sortOrder === null
-        ? Number(maxSortOrder || 0) + 1
-        : Number(data.sortOrder) || 0,
+  const { context, row } = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    await assertNameAvailable(type, name, null, context, transaction);
+    const maxSortOrder = await Model.max('sortOrder', {
+      transaction,
+      where: { organizationId: context.organizationId },
+    });
+    const row = await Model.create({
+      name,
+      organizationId: context.organizationId,
+      status: normalizeStatus(data.status || 'active'),
+      sortOrder:
+        data.sortOrder === undefined || data.sortOrder === null
+          ? Number(maxSortOrder || 0) + 1
+          : Number(data.sortOrder) || 0,
+    }, { transaction });
+    return { context, row };
   });
 
-  await invalidateReferenceCache(type);
+  await invalidateReferenceCache(type, context);
   return mapReference(row);
 }
 
-async function update(type, id, data) {
+async function update(type, id, data, tenant = null) {
   const config = getConfig(type);
   const Model = getModel(type);
-  const row = await Model.findByPk(Number(id));
-  if (!row) throw appError('Значение справочника не найдено', 404);
+  const { context, row } = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const row = await Model.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: referenceWhere(context, { id: Number(id) }),
+    });
+    if (!row) throw appError('Значение справочника не найдено', 404);
 
-  const payload = {};
-  if ('name' in data) {
-    const name = normalizeName(data.name, config.label);
-    await assertNameAvailable(type, name, row.id);
-    payload.name = name;
-  }
-  if ('status' in data) {
-    payload.status = normalizeStatus(data.status);
-  }
-  if ('sortOrder' in data) {
-    payload.sortOrder = Number(data.sortOrder) || 0;
-  }
+    const payload = {};
+    if ('name' in data) {
+      const name = normalizeName(data.name, config.label);
+      await assertNameAvailable(
+        type,
+        name,
+        row.id,
+        context,
+        transaction,
+      );
+      payload.name = name;
+    }
+    if ('status' in data) payload.status = normalizeStatus(data.status);
+    if ('sortOrder' in data) payload.sortOrder = Number(data.sortOrder) || 0;
 
-  await row.update(payload);
-  await invalidateReferenceCache(type);
+    await row.update(payload, { transaction });
+    return { context, row };
+  });
+  await invalidateReferenceCache(type, context);
   return mapReference(row);
 }
 
-async function archive(type, id) {
-  return update(type, id, { status: 'archived' });
+async function archive(type, id, tenant = null) {
+  return update(type, id, { status: 'archived' }, tenant);
 }
 
-async function restore(type, id) {
-  return update(type, id, { status: 'active' });
+async function restore(type, id, tenant = null) {
+  return update(type, id, { status: 'active' }, tenant);
 }
 
-async function assertReferenceNotUsed(type, row) {
+async function assertReferenceNotUsed(type, row, transaction) {
   const bases = await db.ClientBase.findAll({
     attributes: ['id', 'filters'],
+    transaction,
+    where: { organizationId: row.organizationId },
   });
   const fieldName =
     type === 'client-sources' ? 'sourceId' : 'visitCategoryId';
@@ -200,7 +274,10 @@ async function assertReferenceNotUsed(type, row) {
   }
 
   if (type === 'client-sources') {
-    const clientsCount = await db.User.count({ where: { sourceId: row.id } });
+    const clientsCount = await db.User.count({
+      transaction,
+      where: { organizationId: row.organizationId, sourceId: row.id },
+    });
     if (clientsCount > 0) {
       throw appError(
         'Источник нельзя удалить безвозвратно: он используется у клиентов. Оставьте его в архиве.',
@@ -211,6 +288,7 @@ async function assertReferenceNotUsed(type, row) {
   }
 
   const assignmentsCount = await db.VisitCategoryAssignment.count({
+    transaction,
     where: { visitCategoryId: row.id },
   });
   if (assignmentsCount > 0) {
@@ -221,27 +299,41 @@ async function assertReferenceNotUsed(type, row) {
   }
 }
 
-async function removeArchived(type, id) {
+async function removeArchived(type, id, tenant = null) {
   const Model = getModel(type);
-  const row = await Model.findByPk(Number(id));
-  if (!row) throw appError('Значение справочника не найдено', 404);
-  if (row.status !== 'archived') {
-    throw appError(
-      'Удалять безвозвратно можно только значения справочника из архива',
-      409,
-    );
-  }
+  const context = await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveClientAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const row = await Model.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: referenceWhere(context, { id: Number(id) }),
+    });
+    if (!row) throw appError('Значение справочника не найдено', 404);
+    if (row.status !== 'archived') {
+      throw appError(
+        'Удалять безвозвратно можно только значения справочника из архива',
+        409,
+      );
+    }
 
-  await assertReferenceNotUsed(type, row);
-  await row.destroy();
-  await invalidateReferenceCache(type);
+    await assertReferenceNotUsed(type, row, transaction);
+    await row.destroy({ transaction });
+    return context;
+  });
+  await invalidateReferenceCache(type, context);
   return { success: true };
 }
 
-async function getClientSourceByInput({ sourceId, source, allowArchived = false }) {
+async function getClientSourceByInput(
+  { sourceId, source, allowArchived = false },
+  tenant = null,
+) {
   const rows = await list('client-sources', {
     status: allowArchived ? 'all' : 'active',
-  });
+  }, tenant);
 
   if (sourceId) {
     const rowById = rows.find((row) => Number(row.id) === Number(sourceId));
@@ -255,7 +347,10 @@ async function getClientSourceByInput({ sourceId, source, allowArchived = false 
   return row;
 }
 
-async function getVisitCategoriesByIds(categoryIds, { allowArchived = false } = {}) {
+async function getVisitCategoriesByIds(
+  categoryIds,
+  { allowArchived = false, tenant = null } = {},
+) {
   const ids = Array.from(
     new Set(
       (categoryIds || [])
@@ -268,7 +363,7 @@ async function getVisitCategoriesByIds(categoryIds, { allowArchived = false } = 
 
   const rows = await list('visit-categories', {
     status: allowArchived ? 'all' : 'active',
-  });
+  }, tenant);
   const matchedRows = rows.filter((row) => ids.includes(Number(row.id)));
 
   if (matchedRows.length !== ids.length) {
@@ -278,7 +373,10 @@ async function getVisitCategoriesByIds(categoryIds, { allowArchived = false } = 
   return matchedRows;
 }
 
-async function getVisitCategoriesByNames(names, { allowArchived = false } = {}) {
+async function getVisitCategoriesByNames(
+  names,
+  { allowArchived = false, tenant = null } = {},
+) {
   const normalizedNames = Array.from(
     new Set((names || []).map((name) => normalizeLookupName(name))),
   );
@@ -287,7 +385,7 @@ async function getVisitCategoriesByNames(names, { allowArchived = false } = {}) 
 
   const rows = await list('visit-categories', {
     status: allowArchived ? 'all' : 'active',
-  });
+  }, tenant);
   const matchedRows = rows.filter((row) =>
     normalizedNames.includes(normalizeLookupName(row.name)),
   );

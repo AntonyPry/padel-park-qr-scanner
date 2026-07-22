@@ -1,41 +1,206 @@
+import {
+  selectAuthorizationRole,
+  type AuthorizationScope,
+  type RoleAuthority,
+} from '@/lib/authorization';
 import type { AccountRole } from '@/lib/roles';
 
-export const ROUTE_ACCESS: Record<string, AccountRole[]> = {
+export const ROUTE_ACCESS = {
   '/admin': ['owner', 'manager', 'admin'],
   '/admin/manager-control': ['owner', 'manager'],
   '/admin/audit': ['owner', 'manager'],
   '/admin/onboarding': ['owner', 'manager', 'admin', 'accountant', 'viewer', 'trainer'],
   '/admin/bookings': ['owner', 'manager', 'admin', 'viewer'],
-  '/admin/clients': ['owner', 'manager', 'admin', 'viewer'],
+  '/admin/clients': ['owner', 'manager', 'viewer'],
   '/admin/trainer': ['owner', 'manager', 'trainer'],
   '/admin/methodology': ['owner', 'manager', 'trainer'],
   '/admin/methodology-analytics': ['owner', 'manager'],
   '/admin/client-bases': ['owner', 'manager'],
   '/admin/call-tasks': ['owner', 'manager', 'admin'],
+  '/admin/telephony': ['owner', 'manager'],
   '/admin/prepayments': ['owner', 'manager', 'admin', 'accountant'],
   '/admin/certificates': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/corporate-clients': ['owner', 'manager', 'accountant', 'viewer'],
-  '/admin/telephony': ['owner', 'manager', 'admin', 'viewer'],
   '/admin/visits-analytics': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/finances': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/staff': ['owner', 'manager', 'accountant'],
   '/admin/users': ['owner', 'manager'],
+  '/admin/shift': ['owner', 'manager', 'admin'],
+  '/admin/shift/motivation': ['owner', 'manager', 'admin'],
+  '/admin/shift/reports': ['owner', 'manager', 'admin'],
+  '/admin/shift/cash': ['owner', 'manager', 'admin'],
+  '/admin/shift-settings': ['owner', 'manager'],
   '/admin/motivation': ['owner', 'manager', 'admin'],
-  '/admin/shift-reports': ['owner', 'manager'],
+  '/admin/shift-reports': ['owner', 'manager', 'admin'],
+  '/admin/shift-cash': ['owner', 'manager', 'admin'],
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
-  '/admin/references': ['owner', 'manager', 'admin', 'accountant', 'viewer'],
+  '/admin/references': ['owner', 'manager', 'accountant', 'viewer'],
+} as const satisfies Record<string, readonly AccountRole[]>;
+
+export type ClientRoute = keyof typeof ROUTE_ACCESS;
+
+export const CLIENT_VIEW_ROLES = [
+  'owner',
+  'manager',
+  'admin',
+  'viewer',
+  'trainer',
+] as const satisfies readonly AccountRole[];
+
+export type RouteAuthorizationStrategy =
+  | 'single'
+  | 'composite'
+  | 'partial';
+
+export interface RouteScopeRequirement {
+  roles: readonly AccountRole[];
+  scope: AuthorizationScope;
+}
+
+export interface RouteAuthorizationContract {
+  requirements: readonly RouteScopeRequirement[];
+  strategy: RouteAuthorizationStrategy;
+}
+
+const single = (
+  scope: AuthorizationScope,
+  roles: readonly AccountRole[],
+): RouteAuthorizationContract => ({
+  requirements: [{ roles, scope }],
+  strategy: 'single',
+});
+
+const composite = (
+  requirements: readonly RouteScopeRequirement[],
+): RouteAuthorizationContract => ({ requirements, strategy: 'composite' });
+
+const partial = (
+  scope: AuthorizationScope,
+  roles: readonly AccountRole[],
+): RouteAuthorizationContract => ({
+  requirements: [{ roles, scope }],
+  strategy: 'partial',
+});
+
+export const ROUTE_AUTHORIZATION: Record<
+  ClientRoute,
+  RouteAuthorizationContract
+> = {
+  '/admin': partial('club', ROUTE_ACCESS['/admin']),
+  '/admin/manager-control': single(
+    'club',
+    ROUTE_ACCESS['/admin/manager-control'],
+  ),
+  '/admin/audit': single('organization', ROUTE_ACCESS['/admin/audit']),
+  '/admin/onboarding': partial(
+    'membership',
+    ROUTE_ACCESS['/admin/onboarding'],
+  ),
+  '/admin/bookings': composite([
+    { roles: ROUTE_ACCESS['/admin/bookings'], scope: 'club' },
+    { roles: CLIENT_VIEW_ROLES, scope: 'organization' },
+  ]),
+  '/admin/clients': composite([
+    { roles: ROUTE_ACCESS['/admin/clients'], scope: 'organization' },
+    { roles: CLIENT_VIEW_ROLES, scope: 'club' },
+  ]),
+  '/admin/trainer': composite([
+    { roles: ROUTE_ACCESS['/admin/trainer'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/trainer'], scope: 'organization' },
+  ]),
+  '/admin/methodology': single(
+    'organization',
+    ROUTE_ACCESS['/admin/methodology'],
+  ),
+  '/admin/methodology-analytics': single(
+    'organization',
+    ROUTE_ACCESS['/admin/methodology-analytics'],
+  ),
+  '/admin/client-bases': partial(
+    'club',
+    ROUTE_ACCESS['/admin/client-bases'],
+  ),
+  '/admin/call-tasks': partial('club', ROUTE_ACCESS['/admin/call-tasks']),
+  '/admin/telephony': single('club', ROUTE_ACCESS['/admin/telephony']),
+  '/admin/prepayments': single('club', ROUTE_ACCESS['/admin/prepayments']),
+  '/admin/certificates': single('club', ROUTE_ACCESS['/admin/certificates']),
+  '/admin/corporate-clients': partial(
+    'organization',
+    ROUTE_ACCESS['/admin/corporate-clients'],
+  ),
+  '/admin/visits-analytics': single(
+    'club',
+    ROUTE_ACCESS['/admin/visits-analytics'],
+  ),
+  '/admin/finances': composite([
+    { roles: ROUTE_ACCESS['/admin/finances'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/finances'], scope: 'organization' },
+  ]),
+  '/admin/staff': partial('organization', ROUTE_ACCESS['/admin/staff']),
+  '/admin/users': single('organization', ROUTE_ACCESS['/admin/users']),
+  '/admin/shift': single('club', ROUTE_ACCESS['/admin/shift']),
+  '/admin/shift/motivation': composite([
+    { roles: ROUTE_ACCESS['/admin/shift/motivation'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/shift/motivation'], scope: 'organization' },
+  ]),
+  '/admin/shift/reports': single(
+    'club',
+    ROUTE_ACCESS['/admin/shift/reports'],
+  ),
+  '/admin/shift/cash': single('club', ROUTE_ACCESS['/admin/shift/cash']),
+  '/admin/shift-settings': single(
+    'organization',
+    ROUTE_ACCESS['/admin/shift-settings'],
+  ),
+  '/admin/motivation': composite([
+    { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'club' },
+    { roles: ROUTE_ACCESS['/admin/motivation'], scope: 'organization' },
+  ]),
+  '/admin/shift-reports': single(
+    'club',
+    ROUTE_ACCESS['/admin/shift-reports'],
+  ),
+  '/admin/shift-cash': single('club', ROUTE_ACCESS['/admin/shift-cash']),
+  '/admin/utilization': single('club', ROUTE_ACCESS['/admin/utilization']),
+  '/admin/catalog': composite([
+    { roles: ROUTE_ACCESS['/admin/catalog'], scope: 'organization' },
+    { roles: ROUTE_ACCESS['/admin/catalog'], scope: 'club' },
+  ]),
+  '/admin/references': single(
+    'organization',
+    ROUTE_ACCESS['/admin/references'],
+  ),
 };
 
 export function hasRoleAccess(
   role: AccountRole | null | undefined,
-  allowedRoles: AccountRole[],
+  allowedRoles: readonly AccountRole[],
 ) {
   return Boolean(role && allowedRoles.includes(role));
 }
 
-export function canAccessPath(role: AccountRole | null | undefined, path: string) {
-  return hasRoleAccess(role, ROUTE_ACCESS[path] || []);
+export function canAccessPath(
+  role: AccountRole | null | undefined,
+  path: ClientRoute,
+) {
+  return hasRoleAccess(role, ROUTE_ACCESS[path]);
+}
+
+export function isClientRoute(path: string): path is ClientRoute {
+  return path in ROUTE_ACCESS;
+}
+
+export function canAccessPathForAuthority(
+  authority: RoleAuthority,
+  path: ClientRoute,
+) {
+  return ROUTE_AUTHORIZATION[path].requirements.every((requirement) =>
+    hasRoleAccess(
+      selectAuthorizationRole(authority, requirement.scope),
+      requirement.roles,
+    ),
+  );
 }
 
 export function getDefaultPath(role: AccountRole | null | undefined) {
@@ -47,7 +212,33 @@ export function getDefaultPath(role: AccountRole | null | undefined) {
     hasRoleAccess(role, roles),
   );
 
-  return entry?.[0] || '/admin/motivation';
+  return entry?.[0] || '/admin/shift/motivation';
+}
+
+const DEFAULT_PATH_PRIORITY: ClientRoute[] = [
+  '/admin',
+  '/admin/finances',
+  '/admin/visits-analytics',
+  '/admin/trainer',
+  '/admin/onboarding',
+  ...Object.keys(ROUTE_ACCESS).filter(
+    (path) =>
+      ![
+        '/admin',
+        '/admin/finances',
+        '/admin/visits-analytics',
+        '/admin/trainer',
+        '/admin/onboarding',
+      ].includes(path),
+  ) as ClientRoute[],
+];
+
+export function getDefaultPathForAuthority(authority: RoleAuthority) {
+  return (
+    DEFAULT_PATH_PRIORITY.find((path) =>
+      canAccessPathForAuthority(authority, path),
+    ) || '/admin/shift/motivation'
+  );
 }
 
 export function canManageFinance(role: AccountRole | null | undefined) {
@@ -60,6 +251,10 @@ export function canExportFinance(role: AccountRole | null | undefined) {
 
 export function canManageClients(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+}
+
+export function canViewClients(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, CLIENT_VIEW_ROLES);
 }
 
 export function canManageBookings(role: AccountRole | null | undefined) {
@@ -107,7 +302,7 @@ export function canManageTelephony(role: AccountRole | null | undefined) {
 }
 
 export function canWorkTelephony(role: AccountRole | null | undefined) {
-  return hasRoleAccess(role, ['owner', 'manager', 'admin']);
+  return hasRoleAccess(role, ['owner', 'manager']);
 }
 
 export function canManageCatalog(role: AccountRole | null | undefined) {
@@ -160,6 +355,10 @@ export function canManageSubscriptionTypes(role: AccountRole | null | undefined)
 
 export function canManageReferences(role: AccountRole | null | undefined) {
   return hasRoleAccess(role, ['owner', 'manager']);
+}
+
+export function canViewReferences(role: AccountRole | null | undefined) {
+  return hasRoleAccess(role, ['owner', 'manager', 'admin', 'accountant', 'viewer']);
 }
 
 export function canManageMotivation(role: AccountRole | null | undefined) {

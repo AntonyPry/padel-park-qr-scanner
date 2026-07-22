@@ -13,10 +13,14 @@ const {
   isValidWord,
 } = require('../shared/registration');
 const clientsService = require('../../services/clients.service');
+const {
+  assertLegacyDownstreamReady,
+} = require('../../provider-integrations/runtime');
+const { markConnectionActivity } = require('../../provider-integrations/activity');
 
-async function buildSourceKeyboard() {
+async function buildSourceKeyboard(tenant = null) {
   const keyboard = VkKeyboard.builder();
-  const rows = await getSourceRows(db);
+  const rows = await getSourceRows(db, tenant);
 
   rows.forEach((row, rowIndex) => {
     row.forEach((label) => keyboard.textButton({ label }));
@@ -59,12 +63,26 @@ function createVkConsentKeyboard(consents) {
   return keyboard.inline();
 }
 
-function createVkBot({ token = process.env.VK_TOKEN } = {}) {
+function createVkBot({ connection = null, token = process.env.VK_TOKEN } = {}) {
   if (!token) return null;
+
+  const logError = (label, error) => {
+    if (connection) console.error(label, 'PROVIDER_HANDLER_FAILED');
+    else console.error(label, error);
+  };
 
   const vk = new VK({ token });
   const sessionManager = new VkSessionManager();
   const sceneManager = new VkSceneManager();
+
+  if (connection) {
+    vk.updates.use(async (_ctx, next) => {
+      await assertLegacyDownstreamReady(connection);
+      const result = await next();
+      await markConnectionActivity(connection);
+      return result;
+    });
+  }
 
   const mainMenu = VkKeyboard.builder()
     .textButton({
@@ -96,7 +114,7 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
         keyboard: mainMenu,
       });
     } catch (error) {
-      console.error('Ошибка QR ВК:', error);
+      logError('Ошибка QR ВК:', error);
       await ctx.send('Ошибка генерации QR.');
     }
   }
@@ -146,7 +164,7 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
     async (ctx) => {
       if (ctx.scene.step.firstTime) {
         await ctx.send('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
-          keyboard: await buildSourceKeyboard(),
+          keyboard: await buildSourceKeyboard(connection),
         });
         return;
       }
@@ -163,11 +181,12 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
           name: fullName,
           phone: ctx.scene.state.phone,
           source: ctx.scene.state.source,
+          tenant: connection,
         });
         await ctx.send('✅ Регистрация завершена!');
         await sendQrCode(ctx, vkId);
       } catch (error) {
-        console.error('Ошибка БД ВК:', error);
+        logError('Ошибка БД ВК:', error);
         await ctx.send(
           error.statusCode === 409
             ? `❌ ${error.message}`
@@ -199,7 +218,10 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
     const vkId = String(ctx.peerId);
 
     if (['Начать', 'начать', '/start'].includes(ctx.text)) {
-      const user = await db.User.findOne({ where: { vkId } });
+      const user = await clientsService.findCanonicalByQr(
+        `vk_${vkId}`,
+        connection,
+      );
       if (user) {
         return ctx.send(`С возвращением, ${user.name}!`, {
           keyboard: mainMenu,
@@ -246,6 +268,7 @@ function createVkBot({ token = process.env.VK_TOKEN } = {}) {
   return {
     bot: vk,
     start: () => vk.updates.start(),
+    stop: () => vk.updates.stop(),
   };
 }
 

@@ -1,5 +1,14 @@
 const crypto = require('crypto');
 const db = require('../../models');
+const accountLifecycle = require('./account-lifecycle.service');
+const accountMetadata = require('./account-metadata.service');
+const {
+  assertTenantFoundationOperational,
+} = require('./tenant-foundation.service');
+const {
+  TENANT_FOUNDATION_STATES,
+} = require('../tenant-foundation/constants');
+const { tenantContextCapability } = require('../middleware/tenant-context');
 
 const TOKEN_TTL_SECONDS = 60 * 60 * 12;
 const PASSWORD_ITERATIONS = 120000;
@@ -111,33 +120,39 @@ function sanitizeAccount(account) {
 }
 
 async function isSetupRequired() {
-  const count = await db.Account.count();
-  return count === 0;
+  return (await getSetupStatus()).setupRequired;
 }
 
-async function bootstrapOwner({ name, phone, email, password }) {
-  if (!(await isSetupRequired())) {
-    const error = new Error('Система уже настроена');
-    error.statusCode = 409;
-    throw error;
-  }
+async function getSetupStatus() {
+  const classification = await assertTenantFoundationOperational();
+  const bootstrapPending =
+    classification.state === TENANT_FOUNDATION_STATES.BOOTSTRAP_PENDING;
+  return {
+    bootstrapPending,
+    capabilities: tenantContextCapability(),
+    setupRequired: bootstrapPending,
+    tenantFoundationState: classification.state,
+  };
+}
 
-  const staff = await db.Staff.create({
-    name,
-    role: 'Владелец',
-    phone: phone || null,
-    status: 'active',
-  });
+async function bootstrapOwner({ name, phone, email, password }, options = {}) {
+  const accountId = await accountLifecycle.bootstrapInitialOwner(
+    {
+      account: {
+        email: String(email).trim().toLowerCase(),
+        passwordHash: hashPassword(password),
+      },
+      staff: {
+        name,
+        phone: phone || null,
+        role: 'Владелец',
+        status: 'active',
+      },
+    },
+    options,
+  );
 
-  const account = await db.Account.create({
-    staffId: staff.id,
-    email: String(email).trim().toLowerCase(),
-    passwordHash: hashPassword(password),
-    role: 'owner',
-    status: 'active',
-  });
-
-  return createSession(account.id);
+  return createSession(accountId);
 }
 
 async function login({ email, password }) {
@@ -157,7 +172,9 @@ async function login({ email, password }) {
     throw error;
   }
 
-  await account.update({ lastLoginAt: new Date() });
+  await accountMetadata.updateAccountMetadata(account.id, {
+    lastLoginAt: new Date(),
+  });
   return createSession(account.id);
 }
 
@@ -172,6 +189,7 @@ async function createSession(accountId) {
   return {
     token,
     account: sanitizeAccount(account),
+    capabilities: tenantContextCapability(),
   };
 }
 
@@ -183,6 +201,7 @@ async function getAccountById(id) {
 
 module.exports = {
   bootstrapOwner,
+  getSetupStatus,
   getAccountById,
   hashPassword,
   isSetupRequired,

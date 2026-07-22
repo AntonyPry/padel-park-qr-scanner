@@ -19,9 +19,14 @@ Onboarding impact:
 
 Use concrete route names, event names and role names. If the feature does not affect onboarding, write `none` and explain why.
 
-## In the instructions chat
+## In the instructions service
 
-After a feature lands or is ready for review:
+Onboarding запускается пакетно после стабилизации epic/release candidate и только
+если накопленный impact меняет видимый workflow, roles/permissions, routes,
+actions, checkpoint events, training data или инструкции. `Onboarding impact:
+none` не требует отдельного запуска.
+
+Для накопленной пачки:
 
 1. Read the feature branch diff and its `Onboarding impact`.
 2. Update `server/src/onboarding/catalog.js` for affected role paths.
@@ -32,24 +37,21 @@ After a feature lands or is ready for review:
 7. Keep the approved card format from `docs/ONBOARDING_INSTRUCTION_FORMAT.md`: first card is the section screenshot, action cards explain what to click/fill/check, and screenshots are attached only when they directly illustrate a form or result state.
 8. Update lesson `updatedAt` when text, screenshots, routes, rules, metrics or role visibility change, so users who already completed the lesson see `Обновлено`.
 9. If the feature creates data, add training markers or explicitly document why it is not training-safe yet.
-10. Run the full release gate:
+10. Run targeted onboarding checks for changed catalog/events/assets:
 
 ```bash
 cd server
 npm run onboarding:audit:strict
-npm test
-npm run typecheck
-npm run health
-npm run smoke:api
-cd ../client
-npm test
-npm run build
-UI_SMOKE_BASE_URL=http://127.0.0.1:5174 UI_SMOKE_API_URL=http://127.0.0.1:3005/api npm run smoke:ui
+# Add only affected onboarding tests or changed-file checks here.
 ```
 
 11. Run browser QA for changed instruction cards on desktop and narrow viewport.
 12. Verify console/network output has no actionable error or warning.
 13. Update `docs/SPRINT_STATUS.md` if the work closes or changes a planned onboarding sprint.
+
+Не повторяй полный server/client gate внутри onboarding service. Тимлид выполняет
+единственный release-level artifact/build/migration gate на собранном candidate и
+переиспользует green onboarding evidence exact SHA.
 
 For the onboarding worktree, use the dedicated local ports:
 
@@ -214,6 +216,8 @@ The current Guided Onboarding card-reader baseline is release-ready when:
 - browser QA verifies card navigation, image loading and no return of `Попробовать`, `Практика` or `Мини-тест`.
 
 For Visits Analytics releases, the handoff must also verify owner/manager segment-to-client-base-to-call-task flow, accountant/viewer read-only filters and exports, the four tabs of `/admin/visits-analytics`, and no new checkpoint event beyond the existing `report.viewed` route-review event.
+
+For Shift Cash releases, the handoff must also verify `/admin/shift/cash` instructions inside the `Смена` workspace for admin opening cash and expense with receipt photo, owner/manager closing reconciliation with variance comment, related Shift Reports lessons/routes on `/admin/shift/reports`, motivation rule/settings lessons on `/admin/shift-settings`, accountant read-only review of linked `Finance` expenses in `/admin/finances`, backend-only checkpoint events `shift_cash.opening_recorded`, `shift_cash.attachment_uploaded`, `shift_cash.closed`, and training cleanup for `ShiftCashSession`, `ShiftCashExpense`, receipt attachments and linked finance rows.
 
 ## Handoff text for another Codex chat
 

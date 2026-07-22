@@ -3,6 +3,11 @@ const db = require('../../models');
 const {
   TRAINING_EXERCISE_E_LEVEL_VALUES,
 } = require('../constants/training-methodology');
+const {
+  bindMethodologyActor,
+  methodologyTenantWhere,
+  resolveMethodologyAccessContext,
+} = require('./methodology-access-context.service');
 
 const VIEW_ROLES = new Set(['owner', 'manager']);
 const RECOMMENDATION_SOURCE_TYPES = [
@@ -881,7 +886,7 @@ function accountInclude(alias) {
   };
 }
 
-function exerciseInclude() {
+function exerciseInclude(context) {
   return {
     as: 'exercise',
     attributes: ['id', 'name', 'eLevel', 'formats', 'mainSkillId', 'status'],
@@ -890,19 +895,23 @@ function exerciseInclude() {
         as: 'mainSkill',
         attributes: ['id', 'name', 'direction', 'status'],
         model: db.TrainingSkill,
+        required: true,
+        where: methodologyTenantWhere(context, {}),
       },
       {
         as: 'additionalSkills',
         attributes: ['id', 'name', 'direction', 'status'],
         model: db.TrainingSkill,
+        required: false,
         through: { attributes: [] },
+        where: methodologyTenantWhere(context, {}),
       },
     ],
     model: db.TrainingExercise,
   };
 }
 
-async function loadTrainingNotes(filters) {
+async function loadTrainingNotes(filters, context) {
   const where = {
     isTraining: false,
     trainedAt: buildDateOnlyWhere(filters.from, filters.to),
@@ -913,12 +922,21 @@ async function loadTrainingNotes(filters) {
     include: [
       accountInclude('trainerAccount'),
       {
-        attributes: ['id', 'name', 'status', 'mergedIntoUserId', 'isTraining'],
+        attributes: [
+          'id',
+          'name',
+          'organizationId',
+          'status',
+          'mergedIntoUserId',
+          'isTraining',
+        ],
         model: db.User,
+        required: true,
+        where: methodologyTenantWhere(context, {}),
       },
       {
         as: 'exerciseResults',
-        include: [exerciseInclude()],
+        include: [exerciseInclude(context)],
         model: db.TrainingNoteExercise,
         required: false,
       },
@@ -931,37 +949,41 @@ async function loadTrainingNotes(filters) {
   });
 }
 
-async function loadApprovedExercises() {
+async function loadApprovedExercises(context) {
   return db.TrainingExercise.findAll({
     include: [
       {
         as: 'mainSkill',
         attributes: ['id', 'name', 'direction', 'status'],
         model: db.TrainingSkill,
+        required: true,
+        where: methodologyTenantWhere(context, {}),
       },
       {
         as: 'additionalSkills',
         attributes: ['id', 'name', 'direction', 'status'],
         model: db.TrainingSkill,
+        required: false,
         through: { attributes: [] },
+        where: methodologyTenantWhere(context, {}),
       },
     ],
     order: [['name', 'ASC']],
-    where: { status: 'approved' },
+    where: methodologyTenantWhere(context, { status: 'approved' }),
   });
 }
 
-async function loadActiveSkills() {
+async function loadActiveSkills(context) {
   return db.TrainingSkill.findAll({
     order: [
       ['direction', 'ASC'],
       ['name', 'ASC'],
     ],
-    where: { status: 'active' },
+    where: methodologyTenantWhere(context, { status: 'active' }),
   });
 }
 
-async function loadSkillHistory(filters) {
+async function loadSkillHistory(filters, context) {
   const noteWhere = { isTraining: false };
   if (filters.trainerAccountId) noteWhere.trainerAccountId = filters.trainerAccountId;
 
@@ -971,6 +993,8 @@ async function loadSkillHistory(filters) {
         as: 'skill',
         attributes: ['id', 'name', 'direction', 'status'],
         model: db.TrainingSkill,
+        required: true,
+        where: methodologyTenantWhere(context, {}),
       },
       {
         as: 'trainingNote',
@@ -980,8 +1004,17 @@ async function loadSkillHistory(filters) {
         where: noteWhere,
       },
       {
-        attributes: ['id', 'name', 'status', 'mergedIntoUserId', 'isTraining'],
+        attributes: [
+          'id',
+          'name',
+          'organizationId',
+          'status',
+          'mergedIntoUserId',
+          'isTraining',
+        ],
         model: db.User,
+        required: true,
+        where: methodologyTenantWhere(context, {}),
       },
     ],
     where: {
@@ -992,7 +1025,7 @@ async function loadSkillHistory(filters) {
   });
 }
 
-async function loadRecommendationPlans(filters) {
+async function loadRecommendationPlans(filters, context) {
   const where = {
     isTraining: false,
     plannedAt: buildDateOnlyWhere(filters.from, filters.to),
@@ -1005,12 +1038,24 @@ async function loadRecommendationPlans(filters) {
     include: [
       accountInclude('trainerAccount'),
       {
+        as: 'booking',
+        attributes: ['id', 'organizationId'],
+        model: db.Booking,
+        required: false,
+      },
+      {
         as: 'plannedExercises',
         model: db.TrainingPlanExercise,
       },
       {
         as: 'participants',
         include: [
+          {
+            as: 'client',
+            attributes: ['id', 'organizationId'],
+            model: db.User,
+            required: true,
+          },
           {
             as: 'trainingNote',
             include: [
@@ -1028,6 +1073,21 @@ async function loadRecommendationPlans(filters) {
     ],
     order: [['plannedAt', 'DESC']],
     where,
+  }).then((plans) => {
+    if (!context?.readScoped) return plans;
+    return plans.filter((planValue) => {
+      const plan = toRaw(planValue) || {};
+      const participants = plan.participants || [];
+      if (participants.length === 0) return false;
+      if (
+        plan.booking &&
+        Number(plan.booking.organizationId) !== Number(context.organizationId)
+      ) {
+        return false;
+      }
+      return participants.every((participant) =>
+        Number(participant.client?.organizationId) === Number(context.organizationId));
+    });
   });
 }
 
@@ -1053,9 +1113,23 @@ async function loadLevelHistoryNotes(clientIds) {
   });
 }
 
-async function loadTrainerOptions() {
+async function loadTrainerOptions(context) {
   const accounts = await db.Account.findAll({
-    include: [{ model: db.Staff, attributes: ['id', 'name'] }],
+    include: [
+      { model: db.Staff, attributes: ['id', 'name'] },
+      ...(context?.readScoped
+        ? [{
+            attributes: [],
+            model: db.Membership,
+            required: true,
+            where: {
+              organizationId: context.organizationId,
+              role: 'trainer',
+              status: 'active',
+            },
+          }]
+        : []),
+    ],
     order: [['email', 'ASC']],
     where: {
       role: 'trainer',
@@ -1066,8 +1140,10 @@ async function loadTrainerOptions() {
   return accounts.map(mapAccount);
 }
 
-async function getAnalytics(query = {}, actor = null) {
-  assertCanView(actor);
+async function getAnalytics(query = {}, actor = null, tenant = null) {
+  const context = await resolveMethodologyAccessContext(tenant);
+  const authorityActor = bindMethodologyActor(actor, context);
+  assertCanView(authorityActor);
   const filters = normalizeAnalyticsQuery(query);
   const [
     trainingNotes,
@@ -1077,12 +1153,12 @@ async function getAnalytics(query = {}, actor = null) {
     recommendationPlans,
     trainers,
   ] = await Promise.all([
-    loadTrainingNotes(filters),
-    loadApprovedExercises(),
-    loadActiveSkills(),
-    loadSkillHistory(filters),
-    loadRecommendationPlans(filters),
-    loadTrainerOptions(),
+    loadTrainingNotes(filters, context),
+    loadApprovedExercises(context),
+    loadActiveSkills(context),
+    loadSkillHistory(filters, context),
+    loadRecommendationPlans(filters, context),
+    loadTrainerOptions(context),
   ]);
   const exerciseUsage = buildExerciseUsage(trainingNotes, approvedExercises);
   const clientIds = Array.from(

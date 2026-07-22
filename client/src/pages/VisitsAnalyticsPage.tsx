@@ -48,7 +48,7 @@ import {
   type LifecycleSourceFilterState,
 } from '@/lib/visits-analytics-export';
 import { canManageClientBases } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 const CohortsLifecycleTab = lazy(() => import('@/components/cohorts-lifecycle-tab'));
 const RevenueLtvTab = lazy(() => import('@/components/revenue-ltv-tab'));
@@ -192,8 +192,8 @@ function DonutChartCard({
 }
 
 export default function VisitsAnalyticsPage() {
-  const { account } = useAuth();
-  const canCreateBase = canManageClientBases(account?.role);
+  const clubRole = useAuthorizationRole('club');
+  const canCreateBase = canManageClientBases(clubRole);
   const [activeTab, setActiveTab] = useState('overview');
   const [segmentSelection, setSegmentSelection] = useState<VisitsAnalyticsSegmentSelection | null>(null);
   const [lifecycleSourceFilter, setLifecycleSourceFilter] = useState<LifecycleSourceFilterState>({ allHidden: false });

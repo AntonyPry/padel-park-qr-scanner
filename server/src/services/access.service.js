@@ -5,6 +5,13 @@ const onboardingService = require('./onboarding.service');
 const referencesService = require('./references.service');
 const scannerEventsService = require('./scanner-events.service');
 const {
+  resolveVisitAccessContext,
+  visitTenantWhere,
+} = require('./visit-access-context.service');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
+const {
   getPhoneLookupDigits,
   normalizePhone,
   normalizedPhoneColumn,
@@ -60,8 +67,12 @@ function serializeVisitUser(user) {
   };
 }
 
-async function serializeVisitEvent(visitId, { isRepeated = false, clientEventId = null } = {}) {
-  const visit = await db.Visit.findByPk(visitId, {
+async function serializeVisitEvent(
+  visitId,
+  { clientEventId = null, context = null, isRepeated = false } = {},
+) {
+  const visit = await db.Visit.findOne({
+    where: visitTenantWhere(context, { id: visitId }),
     include: [
       { model: db.User },
       {
@@ -90,9 +101,10 @@ async function serializeVisitEvent(visitId, { isRepeated = false, clientEventId 
   };
 }
 
-async function searchUsers(query) {
+async function searchUsers(query, tenant = null) {
   const normalizedQuery = String(query || '').trim();
   if (normalizedQuery.length < 2) return [];
+  const context = await resolveClientAccessContext(tenant);
 
   const phoneDigits = normalizePhone(normalizedQuery);
   const conditions = [
@@ -120,6 +132,7 @@ async function searchUsers(query) {
 
   const users = await db.User.findAll({
     where: {
+      ...(context.scoped ? { organizationId: context.organizationId } : {}),
       status: 'active',
       isTraining: false,
       mergedIntoUserId: null,
@@ -137,15 +150,15 @@ async function searchUsers(query) {
   }));
 }
 
-async function findUserByPhone(phone) {
+async function findUserByPhone(phone, tenant = null) {
   const phoneDigits = getPhoneLookupDigits(phone);
   if (phoneDigits.length < 10) return null;
 
-  return clientsService.findActiveByPhone(phoneDigits);
+  return clientsService.findActiveByPhone(phoneDigits, tenant);
 }
 
-async function findUserByQr(qr) {
-  return clientsService.findCanonicalByQr(qr);
+async function findUserByQr(qr, tenant = null) {
+  return clientsService.findCanonicalByQr(qr, tenant);
 }
 
 async function createVisitForUser(user, options = {}) {
@@ -156,18 +169,27 @@ async function createVisitForUser(user, options = {}) {
     metadata = null,
     rawQr = null,
     source = null,
+    tenant = null,
   } = options;
 
   const normalizedClientEventId = normalizeClientEventId(clientEventId);
-  const trainingMarker = await onboardingService.getTrainingDataMarker(account);
+  const trainingMarker = await onboardingService.getTrainingDataMarker(account, tenant);
 
   let visitResult;
 
   try {
     visitResult = await db.sequelize.transaction(async (transaction) => {
+      const context = await resolveVisitAccessContext(tenant, {
+        lock: true,
+        transaction,
+      });
       if (normalizedClientEventId) {
         const existingVisit = await db.Visit.findOne({
-          where: { clientEventId: normalizedClientEventId },
+          where: visitTenantWhere(
+            context,
+            { clientEventId: normalizedClientEventId },
+            { force: true },
+          ),
           transaction,
           lock: transaction.LOCK.UPDATE,
         });
@@ -180,11 +202,16 @@ async function createVisitForUser(user, options = {}) {
             duplicateMessage:
               'Повторная отправка того же события не создала новый визит',
             clientEventId: normalizedClientEventId,
+            context,
           };
         }
       }
 
-      const lockedUser = await db.User.findByPk(user.id, {
+      const lockedUser = await db.User.findOne({
+        where: {
+          id: user.id,
+          organizationId: context.organizationId,
+        },
         transaction,
         lock: transaction.LOCK.UPDATE,
       });
@@ -192,7 +219,11 @@ async function createVisitForUser(user, options = {}) {
       if (!lockedUser || lockedUser.status !== 'active') return null;
 
       const lastVisit = await db.Visit.findOne({
-        where: { userId: lockedUser.id },
+        where: visitTenantWhere(
+          context,
+          { userId: lockedUser.id },
+          { force: true },
+        ),
         order: [
           ['scannedAt', 'DESC'],
           ['createdAt', 'DESC'],
@@ -214,12 +245,15 @@ async function createVisitForUser(user, options = {}) {
           duplicateCode: 'REPEAT_SCAN_WINDOW',
           duplicateMessage: 'Повторный вход в коротком окне не создал новый визит',
           clientEventId: normalizedClientEventId,
+          context,
         };
       }
 
       const visit = await db.Visit.create(
         {
           userId: lockedUser.id,
+          organizationId: context.organizationId,
+          clubId: context.clubId,
           scannedAt: new Date(),
           entrySource,
           qrRaw: rawQr || null,
@@ -233,6 +267,7 @@ async function createVisitForUser(user, options = {}) {
         visitId: visit.id,
         isRepeated: false,
         clientEventId: normalizedClientEventId,
+        context,
       };
     });
   } catch (error) {
@@ -241,8 +276,13 @@ async function createVisitForUser(user, options = {}) {
       (error?.name === 'SequelizeUniqueConstraintError' ||
         error?.parent?.code === 'ER_DUP_ENTRY')
     ) {
+      const context = await resolveVisitAccessContext(tenant);
       const existingVisit = await db.Visit.findOne({
-        where: { clientEventId: normalizedClientEventId },
+        where: visitTenantWhere(
+          context,
+          { clientEventId: normalizedClientEventId },
+          { force: true },
+        ),
       });
 
       if (existingVisit) {
@@ -252,6 +292,7 @@ async function createVisitForUser(user, options = {}) {
           duplicateCode: 'CLIENT_EVENT_RETRY',
           duplicateMessage: 'Повторная отправка того же события не создала новый визит',
           clientEventId: normalizedClientEventId,
+          context,
         };
       } else {
         throw error;
@@ -266,6 +307,7 @@ async function createVisitForUser(user, options = {}) {
   const result = await serializeVisitEvent(visitResult.visitId, {
     isRepeated: visitResult.isRepeated,
     clientEventId: visitResult.clientEventId,
+    context: visitResult.context,
   });
   if (!result) return null;
 
@@ -288,12 +330,14 @@ async function createVisitForUser(user, options = {}) {
       entrySource,
       repeatWindowMinutes: REPEAT_SCAN_WINDOW_MINUTES,
     },
+    tenant,
   });
 
   if (!result.isRepeated) {
     await onboardingService.recordEventSafe(account, 'access.visit_created', {
       entityId: result.visitId,
       entityType: 'visit',
+      tenant,
       payload: {
         entrySource,
         userId: result.user.id,
@@ -306,13 +350,10 @@ async function createVisitForUser(user, options = {}) {
 }
 
 async function createManualVisit(userId, options = {}) {
-  const user = await db.User.findByPk(userId);
-  if (!user) return null;
-
-  const canonicalUser =
-    user.mergedIntoUserId
-      ? await db.User.findByPk(user.mergedIntoUserId)
-      : user;
+  const canonicalUser = await clientsService.findCanonicalById(
+    userId,
+    options.tenant || null,
+  );
   if (!canonicalUser || canonicalUser.status !== 'active') return null;
 
   return createVisitForUser(canonicalUser, {
@@ -323,7 +364,7 @@ async function createManualVisit(userId, options = {}) {
 
 async function scanQr(rawQr, options = {}) {
   const qr = normalizeQr(rawQr);
-  const user = await findUserByQr(qr);
+  const user = await findUserByQr(qr, options.tenant || null);
 
   if (!user || user.status !== 'active') {
     await scannerEventsService.recordEvent({
@@ -337,6 +378,7 @@ async function scanQr(rawQr, options = {}) {
       account: options.account,
       clientEventId: options.clientEventId,
       metadata: options.metadata,
+      tenant: options.tenant || null,
     });
     const qrPreview = scannerEventsService.sanitizeQrPreview(qr);
 
@@ -377,8 +419,14 @@ async function scanQr(rawQr, options = {}) {
   };
 }
 
-async function registerReceptionUser({ name, phone, source, sourceId }) {
-  const existingUser = await findUserByPhone(phone);
+async function registerReceptionUser({
+  name,
+  phone,
+  source,
+  sourceId,
+  tenant = null,
+}) {
+  const existingUser = await findUserByPhone(phone, tenant);
   if (existingUser) {
     return {
       status: 'exists',
@@ -388,12 +436,16 @@ async function registerReceptionUser({ name, phone, source, sourceId }) {
     };
   }
 
-  const result = await clientsService.createClient({
-    name,
-    phone,
-    source,
-    sourceId,
-  });
+  const result = await clientsService.createClient(
+    {
+      name,
+      phone,
+      source,
+      sourceId,
+    },
+    null,
+    tenant,
+  );
   const user = result.client;
 
   return {
@@ -403,8 +455,10 @@ async function registerReceptionUser({ name, phone, source, sourceId }) {
   };
 }
 
-async function getRecentVisitCards(limit = 50) {
+async function getRecentVisitCards(limit = 50, tenant = null) {
+  const context = await resolveVisitAccessContext(tenant);
   const visits = await db.Visit.findAll({
+    where: visitTenantWhere(context),
     limit,
     order: [
       ['scannedAt', 'DESC'],
@@ -431,6 +485,7 @@ async function getRecentVisitCards(limit = 50) {
         minute: '2-digit',
       }),
       name: visit.User?.name || 'Неизвестный',
+      userId: visit.User?.id || visit.userId,
       phone: visit.User?.phone || '',
       source: visit.User?.source || '-',
       visitId: visit.id,
@@ -442,17 +497,27 @@ async function getRecentVisitCards(limit = 50) {
   });
 }
 
-async function issueKey(visitId, keyNumber, account = null) {
+async function issueKey(visitId, keyNumber, account = null, tenant = null) {
   const cleanKeyNumber = String(keyNumber || '').replace(/\D/g, '');
   if (!cleanKeyNumber) {
     throw appError('Номер ключа обязателен');
   }
 
   const visit = await db.sequelize.transaction(async (transaction) => {
-    const lockedVisit = await db.Visit.findByPk(Number(visitId), {
+    const context = await resolveVisitAccessContext(tenant, {
+      lock: true,
       transaction,
-      lock: transaction.LOCK.UPDATE,
     });
+    const lockedVisit = context
+      ? await db.Visit.findOne({
+          where: visitTenantWhere(context, { id: Number(visitId) }),
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        })
+      : await db.Visit.findByPk(Number(visitId), {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
     if (!lockedVisit) throw appError('Визит не найден', 404);
     if (lockedVisit.keyNumber) {
       throw appError(
@@ -471,27 +536,30 @@ async function issueKey(visitId, keyNumber, account = null) {
       { transaction },
     );
 
-    return lockedVisit;
-  });
+    await scannerEventsService.recordEvent({
+      eventType: 'key_issued',
+      severity: 'info',
+      status: 'updated',
+      message: `Выдан ключ №${cleanKeyNumber}`,
+      source: 'reception',
+      visitId: lockedVisit.id,
+      userId: lockedVisit.userId,
+      account,
+      metadata: {
+        keyNumber: cleanKeyNumber,
+      },
+      tenant,
+      transaction,
+      throwOnError: true,
+    });
 
-  await scannerEventsService.recordEvent({
-    eventType: 'key_issued',
-    severity: 'info',
-    status: 'updated',
-    message: `Выдан ключ №${cleanKeyNumber}`,
-    source: 'reception',
-    visitId: visit.id,
-    userId: visit.userId,
-    account,
-    metadata: {
-      keyNumber: cleanKeyNumber,
-    },
+    return lockedVisit;
   });
 
   return visit;
 }
 
-async function correctKey(visitId, keyNumber, account = null) {
+async function correctKey(visitId, keyNumber, account = null, tenant = null) {
   const cleanKeyNumber = String(keyNumber ?? '').trim();
   if (!/^\d+$/.test(cleanKeyNumber)) {
     throw appError(
@@ -502,10 +570,20 @@ async function correctKey(visitId, keyNumber, account = null) {
   }
 
   return db.sequelize.transaction(async (transaction) => {
-    const lockedVisit = await db.Visit.findByPk(Number(visitId), {
+    const context = await resolveVisitAccessContext(tenant, {
+      lock: true,
       transaction,
-      lock: transaction.LOCK.UPDATE,
     });
+    const lockedVisit = context
+      ? await db.Visit.findOne({
+          where: visitTenantWhere(context, { id: Number(visitId) }),
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        })
+      : await db.Visit.findByPk(Number(visitId), {
+          transaction,
+          lock: transaction.LOCK.UPDATE,
+        });
     if (!lockedVisit) throw appError('Визит не найден', 404);
 
     const oldKeyNumber = String(lockedVisit.keyNumber || '');
@@ -547,6 +625,7 @@ async function correctKey(visitId, keyNumber, account = null) {
       },
       transaction,
       throwOnError: true,
+      tenant,
     });
 
     return {
@@ -566,18 +645,34 @@ function splitVisitCategories(category) {
     .filter(Boolean);
 }
 
-async function updateVisitCategory(visitId, category, categoryIds = [], account = null) {
+async function updateVisitCategory(
+  visitId,
+  category,
+  categoryIds = [],
+  account = null,
+  tenant = null,
+) {
   const categories =
     Array.isArray(categoryIds) && categoryIds.length > 0
-      ? await referencesService.getVisitCategoriesByIds(categoryIds)
+      ? await referencesService.getVisitCategoriesByIds(categoryIds, { tenant })
       : await referencesService.getVisitCategoriesByNames(
           splitVisitCategories(category),
+          { tenant },
         );
   const categoryName = categories.map((item) => item.name).join(', ');
   let userId = null;
 
   await db.sequelize.transaction(async (transaction) => {
-    const visit = await db.Visit.findByPk(Number(visitId), {
+    const context = await resolveVisitAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const visit = await db.Visit.findOne({
+      where: visitTenantWhere(
+        context,
+        { id: Number(visitId) },
+        { force: true },
+      ),
       transaction,
       lock: transaction.LOCK.UPDATE,
     });
@@ -585,13 +680,19 @@ async function updateVisitCategory(visitId, category, categoryIds = [], account 
     userId = visit.userId;
 
     await db.VisitCategoryAssignment.destroy({
-      where: { visitId: visit.id },
+      where: visitTenantWhere(
+        context,
+        { visitId: visit.id },
+        { force: true },
+      ),
       transaction,
     });
 
     if (categories.length > 0) {
       await db.VisitCategoryAssignment.bulkCreate(
         categories.map((item) => ({
+          organizationId: context.organizationId,
+          clubId: context.clubId,
           visitId: visit.id,
           visitCategoryId: item.id,
         })),
@@ -600,23 +701,26 @@ async function updateVisitCategory(visitId, category, categoryIds = [], account 
     }
 
     await visit.update({ category: categoryName || null }, { transaction });
-  });
 
-  await scannerEventsService.recordEvent({
-    eventType: 'visit_category_changed',
-    severity: 'info',
-    status: 'updated',
-    message: categoryName
-      ? `Цель визита: ${categoryName}`
-      : 'Цель визита очищена',
-    source: 'reception',
-    visitId: Number(visitId),
-    userId,
-    account,
-    metadata: {
-      categoryIds: categories.map((item) => item.id),
-      categoryName,
-    },
+    await scannerEventsService.recordEvent({
+      eventType: 'visit_category_changed',
+      severity: 'info',
+      status: 'updated',
+      message: categoryName
+        ? `Цель визита: ${categoryName}`
+        : 'Цель визита очищена',
+      source: 'reception',
+      visitId: visit.id,
+      userId,
+      account,
+      metadata: {
+        categoryIds: categories.map((item) => item.id),
+        categoryName,
+      },
+      tenant,
+      transaction,
+      throwOnError: true,
+    });
   });
 
   return {

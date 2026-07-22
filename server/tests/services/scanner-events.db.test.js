@@ -6,8 +6,10 @@ const {
   listEvents,
   recordEvent,
 } = require('../../src/services/scanner-events.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 test('DB-backed scanner event preserves false and zero metadata', async () => {
+  const restoreSingleton = mockExactSingletonDefault(db);
   await db.sequelize.authenticate();
   let event;
   const eventType = `scanner_metadata_regression_test_${Date.now()}`;
@@ -29,5 +31,6 @@ test('DB-backed scanner event preserves false and zero metadata', async () => {
     assert.equal(storedEvent.metadata.reconnectAttempt, 0);
   } finally {
     await event?.destroy();
+    restoreSingleton();
   }
 });

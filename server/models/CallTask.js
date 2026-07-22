@@ -1,5 +1,13 @@
 module.exports = (sequelize, DataTypes) => {
   const CallTask = sequelize.define('CallTask', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     clientBaseId: {
       type: DataTypes.INTEGER,
       allowNull: true,
@@ -56,9 +64,37 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    trainingSessionId: { type: DataTypes.UUID, allowNull: true },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        const attributes = options.attributes || {};
+        if (['organizationId', 'clubId', 'clientBaseId', 'createdByAccountId'].some(
+          (field) => Object.prototype.hasOwnProperty.call(attributes, field),
+        )) {
+          const error = new Error('Call task tenant attribution is immutable');
+          error.code = 'CALL_TASK_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+      beforeUpdate(task) {
+        if (
+          task.changed('organizationId') ||
+          task.changed('clubId') ||
+          task.changed('clientBaseId') ||
+          task.changed('createdByAccountId')
+        ) {
+          const error = new Error('Call task tenant attribution is immutable');
+          error.code = 'CALL_TASK_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   CallTask.associate = (models) => {
+    CallTask.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    CallTask.belongsTo(models.Club, { foreignKey: 'clubId' });
     CallTask.belongsTo(models.ClientBase, {
       as: 'clientBase',
       foreignKey: 'clientBaseId',

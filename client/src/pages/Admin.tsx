@@ -20,6 +20,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { VisitKeyControl } from '@/components/visit-key-control';
+import { ClientProfileDialog } from '@/components/client-profile-dialog';
 import {
   Table,
   TableBody,
@@ -58,6 +59,8 @@ import { useRealtimeEvent, useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
 import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
+import { canManageClients, canViewReferences } from '@/lib/permissions';
+import { useAuthorizationRole } from '@/lib/useAuth';
 import {
   createInitialScannerSnapshot,
   WebSerialScannerLifecycle,
@@ -75,6 +78,7 @@ import type { PendingScannerScan } from '@/lib/scanner-scan-queue';
 import { postScannerDiagnosticEvent } from '@/lib/scanner-telemetry';
 
 const EMPTY_RECEPTION_CLIENT_FORM = {
+  birthDate: '',
   name: '',
   phone: '',
   sourceId: '',
@@ -93,6 +97,7 @@ interface VisitCard {
   clientEventId?: string | null;
   name?: string;
   phone?: string;
+  userId?: number;
   source?: string;
   telegramId?: string;
   vkId?: string;
@@ -135,6 +140,7 @@ interface SearchUser {
 }
 
 interface ExistingClientCandidate {
+  birthDate?: string | null;
   id: number;
   name: string;
   note?: string | null;
@@ -289,6 +295,9 @@ function playSound(type: 'success' | 'error') {
 }
 
 export default function AdminPage() {
+  const organizationRole = useAuthorizationRole('organization');
+  const canManageOrganizationClients = canManageClients(organizationRole);
+  const canLoadOrganizationReferences = canViewReferences(organizationRole);
   const [cards, setCards] = useState<VisitCard[]>([]);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -297,6 +306,7 @@ export default function AdminPage() {
   const [isDisconnectOpen, setIsDisconnectOpen] = useState(false);
   const [cardToDelete, setCardToDelete] = useState<string | null>(null);
   const [activeVisit, setActiveVisit] = useState<VisitCard | null>(null);
+  const [clientProfileId, setClientProfileId] = useState<number | null>(null);
   const [visitActionError, setVisitActionError] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -344,6 +354,7 @@ export default function AdminPage() {
   const [savingCategoryVisitId, setSavingCategoryVisitId] = useState<
     number | null
   >(null);
+  const [keyDrafts, setKeyDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
     activeVisitRef.current = activeVisit;
@@ -431,6 +442,12 @@ export default function AdminPage() {
   });
 
   useEffect(() => {
+    if (!canLoadOrganizationReferences) {
+      setClientSources([]);
+      setVisitCategories([]);
+      return;
+    }
+
     let cancelled = false;
 
     async function loadReferences() {
@@ -466,7 +483,7 @@ export default function AdminPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [canLoadOrganizationReferences]);
 
   const buildVisitCard = useCallback((data: ScanResultPayload): VisitCard => {
     const time = new Date().toLocaleTimeString('ru-RU', {
@@ -483,6 +500,7 @@ export default function AdminPage() {
       clientEventId: data.clientEventId || null,
       isRepeated: data.isRepeated,
       name: data.user?.name || '',
+      userId: data.user?.id,
       phone: data.user?.phone || '',
       source: data.user?.source || '-',
       telegramId: data.user?.telegramId,
@@ -776,7 +794,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     const phoneDigits = getPhoneDigits(regForm.phone);
-    if (!isRegOpen || phoneDigits.length !== 10) {
+    if (
+      !canManageOrganizationClients ||
+      !isRegOpen ||
+      phoneDigits.length !== 10
+    ) {
       setRegCandidate(null);
       return;
     }
@@ -812,7 +834,12 @@ export default function AdminPage() {
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [isRegOpen, regForm.phone, restoreCandidate]);
+  }, [
+    canManageOrganizationClients,
+    isRegOpen,
+    regForm.phone,
+    restoreCandidate,
+  ]);
 
   const handleManualVisit = async (userId: number) => {
     const clientEventId = createClientEventId('manual');
@@ -854,18 +881,21 @@ export default function AdminPage() {
   };
 
   const openNewClientDialog = useCallback(() => {
+    if (!canManageOrganizationClients) return;
     setRegForm(getEmptyReceptionForm());
     setRegCandidate(null);
     setRestoreCandidate(null);
     setRegError('');
     setIsRegOpen(true);
-  }, [getEmptyReceptionForm]);
+  }, [canManageOrganizationClients, getEmptyReceptionForm]);
 
   const openReceptionRestore = (candidate: ExistingClientCandidate) => {
+    if (!canManageOrganizationClients) return;
     setRestoreCandidate(candidate);
     setRegCandidate(null);
     setRegError('');
     setRegForm({
+      birthDate: candidate.birthDate || '',
       name: candidate.name,
       note: candidate.note || '',
       phone: candidate.phone,
@@ -890,16 +920,13 @@ export default function AdminPage() {
 
   const handleKeyInput = (cardId: string, val: string) => {
     const numericVal = val.replace(/\D/g, '');
-    setCards((prev) =>
-      prev.map((c) => (c.id === cardId ? { ...c, keyNumber: numericVal } : c)),
-    );
-    setActiveVisit((prev) =>
-      prev?.id === cardId ? { ...prev, keyNumber: numericVal } : prev,
-    );
+    setKeyDrafts((current) => ({ ...current, [cardId]: numericVal }));
   };
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!canManageOrganizationClients) return;
 
     if (regForm.name.trim().length < 2) {
       setRegError('Введите корректное имя');
@@ -1009,6 +1036,11 @@ export default function AdminPage() {
       setActiveVisit((prev) =>
         prev?.id === cardId ? { ...prev, keyNumber, keyIssued: true } : prev,
       );
+      setKeyDrafts((current) => {
+        const next = { ...current };
+        delete next[cardId];
+        return next;
+      });
       setVisitActionError('');
     } catch (e) {
       console.error('Ошибка выдачи ключа', e);
@@ -1350,10 +1382,12 @@ export default function AdminPage() {
               <Search className="w-4 h-4 mr-2" />
               Ручной поиск
             </Button>
-            <Button onClick={openNewClientDialog} className="w-full md:w-auto">
-              <UserPlus className="w-4 h-4 mr-2" />
-              Новый клиент
-            </Button>
+            {canManageOrganizationClients && (
+              <Button onClick={openNewClientDialog} className="w-full md:w-auto">
+                <UserPlus className="w-4 h-4 mr-2" />
+                Новый клиент
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1467,14 +1501,20 @@ export default function AdminPage() {
                             <TableCell className="px-5 py-4">
                               <div className="flex min-w-[240px] items-start gap-3">
                                 <div className="min-w-0">
-                                  <div
+                                  <button
+                                    type="button"
                                     className={cn(
-                                      'max-w-[260px] truncate font-semibold leading-5',
+                                      'block max-w-[260px] truncate text-left font-semibold leading-5 hover:text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                                       !card.success && 'text-destructive',
                                     )}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      if (card.success && card.userId) setClientProfileId(card.userId);
+                                    }}
+                                    disabled={!card.success || !card.userId}
                                   >
                                     {card.success ? card.name : 'Неизвестный QR'}
-                                  </div>
+                                  </button>
                                   <div className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground">
                                     {card.success
                                       ? card.source || 'Источник не указан'
@@ -1612,19 +1652,21 @@ export default function AdminPage() {
                   <p className="text-sm text-muted-foreground mb-4">
                     Ничего не найдено
                   </p>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setIsSearchOpen(false);
-                      setRegForm(getEmptyReceptionForm());
-                      setRegCandidate(null);
-                      setRestoreCandidate(null);
-                      setRegError('');
-                      setIsRegOpen(true);
-                    }}
-                  >
-                    Создать нового
-                  </Button>
+                  {canManageOrganizationClients && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setIsSearchOpen(false);
+                        setRegForm(getEmptyReceptionForm());
+                        setRegCandidate(null);
+                        setRestoreCandidate(null);
+                        setRegError('');
+                        setIsRegOpen(true);
+                      }}
+                    >
+                      Создать нового
+                    </Button>
+                  )}
                 </div>
               ) : (
                 searchResults.map((u) => (
@@ -1721,7 +1763,7 @@ export default function AdminPage() {
             )}
             <div>
               <label className="mb-1 block text-xs font-medium">
-                Источник
+                Откуда о нас узнал клиент
               </label>
               <Select
                 value={regForm.sourceId}
@@ -1747,6 +1789,23 @@ export default function AdminPage() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div>
+              <label
+                className="mb-1 block text-xs font-medium"
+                htmlFor="reception-client-birth-date"
+              >
+                Дата рождения
+              </label>
+              <Input
+                id="reception-client-birth-date"
+                type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                value={regForm.birthDate}
+                onChange={(event) =>
+                  setRegForm({ ...regForm, birthDate: event.target.value })
+                }
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium">
@@ -1816,7 +1875,9 @@ export default function AdminPage() {
                   </div>
                 </div>
                 <div className="rounded-md border p-3">
-                  <div className="text-xs text-muted-foreground">Источник</div>
+                  <div className="text-xs text-muted-foreground">
+                    Откуда о нас узнал клиент
+                  </div>
                   <div className="mt-1 font-medium">
                     {activeVisit.success ? activeVisit.source || '-' : '-'}
                   </div>
@@ -1977,7 +2038,7 @@ export default function AdminPage() {
                         <Input
                           placeholder="Номер ключа"
                           inputMode="numeric"
-                          value={activeVisit.keyNumber}
+                          value={keyDrafts[activeVisit.id] ?? activeVisit.keyNumber}
                           disabled={issuingKeyVisitId === activeVisit.visitId}
                           onChange={(event) =>
                             handleKeyInput(activeVisit.id, event.target.value)
@@ -1986,13 +2047,13 @@ export default function AdminPage() {
                         <Button
                           type="button"
                           disabled={
-                            !activeVisit.keyNumber.trim() ||
+                            !(keyDrafts[activeVisit.id] ?? activeVisit.keyNumber).trim() ||
                             issuingKeyVisitId === activeVisit.visitId
                           }
                           onClick={() =>
                             void handleIssueKey(
                               activeVisit.visitId,
-                              activeVisit.keyNumber,
+                              keyDrafts[activeVisit.id] ?? activeVisit.keyNumber,
                               activeVisit.id,
                             )
                           }
@@ -2015,6 +2076,13 @@ export default function AdminPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ClientProfileDialog
+        clientId={clientProfileId}
+        onOpenChange={(open) => {
+          if (!open) setClientProfileId(null);
+        }}
+      />
 
       {/* МОДАЛКА: УДАЛЕНИЕ */}
       <Dialog open={isDeleteOpen} onOpenChange={setIsDeleteOpen}>

@@ -4,7 +4,7 @@ const { sendError } = require('../utils/api-error');
 class AccountsController {
   async getAll(req, res) {
     try {
-      const accounts = await accountsService.getAll(req.query);
+      const accounts = await accountsService.getAll(req.query, req.tenant);
       res.json(accounts);
     } catch (error) {
       sendError(res, error, 'Ошибка получения пользователей');
@@ -13,7 +13,7 @@ class AccountsController {
 
   async create(req, res) {
     try {
-      const account = await accountsService.create(req.account, req.body);
+      const account = await accountsService.create(req.account, req.body, req.tenant);
       res.status(201).json(account);
     } catch (error) {
       sendError(res, error, 'Ошибка создания пользователя');
@@ -26,6 +26,7 @@ class AccountsController {
         req.account,
         req.params.id,
         req.body,
+        req.tenant,
       );
       res.json(account);
     } catch (error) {
@@ -35,7 +36,11 @@ class AccountsController {
 
   async remove(req, res) {
     try {
-      const result = await accountsService.remove(req.account, req.params.id);
+      const result = await accountsService.remove(
+        req.account,
+        req.params.id,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка удаления пользователя');
@@ -44,7 +49,11 @@ class AccountsController {
 
   async restore(req, res) {
     try {
-      const result = await accountsService.restore(req.account, req.params.id);
+      const result = await accountsService.restore(
+        req.account,
+        req.params.id,
+        req.tenant,
+      );
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка восстановления пользователя');
@@ -56,6 +65,7 @@ class AccountsController {
       const result = await accountsService.removeArchived(
         req.account,
         req.params.id,
+        req.tenant,
       );
       res.json(result);
     } catch (error) {

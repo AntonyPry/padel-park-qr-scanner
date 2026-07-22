@@ -1,8 +1,8 @@
 import {
   Activity,
   BicepsFlexed,
+  Banknote,
   CalendarDays,
-  CircleDollarSign,
   ContactRound,
   Database,
   Filter,
@@ -12,8 +12,10 @@ import {
   LineChart,
   ListChecks,
   ClipboardCheck,
-  ClipboardList,
   Boxes,
+  Building2,
+  Check,
+  ChevronsUpDown,
   LogOut,
   ListTree,
   PhoneCall,
@@ -22,9 +24,12 @@ import {
   Users,
   Wallet,
   WalletCards,
+  SlidersHorizontal,
+  MapPin,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { ShiftReportsAttentionBadge } from '@/components/shift-reports-attention-badge';
 import {
   Sidebar,
   SidebarContent,
@@ -40,21 +45,40 @@ import {
   SidebarSeparator,
 } from '@/components/ui/sidebar';
 import { Link, useLocation } from 'react-router-dom';
-import { ROUTE_ACCESS, hasRoleAccess } from '@/lib/permissions';
+import {
+  canAccessPathForAuthority,
+  type ClientRoute,
+} from '@/lib/permissions';
 import { useAuth } from '@/lib/useAuth';
+import { selectAuthorizationRole } from '@/lib/authorization';
 import { getAccountRoleLabel } from '@/lib/roles';
-import type { AccountRole } from '@/lib/roles';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from './theme-toggle';
+import { BrandMark } from './brand-mark';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import type {
+  TenantDiscoveryResponse,
+  ActiveTenantContext,
+} from '@/lib/tenant-context';
 
 type NavItem = {
   title: string;
-  url?: string;
+  url?: ClientRoute;
+  authorizationPath?: ClientRoute;
   icon: LucideIcon;
   activeUrls?: string[];
-  badge?: string;
+  badge?:
+    | { kind: 'static'; label: string }
+    | { kind: 'shiftReports' };
   disabled?: boolean;
-  roles?: AccountRole[];
   tooltip?: string;
 };
 
@@ -91,6 +115,13 @@ const navigationSections: NavSection[] = [
         title: 'Обучение',
         url: '/admin/onboarding',
         icon: GraduationCap,
+      },
+      {
+        title: 'Смена',
+        url: '/admin/shift/motivation',
+        activeUrls: ['/admin/shift'],
+        icon: Banknote,
+        badge: { kind: 'shiftReports' },
       },
     ],
   },
@@ -132,11 +163,6 @@ const navigationSections: NavSection[] = [
         url: '/admin/finances',
         icon: Wallet,
       },
-      {
-        title: 'Мотивация',
-        url: '/admin/motivation',
-        icon: CircleDollarSign,
-      },
     ],
   },
   {
@@ -159,11 +185,6 @@ const navigationSections: NavSection[] = [
         icon: ClipboardCheck,
       },
       {
-        title: 'Отчеты смены',
-        url: '/admin/shift-reports',
-        icon: ClipboardList,
-      },
-      {
         title: 'Аналитика входов',
         url: '/admin/visits-analytics',
         icon: LineChart,
@@ -184,6 +205,11 @@ const navigationSections: NavSection[] = [
     title: 'Настройки',
     items: [
       {
+        title: 'Настройки смены',
+        url: '/admin/shift-settings',
+        icon: SlidersHorizontal,
+      },
+      {
         title: 'Персонал',
         url: '/admin/staff',
         icon: Users,
@@ -201,9 +227,9 @@ const navigationSections: NavSection[] = [
       {
         title: 'Инвентаризация',
         icon: Boxes,
-        badge: 'Скоро',
+        badge: { kind: 'static', label: 'Скоро' },
         disabled: true,
-        roles: ROUTE_ACCESS['/admin/catalog'],
+        authorizationPath: '/admin/catalog',
         tooltip: 'Раздел в разработке',
       },
       {
@@ -226,9 +252,129 @@ function isRouteActive(currentPath: string, item: NavItem) {
   );
 }
 
+function ShiftReportsBadge() {
+  return <ShiftReportsAttentionBadge placement="sidebar" />;
+}
+
+function NavigationBadge({ badge }: { badge: NonNullable<NavItem['badge']> }) {
+  if (badge.kind === 'shiftReports') return <ShiftReportsBadge />;
+
+  return (
+    <SidebarMenuBadge className="bg-sidebar-accent/70 text-[10px] text-sidebar-foreground/60">
+      {badge.label}
+    </SidebarMenuBadge>
+  );
+}
+
+function TenantSwitcher({
+  context,
+  discovery,
+  onSwitch,
+}: {
+  context: ActiveTenantContext;
+  discovery: TenantDiscoveryResponse;
+  onSwitch: (organizationId: number, clubId: number) => Promise<void>;
+}) {
+  const activeMembership = discovery.memberships.find(
+    (membership) => membership.id === context.membershipId,
+  );
+  const activeClub = activeMembership?.clubs.find((club) => club.id === context.clubId);
+
+  if (!activeMembership || !activeClub) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          aria-label={`Сменить организацию или клуб. Сейчас ${activeMembership.organization.name}, ${activeClub.name}`}
+          className="group mt-3 flex w-full min-w-0 items-center gap-2.5 rounded-xl border border-sidebar-border/80 bg-sidebar-accent/35 px-3 py-2.5 text-left shadow-sm shadow-foreground/5 outline-none transition hover:bg-sidebar-accent/65 focus-visible:ring-2 focus-visible:ring-sidebar-ring"
+        >
+          <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-background/75 text-primary ring-1 ring-sidebar-border/70">
+            <Building2 className="size-4" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span
+              className="block truncate text-[11px] font-medium uppercase tracking-wide text-sidebar-foreground/55"
+              title={activeMembership.organization.name}
+            >
+              {activeMembership.organization.name}
+            </span>
+            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-sm font-semibold text-sidebar-foreground">
+              <MapPin className="size-3.5 shrink-0 text-primary/75" />
+              <span className="truncate" title={activeClub.name}>{activeClub.name}</span>
+            </span>
+          </span>
+          <ChevronsUpDown className="size-4 shrink-0 text-sidebar-foreground/55 transition group-hover:text-sidebar-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        sideOffset={8}
+        className="max-h-[min(70vh,34rem)] w-[min(22rem,calc(100vw-2rem))] overflow-y-auto rounded-xl p-1.5"
+      >
+        <DropdownMenuLabel className="px-2.5 py-2 text-[11px] uppercase tracking-wide">
+          Выберите рабочий клуб
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {discovery.memberships.map((membership, index) => (
+          <DropdownMenuGroup key={membership.id}>
+            {index > 0 ? <DropdownMenuSeparator className="my-1.5" /> : null}
+            <DropdownMenuLabel className="flex items-center gap-2 px-2.5 pb-1 pt-2 text-xs text-foreground">
+              <Building2 className="size-3.5 text-muted-foreground" />
+              <span className="truncate" title={membership.organization.name}>
+                {membership.organization.name}
+              </span>
+            </DropdownMenuLabel>
+            {membership.clubs.map((club) => {
+              const active =
+                membership.id === context.membershipId && club.id === context.clubId;
+              return (
+                <DropdownMenuItem
+                  key={`${membership.id}:${club.id}`}
+                  aria-current={active ? 'true' : undefined}
+                  className="min-h-11 rounded-lg px-2.5 py-2"
+                  onSelect={() => {
+                    if (!active) {
+                      void onSwitch(membership.organization.id, club.id);
+                    }
+                  }}
+                >
+                  <MapPin className="size-4 text-muted-foreground" />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium" title={club.name}>
+                      {club.name}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {getAccountRoleLabel(club.effectiveRole)}
+                    </span>
+                  </span>
+                  {active ? <Check className="size-4 text-primary" /> : null}
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuGroup>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 export function AppSidebar() {
   const location = useLocation();
-  const { account, logout } = useAuth();
+  const {
+    account,
+    logout,
+    tenantContext,
+    tenantDiscovery,
+    tenantContextEnabled,
+    switchTenantContext,
+  } = useAuth();
+  const authority = {
+    accountRole: account?.role,
+    tenantContext,
+    tenantContextEnabled,
+  };
   const navRef = useRef<HTMLDivElement | null>(null);
   const [activeIndicator, setActiveIndicator] = useState({
     height: 0,
@@ -240,18 +386,16 @@ export function AppSidebar() {
   const availableSections = navigationSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) =>
-        hasRoleAccess(
-          account?.role,
-          item.roles || (item.url ? ROUTE_ACCESS[item.url] : []) || [],
-        ),
-      ),
+      items: section.items.filter((item) => {
+        const path = item.authorizationPath || item.url;
+        return path ? canAccessPathForAuthority(authority, path) : false;
+      }),
     }))
     .filter((section) => section.items.length > 0);
   const displayName = account?.Staff?.name || account?.email || 'Аккаунт';
   const secondaryLabel = account?.Staff?.name
     ? account.email
-    : getAccountRoleLabel(account?.role);
+    : getAccountRoleLabel(selectAuthorizationRole(authority, 'membership'));
   const initials = displayName
     .split(/\s+/)
     .filter(Boolean)
@@ -300,18 +444,19 @@ export function AppSidebar() {
     <Sidebar collapsible="none">
       <SidebarHeader className="border-b border-sidebar-border/70 p-4 pb-3">
         <div className="flex h-10 min-w-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-md border border-sidebar-border bg-sidebar-accent shadow-sm shadow-foreground/5">
-            <img
-              src="/setly-mark.png?v=20260714"
-              alt=""
-              className="size-full object-cover"
-            />
-          </div>
+          <BrandMark className="size-9" decorative />
           <span className="block min-w-0 truncate text-sm font-semibold tracking-tight text-primary">
             Setly
           </span>
           <ThemeToggle />
         </div>
+        {tenantContextEnabled && tenantContext && tenantDiscovery ? (
+          <TenantSwitcher
+            context={tenantContext}
+            discovery={tenantDiscovery}
+            onSwitch={switchTenantContext}
+          />
+        ) : null}
       </SidebarHeader>
 
       <SidebarContent>
@@ -369,11 +514,7 @@ export function AppSidebar() {
                               <item.icon />
                               <span>{item.title}</span>
                             </SidebarMenuButton>
-                            {item.badge ? (
-                              <SidebarMenuBadge className="bg-sidebar-accent/70 text-[10px] text-sidebar-foreground/60">
-                                {item.badge}
-                              </SidebarMenuBadge>
-                            ) : null}
+                            {item.badge ? <NavigationBadge badge={item.badge} /> : null}
                           </SidebarMenuItem>
                         );
                       }
@@ -382,6 +523,7 @@ export function AppSidebar() {
                         <SidebarMenuItem key={item.url}>
                           <SidebarMenuButton
                             asChild
+                            className={item.badge ? 'pr-10' : undefined}
                             data-sidebar-nav-item="true"
                             isActive={isActive}
                           >
@@ -390,6 +532,7 @@ export function AppSidebar() {
                               <span>{item.title}</span>
                             </Link>
                           </SidebarMenuButton>
+                          {item.badge ? <NavigationBadge badge={item.badge} /> : null}
                         </SidebarMenuItem>
                       );
                     })}

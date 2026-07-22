@@ -8,7 +8,7 @@ function handleError(res, error, fallback) {
 class ClientBasesController {
   async getAll(req, res) {
     try {
-      res.json(await clientBasesService.list(req.query));
+      res.json(await clientBasesService.list(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения баз клиентов');
     }
@@ -16,7 +16,9 @@ class ClientBasesController {
 
   async create(req, res) {
     try {
-      res.status(201).json(await clientBasesService.create(req.account, req.body));
+      res.status(201).json(
+        await clientBasesService.create(req.account, req.body, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка создания базы клиентов');
     }
@@ -24,7 +26,9 @@ class ClientBasesController {
 
   async update(req, res) {
     try {
-      res.json(await clientBasesService.update(req.params.id, req.body));
+      res.json(
+        await clientBasesService.update(req.params.id, req.body, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка обновления базы клиентов');
     }
@@ -32,7 +36,7 @@ class ClientBasesController {
 
   async archive(req, res) {
     try {
-      res.json(await clientBasesService.archive(req.params.id));
+      res.json(await clientBasesService.archive(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка архивации базы клиентов');
     }
@@ -40,7 +44,7 @@ class ClientBasesController {
 
   async restore(req, res) {
     try {
-      res.json(await clientBasesService.restore(req.params.id));
+      res.json(await clientBasesService.restore(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка восстановления базы клиентов');
     }
@@ -48,7 +52,9 @@ class ClientBasesController {
 
   async removeArchived(req, res) {
     try {
-      res.json(await clientBasesService.removeArchived(req.params.id));
+      res.json(
+        await clientBasesService.removeArchived(req.params.id, req.tenant),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка удаления базы клиентов из архива');
     }
@@ -56,7 +62,13 @@ class ClientBasesController {
 
   async getClients(req, res) {
     try {
-      res.json(await clientBasesService.getClients(req.params.id, req.query));
+      res.json(
+        await clientBasesService.getClients(
+          req.params.id,
+          req.query,
+          req.tenant,
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка получения клиентов базы');
     }

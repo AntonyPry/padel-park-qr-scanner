@@ -66,6 +66,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    trainingSessionId: { type: DataTypes.UUID, allowNull: true },
   });
 
   CallTaskClient.associate = (models) => {

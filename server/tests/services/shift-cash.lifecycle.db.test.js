@@ -4,23 +4,43 @@ const db = require('../../models');
 const shiftCashService = require('../../src/services/shift-cash.service');
 const attachmentStorage = require('../../src/services/shift-cash-attachments');
 const shiftsService = require('../../src/services/shifts.service');
+const onboardingService = require('../../src/services/onboarding.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 test('DB-backed shift cash lifecycle closes cash and shift atomically after rollback-safe variance validation', async () => {
+  const restoreSingleton = mockExactSingletonDefault(db);
   await db.sequelize.authenticate();
 
   const suffix = `${Date.now()}`;
   const receiptIds = [];
   let account;
-  let category;
   let expenseId;
   let financeId;
+  let membership;
+  let membershipAccess;
   let shift;
   let staff;
+  const originalDeleteAttachmentFile = attachmentStorage.deleteAttachmentFile;
   const originalStoreAttachment = attachmentStorage.storeAttachment;
+  const originalRecordEventSafe = onboardingService.recordEventSafe;
+  const onboardingEvents = [];
 
   try {
+    onboardingService.recordEventSafe = async (actor, eventKey, options) => {
+      onboardingEvents.push({ actor, eventKey, options });
+      return { completedTaskKeys: [], event: null, progressedTaskKeys: [], role: null };
+    };
+    const organization = await db.Organization.findOne({
+      where: { slug: 'padel-park' },
+    });
+    assert.ok(organization, 'default Organization is required');
+    const club = await db.Club.findOne({
+      where: { organizationId: organization.id, slug: 'padel-park' },
+    });
+    assert.ok(club, 'default Club is required');
     staff = await db.Staff.create({
       name: `Shift cash lifecycle ${suffix}`,
+      organizationId: organization.id,
       role: 'Администратор',
       status: 'active',
     });
@@ -31,13 +51,19 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       staffId: staff.id,
       status: 'active',
     });
-    category = await db.Category.create({
-      group: 'OPEX',
-      isActive: true,
-      name: `Shift cash lifecycle expense ${suffix}`,
-      type: 'expense',
+    membership = await db.Membership.create({
+      accountId: account.id,
+      organizationId: organization.id,
+      role: 'admin',
+      staffId: staff.id,
+      status: 'active',
     });
-
+    membershipAccess = await db.MembershipClubAccess.create({
+      clubId: club.id,
+      membershipId: membership.id,
+      organizationId: organization.id,
+      status: 'active',
+    });
     const startedAt = new Date(Date.now() - 1000);
     shift = await db.Shift.create({
       actualHours: null,
@@ -93,7 +119,6 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     const expenseSummary = await shiftCashService.createExpense(
       {
         amount: 900,
-        categoryId: category.id,
         description: 'DB-backed linked cash expense',
         spentAt: new Date(),
       },
@@ -107,12 +132,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(expenseSummary.expectedClosingCash, 3300);
     assert.ok(financeId);
     assert.equal(
-      await db.OnboardingEvent.count({
-        where: {
-          accountId: account.id,
-          eventKey: 'shift_cash.attachment_uploaded',
-        },
-      }),
+      onboardingEvents.filter((event) => event.eventKey === 'shift_cash.attachment_uploaded').length,
       0,
     );
     attachmentStorage.storeAttachment = async () => ({
@@ -124,6 +144,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       uploadedAt: new Date().toISOString(),
       uploadedByAccountId: account.id,
     });
+    attachmentStorage.deleteAttachmentFile = async () => true;
     const expenseWithAttachment = await shiftCashService.uploadAttachment(
       expenseId,
       {
@@ -134,16 +155,11 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       account,
     );
     assert.equal(expenseWithAttachment.attachments.length, 1);
-    const attachmentEvents = await db.OnboardingEvent.findAll({
-      where: {
-        accountId: account.id,
-        eventKey: 'shift_cash.attachment_uploaded',
-      },
-    });
+    const attachmentEvents = onboardingEvents.filter(
+      (event) => event.eventKey === 'shift_cash.attachment_uploaded',
+    );
     assert.equal(attachmentEvents.length, 1);
-    const attachmentEventPayload = typeof attachmentEvents[0].payload === 'string'
-      ? JSON.parse(attachmentEvents[0].payload)
-      : attachmentEvents[0].payload;
+    const attachmentEventPayload = attachmentEvents[0].options.payload;
     assert.deepEqual(attachmentEventPayload, {
       attachmentId: `lifecycle-attachment-${suffix}`,
       expenseId,
@@ -157,7 +173,12 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     const linkedFinance = await db.Finance.findByPk(financeId);
     assert.equal(linkedFinance.type, 'expense');
     assert.equal(Number(linkedFinance.amount), 900);
+    assert.equal(
+      linkedFinance.category,
+      shiftCashService.SHIFT_CASH_EXPENSE_CATEGORY,
+    );
     assert.match(linkedFinance.comment, new RegExp(`Касса смены #${shift.id}`));
+    assert.match(linkedFinance.comment, /DB-backed linked cash expense/);
 
     const canceledSummary = await shiftCashService.cancelExpense(
       expenseId,
@@ -216,6 +237,9 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(Number(persistedSession.expectedClosingCash), 4200);
     assert.equal(Number(persistedSession.variance), 0);
   } finally {
+    restoreSingleton();
+    onboardingService.recordEventSafe = originalRecordEventSafe;
+    attachmentStorage.deleteAttachmentFile = originalDeleteAttachmentFile;
     attachmentStorage.storeAttachment = originalStoreAttachment;
     if (shift?.id) {
       const reports = await db.ShiftReport.findAll({
@@ -232,7 +256,6 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     }
     if (account?.id) {
       await db.OnboardingProgress.destroy({ where: { accountId: account.id } });
-      await db.OnboardingEvent.destroy({ where: { accountId: account.id } });
       await db.FinanceChangeLog.destroy({ where: { accountId: account.id } });
       await db.Finance.destroy({ where: { createdByAccountId: account.id } });
     }
@@ -240,8 +263,9 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       await db.Receipt.destroy({ where: { id: receiptIds } });
     }
     if (shift?.id) await db.Shift.destroy({ where: { id: shift.id } });
+    if (membershipAccess) await membershipAccess.destroy();
+    if (membership) await membership.destroy();
     if (account?.id) await db.Account.destroy({ force: true, where: { id: account.id } });
     if (staff?.id) await db.Staff.destroy({ where: { id: staff.id } });
-    if (category?.id) await db.Category.destroy({ where: { id: category.id } });
   }
 });

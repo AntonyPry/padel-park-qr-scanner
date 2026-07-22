@@ -5,6 +5,9 @@ const {
   getRealtimeDomainRoom,
   getRealtimeRoomsForRole,
   getRolesForDomain,
+  getTenantBaseRoom,
+  getTenantDomainRoom,
+  getTenantRoomsForContext,
 } = require('../../src/realtime');
 
 test('realtime domain rooms follow access matrix visibility', () => {
@@ -43,4 +46,29 @@ test('onboarding realtime is available for every active role', () => {
     'viewer',
     'trainer',
   ]);
+});
+
+test('audit realtime follows the existing audit visibility matrix', () => {
+  assert.deepEqual(getRolesForDomain('audit'), ['owner', 'manager']);
+  assert.equal(canReceiveDomain('owner', 'audit'), true);
+  assert.equal(canReceiveDomain('manager', 'audit'), true);
+  assert.equal(canReceiveDomain('admin', 'audit'), false);
+});
+
+test('tenant rooms include validated org, club, membership and role-specific domains', () => {
+  const tenant = Object.freeze({
+    clubId: 12,
+    effectiveRole: 'trainer',
+    membershipId: 21,
+    membershipRole: 'manager',
+    organizationId: 11,
+    scope: 'club',
+  });
+  const rooms = getTenantRoomsForContext(tenant);
+  assert.equal(rooms.includes(getTenantBaseRoom('organization', tenant)), true);
+  assert.equal(rooms.includes(getTenantBaseRoom('club', tenant)), true);
+  assert.equal(rooms.includes(getTenantBaseRoom('membership', tenant)), true);
+  assert.equal(rooms.includes(getTenantDomainRoom('organization', tenant, 'finance')), true);
+  assert.equal(rooms.includes(getTenantDomainRoom('club', tenant, 'training_notes')), true);
+  assert.equal(rooms.includes(getTenantDomainRoom('club', tenant, 'finance')), false);
 });

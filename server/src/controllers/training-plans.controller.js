@@ -8,7 +8,7 @@ function handleError(res, error, fallback) {
 class TrainingPlansController {
   async list(req, res) {
     try {
-      res.json(await trainingPlansService.list(req.query, req.account));
+      res.json(await trainingPlansService.list(req.query, req.account, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения планов тренировок');
     }
@@ -16,7 +16,11 @@ class TrainingPlansController {
 
   async create(req, res) {
     try {
-      res.status(201).json(await trainingPlansService.create(req.body, req.account));
+      res.status(201).json(await trainingPlansService.create(
+        req.body,
+        req.account,
+        req.tenant,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка создания плана тренировки');
     }
@@ -24,7 +28,11 @@ class TrainingPlansController {
 
   async getOne(req, res) {
     try {
-      res.json(await trainingPlansService.getById(req.params.planId, req.account));
+      res.json(await trainingPlansService.getById(
+        req.params.planId,
+        req.account,
+        req.tenant,
+      ));
     } catch (error) {
       handleError(res, error, 'Ошибка получения плана тренировки');
     }
@@ -37,6 +45,7 @@ class TrainingPlansController {
           req.params.planId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -51,6 +60,7 @@ class TrainingPlansController {
           req.params.planId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -65,6 +75,7 @@ class TrainingPlansController {
           req.params.planId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

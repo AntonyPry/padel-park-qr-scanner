@@ -2,6 +2,18 @@ const db = require('../../models');
 const {
   TRAINING_EXERCISE_E_LEVEL_VALUES,
 } = require('../constants/training-methodology');
+const {
+  isTenantMethodologySkillMapEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  resolveClientAccessContext,
+} = require('./client-access-context.service');
+const {
+  bindMethodologyActor,
+  methodologyTenantWhere,
+  resolveMethodologyAccessContext,
+  validateBookingPlanRecommendationDelegation,
+} = require('./methodology-access-context.service');
 
 const VIEW_ROLES = new Set(['owner', 'manager', 'trainer']);
 const MANAGE_ROLES = new Set(['owner', 'manager', 'trainer']);
@@ -110,6 +122,7 @@ function getClientTrainingMarker(client) {
     isTraining: Boolean(raw?.isTraining),
     trainingAccountId: raw?.trainingAccountId || null,
     trainingRole: raw?.trainingRole || null,
+    trainingSessionId: raw?.trainingSessionId || null,
   };
 }
 
@@ -332,19 +345,23 @@ function mapEntry(entry) {
   };
 }
 
-async function loadClientOrFail(clientId, options = {}) {
-  const where = { id: Number(clientId) };
+async function loadClientOrFail(clientId, context, options = {}) {
+  const where = methodologyTenantWhere(context, { id: Number(clientId) });
   if (!options.includeMerged) where.mergedIntoUserId = null;
 
   const client = await db.User.findOne({
     attributes: [
       'id',
+      'organizationId',
       'status',
       'mergedIntoUserId',
       'isTraining',
       'trainingRole',
       'trainingAccountId',
+      'trainingSessionId',
     ],
+    lock: options.lock,
+    transaction: options.transaction,
     where,
   });
 
@@ -352,13 +369,17 @@ async function loadClientOrFail(clientId, options = {}) {
   return client;
 }
 
-async function syncActiveSkillsForClient(client, options = {}) {
+async function syncActiveSkillsForClientWithContext(client, context, options = {}) {
   if (!db.ClientTrainingSkill || !db.TrainingSkill || !client?.id) return;
+  if (Number(client.organizationId) !== Number(context?.organizationId)) {
+    if (context?.readScoped) throw appError('Клиент не найден', 404);
+    return;
+  }
 
   const activeSkills = await db.TrainingSkill.findAll({
     attributes: ['id'],
     transaction: options.transaction,
-    where: { status: 'active' },
+    where: methodologyTenantWhere(context, { status: 'active' }),
   });
   if (activeSkills.length === 0) return;
 
@@ -388,21 +409,63 @@ async function syncActiveSkillsForClient(client, options = {}) {
   });
 }
 
+async function syncActiveSkillsForClient(client, options = {}) {
+  const context = await resolveMethodologyAccessContext(options.tenant, options);
+  return syncActiveSkillsForClientWithContext(client, context, options);
+}
+
+async function syncActiveSkillsForClientFromProvider(client, options = {}) {
+  if (!isTenantMethodologySkillMapEnabled()) {
+    return syncActiveSkillsForClient(client, { ...options, tenant: null });
+  }
+  const providerContext = await resolveClientAccessContext(
+    options.tenant,
+    options,
+  );
+  if (
+    providerContext.authority !== 'provider' ||
+    !providerContext.scoped ||
+    !providerContext.connectionId ||
+    !providerContext.organizationId
+  ) {
+    const error = appError('Клиент не найден', 404);
+    error.code = 'TENANT_CONTEXT_NOT_FOUND';
+    throw error;
+  }
+  return syncActiveSkillsForClientWithContext(
+    client,
+    {
+      organizationId: providerContext.organizationId,
+      readScoped: true,
+    },
+    options,
+  );
+}
+
 async function syncActiveSkillsForClientId(clientId, options = {}) {
-  const client = options.client || await loadClientOrFail(clientId, {
+  const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const client = options.client || await loadClientOrFail(clientId, context, {
     includeMerged: Boolean(options.includeMerged),
   });
 
   if (client.mergedIntoUserId && !options.includeMerged) return;
-  await syncActiveSkillsForClient(client, options);
+  await syncActiveSkillsForClientWithContext(client, context, options);
 }
 
 async function listForClient(clientId, actor, options = {}) {
-  assertCanView(actor);
-  const client = await loadClientOrFail(clientId, { includeMerged: true });
+  const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = options.bookingPlanRecommendationDelegation
+    ? validateBookingPlanRecommendationDelegation(
+        options.bookingPlanRecommendationDelegation,
+        actor,
+        context,
+      )
+    : bindMethodologyActor(actor, context);
+  if (!options.bookingPlanRecommendationDelegation) assertCanView(authorityActor);
+  const client = await loadClientOrFail(clientId, context, { includeMerged: true });
 
   if (!client.mergedIntoUserId && options.sync !== false) {
-    await syncActiveSkillsForClient(client);
+    await syncActiveSkillsForClientWithContext(client, context, options);
   }
 
   const rows = await db.ClientTrainingSkill.findAll({
@@ -411,7 +474,7 @@ async function listForClient(clientId, actor, options = {}) {
         as: 'skill',
         model: db.TrainingSkill,
         required: true,
-        where: { status: 'active' },
+        where: methodologyTenantWhere(context, { status: 'active' }),
       },
       ...(db.ClientTrainingSkillHistory
         ? [
@@ -473,7 +536,7 @@ function mapStructuredResult(row) {
   };
 }
 
-async function loadStructuredSkillResults(clientId, options = {}) {
+async function loadStructuredSkillResults(clientId, context, options = {}) {
   if (!db.TrainingNoteExercise || !db.TrainingExercise || !db.TrainingNote) {
     return [];
   }
@@ -499,6 +562,7 @@ async function loadStructuredSkillResults(clientId, options = {}) {
         ],
         model: db.TrainingExercise,
         required: true,
+        where: methodologyTenantWhere(context, {}),
       },
     ],
     transaction: options.transaction,
@@ -520,11 +584,20 @@ function groupResultsBySkillId(results) {
   return grouped;
 }
 
-async function loadAutoHistorySkillIds(clientId, options = {}) {
+async function loadAutoHistorySkillIds(clientId, context, options = {}) {
   if (!db.ClientTrainingSkillHistory) return new Set();
   const rows = await db.ClientTrainingSkillHistory.findAll({
     attributes: ['trainingSkillId'],
     group: ['trainingSkillId'],
+    include: context?.readScoped
+      ? [{
+          as: 'skill',
+          attributes: [],
+          model: db.TrainingSkill,
+          required: true,
+          where: { organizationId: context.organizationId },
+        }]
+      : undefined,
     raw: true,
     transaction: options.transaction,
     where: {
@@ -568,7 +641,7 @@ async function replaceAutoHistory(entry, history, actor, clientMarker, options =
   );
 }
 
-async function recordManualHistory(entry, previousEntry, payload, actor) {
+async function recordManualHistory(entry, previousEntry, payload, actor, options = {}) {
   if (!db.ClientTrainingSkillHistory) return;
 
   const previousLevel = Number(previousEntry.level || 0);
@@ -598,16 +671,18 @@ async function recordManualHistory(entry, previousEntry, payload, actor) {
     trainingSkillId: Number(entry.trainingSkillId),
     updatedByAccountId: actor?.id || null,
     userId: Number(entry.userId),
-  });
+  }, { transaction: options.transaction });
 }
 
 async function recalculateFromStructuredTraining(clientId, actor, options = {}) {
-  const client = options.client || await loadClientOrFail(clientId, {
+  const context = await resolveMethodologyAccessContext(options.tenant, options);
+  const authorityActor = bindMethodologyActor(actor, context);
+  const client = options.client || await loadClientOrFail(clientId, context, {
     includeMerged: Boolean(options.includeMerged),
   });
   if (client.mergedIntoUserId && !options.includeMerged) return;
 
-  await syncActiveSkillsForClient(client, options);
+  await syncActiveSkillsForClientWithContext(client, context, options);
 
   const entries = await db.ClientTrainingSkill.findAll({
     include: [
@@ -615,14 +690,14 @@ async function recalculateFromStructuredTraining(clientId, actor, options = {}) 
         as: 'skill',
         model: db.TrainingSkill,
         required: true,
-        where: { status: 'active' },
+        where: methodologyTenantWhere(context, { status: 'active' }),
       },
     ],
     transaction: options.transaction,
     where: { userId: client.id },
   });
-  const results = await loadStructuredSkillResults(client.id, options);
-  const autoHistorySkillIds = await loadAutoHistorySkillIds(client.id, options);
+  const results = await loadStructuredSkillResults(client.id, context, options);
+  const autoHistorySkillIds = await loadAutoHistorySkillIds(client.id, context, options);
   const resultsBySkillId = groupResultsBySkillId(results);
   const clientMarker = getClientTrainingMarker(client);
 
@@ -664,54 +739,82 @@ async function recalculateFromStructuredTraining(clientId, actor, options = {}) 
         level: nextState.level,
         nextEStep: nextState.nextEStep,
         repeatFlag: nextState.repeatFlag,
-        updatedByAccountId: actor?.id || entry.updatedByAccountId || null,
+        updatedByAccountId: authorityActor?.id || entry.updatedByAccountId || null,
       },
       { transaction: options.transaction },
     );
 
-    await replaceAutoHistory(entry, nextState.history, actor, clientMarker, options);
+    await replaceAutoHistory(
+      entry,
+      nextState.history,
+      authorityActor,
+      clientMarker,
+      options,
+    );
   }
 }
 
-async function updateEntry(clientId, skillId, data, actor) {
-  assertCanManage(actor);
-  const client = await loadClientOrFail(clientId);
-
-  if (client.status === 'archived') {
-    throw appError('Архивный клиент доступен только для просмотра', 409);
-  }
-
-  const skill = await db.TrainingSkill.findOne({
-    where: { id: Number(skillId), status: 'active' },
+async function updateEntry(clientId, skillId, data, actor, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const context = await resolveMethodologyAccessContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const authorityActor = bindMethodologyActor(actor, context);
+    assertCanManage(authorityActor);
+    const payload = normalizeUpdatePayload(data, authorityActor);
+    const client = await loadClientOrFail(clientId, context, {
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+    });
+    if (client.status === 'archived') {
+      throw appError('Архивный клиент доступен только для просмотра', 409);
+    }
+    if (Number(client.organizationId) !== Number(context.organizationId)) {
+      throw appError('Клиент не найден', 404);
+    }
+    const skill = await db.TrainingSkill.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where: methodologyTenantWhere(context, {
+        id: Number(skillId),
+        status: 'active',
+      }, { force: true }),
+    });
+    if (!skill) throw appError('Активный навык не найден', 404);
+    await syncActiveSkillsForClientWithContext(client, context, { transaction });
+    const [entry] = await db.ClientTrainingSkill.findOrCreate({
+      defaults: {
+        ...getClientTrainingMarker(client),
+        level: 0,
+      },
+      transaction,
+      where: {
+        trainingSkillId: Number(skillId),
+        userId: client.id,
+      },
+    });
+    const previousEntry = entry.toJSON ? entry.toJSON() : { ...entry };
+    await entry.update({
+      ...payload,
+      ...('level' in payload ? { autoBaselineLevel: payload.level } : {}),
+    }, { transaction });
+    await recordManualHistory(
+      entry,
+      previousEntry,
+      payload,
+      authorityActor,
+      { transaction },
+    );
   });
-  if (!skill) throw appError('Активный навык не найден', 404);
-
-  await syncActiveSkillsForClient(client);
-  const [entry] = await db.ClientTrainingSkill.findOrCreate({
-    defaults: {
-      ...getClientTrainingMarker(client),
-      level: 0,
-    },
-    where: {
-      trainingSkillId: Number(skillId),
-      userId: client.id,
-    },
-  });
-
-  const payload = normalizeUpdatePayload(data, actor);
-  const previousEntry = entry.toJSON ? entry.toJSON() : { ...entry };
-  await entry.update({
-    ...payload,
-    ...('level' in payload ? { autoBaselineLevel: payload.level } : {}),
-  });
-  await recordManualHistory(entry, previousEntry, payload, actor);
-  return listForClient(client.id, actor, { sync: false });
+  return listForClient(clientId, actor, { sync: false, tenant });
 }
 
 module.exports = {
   listForClient,
   recalculateFromStructuredTraining,
   syncActiveSkillsForClient,
+  syncActiveSkillsForClientFromProvider,
   syncActiveSkillsForClientId,
   updateEntry,
   __testing: {

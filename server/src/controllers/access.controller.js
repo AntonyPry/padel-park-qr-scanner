@@ -1,6 +1,10 @@
 const accessService = require('../services/access.service');
 const scannerEventsService = require('../services/scanner-events.service');
 const { ACCESS_SOCKET_ROOM } = require('../sockets');
+const { publishTenantSocketEvent } = require('../realtime');
+const {
+  isTenantCacheRealtimeEnabled,
+} = require('../tenant-context/capabilities');
 const { sendError } = require('../utils/api-error');
 
 function getIo(req) {
@@ -8,13 +12,25 @@ function getIo(req) {
 }
 
 function emitAccessEvent(req, event) {
+  if (isTenantCacheRealtimeEnabled()) {
+    void publishTenantSocketEvent(
+      getIo(req),
+      'scan_result',
+      'access',
+      event,
+      req.tenant,
+    ).catch((error) => {
+      console.error('[realtime] access event publish failed', error.code || error.message);
+    });
+    return;
+  }
   getIo(req).to(ACCESS_SOCKET_ROOM).emit('scan_result', event);
 }
 
 class AccessController {
   async search(req, res) {
     try {
-      const users = await accessService.searchUsers(req.query.q);
+      const users = await accessService.searchUsers(req.query.q, req.tenant);
       res.json(users);
     } catch (error) {
       sendError(res, error, 'Поиск временно недоступен');
@@ -31,6 +47,7 @@ class AccessController {
         clientEventId,
         source: source || 'manual',
         metadata,
+        tenant: req.tenant,
       });
       if (!event) return sendError(res, { statusCode: 404 }, 'Клиент не найден');
 
@@ -45,7 +62,7 @@ class AccessController {
     const { visitId, keyNumber } = req.body;
 
     try {
-      await accessService.issueKey(visitId, keyNumber, req.account);
+      await accessService.issueKey(visitId, keyNumber, req.account, req.tenant);
       res.json({ status: 'ok' });
     } catch (error) {
       sendError(res, error, 'Ошибка выдачи ключа');
@@ -60,6 +77,7 @@ class AccessController {
         visitId,
         keyNumber,
         req.account,
+        req.tenant,
       );
       res.json({ status: 'ok', ...result });
     } catch (error) {
@@ -82,6 +100,7 @@ class AccessController {
           scannerSessionId,
           deviceLabel,
         },
+        tenant: req.tenant,
       });
 
       if (result.found) {
@@ -110,6 +129,7 @@ class AccessController {
           scannerSessionId,
           deviceLabel,
         },
+        tenant: req.tenant,
       });
       sendError(res, error, 'Ошибка сканирования QR');
     }
@@ -130,6 +150,7 @@ class AccessController {
         account: req.account,
         clientEventId: req.body.clientEventId,
         metadata: req.body.metadata,
+        tenant: req.tenant,
         throwOnError: true,
       });
 
@@ -144,7 +165,7 @@ class AccessController {
 
   async getScannerEvents(req, res) {
     try {
-      const events = await scannerEventsService.listEvents(req.query);
+      const events = await scannerEventsService.listEvents(req.query, req.tenant);
       res.json(events);
     } catch (error) {
       sendError(res, error, 'Ошибка получения журнала сканера');
@@ -164,6 +185,7 @@ class AccessController {
         phone,
         source,
         sourceId,
+        tenant: req.tenant,
       });
       res.json(result);
     } catch (error) {
@@ -174,7 +196,7 @@ class AccessController {
 
   async getVisits(req, res) {
     try {
-      const visits = await accessService.getRecentVisitCards();
+      const visits = await accessService.getRecentVisitCards(50, req.tenant);
       res.json(visits);
     } catch (error) {
       console.error(error);
@@ -191,6 +213,7 @@ class AccessController {
         category,
         categoryIds,
         req.account,
+        req.tenant,
       );
       if (!result) return sendError(res, { statusCode: 404 }, 'Визит не найден');
       res.json({ status: 'ok', ...result });

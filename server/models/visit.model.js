@@ -4,6 +4,8 @@ const { Model } = require('sequelize');
 module.exports = (sequelize, DataTypes) => {
   class Visit extends Model {
     static associate(models) {
+      Visit.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+      Visit.belongsTo(models.Club, { foreignKey: 'clubId' });
       Visit.belongsTo(models.User, { foreignKey: 'userId' });
       Visit.belongsTo(models.Visit, {
         as: 'duplicateOfVisit',
@@ -25,6 +27,14 @@ module.exports = (sequelize, DataTypes) => {
 
   Visit.init(
     {
+      organizationId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+      },
+      clubId: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+      },
       userId: {
         type: DataTypes.INTEGER,
         allowNull: false,
@@ -63,7 +73,6 @@ module.exports = (sequelize, DataTypes) => {
       clientEventId: {
         type: DataTypes.STRING,
         allowNull: true,
-        unique: true,
       },
       keyIssuedAt: {
         type: DataTypes.DATE,
@@ -86,10 +95,38 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: true,
       },
+      trainingSessionId: { type: DataTypes.UUID, allowNull: true },
     },
     {
       sequelize,
       modelName: 'Visit',
+      indexes: [
+        {
+          fields: ['organizationId', 'clubId', 'clientEventId'],
+          name: 'uq_visits_tenant_client_event',
+          unique: true,
+        },
+      ],
+      hooks: {
+        beforeBulkUpdate(options) {
+          const attributes = options.attributes || {};
+          if (
+            Object.prototype.hasOwnProperty.call(attributes, 'organizationId') ||
+            Object.prototype.hasOwnProperty.call(attributes, 'clubId')
+          ) {
+            const error = new Error('Visit tenant attribution is immutable');
+            error.code = 'VISIT_TENANT_IMMUTABLE';
+            throw error;
+          }
+        },
+        beforeUpdate(visit) {
+          if (visit.changed('organizationId') || visit.changed('clubId')) {
+            const error = new Error('Visit tenant attribution is immutable');
+            error.code = 'VISIT_TENANT_IMMUTABLE';
+            throw error;
+          }
+        },
+      },
     },
   );
 

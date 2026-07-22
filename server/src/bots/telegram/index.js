@@ -20,6 +20,10 @@ const {
   isValidWord,
 } = require('../shared/registration');
 const clientsService = require('../../services/clients.service');
+const {
+  assertLegacyDownstreamReady,
+} = require('../../provider-integrations/runtime');
+const { markConnectionActivity } = require('../../provider-integrations/activity');
 
 function createProxyAgent(proxyUrl) {
   if (!proxyUrl) return undefined;
@@ -30,17 +34,23 @@ function createProxyAgent(proxyUrl) {
   });
 }
 
-async function createSourceKeyboard(includeBack = false) {
-  const rows = (await getSourceRows(db)).map((row) => [...row]);
+async function createSourceKeyboard(includeBack = false, tenant = null) {
+  const rows = (await getSourceRows(db, tenant)).map((row) => [...row]);
   if (includeBack) rows[rows.length - 1].push('⬅️ Назад');
   return TgKeyboard.from(rows).resized().oneTime();
 }
 
 function createTelegramBot({
+  connection = null,
   token = process.env.BOT_TOKEN,
   proxyUrl = process.env.TG_PROXY_CREDS,
 } = {}) {
   if (!token) return null;
+
+  const logError = (label, error) => {
+    if (connection) console.error(label, 'PROVIDER_HANDLER_FAILED');
+    else console.error(label, error);
+  };
 
   const agent = createProxyAgent(proxyUrl);
   const bot = new TgBot(token, {
@@ -51,6 +61,15 @@ function createTelegramBot({
       }),
     },
   });
+
+  if (connection) {
+    bot.use(async (_ctx, next) => {
+      await assertLegacyDownstreamReady(connection);
+      const result = await next();
+      await markConnectionActivity(connection);
+      return result;
+    });
+  }
 
   bot.use(tgSession({ initial: () => ({ consents: [false, false, false] }) }));
   bot.use(tgConversations());
@@ -100,7 +119,7 @@ function createTelegramBot({
         reply_markup: mainMenu,
       });
     } catch (error) {
-      console.error(error);
+      logError('Ошибка QR Tg:', error);
       await ctx.reply('Ошибка генерации QR.');
     }
   }
@@ -162,7 +181,7 @@ function createTelegramBot({
         step++;
       } else if (step === 3) {
         await ctx.reply('📊 Шаг 4 из 4. Откуда вы о нас узнали?', {
-          reply_markup: await createSourceKeyboard(true),
+          reply_markup: await createSourceKeyboard(true, connection),
         });
         const msg = await conversation.waitFor(':text');
         if (msg.message.text === '⬅️ Назад') {
@@ -185,10 +204,11 @@ function createTelegramBot({
           name: fullName,
           phone,
           source,
+          tenant: connection,
         }),
       );
     } catch (error) {
-      console.error('Ошибка регистрации Tg:', error);
+      logError('Ошибка регистрации Tg:', error);
       await ctx.reply(
         error.statusCode === 409
           ? `❌ ${error.message}`
@@ -209,7 +229,10 @@ function createTelegramBot({
 
   bot.command('start', async (ctx) => {
     const telegramId = String(ctx.from.id);
-    const user = await db.User.findOne({ where: { telegramId } });
+    const user = await clientsService.findCanonicalByQr(
+      telegramId,
+      connection,
+    );
 
     if (user) {
       return ctx.reply(`С возвращением, ${user.name}!`, {
@@ -257,9 +280,17 @@ function createTelegramBot({
     ctx.conversation.enter('register'),
   );
 
+  let runner = null;
   return {
     bot,
-    start: () => runTg(bot),
+    start: () => {
+      if (!runner) runner = runTg(bot);
+      return runner;
+    },
+    stop: async () => {
+      if (runner?.stop) await runner.stop();
+      runner = null;
+    },
   };
 }
 

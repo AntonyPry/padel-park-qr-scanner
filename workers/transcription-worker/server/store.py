@@ -21,8 +21,23 @@ def _load_json(value: str | None, default: Any = None) -> Any:
         return default
     try:
         return json.loads(value)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, TypeError):
         return default
+
+
+def _safe_crm_job(job_payload: dict[str, Any]) -> dict[str, Any]:
+    tenant = job_payload.get("tenant") or {}
+    return {
+        "id": job_payload.get("id"),
+        "status": job_payload.get("status"),
+        "progress": job_payload.get("progress"),
+        "progressStage": job_payload.get("progressStage"),
+        "attempts": job_payload.get("attempts"),
+        "tenant": {
+            "organizationKey": tenant.get("organizationKey"),
+            "clubKey": tenant.get("clubKey"),
+        },
+    }
 
 
 class WorkerStore:
@@ -42,6 +57,11 @@ class WorkerStore:
                   id INTEGER PRIMARY KEY AUTOINCREMENT,
                   crm_job_id TEXT,
                   call_id TEXT,
+                  organization_key TEXT,
+                  club_key TEXT,
+                  attempt INTEGER,
+                  claim_id TEXT,
+                  protocol_version INTEGER,
                   status TEXT NOT NULL,
                   current_stage TEXT,
                   recording_status TEXT,
@@ -64,6 +84,25 @@ class WorkerStore:
                   created_at TEXT NOT NULL,
                   updated_at TEXT NOT NULL
                 )
+                """
+            )
+            existing_columns = {
+                row["name"] for row in self._conn.execute("PRAGMA table_info(jobs)").fetchall()
+            }
+            for column, definition in {
+                "organization_key": "TEXT",
+                "club_key": "TEXT",
+                "attempt": "INTEGER",
+                "claim_id": "TEXT",
+                "protocol_version": "INTEGER",
+            }.items():
+                if column not in existing_columns:
+                    self._conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
+            self._conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS jobs_tenant_attempt_unique
+                ON jobs(organization_key, club_key, crm_job_id, attempt)
+                WHERE organization_key IS NOT NULL AND club_key IS NOT NULL AND attempt IS NOT NULL
                 """
             )
             self._conn.execute(
@@ -110,24 +149,32 @@ class WorkerStore:
         now = utc_now()
         call = job_payload.get("call") or {}
         crm_job_id = str(job_payload.get("id") or "")
-        call_id = str(call.get("id") or job_payload.get("telephonyCallId") or "")
+        tenant = job_payload.get("tenant") or {}
+        lease = job_payload.get("_lease") or {}
+        call_id = "" if tenant else str(call.get("id") or job_payload.get("telephonyCallId") or "")
         with self._lock, self._conn:
             cursor = self._conn.execute(
                 """
                 INSERT INTO jobs(
-                  crm_job_id, call_id, status, current_stage, recording_status,
+                  crm_job_id, call_id, organization_key, club_key, attempt, claim_id,
+                  protocol_version, status, current_stage, recording_status,
                   model, model_path, started_at, crm_job_json, created_at, updated_at
                 )
-                VALUES (?, ?, 'processing', 'claimed', ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'processing', 'claimed', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     crm_job_id,
                     call_id,
+                    tenant.get("organizationKey"),
+                    tenant.get("clubKey"),
+                    lease.get("attempt"),
+                    lease.get("claimId"),
+                    job_payload.get("protocolVersion"),
                     call.get("recordingStatus"),
                     model,
                     model_path,
                     now,
-                    _json(job_payload),
+                    _json(_safe_crm_job(job_payload)),
                     now,
                     now,
                 ),
@@ -287,6 +334,11 @@ class WorkerStore:
             "id": int(row["id"]),
             "crmJobId": row["crm_job_id"],
             "callId": row["call_id"],
+            "organizationKey": row["organization_key"],
+            "clubKey": row["club_key"],
+            "attempt": row["attempt"],
+            "claimId": row["claim_id"],
+            "protocolVersion": row["protocol_version"],
             "status": row["status"],
             "currentStage": row["current_stage"],
             "recordingStatus": row["recording_status"],

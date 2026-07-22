@@ -48,6 +48,8 @@ DASHBOARD_PORT=8090
 
 На стороне CRM backend должен быть настроен тот же secret в `CRM_WORKER_TOKEN` или `TELEPHONY_TRANSCRIPTION_WORKER_TOKEN`. Dashboard показывает только `token configured: yes/no`, значение секрета не отдается в UI.
 
+Worker использует protocol v2: отправляет `X-Worker-Protocol-Version: 2`, получает tenant routing и одноразовый claim lease от CRM. Token аутентифицирует audited platform worker, но не выбирает tenant. `audio-reference`, progress, result and fail принимаются только для активного lease/attempt. При включенном `TENANT_FILES_WORKERS_ENABLED` старый protocol получает `426 WORKER_PROTOCOL_UPGRADE_REQUIRED`.
+
 `START_PAUSED=true` защищает локальный запуск от polling spam, если token еще не настроен. Для постоянного polling после проверки `.env` выставь `START_PAUSED=false`; ручная кнопка `Взять следующую задачу` работает и в paused mode.
 
 ## Запуск на Mac
@@ -114,11 +116,11 @@ curl -sS -X POST \
 
 ## Где лежат данные
 
-- SQLite history: `/data/transcription-worker.sqlite3`.
+- SQLite history: `/data/transcription-worker.sqlite3`; state partitioned by opaque organization/club/job/attempt, claim token and CRM PII are not persisted.
 - Docker volume с историей: `transcription-worker_worker-data`.
 - Model cache нужен только для `ASR_BACKEND=whisper_cpp`: `/models/ggml-small.bin` или `/models/ggml-medium.bin`.
 - Docker volume с моделями нужен только для `whisper_cpp`: `transcription-worker_whisper-models`.
-- Временные audio files создаются в `/tmp` и удаляются после обработки при `DELETE_AUDIO_AFTER=true`.
+- Временные audio files создаются в opaque tenant/claim namespace under `/tmp/setly-transcription` и удаляются только для текущего attempt при `DELETE_AUDIO_AFTER=true`.
 
 ## Остановить worker
 
@@ -174,8 +176,8 @@ Dashboard пишет lifecycle events:
 
 - Docker публикует dashboard только на `127.0.0.1:${DASHBOARD_PORT}`.
 - `CRM_WORKER_TOKEN` не показывается в UI и редактируется из technical details/log strings.
-- Temporary recording URLs не сохраняются полностью в lifecycle events.
-- Dashboard показывает `jobId/callId`; телефоны и имена не выводятся.
+- Recording URLs, temp paths, phones and transcript bodies не сохраняются в lifecycle events.
+- Dashboard показывает opaque tenant routing, `jobId/attempt/claimId`; телефоны, имена и claim token не выводятся.
 
 ## Dev sample
 

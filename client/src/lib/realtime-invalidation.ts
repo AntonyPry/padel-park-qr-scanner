@@ -1,4 +1,8 @@
 import { queryKeys } from '@/api/query-keys';
+import {
+  getActiveTenantContext,
+  isTenantCacheRealtimeCapabilityEnabled,
+} from '@/lib/tenant-context';
 
 export interface CrmChangedEvent {
   id: string;
@@ -22,6 +26,11 @@ export interface CrmChangedEvent {
   source: 'api' | 'webhook' | 'system' | string;
   trainingMode?: boolean;
   trainingRole?: string | null;
+  clubId?: number | null;
+  event?: string;
+  membershipId?: number | null;
+  organizationId?: number | null;
+  tenantScope?: 'membership' | 'organization' | 'club';
   hints?: {
     queryGroups?: string[];
     routes?: string[];
@@ -29,38 +38,50 @@ export interface CrmChangedEvent {
 }
 
 type QueryKey = readonly unknown[];
+type QueryKeyResolver = () => QueryKey[];
 
-export const REALTIME_QUERY_GROUP_KEYS: Record<string, QueryKey[]> = {
-  access: [['access']],
-  accounts: [['accounts']],
-  audit: [queryKeys.audit.all],
-  bookings: [queryKeys.bookings.all, queryKeys.visitsAnalytics.all],
-  callTasks: [['callTasks']],
-  catalog: [['catalog']],
-  certificates: [['certificates'], queryKeys.clients.all, queryKeys.bookings.all, queryKeys.visitsAnalytics.all],
-  clientBases: [['clientBases']],
-  clientSubscriptions: [['clientSubscriptions'], queryKeys.clients.all, queryKeys.visitsAnalytics.all],
-  clients: [queryKeys.clients.all, queryKeys.visitsAnalytics.all],
-  corporateClients: [['corporateClients'], ['finance'], ['prepayments'], queryKeys.visitsAnalytics.all],
-  finance: [['finance'], queryKeys.visitsAnalytics.all],
-  managerControl: [['manager-control-dashboard']],
-  methodology: [queryKeys.methodology.all],
-  methodologyAnalytics: [queryKeys.methodology.all],
-  motivation: [['motivation']],
-  onboarding: [queryKeys.onboarding.all],
-  payroll: [['payroll'], ['finance'], ['staff']],
-  prepayments: [['prepayments'], queryKeys.visitsAnalytics.all],
-  references: [queryKeys.references.all, queryKeys.visitsAnalytics.all],
-  reports: [['reports']],
-  shiftReports: [['shiftReports'], ['shifts']],
-  shifts: [['shifts'], ['shiftReports'], ['payroll'], ['staff'], ['finance'], ['motivation']],
-  staff: [['staff']],
-  subscriptionTypes: [['subscriptionTypes'], ['catalog']],
-  telephony: [queryKeys.telephony.all],
-  trainingNotes: [queryKeys.clients.all],
-  trainingPlans: [queryKeys.trainingPlans.all, queryKeys.bookings.all],
-  utilization: [queryKeys.utilization.all],
-  visitsAnalytics: [queryKeys.visitsAnalytics.all],
+export const REALTIME_QUERY_GROUP_KEYS: Record<string, QueryKeyResolver> = {
+  access: () => [queryKeys.access.all],
+  accounts: () => [queryKeys.accounts.all],
+  audit: () => [queryKeys.audit.all],
+  bookings: () => [queryKeys.bookings.all, queryKeys.visitsAnalytics.all],
+  callTasks: () => [queryKeys.callTasks.all],
+  catalog: () => [queryKeys.catalog.organization, queryKeys.catalog.club],
+  certificates: () => [queryKeys.certificates.all, queryKeys.clients.all, queryKeys.bookings.all, queryKeys.visitsAnalytics.all],
+  clientBases: () => [queryKeys.clientBases.all],
+  clientSubscriptions: () => [queryKeys.clientSubscriptions.all, queryKeys.clients.all, queryKeys.visitsAnalytics.all],
+  clients: () => [queryKeys.clients.all, queryKeys.visitsAnalytics.all],
+  corporateClients: () => [queryKeys.corporateClients.organization, queryKeys.corporateClients.club, queryKeys.finance.club, queryKeys.prepayments.all, queryKeys.visitsAnalytics.all],
+  finance: () => [queryKeys.finance.club, queryKeys.finance.organization, queryKeys.visitsAnalytics.all],
+  managerControl: () => [queryKeys.managerControl.all],
+  methodology: () => [queryKeys.methodology.all],
+  methodologyAnalytics: () => [queryKeys.methodology.all],
+  motivation: () => [queryKeys.motivation.organization, queryKeys.motivation.club],
+  onboarding: () => [queryKeys.onboarding.all, queryKeys.onboarding.organizationAll, queryKeys.onboarding.clubAll],
+  payroll: () => [queryKeys.payroll.all, queryKeys.finance.organization, queryKeys.staff.all],
+  prepayments: () => [queryKeys.prepayments.all, queryKeys.visitsAnalytics.all],
+  references: () => [queryKeys.references.all, queryKeys.visitsAnalytics.all],
+  reports: () => [queryKeys.reports.all],
+  shiftCash: () => [queryKeys.shiftCash.all, queryKeys.shifts.all, queryKeys.finance.club],
+  shiftReports: () => [queryKeys.shiftReports.all, queryKeys.shiftReports.templatesAll, queryKeys.shifts.all],
+  shifts: () => [
+    queryKeys.shifts.all,
+    queryKeys.shiftCash.all,
+    queryKeys.shiftReports.all,
+    queryKeys.payroll.all,
+    queryKeys.staff.all,
+    queryKeys.finance.club,
+    queryKeys.finance.organization,
+    queryKeys.motivation.club,
+    queryKeys.motivation.organization,
+  ],
+  staff: () => [queryKeys.staff.all],
+  subscriptionTypes: () => [queryKeys.subscriptionTypes.all, queryKeys.catalog.organization],
+  telephony: () => [queryKeys.telephony.all],
+  trainingNotes: () => [queryKeys.trainingNotes.all, queryKeys.clients.all],
+  trainingPlans: () => [queryKeys.trainingPlans.all, queryKeys.bookings.all],
+  utilization: () => [queryKeys.utilization.all],
+  visitsAnalytics: () => [queryKeys.visitsAnalytics.all],
 };
 
 const DOMAIN_FALLBACK_GROUPS: Record<string, string[]> = {
@@ -87,7 +108,7 @@ const DOMAIN_FALLBACK_GROUPS: Record<string, string[]> = {
   prepayments: ['prepayments'],
   references: ['references', 'clients', 'access', 'visitsAnalytics'],
   reports: ['reports'],
-  shifts: ['shifts', 'shiftReports', 'payroll', 'staff', 'motivation', 'finance'],
+  shifts: ['shifts', 'shiftCash', 'shiftReports', 'payroll', 'staff', 'motivation', 'finance'],
   staff: ['staff', 'payroll', 'accounts'],
   subscription_types: ['subscriptionTypes', 'catalog', 'prepayments'],
   telephony: ['telephony', 'clients', 'callTasks'],
@@ -107,10 +128,25 @@ export function getRealtimeQueryGroups(event: CrmChangedEvent) {
   return Array.from(new Set([...hintedGroups, ...fallbackGroups]));
 }
 
+export function isRealtimeEventForActiveTenant(event: CrmChangedEvent) {
+  if (!isTenantCacheRealtimeCapabilityEnabled()) return true;
+  const context = getActiveTenantContext();
+  if (!context || event.organizationId !== context.organizationId) return false;
+  if (event.tenantScope === 'organization') return event.clubId == null;
+  if (event.tenantScope === 'membership') {
+    return event.membershipId === context.membershipId && event.clubId == null;
+  }
+  if (event.tenantScope === 'club') return event.clubId === context.clubId;
+  return false;
+}
+
 export function getRealtimeQueryKeys(event: CrmChangedEvent) {
+  if (!isRealtimeEventForActiveTenant(event)) return [];
   const seen = new Set<string>();
   return getRealtimeQueryGroups(event).flatMap((group) => {
-    const keys = REALTIME_QUERY_GROUP_KEYS[group] || [[group]];
+    const keys = REALTIME_QUERY_GROUP_KEYS[group]?.() || (
+      isTenantCacheRealtimeCapabilityEnabled() ? [] : [[group]]
+    );
     return keys.filter((queryKey) => {
       const serialized = serializeQueryKey(queryKey);
       if (seen.has(serialized)) return false;

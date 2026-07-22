@@ -63,7 +63,7 @@ import {
   canCreateMethodologyDraft,
   canManageMethodology,
 } from '@/lib/permissions';
-import { useAuth } from '@/lib/useAuth';
+import { useAuth, useAuthorizationRole } from '@/lib/useAuth';
 import {
   TRAINING_EXERCISE_E_LEVELS,
   TRAINING_EXERCISE_FORMATS,
@@ -208,9 +208,10 @@ function canEditExercise(
 
 export default function MethodologyPage() {
   const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
   const queryClient = useQueryClient();
-  const canManage = canManageMethodology(account?.role);
-  const canCreateDraft = canCreateMethodologyDraft(account?.role);
+  const canManage = canManageMethodology(organizationRole);
+  const canCreateDraft = canCreateMethodologyDraft(organizationRole);
   const [section, setSection] = useState<Section>('exercises');
   const [skillFilters, setSkillFilters] = useState<MethodologySkillFilters>({
     direction: 'all',

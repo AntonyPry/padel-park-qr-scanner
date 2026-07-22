@@ -7,6 +7,7 @@ from server.crm import CrmClient
 
 
 REQUESTS = []
+REQUEST_BODIES = []
 
 
 class MockCrmHandler(BaseHTTPRequestHandler):
@@ -38,7 +39,10 @@ class MockCrmHandler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, status=404)
 
     def do_POST(self):
+        body_length = int(self.headers.get("Content-Length") or 0)
+        body = json.loads(self.rfile.read(body_length) or b"{}")
         REQUESTS.append(("POST", self.path, self.headers.get("Authorization")))
+        REQUEST_BODIES.append((self.path, body, self.headers.get("X-Worker-Protocol-Version")))
         if not self._check_auth():
             self._json({"error": "Unauthorized worker"}, status=401)
             return
@@ -49,7 +53,17 @@ class MockCrmHandler(BaseHTTPRequestHandler):
                         "id": 77,
                         "telephonyCallId": 123,
                         "call": {"id": 123, "recordingStatus": "available"},
-                    }
+                    },
+                    "lease": {
+                        "attempt": 2,
+                        "claimId": "160dca15-56e8-41df-885f-b91793733f5c",
+                        "claimToken": "lease-secret",
+                    },
+                    "protocolVersion": 2,
+                    "tenant": {
+                        "organizationKey": "org_12345678",
+                        "clubKey": "club_12345678",
+                    },
                 }
             )
             return
@@ -94,19 +108,29 @@ class MockCrmTest(unittest.TestCase):
 
     def setUp(self):
         REQUESTS.clear()
-        self.client = CrmClient(self.base_url, "worker-secret")
+        REQUEST_BODIES.clear()
+        self.client = CrmClient(self.base_url, "worker-secret", worker_instance_id="python-worker-a")
 
     def test_claim_audio_result_and_retry_use_worker_token(self):
         self.assertEqual(self.client.health()["status"], "ok")
         self.assertEqual(self.client.queue()["totals"]["queued"], 0)
-        self.assertEqual(self.client.claim_job("test-worker")["job"]["id"], 77)
-        self.assertIn("downloadUrl", self.client.audio_reference(77)["audio"])
-        self.assertEqual(self.client.progress_job(77, "ffmpeg_preprocess", 25, "Preparing")["job"]["status"], "processing")
-        self.assertEqual(self.client.complete_job(77, {"transcriptText": "ok"})["job"]["status"], "completed")
+        claimed = self.client.claim_job("test-worker")
+        self.assertEqual(claimed["job"]["id"], 77)
+        job = claimed["job"]
+        job["_lease"] = claimed["lease"]
+        self.assertIn("downloadUrl", self.client.audio_reference(job)["audio"])
+        self.assertEqual(self.client.progress_job(job, "ffmpeg_preprocess", 25, "Preparing")["job"]["status"], "processing")
+        self.assertEqual(self.client.complete_job(job, {"claimId": "forged", "transcriptText": "ok"})["job"]["status"], "completed")
         self.assertEqual(self.client.retry_job(77, "test-worker")["job"]["status"], "processing")
 
         self.assertTrue(REQUESTS)
         self.assertTrue(all(auth == "Bearer worker-secret" for _method, _path, auth in REQUESTS))
+        lease_requests = [item for item in REQUEST_BODIES if item[0].endswith(("audio-reference", "progress", "result"))]
+        self.assertEqual(len(lease_requests), 3)
+        for _path, body, protocol in lease_requests:
+            self.assertEqual(protocol, "2")
+            self.assertEqual(body["claimId"], "160dca15-56e8-41df-885f-b91793733f5c")
+            self.assertEqual(body["claimToken"], "lease-secret")
 
 
 if __name__ == "__main__":

@@ -5,10 +5,14 @@ function handleError(res, error, fallback) {
   sendError(res, error, fallback);
 }
 
+function idempotencyKey(req) {
+  return req.get('Idempotency-Key') || null;
+}
+
 class BookingsController {
   async getSchedule(req, res) {
     try {
-      res.json(await bookingsService.getSchedule(req.query));
+      res.json(await bookingsService.getSchedule(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения расписания');
     }
@@ -16,7 +20,7 @@ class BookingsController {
 
   async getCourts(req, res) {
     try {
-      res.json(await bookingsService.listBookingResources(req.query));
+      res.json(await bookingsService.listBookingResources(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения колонок бронирования');
     }
@@ -24,7 +28,7 @@ class BookingsController {
 
   async createCourt(req, res) {
     try {
-      res.status(201).json(await bookingsService.createBookingResource(req.body));
+      res.status(201).json(await bookingsService.createBookingResource(req.body, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка создания колонки бронирования');
     }
@@ -32,7 +36,7 @@ class BookingsController {
 
   async updateCourt(req, res) {
     try {
-      res.json(await bookingsService.updateBookingResource(req.params.id, req.body));
+      res.json(await bookingsService.updateBookingResource(req.params.id, req.body, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка обновления колонки бронирования');
     }
@@ -40,15 +44,15 @@ class BookingsController {
 
   async archiveCourt(req, res) {
     try {
-      res.json(await bookingsService.archiveBookingResource(req.params.id));
+      res.json(await bookingsService.archiveBookingResource(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка выключения колонки бронирования');
     }
   }
 
-  async getResponsibles(_req, res) {
+  async getResponsibles(req, res) {
     try {
-      res.json(await bookingsService.listResponsibleStaff());
+      res.json(await bookingsService.listResponsibleStaff(req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения ответственных сотрудников');
     }
@@ -56,7 +60,7 @@ class BookingsController {
 
   async getAnalytics(req, res) {
     try {
-      res.json(await bookingsService.getBookingAnalytics(req.query));
+      res.json(await bookingsService.getBookingAnalytics(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения отчета по бронированиям');
     }
@@ -64,7 +68,7 @@ class BookingsController {
 
   async getOne(req, res) {
     try {
-      res.json(await bookingsService.getBooking(req.params.id));
+      res.json(await bookingsService.getBooking(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения брони');
     }
@@ -72,7 +76,14 @@ class BookingsController {
 
   async create(req, res) {
     try {
-      res.status(201).json(await bookingsService.createBooking(req.body, req.account));
+      res.status(201).json(
+        await bookingsService.createBooking(
+          req.body,
+          req.account,
+          req.tenant,
+          { idempotencyKey: idempotencyKey(req) },
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка создания брони');
     }
@@ -81,7 +92,13 @@ class BookingsController {
   async update(req, res) {
     try {
       res.json(
-        await bookingsService.updateBooking(req.params.id, req.body, req.account),
+        await bookingsService.updateBooking(
+          req.params.id,
+          req.body,
+          req.account,
+          req.tenant,
+          { idempotencyKey: idempotencyKey(req) },
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка обновления брони');
@@ -95,6 +112,8 @@ class BookingsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
+          { idempotencyKey: idempotencyKey(req) },
         ),
       );
     } catch (error) {
@@ -104,7 +123,7 @@ class BookingsController {
 
   async getHistory(req, res) {
     try {
-      res.json(await bookingsService.listBookingHistory(req.params.id));
+      res.json(await bookingsService.listBookingHistory(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения истории брони');
     }
@@ -113,7 +132,11 @@ class BookingsController {
   async getTrainingPlan(req, res) {
     try {
       res.json(
-        await bookingsService.getBookingTrainingPlan(req.params.id, req.account),
+        await bookingsService.getBookingTrainingPlan(
+          req.params.id,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения плана тренировки по брони');
@@ -123,7 +146,11 @@ class BookingsController {
   async createTrainingPlan(req, res) {
     try {
       res.status(201).json(
-        await bookingsService.createBookingTrainingPlan(req.params.id, req.account),
+        await bookingsService.createBookingTrainingPlan(
+          req.params.id,
+          req.account,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка создания плана тренировки по брони');
@@ -132,7 +159,7 @@ class BookingsController {
 
   async listSeries(req, res) {
     try {
-      res.json(await bookingsService.listBookingSeries(req.query));
+      res.json(await bookingsService.listBookingSeries(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения постоянных броней');
     }
@@ -140,7 +167,7 @@ class BookingsController {
 
   async previewSeries(req, res) {
     try {
-      res.json(await bookingsService.previewBookingSeries(req.body));
+      res.json(await bookingsService.previewBookingSeries(req.body, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка проверки серии броней');
     }
@@ -148,7 +175,14 @@ class BookingsController {
 
   async createSeries(req, res) {
     try {
-      res.status(201).json(await bookingsService.createBookingSeries(req.body, req.account));
+      res.status(201).json(
+        await bookingsService.createBookingSeries(
+          req.body,
+          req.account,
+          req.tenant,
+          { idempotencyKey: idempotencyKey(req) },
+        ),
+      );
     } catch (error) {
       handleError(res, error, 'Ошибка создания серии броней');
     }
@@ -161,6 +195,8 @@ class BookingsController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
+          { idempotencyKey: idempotencyKey(req) },
         ),
       );
     } catch (error) {

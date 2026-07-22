@@ -1,9 +1,16 @@
+const {
+  createTenantAttributionHooks,
+} = require('../src/tenant-context/model-attribution');
+
 module.exports = (sequelize, DataTypes) => {
   const SubscriptionType = sequelize.define('SubscriptionType', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     name: {
       type: DataTypes.STRING,
       allowNull: false,
-      unique: true,
     },
     serviceType: {
       type: DataTypes.STRING,
@@ -63,9 +70,15 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+  }, {
+    hooks: createTenantAttributionHooks(
+      ['organizationId'],
+      'SubscriptionType',
+    ),
   });
 
   SubscriptionType.associate = (models) => {
+    SubscriptionType.belongsTo(models.Organization, { foreignKey: 'organizationId' });
     SubscriptionType.belongsTo(models.Account, {
       as: 'createdBy',
       foreignKey: 'createdByAccountId',

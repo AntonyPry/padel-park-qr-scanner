@@ -1,11 +1,17 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const XLSX = require('xlsx');
 const db = require('../../models');
 const service = require('../../src/services/visits-analytics.service');
+const { mockExactSingletonDefault } = require('../helpers/tenant-fixtures');
 
 const originalQuery = db.sequelize.query;
-afterEach(() => { db.sequelize.query = originalQuery; });
+let restoreSingleton;
+beforeEach(() => { restoreSingleton = mockExactSingletonDefault(db); });
+afterEach(() => {
+  db.sequelize.query = originalQuery;
+  restoreSingleton();
+});
 
 test('LTV maturity returns null instead of a synthetic zero and flags a small sample', () => {
   assert.deepEqual(service.ltvMetric(0, 0), {

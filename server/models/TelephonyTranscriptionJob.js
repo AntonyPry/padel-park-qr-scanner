@@ -1,5 +1,18 @@
+const {
+  assertBulkAuthorityFieldsAreMutable,
+  assertInstanceAuthorityFieldsAreMutable,
+} = require('../src/tenant-enforcement/immutable-authority');
+
 module.exports = (sequelize, DataTypes) => {
   const TelephonyTranscriptionJob = sequelize.define('TelephonyTranscriptionJob', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     telephonyCallId: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -53,6 +66,26 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.STRING,
       allowNull: true,
     },
+    claimId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+    },
+    claimTokenHash: {
+      type: DataTypes.STRING(64),
+      allowNull: true,
+    },
+    claimExpiresAt: {
+      type: DataTypes.DATE,
+      allowNull: true,
+    },
+    claimWorkerCredentialId: {
+      type: DataTypes.STRING(96),
+      allowNull: true,
+    },
+    workerProtocolVersion: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
     attemptCount: {
       type: DataTypes.INTEGER,
       allowNull: false,
@@ -78,9 +111,34 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.JSON,
       allowNull: true,
     },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        assertBulkAuthorityFieldsAreMutable(
+          options,
+          ['organizationId', 'clubId', 'telephonyCallId'],
+          'Transcription job tenant attribution is immutable',
+        );
+      },
+      beforeUpdate(job) {
+        assertInstanceAuthorityFieldsAreMutable(
+          job,
+          ['organizationId', 'clubId', 'telephonyCallId'],
+          'Transcription job tenant attribution is immutable',
+        );
+      },
+    },
   });
 
   TelephonyTranscriptionJob.associate = (models) => {
+    TelephonyTranscriptionJob.belongsTo(models.Organization, {
+      as: 'organization',
+      foreignKey: 'organizationId',
+    });
+    TelephonyTranscriptionJob.belongsTo(models.Club, {
+      as: 'club',
+      foreignKey: 'clubId',
+    });
     TelephonyTranscriptionJob.belongsTo(models.TelephonyCall, {
       as: 'call',
       foreignKey: 'telephonyCallId',

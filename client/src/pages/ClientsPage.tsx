@@ -28,7 +28,6 @@ import {
   MessageSquareText,
   PackageCheck,
   Pencil,
-  Phone,
   PhoneCall,
   Plus,
   RotateCcw,
@@ -56,6 +55,7 @@ import {
   type ClientSkillMapItem,
   type ClientSkillMapPayload,
 } from '@/components/client-skill-map';
+import { ClientProfileOverview } from '@/components/client-profile-overview';
 import {
   TrainingNoteExerciseEditor,
   TrainingNoteExerciseList,
@@ -121,6 +121,7 @@ import {
   parseNonNegativeNumericFilter,
 } from '@/lib/client-query';
 import {
+  canAccessPath,
   canManageClients,
   canManageCallTasks,
   canManageTrainingNotes,
@@ -135,7 +136,7 @@ import type { ReferenceItem } from '@/lib/references';
 import { fetchReferences } from '@/lib/references';
 import { useRealtimeRefresh } from '@/lib/realtime';
 import { cn } from '@/lib/utils';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 type ClientStatus = 'active' | 'archived';
 type ClientSegment = 'all' | 'new' | 'regular' | 'inactive' | 'no_visits';
@@ -160,6 +161,7 @@ interface ClientTrainingSummary {
 }
 
 interface Client {
+  birthDate?: string | null;
   id: number;
   telegramId?: string | null;
   vkId?: string | null;
@@ -568,6 +570,7 @@ interface DuplicateGroupSelection {
 }
 
 interface ClientFormState {
+  birthDate: string;
   name: string;
   phone: string;
   sourceId: string;
@@ -580,6 +583,7 @@ interface ClientFormState {
 }
 
 interface ClientPayload {
+  birthDate?: string | null;
   name: string;
   note: string;
   phone: string;
@@ -603,6 +607,7 @@ type PendingAction = ConfirmAction & {
 };
 
 const EMPTY_FORM: ClientFormState = {
+  birthDate: '',
   name: '',
   phone: '',
   sourceId: '',
@@ -634,6 +639,7 @@ const EMPTY_CALL_TASK_FORM: ClientCallTaskFormState = {
   title: '',
 };
 const clientFormSchema = z.object({
+  birthDate: z.string(),
   name: z.string().trim().min(2, 'Введите имя клиента'),
   note: z.string(),
   phone: z.string().refine((value) => getPhoneDigits(value).length === 10, {
@@ -1310,22 +1316,22 @@ function TooltipIconButton({
 }
 
 export default function ClientsPage() {
-  const { account } = useAuth();
+  const organizationRole = useAuthorizationRole('organization');
+  const clubRole = useAuthorizationRole('club');
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const canEdit = canManageClients(account?.role);
-  const canCreateCallTask = canManageCallTasks(account?.role);
-  const canMerge = canMergeClients(account?.role);
-  const canViewTraining = canViewTrainingNotes(account?.role);
-  const canEditTraining = canManageTrainingNotes(account?.role);
-  const canViewSubscriptions = canViewClientSubscriptions(account?.role);
-  const canRedeemSubscriptions = canRedeemClientSubscriptions(account?.role);
-  const canViewClientCertificates = canViewCertificates(account?.role);
-  const canRedeemClientCertificates = canRedeemCertificates(account?.role);
-  const canViewClientTelephony = ['owner', 'manager', 'admin', 'viewer'].includes(
-    account?.role || '',
-  );
-  const isTrainerAccount = account?.role === 'trainer';
+  const canEdit = canManageClients(organizationRole);
+  const canCreateCallTask = canManageCallTasks(clubRole);
+  const canMerge = canMergeClients(organizationRole);
+  const canViewTraining = canViewTrainingNotes(clubRole);
+  const canEditTraining = canManageTrainingNotes(clubRole);
+  const canViewSubscriptions = canViewClientSubscriptions(clubRole);
+  const canRedeemSubscriptions = canRedeemClientSubscriptions(clubRole);
+  const canViewClientCertificates = canViewCertificates(clubRole);
+  const canRedeemClientCertificates = canRedeemCertificates(clubRole);
+  const canViewClientTelephony = false;
+  const isOrganizationTrainer = organizationRole === 'trainer';
+  const canViewClubBookingHistory = canAccessPath(clubRole, '/admin/bookings');
 
   const [viewMode, setViewMode] = useState<'list' | 'duplicates'>('list');
   const [clients, setClients] = useState<Client[]>([]);
@@ -1849,6 +1855,7 @@ export default function ClientsPage() {
   const openEdit = (client: Client) => {
     setEditingClient(client);
     clientForm.reset({
+      birthDate: client.birthDate || '',
       name: client.name,
       phone: client.phone,
       sourceId: client.sourceId
@@ -1869,6 +1876,7 @@ export default function ClientsPage() {
   const openRestoreFromArchive = (client: Client) => {
     setEditingClient(client);
     clientForm.reset({
+      birthDate: client.birthDate || '',
       name: client.name,
       phone: client.phone,
       sourceId: client.sourceId
@@ -2144,7 +2152,6 @@ export default function ClientsPage() {
       'references',
       'trainingNotes',
       'trainingPlans',
-      'telephony',
     ],
     () => {
       void fetchClients();
@@ -2378,6 +2385,7 @@ export default function ClientsPage() {
 
   const handleSave = clientForm.handleSubmit(async (values) => {
     const payload: ClientPayload = {
+      birthDate: values.birthDate || null,
       name: values.name.trim(),
       phone: values.phone,
       sourceId: values.sourceId ? Number(values.sourceId) : undefined,
@@ -2985,7 +2993,7 @@ export default function ClientsPage() {
         );
       },
     },
-    ...(!isTrainerAccount
+    ...(!isOrganizationTrainer
       ? ([
           {
             accessorKey: 'phone',
@@ -3062,7 +3070,7 @@ export default function ClientsPage() {
                     aria-label="Поиск клиентов"
                     value={q}
                     onChange={(event) => { setQ(event.target.value); setPage(1); }}
-                    placeholder={isTrainerAccount ? 'Имя клиента' : 'Имя или телефон'}
+                    placeholder={isOrganizationTrainer ? 'Имя клиента' : 'Имя или телефон'}
                     className="h-9 pl-9 pr-9"
                   />
                   {hasClientSearchQuery && (
@@ -3426,7 +3434,7 @@ export default function ClientsPage() {
                 </div>
 
                 <div className="mt-4 grid grid-cols-1 gap-2 text-sm">
-                  {!isTrainerAccount && (
+                  {!isOrganizationTrainer && (
                     <div className="flex justify-between gap-3">
                       <span className="text-muted-foreground">Телефон</span>
                       <span className="text-right font-medium">{client.phone}</span>
@@ -3683,6 +3691,19 @@ export default function ClientsPage() {
                   placeholder="+7 (999) 000-00-00"
                 />
                 <FieldError>{clientForm.formState.errors.phone?.message}</FieldError>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">
+                  Дата рождения
+                </label>
+                <Input
+                  type="date"
+                  max={new Date().toISOString().slice(0, 10)}
+                  value={form.birthDate}
+                  onChange={(event) =>
+                    setForm({ ...form, birthDate: event.target.value })
+                  }
+                />
               </div>
             </div>
 
@@ -4376,7 +4397,7 @@ export default function ClientsPage() {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  {!isTrainerAccount && getPhoneHref(details.client.phone) && (
+                  {!isOrganizationTrainer && getPhoneHref(details.client.phone) && (
                     <Button asChild variant="outline" size="sm">
                       <a href={getPhoneHref(details.client.phone)}>
                         <PhoneCall className="mr-2 h-4 w-4" />
@@ -4384,7 +4405,7 @@ export default function ClientsPage() {
                       </a>
                     </Button>
                   )}
-                  {!isTrainerAccount && (
+                  {!isOrganizationTrainer && (
                     <Button
                       type="button"
                       variant="outline"
@@ -4435,166 +4456,67 @@ export default function ClientsPage() {
                 </div>
               ) : (
                 <>
-                  <div
-                    className={`grid grid-cols-1 gap-4 ${
-                      isTrainerAccount ? 'md:grid-cols-2' : 'md:grid-cols-3'
-                    }`}
-                  >
-                    {!isTrainerAccount && (
-                      <div className="min-w-0 rounded-md border p-4">
-                        <div className="text-xs text-muted-foreground">
-                          Телефон
-                        </div>
-                        <div className="mt-1 flex items-center gap-2 font-medium">
-                          <Phone className="h-4 w-4 text-muted-foreground" />
-                          {details.client.phone}
-                        </div>
-                      </div>
-                    )}
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="text-xs text-muted-foreground">
-                        Визитов
-                      </div>
-                      <div className="mt-1 text-2xl font-bold">
-                        {details.client.stats.visitCount}
-                      </div>
-                    </div>
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="text-xs text-muted-foreground">
-                        Последний визит
-                      </div>
-                      <div className="mt-1 flex min-w-0 items-center gap-2 font-medium">
-                        <CalendarDays className="h-4 w-4 text-muted-foreground" />
-                        <span className="min-w-0 break-words">
-                          {formatDateTime(details.client.stats.lastVisitAt)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="mb-3 flex items-center justify-between gap-3">
-                        <div className="font-medium">Данные клиента</div>
-                        {canEdit && (
-                          <div className="flex flex-wrap justify-end gap-2">
-                            {canCreateCallTask &&
-                              details.client.status !== 'archived' && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={openCallTaskDialog}
-                                >
-                                  <MessageSquareText className="mr-2 h-4 w-4" />
-                                  Задача
-                                </Button>
-                              )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => openEdit(details.client)}
-                            >
-                              <Pencil className="mr-2 h-4 w-4" /> Изменить
-                            </Button>
-                            {details.client.status === 'archived' ? (
-                              <>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    requestClientStatusUpdate(
-                                      details.client,
-                                      'active',
-                                    )
-                                  }
-                                >
-                                  <ArchiveRestore className="mr-2 h-4 w-4" />
-                                  Восстановить
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                  onClick={() =>
-                                    requestPermanentDelete(details.client)
-                                  }
-                                >
-                                  <Trash2 className="mr-2 h-4 w-4" />
-                                  Удалить
-                                </Button>
-                              </>
-                            ) : (
+                  <ClientProfileOverview
+                    client={details.client}
+                    hidePhone={isOrganizationTrainer}
+                    showStatus={false}
+                    actions={
+                      canEdit ? (
+                        <>
+                          {canCreateCallTask &&
+                            details.client.status !== 'archived' && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={openCallTaskDialog}
+                              >
+                                <MessageSquareText className="mr-2 h-4 w-4" />
+                                Задача
+                              </Button>
+                            )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => openEdit(details.client)}
+                          >
+                            <Pencil className="mr-2 h-4 w-4" /> Изменить
+                          </Button>
+                          {details.client.status === 'archived' ? (
+                            <>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 onClick={() =>
-                                  requestClientStatusUpdate(
-                                    details.client,
-                                    'archived',
-                                  )
+                                  requestClientStatusUpdate(details.client, 'active')
                                 }
                               >
-                                <Archive className="mr-2 h-4 w-4" />
-                                В архив
+                                <ArchiveRestore className="mr-2 h-4 w-4" />
+                                Восстановить
                               </Button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Источник
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {details.client.source}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Первый визит
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {formatDateTime(
-                              details.client.stats.firstVisitAt,
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Создан
-                          </span>
-                          <span className="min-w-0 break-words text-right">
-                            {formatDateTime(details.client.createdAt)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between gap-3">
-                          <span className="text-muted-foreground">
-                            Внешние ID
-                          </span>
-                          <span className="min-w-0 break-all text-right text-xs">
-                            {[
-                              details.client.telegramId &&
-                                `TG: ${details.client.telegramId}`,
-                              details.client.vkId &&
-                                `VK: ${details.client.vkId}`,
-                              details.client.webId &&
-                                `WEB: ${details.client.webId}`,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ') || '-'}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="min-w-0 rounded-md border p-4">
-                      <div className="mb-2 font-medium">Заметка</div>
-                      <div className="min-h-[112px] whitespace-pre-wrap text-sm text-muted-foreground">
-                        {details.client.note || 'Заметка пока не заполнена.'}
-                      </div>
-                    </div>
-                  </div>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                onClick={() => requestPermanentDelete(details.client)}
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" /> Удалить
+                              </Button>
+                            </>
+                          ) : (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() =>
+                                requestClientStatusUpdate(details.client, 'archived')
+                              }
+                            >
+                              <Archive className="mr-2 h-4 w-4" /> В архив
+                            </Button>
+                          )}
+                        </>
+                      ) : undefined
+                    }
+                  />
 
                   {canViewSubscriptions && (
                     <div className="rounded-md border">
@@ -4975,7 +4897,7 @@ export default function ClientsPage() {
                     </div>
                   )}
 
-                  {canViewClientTelephony && (
+                  {canCreateCallTask && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
@@ -5076,7 +4998,7 @@ export default function ClientsPage() {
                     </div>
                   )}
 
-                  {!isTrainerAccount && (
+                  {canViewClientTelephony && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
@@ -5263,7 +5185,7 @@ export default function ClientsPage() {
                     </div>
                   )}
 
-                  {!isTrainerAccount && (
+                  {canViewClubBookingHistory && (
                     <div className="rounded-md border">
                       <div className="flex flex-col gap-2 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>

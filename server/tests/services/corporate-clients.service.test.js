@@ -1,8 +1,11 @@
 const assert = require('node:assert/strict');
-const { afterEach, test } = require('node:test');
+const { afterEach, beforeEach, test } = require('node:test');
 const xlsx = require('xlsx');
 const db = require('../../models');
 const corporateClientsService = require('../../src/services/corporate-clients.service');
+const onboardingService = require('../../src/services/onboarding.service');
+const originalGetTrainingDataMarker = onboardingService.getTrainingDataMarker;
+const originalRecordEventSafe = onboardingService.recordEventSafe;
 
 const originalModels = {
   Category: db.Category,
@@ -19,6 +22,18 @@ const originalModels = {
 
 afterEach(() => {
   Object.assign(db, originalModels);
+  onboardingService.getTrainingDataMarker = originalGetTrainingDataMarker;
+  onboardingService.recordEventSafe = originalRecordEventSafe;
+});
+
+beforeEach(() => {
+  onboardingService.getTrainingDataMarker = async () => ({
+    isTraining: false,
+    trainingAccountId: null,
+    trainingRole: null,
+    trainingSessionId: null,
+  });
+  onboardingService.recordEventSafe = async () => null;
 });
 
 function makeClient(overrides = {}) {
@@ -283,21 +298,13 @@ test('createDeposit creates manual Finance income and records history in active 
       return null;
     },
   };
-  db.OnboardingEvent = {
-    async create(payload, options) {
-      onboardingEvents.push({
-        options,
-        payload,
-        transactionCommitted,
-        transactionOpen,
-      });
-      return {
-        ...payload,
-        toJSON() {
-          return { ...this };
-        },
-      };
-    },
+  onboardingService.recordEventSafe = async (_actor, eventKey, options) => {
+    onboardingEvents.push({
+      options: undefined,
+      payload: { eventKey, ...options },
+      transactionCommitted,
+      transactionOpen,
+    });
   };
   db.Category = {
     async findOne({ where }) {
@@ -397,7 +404,7 @@ test('createDeposit creates manual Finance income and records history in active 
   assert.ok(financeChangeLogs.every((log) => log.options.transaction === transaction));
   assert.equal(onboardingEvents.length, 1);
   assert.equal(onboardingEvents[0].payload.eventKey, 'finance.record_created');
-  assert.equal(onboardingEvents[0].payload.entityId, String(finance.id));
+  assert.equal(onboardingEvents[0].payload.entityId, finance.id);
   assert.equal(onboardingEvents[0].transactionOpen, false);
   assert.equal(onboardingEvents[0].transactionCommitted, true);
   assert.equal(onboardingEvents[0].options, undefined);

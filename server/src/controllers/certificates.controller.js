@@ -8,7 +8,7 @@ function handleError(res, error, fallback) {
 class CertificatesController {
   async list(req, res) {
     try {
-      res.json(await certificatesService.listCertificates(req.query));
+      res.json(await certificatesService.listCertificates(req.query, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка поиска сертификатов');
     }
@@ -20,6 +20,7 @@ class CertificatesController {
         await certificatesService.listClientCertificates(
           req.params.clientId,
           req.query,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -27,9 +28,24 @@ class CertificatesController {
     }
   }
 
+  async issue(req, res) {
+    try {
+      res.status(201).json(
+        await certificatesService.issueCertificate(
+          req.params.clientId,
+          req.body,
+          req.account,
+          req.tenant,
+        ),
+      );
+    } catch (error) {
+      handleError(res, error, 'Ошибка ручной выдачи сертификата');
+    }
+  }
+
   async get(req, res) {
     try {
-      res.json(await certificatesService.getCertificate(req.params.id));
+      res.json(await certificatesService.getCertificate(req.params.id, req.tenant));
     } catch (error) {
       handleError(res, error, 'Ошибка получения сертификата');
     }
@@ -38,7 +54,10 @@ class CertificatesController {
   async listRedemptions(req, res) {
     try {
       res.json(
-        await certificatesService.listCertificateRedemptions(req.params.id),
+        await certificatesService.listCertificateRedemptions(
+          req.params.id,
+          req.tenant,
+        ),
       );
     } catch (error) {
       handleError(res, error, 'Ошибка получения истории сертификата');
@@ -52,6 +71,7 @@ class CertificatesController {
           req.params.id,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {
@@ -67,6 +87,7 @@ class CertificatesController {
           req.params.redemptionId,
           req.body,
           req.account,
+          req.tenant,
         ),
       );
     } catch (error) {

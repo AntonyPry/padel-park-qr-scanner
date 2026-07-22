@@ -69,9 +69,12 @@ import {
   MetricLabel,
 } from '@/components/dashboard-metric';
 import { apiFetch, getApiErrorMessage } from '@/lib/api';
-import { canManageCallTasks } from '@/lib/permissions';
+import {
+  canManageCallTasks,
+  canManageSystemUsers,
+} from '@/lib/permissions';
 import { useRealtimeRefresh } from '@/lib/realtime';
-import { useAuth } from '@/lib/useAuth';
+import { useAuthorizationRole } from '@/lib/useAuth';
 
 type CallTaskStatus = 'backlog' | 'in_progress' | 'done' | 'archived';
 type TaskFilterStatus = CallTaskStatus | 'active' | 'all';
@@ -425,10 +428,13 @@ function getTaskStatusActionCopy(task: CallTask, nextStatus: CallTaskStatus) {
 }
 
 export default function CallTasksPage() {
-  const { account } = useAuth();
+  const clubRole = useAuthorizationRole('club');
+  const organizationRole = useAuthorizationRole('organization');
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const canManage = canManageCallTasks(account?.role);
+  const canManage = canManageCallTasks(clubRole);
+  const canLoadAccountOptions =
+    canManage && canManageSystemUsers(organizationRole);
   const initialStatus = searchParams.get('status') as TaskFilterStatus | null;
   const initialClientStatus = searchParams.get('clientStatus') as ClientFilterStatus | null;
   const [tasks, setTasks] = useState<CallTask[]>([]);
@@ -571,7 +577,7 @@ export default function CallTasksPage() {
   }, [status]);
 
   const fetchAccounts = useCallback(async () => {
-    if (!canManage) {
+    if (!canLoadAccountOptions) {
       setAccounts([]);
       return;
     }
@@ -586,7 +592,7 @@ export default function CallTasksPage() {
     } catch {
       setAccounts([]);
     }
-  }, [canManage]);
+  }, [canLoadAccountOptions]);
 
   const openTask = useCallback(async (task: CallTask) => {
     const requestId = taskDetailsRequestIdRef.current + 1;

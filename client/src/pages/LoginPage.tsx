@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { OperatorLogoShortcut } from '@/components/operator-logo-shortcut';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/lib/useAuth';
+import { BrandMark } from '@/components/brand-mark';
 
 interface LoginPageProps {
   mode: 'login' | 'setup';
@@ -43,14 +45,12 @@ export default function LoginPage({ mode }: LoginPageProps) {
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-2">
-          <div className="mb-2 flex items-center gap-3">
-            <img
-              src="/setly-mark.png?v=20260714"
-              alt=""
-              className="size-11 rounded-xl border border-border object-cover shadow-sm"
-            />
-            <span className="text-base font-semibold text-foreground">Setly</span>
-          </div>
+          {isSetup ? (
+            <div className="mb-2 flex items-center gap-3">
+              <BrandMark className="size-11" decorative />
+              <span className="text-base font-semibold text-foreground">Setly</span>
+            </div>
+          ) : <OperatorLogoShortcut />}
           <CardTitle>
             {isSetup ? 'Первичная настройка' : 'Вход в панель'}
           </CardTitle>

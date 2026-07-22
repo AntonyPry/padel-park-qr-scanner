@@ -61,6 +61,54 @@ test('passes valid payloads and preserves query strings used by controllers', ()
   assert.equal(req.query.includeArchived, 'true');
 });
 
+test('shift cash expense contract strips legacy categoryId before strict validation', () => {
+  const valid = runValidation(
+    { body: apiSchemas.shiftCash.expenseBody },
+    {
+      body: { amount: 900, description: 'Хозяйственный расход' },
+      params: {},
+      query: {},
+    },
+  );
+  assert.equal(valid.nextCalled, true);
+
+  const legacyRequest = {
+    body: {
+      amount: 900,
+      categoryId: 12,
+      description: 'Хозяйственный расход',
+    },
+    params: {},
+    query: {},
+  };
+  const legacy = runValidation(
+    { body: apiSchemas.shiftCash.expenseBody },
+    legacyRequest,
+  );
+  assert.equal(legacy.nextCalled, true);
+  assert.equal(legacy.res.statusCode, null);
+  assert.deepEqual(legacyRequest.body, {
+    amount: 900,
+    description: 'Хозяйственный расход',
+  });
+
+  const unknownFieldRequest = {
+    body: {
+      amount: 900,
+      description: 'Хозяйственный расход',
+      unexpectedField: true,
+    },
+    params: {},
+    query: {},
+  };
+  const unknownField = runValidation(
+    { body: apiSchemas.shiftCash.expenseBody },
+    unknownFieldRequest,
+  );
+  assert.equal(unknownField.nextCalled, false);
+  assert.equal(unknownField.res.statusCode, 400);
+});
+
 test('accepts whitespace clients list numeric query values as empty', () => {
   const req = {
     body: {},
@@ -168,23 +216,34 @@ test('accepts manual shift payload used by staff page', () => {
 });
 
 test('accepts shift report template and answer payloads', () => {
+  const templateRequest = {
+    body: {
+      appliesToRole: 'admin',
+      appliesToShiftType: 'day',
+      description: '',
+      gracePeriodMinutes: '15',
+      name: 'Утренний отчет',
+      scheduleConfig: { times: ['09:00', '13:30'] },
+      scheduleType: 'daily_times',
+      status: 'active',
+    },
+    params: {},
+    query: {},
+  };
   const templateResult = runValidation(
     { body: apiSchemas.shiftReports.templateBody },
-    {
-      body: {
-        description: '',
-        gracePeriodMinutes: '15',
-        name: 'Утренний отчет',
-        scheduleConfig: { times: ['09:00', '13:30'] },
-        scheduleType: 'daily_times',
-        status: 'active',
-      },
-      params: {},
-      query: {},
-    },
+    templateRequest,
   );
   assert.equal(templateResult.nextCalled, true);
   assert.equal(templateResult.res.statusCode, null);
+  assert.deepEqual(templateRequest.body, {
+    description: '',
+    gracePeriodMinutes: '15',
+    name: 'Утренний отчет',
+    scheduleConfig: { times: ['09:00', '13:30'] },
+    scheduleType: 'daily_times',
+    status: 'active',
+  });
 
   const itemResult = runValidation(
     { body: apiSchemas.shiftReports.templateItemBody },

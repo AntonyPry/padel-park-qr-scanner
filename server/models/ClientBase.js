@@ -1,5 +1,13 @@
 module.exports = (sequelize, DataTypes) => {
   const ClientBase = sequelize.define('ClientBase', {
+    organizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
+    clubId: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+    },
     name: {
       type: DataTypes.STRING,
       allowNull: false,
@@ -18,6 +26,14 @@ module.exports = (sequelize, DataTypes) => {
     },
     originMetadata: {
       type: DataTypes.JSON,
+      allowNull: true,
+    },
+    originOrganizationId: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+    },
+    originClubId: {
+      type: DataTypes.INTEGER,
       allowNull: true,
     },
     status: {
@@ -105,9 +121,62 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: true,
     },
+    trainingSessionId: { type: DataTypes.UUID, allowNull: true },
+  }, {
+    hooks: {
+      beforeBulkUpdate(options) {
+        const attributes = options.attributes || {};
+        if ([
+          'organizationId',
+          'clubId',
+          'createdByAccountId',
+          'filters',
+          'origin',
+          'originMetadata',
+          'originOrganizationId',
+          'originClubId',
+        ].some(
+          (field) => Object.prototype.hasOwnProperty.call(attributes, field),
+        )) {
+          const error = new Error('Client base tenant attribution is immutable');
+          error.code = 'CLIENT_BASE_TENANT_IMMUTABLE';
+          throw error;
+        }
+      },
+      beforeUpdate(base) {
+        if (
+          base.changed('organizationId') ||
+          base.changed('clubId') ||
+          base.changed('createdByAccountId')
+        ) {
+          const error = new Error('Client base tenant attribution is immutable');
+          error.code = 'CLIENT_BASE_TENANT_IMMUTABLE';
+          throw error;
+        }
+        if (
+          base.previous('origin') === 'visits_analytics' &&
+          ['filters', 'origin', 'originMetadata', 'originOrganizationId', 'originClubId']
+            .some((field) => base.changed(field))
+        ) {
+          const error = new Error('Analytics client base provenance is immutable');
+          error.code = 'CLIENT_BASE_PROVENANCE_IMMUTABLE';
+          throw error;
+        }
+      },
+    },
   });
 
   ClientBase.associate = (models) => {
+    ClientBase.belongsTo(models.Organization, { foreignKey: 'organizationId' });
+    ClientBase.belongsTo(models.Club, { foreignKey: 'clubId' });
+    ClientBase.belongsTo(models.Organization, {
+      as: 'originOrganization',
+      foreignKey: 'originOrganizationId',
+    });
+    ClientBase.belongsTo(models.Club, {
+      as: 'originClub',
+      foreignKey: 'originClubId',
+    });
     ClientBase.belongsTo(models.Account, {
       as: 'createdByAccount',
       foreignKey: 'createdByAccountId',

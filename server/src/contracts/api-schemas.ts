@@ -72,6 +72,18 @@ const statusFilter = z.enum(['active', 'archived', 'inactive', 'all']);
 const archiveStatus = z.enum(['active', 'archived']);
 const requiredString = z.string().trim().min(1, 'Поле обязательно');
 const nameString = z.string().trim().min(2, 'Минимум 2 символа').max(160, 'Слишком длинное значение');
+const ianaTimezone = z.string().trim().refine(
+  (value: string) => {
+    if (!value.includes('/')) return false;
+    try {
+      new Intl.DateTimeFormat('ru-RU', { timeZone: value }).format(new Date());
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: 'Выберите город или регион из списка' },
+);
 const optionalString = z.union([z.string().trim(), z.literal(''), z.null()]).optional();
 const jsonObject = z.record(z.string(), z.unknown());
 const optionalJsonObject = z.union([jsonObject, z.null()]).optional();
@@ -174,6 +186,10 @@ const paginationQuery = z
   })
   .passthrough();
 const idParams = z.object({ id });
+const transcriptionWorkerLeaseFields = {
+  claimId: z.string().uuid().optional(),
+  claimToken: z.string().trim().min(32).max(256).optional(),
+};
 const redemptionIdParams = z.object({ id, redemptionId: id });
 const viewIdParams = z.object({ viewId: id });
 const clientIdParams = z.object({ clientId: id });
@@ -331,6 +347,7 @@ const savedViewUpdateBody = z
 
 const clientBody = z
   .object({
+    birthDate: z.union([dateOnly, z.literal(''), z.null()]).optional(),
     name: nameString,
     note: optionalString,
     phone: requiredString,
@@ -431,6 +448,16 @@ const subscriptionRedemptionReverseBody = z
   })
   .passthrough();
 
+const manualSubscriptionIssueBody = z
+  .object({
+    comment: optionalString,
+    paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
+    saleAmount: nonNegativeNumberValue,
+    startsAt: optionalDateTime,
+    subscriptionTypeId: id,
+  })
+  .passthrough();
+
 const certificateSalePayload = z
   .object({
     amountTotal: positiveNumberValue.optional(),
@@ -460,6 +487,23 @@ const certificateRedemptionBody = z
 const certificateRedemptionReverseBody = z
   .object({
     reason: optionalString,
+  })
+  .passthrough();
+
+const manualCertificateIssueBody = z
+  .object({
+    amountTotal: positiveNumberValue.optional(),
+    certificateType: certificateTypeValue,
+    code: optionalString,
+    comment: optionalString,
+    paymentMethod: z.enum(['unknown', 'cash', 'cashless', 'mixed']).optional(),
+    saleAmount: nonNegativeNumberValue,
+    serviceName: optionalString,
+    serviceType: optionalString,
+    startsAt: optionalDateTime,
+    title: nameString,
+    unitsTotal: id.optional(),
+    validityDays: id,
   })
   .passthrough();
 
@@ -828,8 +872,6 @@ const shiftReportScheduleConfig = z
   .passthrough();
 const shiftReportTemplateBody = z
   .object({
-    appliesToRole: z.union([accountRoleValue, z.literal(''), z.null()]).optional(),
-    appliesToShiftType: optionalString,
     description: optionalString,
     gracePeriodMinutes: optionalNonNegativeNumberValue,
     name: nameString,
@@ -837,8 +879,7 @@ const shiftReportTemplateBody = z
     scheduleType: shiftReportScheduleType,
     sortOrder: optionalNumberValue,
     status: shiftReportTemplateStatus.optional(),
-  })
-  .passthrough();
+  });
 const shiftReportTemplateItemBody = z
   .object({
     itemType: shiftReportItemType,
@@ -886,10 +927,15 @@ const shiftCashBalanceBody = z
       .optional(),
   })
   .passthrough();
-const shiftCashExpenseBody = z
-  .object({
+const shiftCashExpenseBody = z.preprocess(
+  (payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+    const normalized = { ...payload } as Record<string, unknown>;
+    delete normalized.categoryId;
+    return normalized;
+  },
+  z.object({
     amount: positiveNumberValue,
-    categoryId: id,
     description: z
       .string()
       .trim()
@@ -897,7 +943,8 @@ const shiftCashExpenseBody = z
       .max(1000, 'Описание расхода слишком длинное'),
     spentAt: optionalHttpDateTime,
   })
-  .passthrough();
+    .strict(),
+);
 
 const bookingUpdateBody = z
   .object(bookingShape)
@@ -978,6 +1025,75 @@ const trainingMethodologyExerciseUpdateBody = trainingMethodologyExerciseBody
   })
   .partial()
   .passthrough();
+
+const installationIdempotencyKey = z.string().uuid('Ключ повторной отправки указан некорректно');
+const installationExpectedUpdatedAt = z.union([dateTimeString, z.null()]).optional();
+const installationMutationResult = z.object({
+  auditLogId: z.number().int().positive(),
+  idempotency: z.object({
+    operationId: z.number().int().positive(),
+    replayed: z.boolean(),
+  }),
+}).passthrough();
+const integrationProvider = z.enum(['beeline', 'evotor', 'telegram', 'vk']);
+const integrationStatus = z.enum(['active', 'disabled', 'revoked', 'not_configured']);
+const integrationValidationStatus = z.enum(['verified', 'pending_event', 'failed', 'not_tested']);
+const httpsUrl = z.string().trim().url('Укажите полный HTTPS-адрес').refine(
+  (value: string) => value.startsWith('https://'),
+  { message: 'Адрес должен начинаться с https://' },
+);
+const messengerProxyUrl = z.string().trim().url('Укажите полный адрес прокси').refine(
+  (value: string) => /^(?:https|socks4|socks5|socks5h):\/\//u.test(value),
+  { message: 'Поддерживаются HTTPS, SOCKS4 и SOCKS5 прокси' },
+).meta({ writeOnly: true });
+const providerPath = z.string().trim().regex(
+  /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+$/u,
+  'Путь должен начинаться с / и не содержать query-параметры',
+);
+const beelineSettings = z.object({
+  apiBaseUrl: httpsUrl,
+  apiTimeoutMs: z.number().int().min(1000).max(60000),
+  callbackBaseUrl: httpsUrl,
+  recordsPath: providerPath,
+  statisticsPath: providerPath,
+  subscriptionAutoRenewEnabled: z.boolean(),
+  subscriptionExpiresSeconds: z.number().int().min(300).max(86400),
+  subscriptionPath: providerPath,
+  subscriptionPattern: z.string().trim().max(500).nullable(),
+  subscriptionRenewBeforeSeconds: z.number().int().min(60).max(43200),
+  subscriptionType: z.enum(['BASIC_CALL', 'ADVANCED_CALL']),
+}).strict();
+const writeOnlyCredential = z.string().trim().min(1, 'Укажите учётные данные').max(8192)
+  .meta({ writeOnly: true });
+const integrationBaseMutation = {
+  expectedUpdatedAt: installationExpectedUpdatedAt,
+  idempotencyKey: installationIdempotencyKey,
+};
+const integrationActionBody = z.object({
+  expectedUpdatedAt: dateTimeString,
+  idempotencyKey: installationIdempotencyKey,
+}).strict();
+const integrationParams = z.object({
+  clubId: id,
+  organizationId: id,
+});
+const integrationStateResponse = z.object({
+  configured: z.boolean(),
+  lastActivityAt: dateTime.nullable(),
+  lastValidatedAt: dateTime.nullable(),
+  provider: integrationProvider,
+  proxyConfigured: z.boolean(),
+  safeCallbackUrl: z.string().nullable(),
+  safeIdentity: z.string().nullable(),
+  secretUpdatedAt: dateTime.nullable(),
+  settings: z.record(z.string(), z.unknown()),
+  status: integrationStatus,
+  updatedAt: dateTime.nullable(),
+  validationStatus: integrationValidationStatus,
+});
+const integrationMutationResponse = installationMutationResult.extend({
+  integration: integrationStateResponse,
+});
 
 const apiSchemas = {
   access: {
@@ -1120,7 +1236,9 @@ const apiSchemas = {
         status: z.enum(['active', 'inactive', 'archived']).optional(),
       })
       .passthrough(),
-    listQuery: z.object({ status: statusFilter.optional() }).passthrough(),
+    listQuery: z
+      .object({ q: optionalString, status: statusFilter.optional() })
+      .passthrough(),
     params: idParams,
   },
   onboarding: {
@@ -1185,6 +1303,294 @@ const apiSchemas = {
         })
         .passthrough(),
     },
+    membershipsResponse: z.object({
+      memberships: z.array(
+        z.object({
+          clubs: z.array(
+            z.object({
+              effectiveRole: accountRoleValue,
+              id: z.number().int().positive(),
+              name: z.string(),
+              slug: z.string(),
+              timezone: z.string(),
+            }),
+          ),
+          id: z.number().int().positive(),
+          organization: z.object({
+            id: z.number().int().positive(),
+            name: z.string(),
+            slug: z.string(),
+          }),
+          role: accountRoleValue,
+        }),
+      ),
+      recommendedContext: z
+        .object({
+          clubId: z.number().int().positive(),
+          effectiveRole: accountRoleValue,
+          membershipId: z.number().int().positive(),
+          organizationId: z.number().int().positive(),
+        })
+        .nullable(),
+    }),
+  },
+  installationProvisioning: {
+    activate: {
+      body: z
+        .object({
+          password: z
+            .string()
+            .min(10, 'Пароль должен быть не короче 10 символов')
+            .max(200, 'Пароль слишком длинный'),
+          token: z.string().trim().regex(/^[A-Za-z0-9_-]{43}$/u, 'Ссылка активации некорректна'),
+        })
+        .strict(),
+      response: z.object({
+        auditLogId: z.number().int().positive(),
+        email: z.string().email(),
+        success: z.literal(true),
+      }),
+    },
+    activationStatus: {
+      body: z.object({
+        token: z.string().trim().regex(/^[A-Za-z0-9_-]{43}$/u, 'Ссылка активации некорректна'),
+      }).strict(),
+      response: z
+        .object({
+          expiresAt: dateTime.optional(),
+          organization: z
+            .object({ id: z.number().int().positive(), name: z.string(), slug: z.string() })
+            .optional(),
+          owner: z.object({ email: z.string().email(), name: z.string() }).optional(),
+          state: z.enum(['pending', 'consumed', 'expired', 'invalidated', 'invalid']),
+        })
+        .strict(),
+    },
+    create: {
+      body: z
+        .object({
+          clubs: z
+            .array(
+              z
+                .object({
+                  name: nameString,
+                  timezone: ianaTimezone,
+                })
+                .strict(),
+            )
+            .min(1, 'Добавьте хотя бы один клуб')
+            .max(20, 'За одну операцию можно создать до 20 клубов'),
+          idempotencyKey: z.string().uuid('Ключ повторной отправки указан некорректно'),
+          organization: z
+            .object({
+              name: nameString,
+            })
+            .strict(),
+          owner: z
+            .object({
+              email: z.string().trim().email('Некорректный email'),
+              name: nameString,
+              phone: z.string().regex(/^\+7[3-9]\d{9}$/u, 'Введите полный номер в формате +7 (999) 123-45-67'),
+            })
+            .strict(),
+        })
+        .strict(),
+      response: z.object({
+        activation: z.object({
+          expiresAt: dateTime,
+          link: z.string().url().nullable(),
+          state: z.enum(['pending', 'consumed', 'expired', 'invalidated']),
+        }),
+        audit: z.object({ action: z.string(), createdAt: dateTime, id: z.number().int().positive() }),
+        clubs: z.array(z.object({ id: z.number().int().positive(), name: z.string(), slug: z.string(), timezone: z.string() })),
+        idempotency: z.object({ operationId: z.number().int().positive(), replayed: z.boolean() }),
+        organization: z.object({ id: z.number().int().positive(), name: z.string(), slug: z.string() }),
+        owner: z.object({ accountId: z.number().int().positive(), email: z.string().email(), name: z.string() }),
+      }),
+    },
+    organizationParams: z.object({ organizationId: id }),
+    organizationUpdate: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        name: nameString,
+      }).strict(),
+      params: z.object({ organizationId: id }),
+      response: installationMutationResult,
+    },
+    organizationLifecycle: {
+      body: z.object({
+        confirmImpact: z.boolean().optional(),
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+      }).strict(),
+      params: z.object({ organizationId: id }),
+      response: installationMutationResult,
+    },
+    clubUpdate: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        name: nameString,
+        timezone: ianaTimezone,
+      }).strict(),
+      params: integrationParams,
+      response: installationMutationResult,
+    },
+    clubLifecycle: {
+      body: z.object({
+        confirmImpact: z.boolean().optional(),
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+      }).strict(),
+      params: integrationParams,
+      response: installationMutationResult,
+    },
+    integrationConfigureBeeline: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+        settings: beelineSettings,
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationConfigureEvotor: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationConfigureTelegram: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+        proxyUrl: z.union([messengerProxyUrl, z.null()]).optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationConfigureVk: {
+      body: z.object({
+        ...integrationBaseMutation,
+        credential: writeOnlyCredential.optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationRotate: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        credential: writeOnlyCredential,
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationRotateTelegram: {
+      body: z.object({
+        expectedUpdatedAt: dateTimeString,
+        idempotencyKey: installationIdempotencyKey,
+        credential: writeOnlyCredential,
+        proxyUrl: z.union([messengerProxyUrl, z.null()]).optional(),
+      }).strict(),
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    integrationAction: {
+      body: integrationActionBody,
+      params: integrationParams,
+      response: integrationMutationResponse,
+    },
+    organization: {
+      params: z.object({ organizationId: id }),
+      response: z.object({
+        clubs: z.array(z.object({
+          id: z.number().int().positive(),
+          integrations: z.array(z.object({
+            configured: z.boolean(),
+            lastActivityAt: dateTime.nullable(),
+            lastValidatedAt: dateTime.nullable(),
+            provider: z.enum(['beeline', 'evotor', 'telegram', 'vk']),
+            proxyConfigured: z.boolean(),
+            safeCallbackUrl: z.string().nullable(),
+            safeIdentity: z.string().nullable(),
+            secretUpdatedAt: dateTime.nullable(),
+            settings: z.record(z.string(), z.unknown()),
+            status: z.enum(['active', 'disabled', 'revoked', 'not_configured']),
+            updatedAt: dateTime.nullable(),
+            validationStatus: z.enum(['verified', 'pending_event', 'failed', 'not_tested']),
+          })),
+          name: z.string(),
+          status: z.enum(['active', 'inactive', 'archived']),
+          timezone: z.string(),
+          updatedAt: dateTime,
+        })),
+        createdAt: dateTime,
+        id: z.number().int().positive(),
+        name: z.string(),
+        status: z.enum(['active', 'inactive', 'archived']),
+        updatedAt: dateTime,
+      }),
+    },
+    reissue: {
+      params: z.object({ organizationId: id }),
+      response: z.object({
+        activation: z.object({
+          expiresAt: dateTime,
+          link: z.string().url(),
+          state: z.literal('pending'),
+        }),
+        audit: z.object({ action: z.string(), createdAt: dateTime, id: z.number().int().positive() }),
+      }),
+    },
+    session: {
+      body: z
+        .object({
+          password: z.string().min(1, 'Пароль обязателен'),
+          username: z.string().trim().min(1, 'Логин обязателен'),
+        })
+        .strict(),
+      response: z.object({
+        expiresAt: dateTime,
+        token: z.string().min(1),
+      }),
+    },
+    sessionRevoke: {
+      response: z.object({ success: z.literal(true) }),
+    },
+    snapshotResponse: z.object({
+      audits: z.array(z.object({
+        action: z.string(),
+        createdAt: dateTime,
+        id: z.number().int().positive(),
+        organizationId: z.number().int().positive(),
+        statusCode: z.number().int(),
+        summary: z.string().nullable(),
+      })),
+      foundation: z.object({
+        state: z.literal('initialized'),
+      }),
+      organizations: z.array(
+        z.object({
+          clubCount: z.number().int().nonnegative(),
+          createdAt: dateTime,
+          id: z.number().int().positive(),
+          name: z.string(),
+          ownerState: z.enum(['active', 'inactive', 'missing', 'pending_activation']),
+          slug: z.string(),
+          status: z.enum(['active', 'inactive', 'archived']),
+          updatedAt: dateTime,
+        }),
+      ),
+    }),
+    statusResponse: z.object({
+      enabled: z.boolean(),
+      managementEnabled: z.boolean(),
+      provisioningEnabled: z.boolean(),
+    }),
   },
   callTasks: {
     attempt: {
@@ -1355,8 +1761,13 @@ const apiSchemas = {
         workerId: optionalString,
       })
       .passthrough(),
+    transcriptionAudioReference: {
+      body: z.object(transcriptionWorkerLeaseFields).passthrough(),
+      params: idParams,
+    },
     transcriptionProgress: {
       body: z.object({
+        ...transcriptionWorkerLeaseFields,
         message: z.string().trim().max(500).optional(),
         progress: z.number().int().min(0).max(100),
         stage: z.enum([
@@ -1378,6 +1789,7 @@ const apiSchemas = {
     transcriptionFail: {
       body: z
         .object({
+          ...transcriptionWorkerLeaseFields,
           error: optionalString,
           errorMessage: optionalString,
         })
@@ -1387,6 +1799,7 @@ const apiSchemas = {
     transcriptionResult: {
       body: z
         .object({
+          ...transcriptionWorkerLeaseFields,
           aiCorrections: optionalJsonArray,
           aiMetadata: optionalJsonObject,
           aiSegments: optionalJsonArray,
@@ -1522,6 +1935,7 @@ const apiSchemas = {
       })
       .passthrough(),
     clientParams: clientIdParams,
+    manualIssueBody: manualCertificateIssueBody,
     listQuery: z
       .object({
         certificateType: certificateTypeValue.optional(),
@@ -1732,7 +2146,7 @@ const apiSchemas = {
         status: z.enum(['active', 'archived', 'all']).optional(),
       })
       .passthrough(),
-    templateUpdateBody: shiftReportTemplateBody.partial().passthrough(),
+    templateUpdateBody: shiftReportTemplateBody.partial(),
     withId: { params: idParams },
   },
   shiftCash: {
@@ -1804,6 +2218,7 @@ const apiSchemas = {
       })
       .passthrough(),
     clientParams: clientIdParams,
+    manualIssueBody: manualSubscriptionIssueBody,
     redemptionBody: subscriptionRedemptionBody,
     redemptionReverse: {
       body: subscriptionRedemptionReverseBody,

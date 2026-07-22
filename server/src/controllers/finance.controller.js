@@ -25,7 +25,11 @@ class FinanceController {
 
   async addManualFinance(req, res) {
     try {
-      const record = await financeService.createManualRecord(req.body, req.account);
+      const record = await financeService.createManualRecord(
+        req.body,
+        req.account,
+        req.tenant,
+      );
       res.status(201).json(record);
     } catch (error) {
       sendError(res, error, 'Ошибка добавления записи');
@@ -35,7 +39,12 @@ class FinanceController {
   async exportFinance(req, res) {
     try {
       const { from, to } = req.query;
-      const file = await financeService.exportFinanceReport(from, to, req.account);
+      const file = await financeService.exportFinanceReport(
+        from,
+        to,
+        req.account,
+        req.tenant,
+      );
       sendXlsx(res, file);
     } catch (error) {
       sendError(res, error, 'Ошибка экспорта финансового отчета');
@@ -45,7 +54,12 @@ class FinanceController {
   async getPayroll(req, res) {
     try {
       const { from, to } = req.query;
-      const data = await financeService.calculatePayroll(from, to);
+      const data = await financeService.calculatePayroll(
+        from,
+        to,
+        req.account,
+        req.tenant,
+      );
       res.json(data);
     } catch (error) {
       console.error('❌ Ошибка Payroll:', error);
@@ -55,7 +69,7 @@ class FinanceController {
 
   async listPayrollPeriods(req, res) {
     try {
-      res.json(await payrollService.listPeriods(req.query));
+      res.json(await payrollService.listPeriods(req.query, req.account, req.tenant));
     } catch (error) {
       sendError(res, error, 'Ошибка списка payroll-периодов');
     }
@@ -63,7 +77,7 @@ class FinanceController {
 
   async createPayrollPeriod(req, res) {
     try {
-      const period = await payrollService.createPeriod(req.body, req.account);
+      const period = await payrollService.createPeriod(req.body, req.account, req.tenant);
       res.status(201).json(payrollService.serializePeriod(period));
     } catch (error) {
       sendError(res, error, 'Ошибка создания payroll-периода');
@@ -76,6 +90,7 @@ class FinanceController {
         req.params.id,
         req.account,
         req.body?.reason,
+        req.tenant,
       );
       res.json(payrollService.serializePeriod(period));
     } catch (error) {
@@ -89,6 +104,7 @@ class FinanceController {
         req.params.id,
         req.body,
         req.account,
+        req.tenant,
       );
       res.json(payrollService.serializePeriod(period));
     } catch (error) {
@@ -98,7 +114,7 @@ class FinanceController {
 
   async exportPayroll(req, res) {
     try {
-      const file = await payrollService.exportPayroll(req.query, req.account);
+      const file = await payrollService.exportPayroll(req.query, req.account, req.tenant);
       sendXlsx(res, file);
     } catch (error) {
       sendError(res, error, 'Ошибка экспорта payroll');
@@ -107,7 +123,7 @@ class FinanceController {
 
   async getFinanceHistory(req, res) {
     try {
-      res.json(await payrollService.getHistory(req.query));
+      res.json(await payrollService.getHistory(req.query, req.account, req.tenant));
     } catch (error) {
       sendError(res, error, 'Ошибка финансовой истории');
     }

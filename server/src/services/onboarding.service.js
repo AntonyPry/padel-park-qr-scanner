@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const db = require('../../models');
 const { ACCOUNT_ROLES, ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 const {
@@ -8,6 +9,47 @@ const {
   ONBOARDING_CLIENT_CHECKPOINT_EVENTS,
 } = require('../onboarding/catalog');
 const shiftCashAttachmentStorage = require('./shift-cash-attachments');
+const { TENANT_SCOPES } = require('../tenant-context/route-scope-declarations');
+const { safeTenantDenial } = require('./tenant-context.service');
+const {
+  bindOnboardingActor,
+  resolveOnboardingClubAccessFromAuthority,
+  resolveOnboardingAccessContext,
+} = require('./onboarding-access-context.service');
+const {
+  callTaskTenantWhere,
+  resolveCallTaskAccessContext,
+} = require('./call-task-access-context.service');
+const {
+  isTenantClientBasesCallTasksEnabled,
+  isTenantBookingsCourtsEnabled,
+  isTenantMethodologySkillMapEnabled,
+  isTenantTrainingNotesPlansEnabled,
+  isTenantClientMoneyInstrumentsEnabled,
+  isTenantShiftsReportsEnabled,
+} = require('../tenant-context/capabilities');
+const {
+  bookingTenantWhere,
+  resolveBookingAccessContext,
+} = require('./booking-access-context.service');
+const {
+  bindMethodologyActor,
+  methodologyTenantWhere,
+  resolveMethodologyAccessContext,
+} = require('./methodology-access-context.service');
+const {
+  resolveTrainingOperationsAccessContext,
+  trainingOperationsTenantWhere,
+} = require('./training-operations-access-context.service');
+const {
+  clubTenantWhere,
+  organizationTenantWhere,
+  resolveClientMoneyAccessContextForModel,
+} = require('./client-money-access-context.service');
+const {
+  bindShiftOperationsActor,
+  resolveShiftOperationsAccessContext,
+} = require('./shift-operations-access-context.service');
 
 const TRAINING_DATA_ENTITIES = [
   { key: 'clients', label: 'Клиенты', modelName: 'User' },
@@ -56,6 +98,31 @@ const TRAINING_DATA_ENTITIES = [
 ];
 
 const DEFAULT_QUIZ_PASSING_SCORE_PERCENT = 100;
+const CALL_TASK_TRAINING_MODELS = new Set([
+  'CallTask',
+  'CallTaskAttempt',
+  'CallTaskClient',
+  'ClientBase',
+]);
+const BOOKING_TRAINING_MODELS = new Set(['Booking', 'BookingSeries']);
+const METHODOLOGY_TRAINING_MODELS = new Set([
+  'ClientTrainingSkill',
+  'ClientTrainingSkillHistory',
+]);
+const TRAINING_OPERATION_MODELS = new Set(['TrainingNote', 'TrainingPlan']);
+const CLIENT_MONEY_ORGANIZATION_MODELS = new Set(['CorporateClient']);
+const CLIENT_MONEY_CLUB_MODELS = new Set([
+  'CorporateLedgerEntry',
+  'Finance',
+]);
+const SHIFT_OPERATION_CHILD_MODELS = new Set([
+  'ShiftCashExpense',
+  'ShiftCashSession',
+]);
+const TRAINING_MODE_TTL_MS = Math.max(
+  60 * 60 * 1000,
+  Number(process.env.ONBOARDING_TRAINING_MODE_TTL_HOURS || 24) * 60 * 60 * 1000,
+);
 
 function appError(message, statusCode = 400) {
   const error = new Error(message);
@@ -103,18 +170,34 @@ function resolveOptionalTrainingRole(role) {
   return normalizeRole(role);
 }
 
-function getTrainingEntityWhere(entity, role) {
+function assertTrainingDataRole(actor, role, options = {}) {
+  assertActor(actor);
+  if (role && actor.role !== 'owner' && role !== actor.role &&
+    role !== options.retainedRole && !options.allowEmptyRole) {
+    throw appError('Учебная сессия принадлежит другой роли', 403);
+  }
+}
+
+function getTrainingEntityWhere(entity, role, ownership = {}) {
   const where = { isTraining: true };
   if (role) {
     where[entity.roleField || 'trainingRole'] = role;
   }
+  if (ownership.accountId) {
+    where[entity.modelName === 'OnboardingEvent' ? 'accountId' : 'trainingAccountId'] =
+      ownership.accountId;
+  }
+  if (ownership.sessionId) {
+    where.trainingSessionId = ownership.sessionId;
+  }
   return where;
 }
 
-async function listTrainingIds(model, where, transaction) {
+async function listTrainingIds(model, where, transaction, options = {}) {
   if (!model) return [];
   const rows = await model.findAll({
     attributes: ['id'],
+    include: options.include,
     raw: true,
     transaction,
     where,
@@ -123,9 +206,181 @@ async function listTrainingIds(model, where, transaction) {
   return rows.map((row) => Number(row.id)).filter(Boolean);
 }
 
-async function destroyTrainingRows(model, where, transaction) {
+async function destroyTrainingRows(model, where, transaction, options = {}) {
   if (!model) return 0;
+  if (options.include) {
+    const ids = await listTrainingIds(model, where, transaction, options);
+    if (ids.length === 0) return 0;
+    return model.destroy({
+      transaction,
+      where: { id: { [db.Sequelize.Op.in]: ids } },
+    });
+  }
   return model.destroy({ transaction, where });
+}
+
+async function resolveTrainingCallTaskContext(actor, tenant, options = {}) {
+  if (!isTenantClientBasesCallTasksEnabled()) return null;
+  return resolveCallTaskAccessContext(tenant, {
+    ...options,
+    accountId: actor.id,
+  });
+}
+
+async function resolveTrainingBookingContext(tenant, options = {}) {
+  if (!isTenantBookingsCourtsEnabled()) return null;
+  return resolveBookingAccessContext(tenant, options);
+}
+
+async function resolveTrainingMethodologyContext(tenant, options = {}) {
+  if (!isTenantMethodologySkillMapEnabled()) return null;
+  return resolveMethodologyAccessContext(tenant, options);
+}
+
+async function resolveTrainingOperationsContext(tenant, options = {}) {
+  if (!isTenantTrainingNotesPlansEnabled()) return null;
+  return resolveTrainingOperationsAccessContext(tenant, options);
+}
+
+async function resolveTrainingClientMoneyContext(tenant, options = {}) {
+  if (!isTenantClientMoneyInstrumentsEnabled()) return null;
+  return resolveClientMoneyAccessContextForModel(
+    tenant,
+    db.CorporateLedgerEntry,
+    options,
+  );
+}
+
+async function resolveTrainingShiftContext(tenant, options = {}) {
+  if (!isTenantShiftsReportsEnabled()) return null;
+  return resolveShiftOperationsAccessContext(tenant, options);
+}
+
+function getTrainingEntityQuery(
+  entity,
+  role,
+  ownership,
+  context,
+  bookingContext = null,
+  methodologyContext = null,
+  trainingOperationsContext = null,
+  clientMoneyContext = null,
+  shiftOperationsContext = null,
+) {
+  const where = getTrainingEntityWhere(entity, role, ownership);
+  if (
+    shiftOperationsContext &&
+    SHIFT_OPERATION_CHILD_MODELS.has(entity.modelName)
+  ) {
+    return {
+      include: [{
+        as: 'shift',
+        attributes: [],
+        model: db.Shift,
+        required: true,
+        where: { clubId: shiftOperationsContext.clubId },
+      }],
+      where,
+    };
+  }
+  if (
+    clientMoneyContext &&
+    CLIENT_MONEY_ORGANIZATION_MODELS.has(entity.modelName)
+  ) {
+    return {
+      where: organizationTenantWhere(clientMoneyContext, where, { force: true }),
+    };
+  }
+  if (
+    clientMoneyContext &&
+    CLIENT_MONEY_CLUB_MODELS.has(entity.modelName)
+  ) {
+    return {
+      where: clubTenantWhere(clientMoneyContext, where, { force: true }),
+    };
+  }
+  if (
+    bookingContext &&
+    ['OnboardingEvent', 'Visit'].includes(entity.modelName)
+  ) {
+    return {
+      where: {
+        ...where,
+        clubId: bookingContext.clubId,
+        organizationId: bookingContext.organizationId,
+      },
+    };
+  }
+  if (methodologyContext && entity.modelName === 'User') {
+    return {
+      where: methodologyTenantWhere(methodologyContext, where, { force: true }),
+    };
+  }
+  if (
+    trainingOperationsContext &&
+    TRAINING_OPERATION_MODELS.has(entity.modelName)
+  ) {
+    return {
+      where: trainingOperationsTenantWhere(
+        trainingOperationsContext,
+        where,
+        { force: true },
+      ),
+    };
+  }
+  if (
+    methodologyContext &&
+    METHODOLOGY_TRAINING_MODELS.has(entity.modelName)
+  ) {
+    return {
+      include: [{
+        attributes: [],
+        model: db.User,
+        required: true,
+        where: { organizationId: methodologyContext.organizationId },
+      }],
+      where,
+    };
+  }
+  if (bookingContext && BOOKING_TRAINING_MODELS.has(entity.modelName)) {
+    return {
+      where: bookingTenantWhere(bookingContext, where, { force: true }),
+    };
+  }
+  if (!context || !CALL_TASK_TRAINING_MODELS.has(entity.modelName)) {
+    return { where };
+  }
+  if (entity.modelName === 'ClientBase' || entity.modelName === 'CallTask') {
+    return { where: callTaskTenantWhere(context, where, { force: true }) };
+  }
+  if (entity.modelName === 'CallTaskClient') {
+    return {
+      include: [{
+        as: 'callTask',
+        attributes: [],
+        model: db.CallTask,
+        required: true,
+        where: callTaskTenantWhere(context, {}, { force: true }),
+      }],
+      where,
+    };
+  }
+  return {
+    include: [{
+      as: 'taskClient',
+      attributes: [],
+      model: db.CallTaskClient,
+      required: true,
+      include: [{
+        as: 'callTask',
+        attributes: [],
+        model: db.CallTask,
+        required: true,
+        where: callTaskTenantWhere(context, {}, { force: true }),
+      }],
+    }],
+    where,
+  };
 }
 
 function getAvailableRoles(actor) {
@@ -692,32 +947,64 @@ function serializeTrainingMode(row, fallbackRole) {
   };
 }
 
-async function getProgressRows(accountId, role) {
+async function resolveBoundary(actor, tenant, scope, options = {}) {
+  const authority = await resolveOnboardingAccessContext(
+    actor,
+    tenant,
+    scope,
+    options,
+  );
+  return {
+    actor: bindOnboardingActor(actor, authority),
+    authority,
+  };
+}
+
+async function getProgressRows(membershipId, role) {
   return db.OnboardingProgress.findAll({
     order: [['updatedAt', 'DESC']],
     where: {
-      accountId,
+      membershipId,
       role,
     },
   });
 }
 
-async function getTaskProgressContext(actor, taskKey, role) {
-  const targetRole = resolveTargetRole(actor, role);
+async function getTaskProgressContext(actor, taskKey, role, tenant, options = {}) {
+  const scope = [TENANT_SCOPES.CLUB, TENANT_SCOPES.ORGANIZATION].includes(
+    tenant?.scope,
+  ) ? tenant.scope : TENANT_SCOPES.MEMBERSHIP;
+  const boundary = await resolveBoundary(
+    actor,
+    tenant,
+    scope,
+    options,
+  );
+  const targetRole = resolveTargetRole(boundary.actor, role);
   const taskMatch = findOnboardingTask(targetRole, taskKey);
   if (!taskMatch) {
     throw appError('Задание обучения не найдено', 404);
   }
 
   const where = {
-    accountId: actor.id,
+    accountId: boundary.authority.accountId,
+    membershipId: boundary.authority.membershipId,
+    organizationId: boundary.authority.organizationId,
     role: targetRole,
     taskKey,
   };
-  const existing = await db.OnboardingProgress.findOne({ where });
+  const existing = await db.OnboardingProgress.findOne({
+    lock: options.transaction && options.lock
+      ? options.transaction.LOCK?.UPDATE
+      : undefined,
+    transaction: options.transaction,
+    where,
+  });
 
   return {
     existing,
+    actor: boundary.actor,
+    authority: boundary.authority,
     metadata: getProgressMetadata(existing),
     taskMatch,
     targetRole,
@@ -725,7 +1012,12 @@ async function getTaskProgressContext(actor, taskKey, role) {
   };
 }
 
-async function saveTaskProgress(context, metadata, statusOverride = null) {
+async function saveTaskProgress(
+  context,
+  metadata,
+  statusOverride = null,
+  options = {},
+) {
   const current = getPlainProgress(context.existing);
   const status =
     statusOverride ||
@@ -741,20 +1033,47 @@ async function saveTaskProgress(context, metadata, statusOverride = null) {
   };
 
   if (context.existing) {
-    await context.existing.update(payload);
+    await context.existing.update(payload, { transaction: options.transaction });
     return context.existing;
   }
 
-  return db.OnboardingProgress.create({
-    ...context.where,
-    ...payload,
-  });
+  return db.OnboardingProgress.create(
+    {
+      ...context.where,
+      ...payload,
+    },
+    { transaction: options.transaction },
+  );
 }
 
-async function upsertTaskProgress(actor, role, task, metadataPatch = {}) {
-  const context = await getTaskProgressContext(actor, task.key, role);
+async function upsertTaskProgress(
+  actor,
+  role,
+  task,
+  metadataPatch = {},
+  tenant = null,
+  eventAuthority = null,
+  options = {},
+) {
+  const context = await getTaskProgressContext(
+    actor,
+    task.key,
+    role,
+    tenant,
+    options,
+  );
+  if (
+    eventAuthority?.clubId &&
+    context.existing?.clubId &&
+    Number(context.existing.clubId) !== Number(eventAuthority.clubId)
+  ) {
+    throw appError('Задание обучения принадлежит другому клубу', 409);
+  }
+  if (eventAuthority?.clubId && !context.existing) {
+    context.where.clubId = eventAuthority.clubId;
+  }
   const metadata = mergeMetadata(context.metadata, metadataPatch);
-  return saveTaskProgress(context, metadata);
+  return saveTaskProgress(context, metadata, null, options);
 }
 
 function buildTaskDetailResponse(actor, targetRole, taskMatch, progress) {
@@ -787,57 +1106,119 @@ function buildTaskDetailResponse(actor, targetRole, taskMatch, progress) {
   };
 }
 
-async function getTaskDetail(actor, taskKey, query = {}) {
-  const context = await getTaskProgressContext(actor, taskKey, query.role);
+async function getTaskDetail(actor, taskKey, query = {}, tenant = null) {
+  const context = await getTaskProgressContext(actor, taskKey, query.role, tenant);
   return buildTaskDetailResponse(
-    actor,
+    context.actor,
     context.targetRole,
     context.taskMatch,
     context.existing,
   );
 }
 
-async function getTrainingMode(actor) {
-  assertActor(actor);
-
+async function loadTrainingMode(boundary, options = {}) {
+  const where = {
+    membershipId: boundary.authority.membershipId,
+    organizationId: boundary.authority.organizationId,
+  };
+  if (boundary.authority.clubId) {
+    where.clubId = boundary.authority.clubId;
+  } else {
+    where.accountId = boundary.authority.accountId;
+  }
   const mode = await db.OnboardingTrainingMode.findOne({
-    where: { accountId: actor.id },
+    lock: options.transaction && options.lock
+      ? options.transaction.LOCK?.UPDATE
+      : undefined,
+    transaction: options.transaction,
+    where,
   });
+  if (!mode?.isEnabled) return mode;
 
-  return serializeTrainingMode(mode, actor.role);
+  if (mode.expiresAt && new Date(mode.expiresAt).getTime() <= Date.now()) {
+    await mode.update({ disabledAt: new Date(), isEnabled: false }, {
+      transaction: options.transaction,
+    });
+    return mode;
+  }
+
+  if (!boundary.authority.clubId) {
+    const clubAuthority = await resolveOnboardingClubAccessFromAuthority(
+      boundary.actor,
+      boundary.authority,
+      mode.clubId,
+      options,
+    );
+    if (
+      clubAuthority.membershipRole !== 'owner' &&
+      mode.role !== clubAuthority.effectiveRole
+    ) {
+      throw safeTenantDenial();
+    }
+  }
+  return mode;
 }
 
-async function getEventTargetContext(actor) {
-  assertActor(actor);
+async function getTrainingMode(actor, tenant = null) {
+  const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.CLUB);
+  const mode = await loadTrainingMode(boundary);
 
-  const mode = await db.OnboardingTrainingMode.findOne({
-    where: { accountId: actor.id },
-  });
+  return serializeTrainingMode(mode, boundary.actor.role);
+}
+
+async function getEventTargetContext(
+  actor,
+  tenant,
+  scope = TENANT_SCOPES.CLUB,
+  options = {},
+) {
+  const boundary = await resolveBoundary(actor, tenant, scope, options);
+  const mode = scope === TENANT_SCOPES.CLUB
+    ? await loadTrainingMode(boundary, options)
+    : null;
   const plainMode = getPlainProgress(mode);
   const requestedRole =
-    plainMode?.isEnabled && plainMode.role ? plainMode.role : actor.role;
+    plainMode?.isEnabled && plainMode.role ? plainMode.role : boundary.actor.role;
 
   return {
-    isTraining: Boolean(plainMode?.isEnabled),
-    role: resolveTargetRole(actor, requestedRole),
+    actor: boundary.actor,
+    authority: boundary.authority,
+    isTraining: Boolean(plainMode?.isEnabled && plainMode?.sessionId),
+    role: resolveTargetRole(boundary.actor, requestedRole),
+    trainingSessionId: plainMode?.isEnabled ? plainMode.sessionId : null,
   };
 }
 
-async function getTrainingDataMarker(actor) {
+async function getTrainingDataMarker(actor, tenant = null, options = {}) {
   if (!actor?.id || !actor.role) {
     return {
       isTraining: false,
       trainingAccountId: null,
       trainingRole: null,
+      trainingSessionId: null,
     };
   }
 
-  const context = await getEventTargetContext(actor);
+  const scope = tenant?.scope === TENANT_SCOPES.ORGANIZATION
+    ? TENANT_SCOPES.ORGANIZATION
+    : TENANT_SCOPES.CLUB;
+  const boundary = await resolveBoundary(actor, tenant, scope, options);
+  const mode = await loadTrainingMode(boundary, options);
+  const plainMode = getPlainProgress(mode);
+  const requestedRole = plainMode?.isEnabled && plainMode.role
+    ? plainMode.role
+    : boundary.actor.role;
+  const context = {
+    isTraining: Boolean(plainMode?.isEnabled && plainMode?.sessionId),
+    role: resolveTargetRole(boundary.actor, requestedRole),
+    trainingSessionId: plainMode?.isEnabled ? plainMode.sessionId : null,
+  };
   if (!context.isTraining) {
     return {
       isTraining: false,
       trainingAccountId: null,
       trainingRole: null,
+      trainingSessionId: null,
     };
   }
 
@@ -845,18 +1226,54 @@ async function getTrainingDataMarker(actor) {
     isTraining: true,
     trainingAccountId: actor.id,
     trainingRole: context.role,
+    trainingSessionId: context.trainingSessionId,
   };
 }
 
-async function getTrainingDataSummary(actor, query = {}) {
-  assertOwner(actor);
+async function getTrainingDataSummary(actor, query = {}, tenant = null, options = {}) {
   const role = resolveOptionalTrainingRole(query.role);
+  const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.CLUB);
+  const mode = await loadTrainingMode(boundary);
+  const ownership = {
+    accountId: boundary.authority.accountId,
+    sessionId: mode?.sessionId || '__no-training-session__',
+  };
+  const methodologyContext = await resolveTrainingMethodologyContext(tenant);
+  const authorityActor = methodologyContext
+    ? bindMethodologyActor(boundary.actor, methodologyContext)
+    : boundary.actor;
+  assertTrainingDataRole(authorityActor, role, {
+    allowEmptyRole: Boolean(options.allowEmptyRole && !mode?.sessionId),
+    retainedRole: mode?.sessionId ? mode.role : null,
+  });
+  const callTaskContext = await resolveTrainingCallTaskContext(authorityActor, tenant);
+  const bookingContext = await resolveTrainingBookingContext(tenant);
+  const trainingOperationsContext = await resolveTrainingOperationsContext(tenant);
+  const clientMoneyContext = await resolveTrainingClientMoneyContext(tenant);
+  const shiftOperationsContext = await resolveTrainingShiftContext(tenant);
+  const shiftAuthorityActor = shiftOperationsContext
+    ? bindShiftOperationsActor(authorityActor, shiftOperationsContext)
+    : authorityActor;
+  assertTrainingDataRole(shiftAuthorityActor, role, {
+    allowEmptyRole: Boolean(options.allowEmptyRole && !mode?.sessionId),
+    retainedRole: mode?.sessionId ? mode.role : null,
+  });
 
   const entities = await Promise.all(
     TRAINING_DATA_ENTITIES.map(async (entity) => {
       const model = db[entity.modelName];
       const count = model
-        ? await model.count({ where: getTrainingEntityWhere(entity, role) })
+        ? await model.count(getTrainingEntityQuery(
+            entity,
+            role,
+            ownership,
+            callTaskContext,
+            bookingContext,
+            methodologyContext,
+            trainingOperationsContext,
+            clientMoneyContext,
+            shiftOperationsContext,
+          ))
         : 0;
 
       return {
@@ -890,19 +1307,30 @@ function getMaxDate(values) {
   return new Date(Math.max(...timestamps));
 }
 
-async function getOnboardingMetrics(actor) {
-  assertOwner(actor, 'Метрики обучения доступны только владельцу');
+async function getOnboardingMetrics(actor, tenant = null) {
+  const boundary = await resolveBoundary(
+    actor,
+    tenant,
+    TENANT_SCOPES.ORGANIZATION,
+  );
+  assertOwner(boundary.actor, 'Метрики обучения доступны только владельцу');
 
   const [accounts, progressRows] = await Promise.all([
-    db.Account.findAll({
-      attributes: ['id', 'role', 'status'],
+    db.Membership.findAll({
+      attributes: [['accountId', 'id'], 'role', 'status'],
       raw: true,
-      where: { status: 'active' },
+      where: {
+        organizationId: boundary.authority.organizationId,
+        status: 'active',
+      },
     }),
     db.OnboardingProgress.findAll({
       attributes: ['accountId', 'completedAt', 'role', 'status', 'taskKey'],
       raw: true,
-      where: { status: 'completed' },
+      where: {
+        organizationId: boundary.authority.organizationId,
+        status: 'completed',
+      },
     }),
   ]);
   const activeAccountIds = new Set();
@@ -1021,22 +1449,96 @@ async function getOnboardingMetrics(actor) {
   };
 }
 
-async function cleanupTrainingData(actor, query = {}) {
-  assertOwner(actor);
+async function cleanupTrainingData(actor, query = {}, tenant = null) {
   const role = resolveOptionalTrainingRole(query.role);
   const deleted = {};
   const shiftCashAttachments = [];
+  let cleanupOwnership = null;
 
   await db.sequelize.transaction(async (transaction) => {
-    const bookingWhere = getTrainingEntityWhere(
-      { modelName: 'Booking' },
-      role,
+    const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.CLUB, {
+      lock: true,
+      transaction,
+    });
+    const mode = await loadTrainingMode(boundary, { lock: true, transaction });
+    if (role && mode?.sessionId && mode.role !== role) {
+      throw appError('Учебная сессия принадлежит другой роли; очистите её в исходной роли', 409);
+    }
+    cleanupOwnership = {
+      accountId: boundary.authority.accountId,
+      sessionId: mode?.sessionId || '__no-training-session__',
+    };
+    const methodologyContext = await resolveTrainingMethodologyContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const authorityActor = methodologyContext
+      ? bindMethodologyActor(boundary.actor, methodologyContext)
+      : boundary.actor;
+    assertTrainingDataRole(authorityActor, role, {
+      retainedRole: mode?.sessionId ? mode.role : null,
+    });
+    const callTaskContext = await resolveTrainingCallTaskContext(
+      authorityActor,
+      tenant,
+      { lock: true, transaction },
     );
-    const visitWhere = getTrainingEntityWhere({ modelName: 'Visit' }, role);
+    const bookingContext = await resolveTrainingBookingContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const trainingOperationsContext = await resolveTrainingOperationsContext(
+      tenant,
+      { lock: true, transaction },
+    );
+    const clientMoneyContext = await resolveTrainingClientMoneyContext(
+      tenant,
+      { lock: true, transaction },
+    );
+    const shiftOperationsContext = await resolveTrainingShiftContext(tenant, {
+      lock: true,
+      transaction,
+    });
+    const shiftAuthorityActor = shiftOperationsContext
+      ? bindShiftOperationsActor(authorityActor, shiftOperationsContext)
+      : authorityActor;
+    assertTrainingDataRole(shiftAuthorityActor, role, {
+      retainedRole: mode?.sessionId ? mode.role : null,
+    });
+    const bookingWhere = bookingContext
+      ? bookingTenantWhere(
+          bookingContext,
+          getTrainingEntityWhere(
+            { modelName: 'Booking' },
+            role,
+            cleanupOwnership,
+          ),
+          { force: true },
+        )
+      : getTrainingEntityWhere({ modelName: 'Booking' }, role, cleanupOwnership);
+    const visitWhere = getTrainingEntityWhere(
+      { modelName: 'Visit' },
+      role,
+      cleanupOwnership,
+    );
 
-    const [bookingIds, visitIds] = await Promise.all([
+    const [bookingIds, visitIds, userIds] = await Promise.all([
       listTrainingIds(db.Booking, bookingWhere, transaction),
       listTrainingIds(db.Visit, visitWhere, transaction),
+      listTrainingIds(
+        db.User,
+        getTrainingEntityQuery(
+          { modelName: 'User' },
+          role,
+          cleanupOwnership,
+          callTaskContext,
+          bookingContext,
+          methodologyContext,
+          trainingOperationsContext,
+          clientMoneyContext,
+        ).where,
+        transaction,
+      ),
     ]);
 
     if (db.ShiftCashExpense) {
@@ -1047,7 +1549,15 @@ async function cleanupTrainingData(actor, query = {}) {
         where: getTrainingEntityWhere(
           { modelName: 'ShiftCashExpense' },
           role,
+          cleanupOwnership,
         ),
+        include: shiftOperationsContext ? [{
+          as: 'shift',
+          attributes: [],
+          model: db.Shift,
+          required: true,
+          where: { clubId: shiftOperationsContext.clubId },
+        }] : undefined,
       });
       cashExpenses.forEach((expense) => {
         const attachments = Array.isArray(expense.attachments)
@@ -1081,6 +1591,22 @@ async function cleanupTrainingData(actor, query = {}) {
       deleted.visitCategoryAssignments = 0;
     }
 
+    if ((visitIds.length > 0 || userIds.length > 0) && db.ScannerEvent) {
+      const scannerWhere = [];
+      if (visitIds.length > 0) {
+        scannerWhere.push({ visitId: { [db.Sequelize.Op.in]: visitIds } });
+      }
+      if (userIds.length > 0) {
+        scannerWhere.push({ userId: { [db.Sequelize.Op.in]: userIds } });
+      }
+      deleted.scannerEvents = await db.ScannerEvent.destroy({
+        transaction,
+        where: { [db.Sequelize.Op.or]: scannerWhere },
+      });
+    } else {
+      deleted.scannerEvents = 0;
+    }
+
     const deletionOrder = [
       { key: 'onboardingEvents', modelName: 'OnboardingEvent', roleField: 'role' },
       { key: 'callTaskAttempts', modelName: 'CallTaskAttempt' },
@@ -1109,59 +1635,115 @@ async function cleanupTrainingData(actor, query = {}) {
     ];
 
     for (const entity of deletionOrder) {
+      const entityQuery = getTrainingEntityQuery(
+        entity,
+        role,
+        cleanupOwnership,
+        callTaskContext,
+        bookingContext,
+        methodologyContext,
+        trainingOperationsContext,
+        clientMoneyContext,
+        shiftOperationsContext,
+      );
       deleted[entity.key] = await destroyTrainingRows(
         db[entity.modelName],
-        getTrainingEntityWhere(entity, role),
+        entityQuery.where,
         transaction,
+        { include: entityQuery.include },
       );
+    }
+
+    if (mode?.sessionId === cleanupOwnership.sessionId) {
+      await mode.update({
+        disabledAt: mode.disabledAt || new Date(),
+        isEnabled: false,
+        role: boundary.actor.role,
+        sessionId: null,
+        expiresAt: null,
+      }, { transaction });
     }
   });
 
-  await shiftCashAttachmentStorage.deleteAttachmentFiles(shiftCashAttachments);
+  await shiftCashAttachmentStorage.deleteAttachmentFiles(
+    shiftCashAttachments,
+    tenant,
+  );
 
   return {
     deleted,
-    remaining: await getTrainingDataSummary(actor, { role }),
+    remaining: await getTrainingDataSummary(
+      actor,
+      { role },
+      tenant,
+      { allowEmptyRole: true },
+    ),
     role,
   };
 }
 
-async function setTrainingMode(actor, body = {}) {
-  assertActor(actor);
-
-  const isEnabled = Boolean(body.isEnabled);
-  const targetRole = resolveTargetRole(actor, body.role || actor.role);
-  const now = new Date();
-  const payload = {
-    disabledAt: isEnabled ? null : now,
-    enabledAt: isEnabled ? now : null,
-    isEnabled,
-    metadata: body.metadata || null,
-    role: targetRole,
-  };
-  const where = { accountId: actor.id };
-  const existing = await db.OnboardingTrainingMode.findOne({ where });
-
-  if (existing) {
-    await existing.update(payload);
-  } else {
-    await db.OnboardingTrainingMode.create({
-      ...where,
-      ...payload,
+async function setTrainingMode(actor, body = {}, tenant = null) {
+  await db.sequelize.transaction(async (transaction) => {
+    const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.CLUB, {
+      lock: true,
+      transaction,
     });
-  }
+    const isEnabled = Boolean(body.isEnabled);
+    const targetRole = resolveTargetRole(
+      boundary.actor,
+      body.role || boundary.actor.role,
+    );
+    const now = new Date();
+    const where = { membershipId: boundary.authority.membershipId };
+    const existing = await db.OnboardingTrainingMode.findOne({
+      lock: transaction.LOCK.UPDATE,
+      transaction,
+      where,
+    });
+    if (existing?.sessionId && (
+      Number(existing.clubId) !== boundary.authority.clubId ||
+      existing.role !== targetRole
+    )) {
+      throw appError(
+        'Сначала очистите сохранённую учебную сессию исходной роли и клуба',
+        409,
+      );
+    }
+    const startsNewSession = isEnabled && !existing?.sessionId;
+    const payload = {
+      accountId: boundary.authority.accountId,
+      clubId: boundary.authority.clubId,
+      disabledAt: isEnabled ? null : now,
+      enabledAt: startsNewSession ? now : existing?.enabledAt,
+      expiresAt: isEnabled
+        ? new Date(now.getTime() + TRAINING_MODE_TTL_MS)
+        : existing?.expiresAt || null,
+      isEnabled,
+      membershipId: boundary.authority.membershipId,
+      metadata: body.metadata || null,
+      organizationId: boundary.authority.organizationId,
+      role: targetRole,
+      sessionId: startsNewSession ? crypto.randomUUID() : existing?.sessionId,
+    };
+    if (existing) await existing.update(payload, { transaction });
+    else await db.OnboardingTrainingMode.create(payload, { transaction });
+  });
 
-  return getTrainingMode(actor);
+  return getTrainingMode(actor, tenant);
 }
 
-async function getOverview(actor, query = {}) {
-  const targetRole = resolveTargetRole(actor, query.role);
-  const progressRows = await getProgressRows(actor.id, targetRole);
-  return buildOnboardingResponse(actor, targetRole, progressRows);
+async function getOverview(actor, query = {}, tenant = null) {
+  const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.MEMBERSHIP);
+  const targetRole = resolveTargetRole(boundary.actor, query.role);
+  const progressRows = await getProgressRows(
+    boundary.authority.membershipId,
+    targetRole,
+  );
+  return buildOnboardingResponse(boundary.actor, targetRole, progressRows);
 }
 
-async function completeTask(actor, taskKey, body = {}) {
-  const context = await getTaskProgressContext(actor, taskKey, body.role);
+async function completeTask(actor, taskKey, body = {}, tenant = null) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role, tenant);
   const metadata = mergeMetadata(context.metadata, {
     ...buildCompletedMetadata(context.taskMatch.task),
     manual: body.metadata || null,
@@ -1169,11 +1751,11 @@ async function completeTask(actor, taskKey, body = {}) {
 
   await saveTaskProgress(context, metadata);
 
-  return getOverview(actor, { role: context.targetRole });
+  return getOverview(context.actor, { role: context.targetRole }, tenant);
 }
 
-async function markLessonRead(actor, taskKey, body = {}) {
-  const context = await getTaskProgressContext(actor, taskKey, body.role);
+async function markLessonRead(actor, taskKey, body = {}, tenant = null) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role, tenant);
   const now = new Date().toISOString();
   const metadata = mergeMetadata(context.metadata, {
     lesson: {
@@ -1184,15 +1766,15 @@ async function markLessonRead(actor, taskKey, body = {}) {
   const progress = await saveTaskProgress(context, metadata);
 
   return buildTaskDetailResponse(
-    actor,
+    context.actor,
     context.targetRole,
     context.taskMatch,
     progress,
   );
 }
 
-async function startPractice(actor, taskKey, body = {}) {
-  const context = await getTaskProgressContext(actor, taskKey, body.role);
+async function startPractice(actor, taskKey, body = {}, tenant = null) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role, tenant);
   const now = new Date().toISOString();
   const content = getGuidedContent(context.taskMatch.task);
 
@@ -1201,14 +1783,14 @@ async function startPractice(actor, taskKey, body = {}) {
   }
 
   if (content.practice.autoTrainingMode) {
-    await setTrainingMode(actor, {
+    await setTrainingMode(context.actor, {
       isEnabled: true,
       metadata: {
         source: 'onboarding-practice',
         taskKey,
       },
       role: context.targetRole,
-    });
+    }, tenant);
   }
 
   const metadata = mergeMetadata(context.metadata, {
@@ -1224,15 +1806,15 @@ async function startPractice(actor, taskKey, body = {}) {
   const progress = await saveTaskProgress(context, metadata);
 
   return buildTaskDetailResponse(
-    actor,
+    context.actor,
     context.targetRole,
     context.taskMatch,
     progress,
   );
 }
 
-async function completePracticeStep(actor, taskKey, stepKey, body = {}) {
-  const context = await getTaskProgressContext(actor, taskKey, body.role);
+async function completePracticeStep(actor, taskKey, stepKey, body = {}, tenant = null) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role, tenant);
   const content = getGuidedContent(context.taskMatch.task);
   const stepKeys = content.practice.steps.map((step) => step.key);
 
@@ -1271,7 +1853,7 @@ async function completePracticeStep(actor, taskKey, stepKey, body = {}) {
   const progress = await saveTaskProgress(context, nextMetadata);
 
   return buildTaskDetailResponse(
-    actor,
+    context.actor,
     context.targetRole,
     context.taskMatch,
     progress,
@@ -1329,8 +1911,8 @@ function evaluateQuizAttempt(task, answers = {}) {
   };
 }
 
-async function submitQuizAttempt(actor, taskKey, body = {}) {
-  const context = await getTaskProgressContext(actor, taskKey, body.role);
+async function submitQuizAttempt(actor, taskKey, body = {}, tenant = null) {
+  const context = await getTaskProgressContext(actor, taskKey, body.role, tenant);
   const attempt = evaluateQuizAttempt(context.taskMatch.task, body.answers || {});
   const attempts = Array.isArray(context.metadata.quiz?.attempts)
     ? context.metadata.quiz.attempts
@@ -1351,7 +1933,7 @@ async function submitQuizAttempt(actor, taskKey, body = {}) {
   return {
     attempt,
     detail: buildTaskDetailResponse(
-      actor,
+      context.actor,
       context.targetRole,
       context.taskMatch,
       progress,
@@ -1361,6 +1943,35 @@ async function submitQuizAttempt(actor, taskKey, body = {}) {
 
 async function recordEventForTarget(actor, target, eventKey, options = {}) {
   const payload = options.payload || {};
+  const idempotencyKey = crypto.createHash('sha256').update(JSON.stringify({
+    clubId: target.authority.clubId,
+    entityId: options.entityId == null ? null : String(options.entityId),
+    entityType: options.entityType || null,
+    eventKey,
+    membershipId: target.authority.membershipId,
+    role: target.role,
+    taskKey: payload.taskKey || null,
+    trainingSessionId: target.trainingSessionId || null,
+  })).digest('hex');
+  const existingEvent = typeof db.OnboardingEvent.findOne === 'function'
+    ? await db.OnboardingEvent.findOne({
+    lock: options.transaction ? options.transaction.LOCK?.UPDATE : undefined,
+    transaction: options.transaction,
+    where: {
+      idempotencyKey,
+      membershipId: target.authority.membershipId,
+      organizationId: target.authority.organizationId,
+    },
+    })
+    : null;
+  if (existingEvent) {
+    return {
+      completedTaskKeys: existingEvent.completedTaskKeys || [],
+      event: existingEvent,
+      progressedTaskKeys: [],
+      role: target.role,
+    };
+  }
   const matchingTasks = listMatchingTasks(target.role, eventKey, payload);
   const completedTaskKeys = [];
   const progressedTaskKeys = [];
@@ -1385,7 +1996,7 @@ async function recordEventForTarget(actor, target, eventKey, options = {}) {
         },
       ]),
     );
-    const progress = await upsertTaskProgress(actor, target.role, task, {
+    const progress = await upsertTaskProgress(target.actor, target.role, task, {
       checkpointEvent: eventKey,
       entityId: options.entityId || null,
       entityType: options.entityType || null,
@@ -1398,6 +2009,9 @@ async function recordEventForTarget(actor, target, eventKey, options = {}) {
         steps,
       },
       source: 'event',
+    }, options.tenant, target.authority, {
+      lock: true,
+      transaction: options.transaction,
     });
     progressedTaskKeys.push(task.key);
     if (getPlainProgress(progress)?.status === 'completed') {
@@ -1405,16 +2019,24 @@ async function recordEventForTarget(actor, target, eventKey, options = {}) {
     }
   }
 
-  const event = await db.OnboardingEvent.create({
-    accountId: actor.id,
-    completedTaskKeys,
-    entityId: options.entityId == null ? null : String(options.entityId),
-    entityType: options.entityType || null,
-    eventKey,
-    isTraining: target.isTraining,
-    payload,
-    role: target.role,
-  });
+  const event = await db.OnboardingEvent.create(
+    {
+      accountId: target.authority.accountId,
+      clubId: target.authority.clubId,
+      completedTaskKeys,
+      entityId: options.entityId == null ? null : String(options.entityId),
+      entityType: options.entityType || null,
+      eventKey,
+      idempotencyKey,
+      isTraining: target.isTraining,
+      membershipId: target.authority.membershipId,
+      organizationId: target.authority.organizationId,
+      payload,
+      role: target.role,
+      trainingSessionId: target.trainingSessionId,
+    },
+    { transaction: options.transaction },
+  );
 
   return {
     completedTaskKeys,
@@ -1434,28 +2056,71 @@ async function recordEvent(actor, eventKey, options = {}) {
     };
   }
 
-  const target = await getEventTargetContext(actor);
-  return recordEventForTarget(actor, target, eventKey, options);
+  return db.sequelize.transaction(async (transaction) => {
+    const scope = options.tenant?.scope || TENANT_SCOPES.CLUB;
+    const currentTarget = await getEventTargetContext(
+      actor,
+      options.tenant,
+      scope,
+      { lock: true, transaction },
+    );
+    const requestedRole = options.onboardingContext?.role;
+    const targetRole = requestedRole
+      ? resolveTargetRole(currentTarget.actor, requestedRole)
+      : currentTarget.role;
+    const isTraining = currentTarget.isTraining && currentTarget.role === targetRole;
+    const target = {
+      actor: currentTarget.actor,
+      authority: currentTarget.authority,
+      isTraining,
+      role: targetRole,
+      trainingSessionId: isTraining ? currentTarget.trainingSessionId : null,
+    };
+    const taskKey = options.onboardingContext?.taskKey;
+
+    return recordEventForTarget(actor, target, eventKey, {
+      ...options,
+      payload: {
+        ...(options.payload || {}),
+        ...(taskKey ? { taskKey } : {}),
+      },
+      transaction,
+    });
+  });
 }
 
-async function recordClientEvent(actor, body = {}) {
-  assertActor(actor);
+async function recordClientEvent(actor, body = {}, tenant = null) {
 
   const eventKey = normalizeClientEventKey(body.eventKey);
-  const currentTarget = await getEventTargetContext(actor);
-  const targetRole = body.role ? resolveTargetRole(actor, body.role) : currentTarget.role;
-  const target = {
-    isTraining: currentTarget.isTraining && currentTarget.role === targetRole,
-    role: targetRole,
-  };
+  return db.sequelize.transaction(async (transaction) => {
+    const currentTarget = await getEventTargetContext(
+      actor,
+      tenant,
+      TENANT_SCOPES.CLUB,
+      { lock: true, transaction },
+    );
+    const targetRole = body.role
+      ? resolveTargetRole(currentTarget.actor, body.role)
+      : currentTarget.role;
+    const isTraining = currentTarget.isTraining && currentTarget.role === targetRole;
+    const target = {
+      actor: currentTarget.actor,
+      authority: currentTarget.authority,
+      isTraining,
+      role: targetRole,
+      trainingSessionId: isTraining ? currentTarget.trainingSessionId : null,
+    };
 
-  return recordEventForTarget(actor, target, eventKey, {
-    entityId: body.entityId || null,
-    entityType: body.entityType || 'client_route',
-    payload: {
-      ...(body.payload || {}),
-      source: 'client',
-    },
+    return recordEventForTarget(actor, target, eventKey, {
+      entityId: body.entityId || null,
+      entityType: body.entityType || 'client_route',
+      payload: {
+        ...(body.payload || {}),
+        source: 'client',
+      },
+      tenant,
+      transaction,
+    });
   });
 }
 
@@ -1477,16 +2142,17 @@ async function recordEventSafe(actor, eventKey, options = {}) {
   }
 }
 
-async function resetProgress(actor, query = {}) {
-  const targetRole = resolveTargetRole(actor, query.role);
+async function resetProgress(actor, query = {}, tenant = null) {
+  const boundary = await resolveBoundary(actor, tenant, TENANT_SCOPES.MEMBERSHIP);
+  const targetRole = resolveTargetRole(boundary.actor, query.role);
   await db.OnboardingProgress.destroy({
     where: {
-      accountId: actor.id,
+      membershipId: boundary.authority.membershipId,
       role: targetRole,
     },
   });
 
-  return getOverview(actor, { role: targetRole });
+  return getOverview(boundary.actor, { role: targetRole }, tenant);
 }
 
 module.exports = {

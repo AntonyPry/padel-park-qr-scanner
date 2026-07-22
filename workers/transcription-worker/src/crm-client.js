@@ -25,6 +25,7 @@ class CrmClient {
   constructor(config) {
     this.baseUrl = config.crmApiUrl;
     this.token = config.crmWorkerToken;
+    this.workerInstanceId = config.workerId;
   }
 
   async request(path, options = {}) {
@@ -33,6 +34,8 @@ class CrmClient {
     const headers = {
       Accept: 'application/json',
       Authorization: `Bearer ${this.token}`,
+      'X-Worker-Instance-Id': this.workerInstanceId,
+      'X-Worker-Protocol-Version': '2',
       ...(options.headers || {}),
     };
     const request = { headers, method };
@@ -86,35 +89,59 @@ class CrmClient {
     });
   }
 
-  getAudioReference(jobId) {
-    return this.request(`/telephony/transcription-jobs/${jobId}/audio-reference`, {
+  getAudioReference(job) {
+    return this.request(`/telephony/transcription-jobs/${job.id}/audio-reference`, {
+      body: leaseBody(job),
       method: 'POST',
     });
   }
 
-  updateProgress(jobId, stage, progress, message) {
-    return this.request(`/telephony/transcription-jobs/${jobId}/progress`, {
-      body: { message, progress, stage },
+  updateProgress(job, stage, progress, message) {
+    return this.request(`/telephony/transcription-jobs/${job.id}/progress`, {
+      body: { ...leaseBody(job), message, progress, stage },
       method: 'POST',
     });
   }
 
-  completeJob(jobId, payload) {
-    return this.request(`/telephony/transcription-jobs/${jobId}/result`, {
-      body: payload,
+  completeJob(job, payload) {
+    return this.request(`/telephony/transcription-jobs/${job.id}/result`, {
+      body: { ...payload, ...leaseBody(job) },
       method: 'POST',
     });
   }
 
-  failJob(jobId, errorMessage) {
-    return this.request(`/telephony/transcription-jobs/${jobId}/fail`, {
-      body: { errorMessage },
+  failJob(job, errorMessage) {
+    return this.request(`/telephony/transcription-jobs/${job.id}/fail`, {
+      body: { ...leaseBody(job), errorMessage },
       method: 'POST',
     });
   }
 }
 
+function leaseBody(job) {
+  const claim = job?.claimContext;
+  if (!claim?.claimId || !claim?.claimToken) return {};
+  return { claimId: claim.claimId, claimToken: claim.claimToken };
+}
+
+function attachClaimContext(job, claimed) {
+  if (!job || !claimed?.lease) return job;
+  Object.defineProperty(job, 'claimContext', {
+    configurable: false,
+    enumerable: false,
+    value: Object.freeze({
+      ...claimed.lease,
+      protocolVersion: claimed.protocolVersion,
+      tenant: claimed.tenant,
+    }),
+    writable: false,
+  });
+  return job;
+}
+
 module.exports = {
   CrmApiError,
   CrmClient,
+  attachClaimContext,
+  leaseBody,
 };
