@@ -29,19 +29,24 @@ const {
 const {
   isRolloutMaintenanceActive,
 } = require('./src/tenant-rollout/contract');
+const {
+  createBrowserOriginPolicy,
+} = require('./src/security/browser-origin-policy');
 
 const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || process.env.SERVER_HOST || null;
 
 const botRunnerRegistry = new BotRunnerRegistry();
+const browserOriginPolicy = createBrowserOriginPolicy();
 const app = createApp({
+  browserOriginPolicy,
   onIntegrationConnectionChanged: (scope) => isFeatureEnabled('BOTS_ENABLED')
     ? botRunnerRegistry.reconcile(scope)
     : Promise.resolve({ action: 'bots_disabled' }),
   onTenantInitialized: startBackgroundComponents,
 });
 const server = http.createServer(app);
-const io = createSocketServer(server);
+const io = createSocketServer(server, { browserOriginPolicy });
 
 app.set('io', io);
 

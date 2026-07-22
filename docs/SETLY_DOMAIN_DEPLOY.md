@@ -145,11 +145,21 @@ Set these values in the production server environment without committing secrets
 ```dotenv
 CLIENT_ORIGIN=https://setly.tech,https://www.setly.tech
 CORS_ORIGIN=https://setly.tech,https://www.setly.tech
+# HTTP bootstrap defaults. Enable both only after product TLS is verified.
+SECURITY_HSTS_ENABLED=false
+SECURITY_HSTS_TLS_READY=false
 HOST=127.0.0.1
 BEELINE_CALLBACK_URL=https://setly.tech/api/integrations/beeline/events
 PUBLIC_APP_URL=https://setly.tech
 INSTALLATION_ACTIVATION_BASE_URL=https://setly.tech
 ```
+
+Production startup fails closed if both origin variables are unset/empty, if
+they differ, or if an entry is wildcard, duplicate, non-canonical, non-HTTPS or
+contains a path/query/fragment. When both variables are present, order may
+differ but the exact sets must match. See
+[`SECURITY_BROWSER_CONTAINMENT.md`](./SECURITY_BROWSER_CONTAINMENT.md) for the
+application header, CSP report-only and HSTS gates.
 
 `ops.setly.tech` does not use Socket.IO and its operator API is same-origin, so
 do not add it to `CLIENT_ORIGIN` merely because the hostname exists. The
@@ -180,3 +190,12 @@ installation operators use `https://ops.setly.tech`.
 Do not treat DNS resolution alone as operator-host readiness. Readiness requires
 that the current ordinary-CRM HTTP fallback is gone and normal TLS verification
 succeeds with `ops.setly.tech` present in the certificate SAN.
+
+The current Nginx serves `client/dist` directly, so application headers observed
+on proxied API responses do not set the SPA document policy. During the
+separately authorized TLS/vhost change, mirror the tested CSP report-only and
+baseline headers on SPA HTML/static responses, proxy the exact
+`/__csp-report` discard path with a maximum 16 KiB body, bounded request rate
+and no body/query logging, verify required assets and Socket.IO in browser
+DevTools, and only then set both HSTS gates to `true`. SEC-A8 intentionally does
+not use `includeSubDomains` or HSTS preload.

@@ -1,6 +1,5 @@
 const path = require('path');
 const express = require('express');
-const cors = require('cors');
 const apiRoutes = require('./routes');
 const { requestTiming } = require('./middleware/performance');
 const telephonyController = require('./controllers/telephony.controller');
@@ -25,9 +24,11 @@ const {
   assertTenantCapabilityDependencies,
 } = require('./tenant-context/capabilities');
 const {
-  ONBOARDING_COMPLETED_TASKS_HEADER,
-  ONBOARDING_PROGRESSED_TASKS_HEADER,
-} = require('./middleware/onboarding-quest');
+  CSP_REPORT_PATH,
+  createBrowserCorsMiddleware,
+  createSecurityHeadersMiddleware,
+  discardCspReport,
+} = require('./middleware/browser-security');
 const {
   beelineCapabilityCutoverGate,
   rolloutMaintenanceGate,
@@ -45,25 +46,32 @@ const {
   validateAuthRateLimitConfiguration,
 } = require('./services/auth-rate-limit.service');
 const { limitProviderIngress } = require('./middleware/auth-rate-limit');
+const {
+  createBrowserOriginPolicy,
+} = require('./security/browser-origin-policy');
 
-function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {}) {
+function createApp({
+  browserOriginPolicy,
+  onIntegrationConnectionChanged,
+  onTenantInitialized,
+  publicDirectory = path.resolve(__dirname, '../public'),
+} = {}) {
   assertTenantCapabilityDependencies();
   validateRolloutMaintenanceConfiguration();
   validateBeelineCapabilityCutoverConfiguration();
   validatePasswordHashingConfiguration();
   validateAuthRateLimitConfiguration();
+  const originPolicy = browserOriginPolicy || createBrowserOriginPolicy();
   const authRateLimiter = createAuthRateLimiter();
   const app = express();
 
   app.set('authRateLimiter', authRateLimiter);
   app.set('onTenantInitialized', onTenantInitialized);
   app.set('onIntegrationConnectionChanged', onIntegrationConnectionChanged);
-  app.use(cors({
-    exposedHeaders: [
-      ONBOARDING_COMPLETED_TASKS_HEADER,
-      ONBOARDING_PROGRESSED_TASKS_HEADER,
-    ],
-  }));
+  app.set('browserOriginPolicy', originPolicy);
+  app.use(createSecurityHeadersMiddleware(originPolicy));
+  app.use(createBrowserCorsMiddleware(originPolicy));
+  app.post(CSP_REPORT_PATH, rolloutMaintenanceGate, discardCspReport);
   app.use(requestTiming);
   const providerIngress = [
     attachRouteDeclaration,
@@ -111,7 +119,7 @@ function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {})
     telephonyController.receiveBeelineEvent,
   );
   app.use(express.json({ limit: '6mb' }));
-  app.use(express.static(path.resolve(__dirname, '../public')));
+  app.use(express.static(publicDirectory));
   app.use('/api', apiRoutes);
 
   return app;

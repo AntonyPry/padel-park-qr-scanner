@@ -21,19 +21,25 @@ const {
 const {
   isRolloutMaintenanceActive,
 } = require('../tenant-rollout/contract');
+const {
+  createBrowserOriginPolicy,
+} = require('../security/browser-origin-policy');
 
 const ACCESS_SOCKET_ROOM = 'access';
 
-function parseAllowedOrigin(value) {
-  if (!value || value === '*') return value || '*';
-
-  const origins = String(value)
-    .split(',')
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-
-  if (origins.length === 0) return '*';
-  return origins.length === 1 ? origins[0] : origins;
+function createSocketCorsOptions(originPolicy) {
+  return {
+    methods: ['GET', 'POST'],
+    origin(origin, callback) {
+      if (origin == null || originPolicy.isAllowed(origin)) {
+        callback(null, true);
+        return;
+      }
+      const error = new Error('Socket origin is not allowed');
+      error.code = 'SOCKET_ORIGIN_DENIED';
+      callback(error);
+    },
+  };
 }
 
 function rolloutSocketMaintenanceGate(_socket, next) {
@@ -50,17 +56,15 @@ function rolloutSocketMaintenanceGate(_socket, next) {
 
 function createSocketServer(
   httpServer,
-  { assertFoundationInitialized = assertTenantFoundationInitialized } = {},
+  {
+    assertFoundationInitialized = assertTenantFoundationInitialized,
+    browserOriginPolicy,
+  } = {},
 ) {
   assertTenantCapabilityDependencies();
-  const allowedOrigin = parseAllowedOrigin(
-    process.env.CLIENT_ORIGIN || process.env.CORS_ORIGIN,
-  );
+  const originPolicy = browserOriginPolicy || createBrowserOriginPolicy();
   const io = new Server(httpServer, {
-    cors: {
-      origin: allowedOrigin,
-      methods: ['GET', 'POST'],
-    },
+    cors: createSocketCorsOptions(originPolicy),
   });
 
   io.use(rolloutSocketMaintenanceGate);
@@ -156,5 +160,6 @@ function createSocketServer(
 module.exports = {
   ACCESS_SOCKET_ROOM,
   createSocketServer,
+  createSocketCorsOptions,
   rolloutSocketMaintenanceGate,
 };
