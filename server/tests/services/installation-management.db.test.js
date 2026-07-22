@@ -18,6 +18,8 @@ const {
   assertFeature10_4IntegrationConnectionSchema,
 } = require('../helpers/feature-10-4-schema');
 
+const OPERATOR_PASSWORD = 'feature-10-4-db-password';
+
 test('Feature 10.4 exact-Club settings and encrypted integration mutations', async () => {
   assert.ok(process.env.DB_USER, 'DB_USER is required for Feature 10.4 DB tests');
   const database = `setly_f9_rc_installation_management_${process.pid}_${Date.now()}`;
@@ -30,6 +32,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     'INSTALLATION_PROVIDER_VALIDATION_MODE',
     'INSTALLATION_MANAGEMENT_ENABLED',
     'INSTALLATION_OPERATOR_PASSWORD',
+    'INSTALLATION_OPERATOR_PASSWORD_HASH',
     'INSTALLATION_OPERATOR_SECRET',
     'INSTALLATION_OPERATOR_USERNAME',
     'NODE_ENV',
@@ -44,7 +47,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
   process.env.INTEGRATION_SECRETS_MASTER_KEY = crypto.randomBytes(32).toString('base64');
   process.env.INSTALLATION_PROVIDER_VALIDATION_MODE = 'preview';
   process.env.INSTALLATION_MANAGEMENT_ENABLED = 'true';
-  process.env.INSTALLATION_OPERATOR_PASSWORD = 'feature-10-4-db-password';
+  delete process.env.INSTALLATION_OPERATOR_PASSWORD;
   process.env.INSTALLATION_OPERATOR_SECRET = 'feature-10-4-db-secret-that-is-long-enough';
   process.env.INSTALLATION_OPERATOR_USERNAME = 'feature-10-4-db-test';
   for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'false';
@@ -59,6 +62,11 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'true';
     process.env.TENANT_ENFORCEMENT_ENABLED = 'true';
     db = require('../../models');
+    const passwordAuth = require('../../src/services/auth.service');
+    process.env.INSTALLATION_OPERATOR_PASSWORD_HASH = await passwordAuth.hashPassword(
+      OPERATOR_PASSWORD,
+      { AUTH_ARGON2_ENABLED: 'true' },
+    );
     const connectionService = require('../../src/provider-integrations/connection-service');
     const operatorValidation = require('../../src/provider-integrations/operator-validation');
     const telephonyService = require('../../src/services/telephony.service');
@@ -103,7 +111,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
     const operatorAuth = require('../../src/services/installation-operator-auth.service');
     const { contextWithSecrets } = connectionService;
     const operatorSession = await operatorAuth.createSession({
-      password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+      password: OPERATOR_PASSWORD,
       username: process.env.INSTALLATION_OPERATOR_USERNAME,
     });
     const operator = await operatorAuth.verifySession(operatorSession.token);
@@ -362,7 +370,7 @@ test('Feature 10.4 exact-Club settings and encrypted integration mutations', asy
 
     const createAuthority = async () => {
       const session = await operatorAuth.createSession({
-        password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+        password: OPERATOR_PASSWORD,
         username: process.env.INSTALLATION_OPERATOR_USERNAME,
       });
       return operatorAuth.verifySession(session.token);

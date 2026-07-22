@@ -4,10 +4,12 @@ const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const express = require('express');
 const db = require('../../models');
+const passwordAuth = require('../../src/services/auth.service');
 
 const ENV_KEYS = [
   'INSTALLATION_MANAGEMENT_ENABLED',
   'INSTALLATION_OPERATOR_PASSWORD',
+  'INSTALLATION_OPERATOR_PASSWORD_HASH',
   'INSTALLATION_OPERATOR_SECRET',
   'INSTALLATION_OPERATOR_USERNAME',
   'INSTALLATION_PROVISIONING_ENABLED',
@@ -31,8 +33,13 @@ async function close(server) {
 
 test('installation provisioning routes remain isolated behind operator authority', async () => {
   const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of ENV_KEYS) delete process.env[key];
+  const operatorPassword = 'route-test-password';
+  const operatorPasswordHash = await passwordAuth.hashPassword(operatorPassword, {
+    AUTH_ARGON2_ENABLED: 'true',
+  });
   Object.assign(process.env, {
-    INSTALLATION_OPERATOR_PASSWORD: 'route-test-password',
+    INSTALLATION_OPERATOR_PASSWORD_HASH: operatorPasswordHash,
     INSTALLATION_OPERATOR_SECRET: 'route-test-secret-longer-than-thirty-two-characters',
     INSTALLATION_OPERATOR_USERNAME: 'route-test-operator',
     INSTALLATION_MANAGEMENT_ENABLED: 'true',
@@ -75,7 +82,7 @@ test('installation provisioning routes remain isolated behind operator authority
 
     const session = await api('/installation/provisioning/session', {
       body: JSON.stringify({
-        password: 'route-test-password',
+        password: operatorPassword,
         username: 'route-test-operator',
       }),
       headers: { 'Content-Type': 'application/json' },
@@ -103,6 +110,29 @@ test('installation provisioning routes remain isolated behind operator authority
     assert.equal(provisioningDisabled.status, 404);
     assert.equal((await provisioningDisabled.json()).error, 'Создание организаций отключено');
     process.env.INSTALLATION_PROVISIONING_ENABLED = 'true';
+
+    const legacyPlaintext = 'legacy-value-must-not-verify';
+    process.env.INSTALLATION_OPERATOR_PASSWORD_HASH = '$argon2id$malformed';
+    process.env.INSTALLATION_OPERATOR_PASSWORD = legacyPlaintext;
+    const unavailableLoginStatus = await api('/installation/provisioning/status');
+    assert.deepEqual(await unavailableLoginStatus.json(), {
+      enabled: false,
+      managementEnabled: false,
+      provisioningEnabled: false,
+    });
+    const unavailableLogin = await api('/installation/provisioning/session', {
+      body: JSON.stringify({
+        password: legacyPlaintext,
+        username: 'route-test-operator',
+      }),
+      headers: { 'Content-Type': 'application/json' },
+      method: 'POST',
+    });
+    assert.equal(unavailableLogin.status, 503);
+    const unavailableBody = await unavailableLogin.json();
+    assert.equal(unavailableBody.error, 'Не удалось войти как оператор');
+    assert.equal(JSON.stringify(unavailableBody).includes(operatorPasswordHash), false);
+    assert.equal(JSON.stringify(unavailableBody).includes(legacyPlaintext), false);
 
     for (const request of [
       ['/installation/provisioning/snapshot', { method: 'GET' }],

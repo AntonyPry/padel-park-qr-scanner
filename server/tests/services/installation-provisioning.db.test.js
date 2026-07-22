@@ -23,6 +23,7 @@ const CAPABILITY_ENV = [
   'TENANT_ENFORCEMENT_ENABLED',
 ];
 const FEATURE_MIGRATION = require('../../migrations/20260720120000-add-installation-provisioning');
+const OPERATOR_PASSWORD = 'provisioning-db-password';
 
 function payload(suffix, idempotencyKey = crypto.randomUUID()) {
   return {
@@ -109,6 +110,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     'INSTALLATION_PROVISIONING_MIGRATION_FAIL_STEP',
     'INSTALLATION_PROVISIONING_ENABLED',
     'INSTALLATION_OPERATOR_PASSWORD',
+    'INSTALLATION_OPERATOR_PASSWORD_HASH',
     'INSTALLATION_OPERATOR_SECRET',
     'INSTALLATION_OPERATOR_USERNAME',
     'NODE_ENV',
@@ -122,7 +124,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
   process.env.NODE_ENV = 'test';
   process.env.INSTALLATION_ACTIVATION_BASE_URL = 'http://127.0.0.1:5182';
   process.env.INSTALLATION_PROVISIONING_ENABLED = 'true';
-  process.env.INSTALLATION_OPERATOR_PASSWORD = 'provisioning-db-password';
+  delete process.env.INSTALLATION_OPERATOR_PASSWORD;
   process.env.INSTALLATION_OPERATOR_SECRET = 'provisioning-db-secret-that-is-long-enough';
   process.env.INSTALLATION_OPERATOR_USERNAME = 'db-test-operator';
   for (const name of CAPABILITY_ENV) process.env[name] = 'false';
@@ -466,11 +468,15 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
     const provisioning = require('../../src/services/installation-provisioning.service');
     const operatorAuth = require('../../src/services/installation-operator-auth.service');
     const auth = require('../../src/services/auth.service');
+    process.env.INSTALLATION_OPERATOR_PASSWORD_HASH = await auth.hashPassword(
+      OPERATOR_PASSWORD,
+      { AUTH_ARGON2_ENABLED: 'true' },
+    );
     const accountLifecycle = require('../../src/services/account-lifecycle.service');
     const auditService = require('../../src/services/audit.service');
     const tenantContext = require('../../src/services/tenant-context.service');
     const operatorSession = await operatorAuth.createSession({
-      password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+      password: OPERATOR_PASSWORD,
       username: process.env.INSTALLATION_OPERATOR_USERNAME,
     });
     const operator = await operatorAuth.verifySession(operatorSession.token);

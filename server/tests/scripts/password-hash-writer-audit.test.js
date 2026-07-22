@@ -53,6 +53,12 @@ test('ordinary-user plaintext writers use the one async auth hash contract', () 
 });
 
 test('no runtime or operational source keeps a parallel PBKDF2 implementation', () => {
+  const canonical = source('src/services/password-hashing.service.js');
+  assert.equal(occurrences(canonical, /await pbkdf2\(/gu), 2);
+  assert.equal(occurrences(canonical, /argon2\.(?:hash|verify)\(/gu), 2);
+  const auth = source('src/services/auth.service.js');
+  assert.match(auth, /require\('\.\/password-hashing\.service'\)/u);
+  assert.doesNotMatch(auth, /pbkdf2|require\('argon2'\)|parseArgon2idPasswordHash/u);
   const files = [
     'src/services/accounts.service.js',
     'src/services/installation-provisioning.service.js',

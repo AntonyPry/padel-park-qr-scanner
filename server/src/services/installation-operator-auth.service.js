@@ -2,9 +2,11 @@
 
 const crypto = require('crypto');
 const db = require('../../models');
+const passwordAuth = require('./password-hashing.service');
 
 const SESSION_TTL_SECONDS = 60 * 30;
 const TOKEN_KIND = 'installation-operator';
+const LEGACY_PASSWORD_ENV = 'INSTALLATION_OPERATOR_PASSWORD';
 const authorities = new WeakSet();
 
 function authorityError() {
@@ -67,24 +69,54 @@ function assertProvisioningEnabled() {
   throw error;
 }
 
-function configuration() {
+function disabledError() {
+  const error = new Error('Installation provisioning is disabled');
+  error.code = 'INSTALLATION_PROVISIONING_DISABLED';
+  error.statusCode = 404;
+  return error;
+}
+
+function configurationError() {
+  const error = new Error('Installation operator login is unavailable');
+  error.code = 'INSTALLATION_OPERATOR_CONFIGURATION_INVALID';
+  error.statusCode = 503;
+  return error;
+}
+
+function credentialError() {
+  const error = new Error('Неверный логин или пароль оператора');
+  error.code = 'INSTALLATION_OPERATOR_CREDENTIALS_INVALID';
+  error.statusCode = 401;
+  return error;
+}
+
+function sessionSigningConfiguration() {
   if (!isEnabled()) {
-    const error = new Error('Installation provisioning is disabled');
-    error.code = 'INSTALLATION_PROVISIONING_DISABLED';
-    error.statusCode = 404;
-    throw error;
+    throw disabledError();
   }
 
   const username = String(process.env.INSTALLATION_OPERATOR_USERNAME || '').trim();
-  const password = String(process.env.INSTALLATION_OPERATOR_PASSWORD || '');
   const secret = String(process.env.INSTALLATION_OPERATOR_SECRET || '');
-  if (!username || !password || secret.length < 32) {
-    const error = new Error('Installation operator credentials are not configured');
-    error.code = 'INSTALLATION_OPERATOR_CONFIGURATION_INVALID';
-    error.statusCode = 503;
-    throw error;
+  if (!username || secret.length < 32) throw configurationError();
+  return { secret, username };
+}
+
+function loginCredentialConfiguration() {
+  const signing = sessionSigningConfiguration();
+  if (Object.prototype.hasOwnProperty.call(process.env, LEGACY_PASSWORD_ENV)) {
+    throw configurationError();
   }
-  return { password, secret, username };
+  const passwordHash = String(process.env.INSTALLATION_OPERATOR_PASSWORD_HASH || '');
+  let info = null;
+  try {
+    info = passwordAuth.passwordHashInfo(passwordHash, {
+      AUTH_ARGON2_ENABLED: 'false',
+    });
+  } catch (_error) {
+    throw configurationError();
+  }
+  if (info?.scheme !== 'argon2id') throw configurationError();
+  return { ...signing, passwordHash };
 }
 
 function safeEqual(left, right) {
@@ -115,16 +147,21 @@ function signSession(username, sessionId, secret) {
 }
 
 async function createSession({ password, username }) {
-  const configured = configuration();
-  if (
-    !safeEqual(String(username || '').trim(), configured.username) ||
-    !safeEqual(String(password || ''), configured.password)
-  ) {
-    const error = new Error('Неверный логин или пароль оператора');
-    error.code = 'INSTALLATION_OPERATOR_CREDENTIALS_INVALID';
-    error.statusCode = 401;
-    throw error;
+  const configured = loginCredentialConfiguration();
+  const usernameMatches = safeEqual(
+    String(username || '').trim(),
+    configured.username,
+  );
+  let passwordMatches = false;
+  try {
+    passwordMatches = await passwordAuth.verifyPassword(
+      String(password || ''),
+      configured.passwordHash,
+    );
+  } catch (_error) {
+    passwordMatches = false;
   }
+  if (!usernameMatches || !passwordMatches) throw credentialError();
   const sessionId = crypto.randomBytes(16).toString('hex');
   const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000);
   await db.InstallationOperatorSession.create({
@@ -139,7 +176,7 @@ async function createSession({ password, username }) {
 }
 
 async function verifySession(token) {
-  const configured = configuration();
+  const configured = sessionSigningConfiguration();
   const [header, body, signature] = String(token || '').split('.');
   if (!header || !body || !signature) return null;
   const expected = crypto
@@ -228,7 +265,7 @@ function getPublicStatus() {
     return { enabled: false, managementEnabled: false, provisioningEnabled: false };
   }
   try {
-    configuration();
+    loginCredentialConfiguration();
     return {
       enabled: true,
       managementEnabled: isManagementEnabled(),

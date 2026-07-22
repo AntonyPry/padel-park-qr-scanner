@@ -20,6 +20,7 @@ const {
 } = require('../helpers/feature-10-4-schema');
 
 const migration = require('../../migrations/20260720220000-add-installation-operator-management');
+const OPERATOR_PASSWORD = 'operator-security-password';
 
 async function targetSchemaFingerprint(schema) {
   const [rows] = await schema.query(`
@@ -94,6 +95,7 @@ test('Feature 10.4 operator authority, history triggers and migration safety', a
     'INSTALLATION_MANAGEMENT_ENABLED',
     'INSTALLATION_MANAGEMENT_MIGRATION_FAIL_STEP',
     'INSTALLATION_OPERATOR_PASSWORD',
+    'INSTALLATION_OPERATOR_PASSWORD_HASH',
     'INSTALLATION_OPERATOR_SECRET',
     'INSTALLATION_OPERATOR_USERNAME',
     'INSTALLATION_PROVISIONING_ENABLED',
@@ -108,7 +110,7 @@ test('Feature 10.4 operator authority, history triggers and migration safety', a
   process.env.NODE_ENV = 'test';
   process.env.INSTALLATION_MANAGEMENT_ENABLED = 'true';
   process.env.INSTALLATION_PROVISIONING_ENABLED = 'true';
-  process.env.INSTALLATION_OPERATOR_PASSWORD = 'operator-security-password';
+  delete process.env.INSTALLATION_OPERATOR_PASSWORD;
   process.env.INSTALLATION_OPERATOR_SECRET = 'operator-security-secret-that-is-long-enough';
   process.env.INSTALLATION_OPERATOR_USERNAME = 'operator-security-test';
   for (const name of ACCEPTED_TENANT_CAPABILITY_ENV) process.env[name] = 'false';
@@ -334,13 +336,18 @@ test('Feature 10.4 operator authority, history triggers and migration safety', a
     await assertFeature10_4IntegrationConnectionSchema(queryInterface);
     await assertFeature10_4InstallationOperatorSchema(queryInterface);
     db = require('../../models');
+    const passwordAuth = require('../../src/services/auth.service');
+    process.env.INSTALLATION_OPERATOR_PASSWORD_HASH = await passwordAuth.hashPassword(
+      OPERATOR_PASSWORD,
+      { AUTH_ARGON2_ENABLED: 'true' },
+    );
     const auth = require('../../src/services/installation-operator-auth.service');
     const auditService = require('../../src/services/audit.service');
     const management = require('../../src/services/installation-management.service');
     const provisioning = require('../../src/services/installation-provisioning.service');
     const createAuthority = async () => {
       const session = await auth.createSession({
-        password: process.env.INSTALLATION_OPERATOR_PASSWORD,
+        password: OPERATOR_PASSWORD,
         username: process.env.INSTALLATION_OPERATOR_USERNAME,
       });
       return auth.verifySession(session.token);

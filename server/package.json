@@ -34,6 +34,7 @@
     "start": "node bot.js",
     "checkports": "node check_ports.js",
     "health": "node scripts/health-check.js",
+    "auth:installation-operator-hash": "node scripts/generate-installation-operator-password-hash.js",
     "auth:password-hash:benchmark": "node scripts/benchmark-password-hashing.js",
     "auth:password-hash:capacity": "node scripts/check-password-hash-capacity.js",
     "openapi": "node scripts/generate-openapi.js",
