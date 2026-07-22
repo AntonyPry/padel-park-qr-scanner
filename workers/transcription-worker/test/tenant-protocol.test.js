@@ -15,6 +15,7 @@ const {
   claimAndProcessOne,
   createTempDir,
   pollingDelayMs,
+  reportProgress,
 } = require('../src/index');
 const { redactDetails } = require('../src/logger');
 
@@ -145,19 +146,22 @@ test('Node worker strictly parses and caps Retry-After for bounded polling backo
   assert.equal(pollingDelayMs(new Error('network'), 10_000), 10_000);
 });
 
-test('Node worker never turns a rate-limited claimed operation into an automatic fail write', async () => {
+test('Node worker propagates a progress 429 into safe poll backoff without an automatic fail write', async () => {
   let failCalls = 0;
   const crmClient = {
     async claimJob() {
       return {
         job: { id: 77 },
-        lease: { claimId: 'claim-id', claimToken: 'claim-token' },
+        lease: { claimId: 'claim-private', claimToken: 'token-private' },
         protocolVersion: 2,
         tenant: { clubKey: 'club_12345678', organizationKey: 'org_12345678' },
       };
     },
     async failJob() {
       failCalls += 1;
+    },
+    async updateProgress() {
+      throw limited;
     },
   };
   const entries = [];
@@ -167,21 +171,40 @@ test('Node worker never turns a rate-limited claimed operation into an automatic
     warn: (message, details) => entries.push({ details, message }),
   };
   const limited = new CrmApiError('Worker request rate limited', {
-    retryAfterSeconds: 17,
+    retryAfterSeconds: 60,
     status: 429,
   });
 
-  await assert.rejects(
-    claimAndProcessOne(
+  let propagated = null;
+  try {
+    await claimAndProcessOne(
       crmClient,
-      { workerId: 'worker-node-a' },
+      { workerId: 'worker-private' },
       logger,
-      { processJob: async () => { throw limited; } },
-    ),
-    limited,
-  );
+      {
+        processJob: async (client, job, _config, processLogger) => {
+          await reportProgress(
+            client,
+            job,
+            'downloading_audio',
+            'Downloading',
+            processLogger,
+          );
+        },
+      },
+    );
+  } catch (error) {
+    propagated = error;
+  }
+  assert.equal(propagated, limited);
+  assert.equal(propagated.status, 429);
+  assert.equal(propagated.retryAfterSeconds, 60);
+  assert.equal(pollingDelayMs(propagated, 10_000), 60_000);
   assert.equal(failCalls, 0);
-  assert.equal(entries.some((entry) => entry.details?.retryAfterSeconds === 17), true);
-  assert.equal(JSON.stringify(entries).includes('claim-token'), false);
-  assert.equal(JSON.stringify(entries).includes('77'), false);
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0].details.retryAfterSeconds, 60);
+  const serialized = JSON.stringify(entries);
+  for (const forbidden of ['77', 'claim-private', 'token-private', 'worker-private']) {
+    assert.equal(serialized.includes(forbidden), false, forbidden);
+  }
 });

@@ -76,6 +76,7 @@ async function reportProgress(crmClient, job, stage, message, logger) {
   try {
     await crmClient.updateProgress(job, stage, PROGRESS_PERCENT[stage], message);
   } catch (error) {
+    if (error instanceof CrmApiError && error.status === 429) throw error;
     logger.warn('CRM progress heartbeat failed', {
       error: error.message,
       jobId: job.id,
