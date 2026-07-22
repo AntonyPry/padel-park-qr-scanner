@@ -66,6 +66,7 @@
     "tenant:rc:targeted": "node scripts/run-final-tenant-rc.js",
     "tenant:rc": "node scripts/run-final-tenant-rc.js --full",
     "test": "node --test --test-concurrency=1 tests/**/*.test.js",
+    "test:shard": "node scripts/run-test-group.js --concurrency=1",
     "typecheck": "tsc --noEmit"
   }
 }

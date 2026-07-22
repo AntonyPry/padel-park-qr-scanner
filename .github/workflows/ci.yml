@@ -6,9 +6,84 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  server-shard:
+    name: Server shard ${{ matrix.shard }} of 4 (shadow)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      DB_NAME: padel_park_test
+      DB_PASSWORD: root
+      DB_USER: root
+      NODE_ENV: test
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: padel_park_test
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Run migrations
+        run: npx sequelize-cli db:migrate --env test
+      - name: Server tests
+        run: npm run test:shard -- --shard=${{ matrix.shard }}/4
+
+  server-contract:
+    name: Server OpenAPI contract (shadow)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Generate OpenAPI
+        run: npm run openapi
+      - name: Check generated API drift
+        working-directory: .
+        run: git diff --exit-code -- docs/openapi.json client/src/api/generated.ts
+
   server:
-    name: Server checks
+    name: Server checks (serial baseline)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
