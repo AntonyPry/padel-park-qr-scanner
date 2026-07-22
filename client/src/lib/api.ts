@@ -64,11 +64,19 @@ export function clearAuthToken() {
 }
 
 export async function revokeCurrentAuthSession() {
-  try {
-    await apiFetch('/api/auth/logout', { keepalive: true, method: 'POST' });
-  } catch {
-    // Local logout remains available during network failure. The opaque session
-    // still expires server-side and can be revoked by the security lifecycle.
+  const response = await apiFetch(
+    '/api/auth/logout',
+    { keepalive: true, method: 'POST' },
+    { preserveAuthOnUnauthorized: true },
+  );
+  if (!response.ok) {
+    const apiError = await readApiError(response, 'Не удалось завершить сессию');
+    throw new ApiRequestError(
+      apiError.message,
+      response.status,
+      apiError.details,
+      apiError.code,
+    );
   }
 }
 
@@ -125,7 +133,11 @@ export function applyOnboardingProgressResponse(response: Response) {
   });
 }
 
-export async function apiFetch(input: string, init: RequestInit = {}) {
+export async function apiFetch(
+  input: string,
+  init: RequestInit = {},
+  options: { preserveAuthOnUnauthorized?: boolean } = {},
+) {
   const headers = new Headers(init.headers);
   const token = getAuthToken();
   const method = String(init.method || 'GET').toUpperCase();
@@ -175,7 +187,7 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
 
   applyOnboardingProgressResponse(response);
 
-  if (response.status === 401) {
+  if (response.status === 401 && !options.preserveAuthOnUnauthorized) {
     clearAuthToken();
     window.dispatchEvent(new Event('auth:expired'));
   }

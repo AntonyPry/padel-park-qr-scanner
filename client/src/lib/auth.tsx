@@ -161,8 +161,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [tenantContext, tenantContextEnabled]);
 
-  const logout = useCallback(() => {
-    void revokeCurrentAuthSession();
+  const logout = useCallback(async () => {
+    try {
+      await revokeCurrentAuthSession();
+    } catch {
+      // Keep the authenticated UI and in-memory authority when server revoke
+      // did not complete; no false local logout is safe here.
+      return;
+    }
     clearAuthToken();
     void clearTenantClientState(queryClient);
     clearActiveTenantContext();

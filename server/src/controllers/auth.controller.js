@@ -79,6 +79,7 @@ class AuthController {
       clearBrowserSessionCookies(res);
       res.json({ success: true });
     } catch (_error) {
+      clearBrowserSessionCookies(res);
       sendError(
         res,
         { statusCode: 503 },

@@ -46,7 +46,7 @@ export interface AuthContextValue {
   tenantSwitching: boolean;
   login: (credentials: Credentials) => Promise<void>;
   bootstrap: (data: BootstrapData) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   switchTenantContext: (organizationId: number, clubId: number) => Promise<void>;
 }
 

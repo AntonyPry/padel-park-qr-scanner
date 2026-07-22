@@ -5,7 +5,9 @@ import {
   apiRequest,
   ApiRequestError,
   clearAuthToken,
+  getAuthToken,
   initializeAuthStorage,
+  revokeCurrentAuthSession,
   setAuthToken,
   setStoredTrainingMode,
 } from './api';
@@ -81,6 +83,17 @@ describe('apiRequest', () => {
     const [, init] = fetchMock.mock.calls[0] || [];
     expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('csrf-test-token');
     expect(init?.credentials).toBe('include');
+  });
+
+  it('does not clear local authority when server logout is non-2xx', async () => {
+    setAuthToken('in-memory-compatibility-token');
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(
+      { error: 'Logout unavailable', status: 503 },
+      { status: 503 },
+    )));
+
+    await expect(revokeCurrentAuthSession()).rejects.toMatchObject({ status: 503 });
+    expect(getAuthToken()).toBe('in-memory-compatibility-token');
   });
 
   it('throws typed error with server message when request fails', async () => {

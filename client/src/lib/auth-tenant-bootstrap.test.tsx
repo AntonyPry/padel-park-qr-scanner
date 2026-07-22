@@ -100,14 +100,27 @@ function DraftProbe() {
   );
 }
 
-function installSessionFetch(options: { discoveryStatus?: number; onDiscovery?: () => void } = {}) {
+function installSessionFetch(options: {
+  discoveryStatus?: number;
+  logoutError?: 'network' | number;
+  onDiscovery?: () => void;
+} = {}) {
   return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith('/api/auth/status')) {
       return Response.json({ capabilities: { tenantContext: true }, setupRequired: false });
     }
     if (url.endsWith('/api/auth/me')) return Response.json({ account });
-    if (url.endsWith('/api/auth/logout')) return Response.json({ success: true });
+    if (url.endsWith('/api/auth/logout')) {
+      if (options.logoutError === 'network') throw new Error('logout network failure');
+      if (typeof options.logoutError === 'number') {
+        return Response.json(
+          { error: 'Logout unavailable', code: 'LOGOUT_UNAVAILABLE', status: options.logoutError },
+          { status: options.logoutError },
+        );
+      }
+      return Response.json({ success: true });
+    }
     if (url.endsWith('/api/auth/me/memberships')) {
       options.onDiscovery?.();
       if (options.discoveryStatus && options.discoveryStatus !== 200) {
@@ -353,6 +366,52 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
     expect(tenantRequestAborted).toBe(true);
     expect(await pendingTenantRequest).toMatchObject({ name: 'AbortError' });
+  });
+
+  it('keeps authenticated state when logout revoke fails', async () => {
+    setAuthToken('test-token');
+    const fetchMock = installSessionFetch({ logoutError: 503 });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <SessionProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByText('session:manager@padelpark.demo club:12')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'logout-probe' }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/api/auth/logout'))).toBe(true);
+    });
+    expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument();
+    expect(screen.getByText('session:manager@padelpark.demo club:12')).toBeInTheDocument();
+  });
+
+  it('keeps authenticated state when logout request rejects', async () => {
+    setAuthToken('test-token');
+    const fetchMock = installSessionFetch({ logoutError: 'network' });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <AuthProvider>
+        <AuthGate>
+          <SessionProbe />
+        </AuthGate>
+      </AuthProvider>,
+    );
+
+    expect(await screen.findByText('session:manager@padelpark.demo club:12')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'logout-probe' }));
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input]) => String(input).endsWith('/api/auth/logout'))).toBe(true);
+    });
+    expect(screen.queryByRole('button', { name: 'Войти' })).not.toBeInTheDocument();
+    expect(screen.getByText('session:manager@padelpark.demo club:12')).toBeInTheDocument();
   });
 
   it('re-discovers authority before switching to one exact club', async () => {
