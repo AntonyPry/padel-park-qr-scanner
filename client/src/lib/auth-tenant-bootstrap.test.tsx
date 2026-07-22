@@ -101,12 +101,13 @@ function DraftProbe() {
 }
 
 function installSessionFetch(options: { discoveryStatus?: number; onDiscovery?: () => void } = {}) {
-  return vi.fn(async (input: RequestInfo | URL) => {
+  return vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith('/api/auth/status')) {
       return Response.json({ capabilities: { tenantContext: true }, setupRequired: false });
     }
     if (url.endsWith('/api/auth/me')) return Response.json({ account });
+    if (url.endsWith('/api/auth/logout')) return Response.json({ success: true });
     if (url.endsWith('/api/auth/me/memberships')) {
       options.onDiscovery?.();
       if (options.discoveryStatus && options.discoveryStatus !== 200) {
@@ -268,7 +269,8 @@ describe('AuthProvider tenant bootstrap', () => {
 
   it('clears the active context on explicit logout', async () => {
     setAuthToken('test-token');
-    vi.stubGlobal('fetch', installSessionFetch());
+    const fetchMock = installSessionFetch();
+    vi.stubGlobal('fetch', fetchMock);
 
     render(
       <AuthProvider>
@@ -289,6 +291,18 @@ describe('AuthProvider tenant bootstrap', () => {
     expect(await screen.findByRole('button', { name: 'Войти' })).toBeInTheDocument();
     expect(getActiveTenantContext()).toBeNull();
     expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([input]) =>
+          String(input).endsWith('/api/auth/logout')),
+      ).toBe(true);
+    });
+    const logoutCall = fetchMock.mock.calls.find(([input]) =>
+      String(input).endsWith('/api/auth/logout'));
+    expect(logoutCall?.[1]?.method).toBe('POST');
+    expect(new Headers(logoutCall?.[1]?.headers).get('Authorization')).toBe(
+      'Bearer test-token',
+    );
   });
 
   it('aborts an in-flight tenant request on explicit logout', async () => {
@@ -306,6 +320,7 @@ describe('AuthProvider tenant bootstrap', () => {
           return Response.json({ capabilities: { tenantContext: true }, setupRequired: false });
         }
         if (url.endsWith('/api/auth/me')) return Response.json({ account });
+        if (url.endsWith('/api/auth/logout')) return Response.json({ success: true });
         if (url.endsWith('/api/auth/me/memberships')) return Response.json(discovery);
         if (url.endsWith('/api/bookings/schedule')) {
           return new Promise<Response>((_resolve, reject) => {

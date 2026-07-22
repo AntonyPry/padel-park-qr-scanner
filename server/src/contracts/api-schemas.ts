@@ -1303,6 +1303,9 @@ const apiSchemas = {
         })
         .passthrough(),
     },
+    logoutResponse: z.object({
+      success: z.literal(true),
+    }),
     membershipsResponse: z.object({
       memberships: z.array(
         z.object({

@@ -12,20 +12,17 @@ const { requireAuth, requireRole } = require('../../src/middleware/auth');
 
 const originalResolve = tenantContextService.resolveTenantContext;
 let previousFlag;
-let originalVerifyToken;
-let originalGetAccountById;
+let originalAuthenticateBearerToken;
 
 beforeEach(() => {
   previousFlag = process.env.TENANT_CONTEXT_ENABLED;
-  originalVerifyToken = authService.verifyToken;
-  originalGetAccountById = authService.getAccountById;
+  originalAuthenticateBearerToken = authService.authenticateBearerToken;
 });
 
 afterEach(() => {
   tenantContextService.resolveTenantContext = originalResolve;
   process.env.TENANT_CONTEXT_ENABLED = previousFlag;
-  authService.verifyToken = originalVerifyToken;
-  authService.getAccountById = originalGetAccountById;
+  authService.authenticateBearerToken = originalAuthenticateBearerToken;
 });
 
 function response() {
@@ -112,8 +109,7 @@ test('flag off preserves legacy account authorization and requires no tenant hea
 });
 
 test('inactive Account remains rejected by identity auth before tenant resolution', async () => {
-  authService.verifyToken = () => ({ accountId: 7 });
-  authService.getAccountById = async () => ({ id: 7, role: 'owner', status: 'inactive' });
+  authService.authenticateBearerToken = async () => null;
   const req = { headers: { authorization: 'Bearer token' } };
   const res = response();
   let nextCalled = false;

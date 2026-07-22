@@ -10,6 +10,7 @@ import {
   apiFetch,
   clearAuthToken,
   getAuthToken,
+  revokeCurrentAuthSession,
   setAuthToken,
 } from '@/lib/api';
 import {
@@ -162,6 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [tenantContext, tenantContextEnabled]);
 
   const logout = useCallback(() => {
+    void revokeCurrentAuthSession();
     clearAuthToken();
     void clearTenantClientState(queryClient);
     clearActiveTenantContext();

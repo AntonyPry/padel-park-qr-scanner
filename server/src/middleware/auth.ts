@@ -3,8 +3,11 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import type { AccountRole } from '../constants/account-roles';
 
 const authService = require('../services/auth.service') as {
-  verifyToken: (token: string) => { accountId?: number } | null;
-  getAccountById: (accountId: number) => Promise<Request['account'] | null>;
+  authenticateBearerToken: (token: string) => Promise<{
+    account: Request['account'];
+    authentication: Request['authentication'];
+  } | null>;
+  extractBearerToken: (request: Request) => string;
 };
 const { isTenantContextEnabled } = require('./tenant-context') as {
   isTenantContextEnabled: () => boolean;
@@ -15,24 +18,17 @@ const { sendError } = require('../utils/api-error') as {
 
 async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const header = req.headers.authorization || '';
-    const token = header.replace(/^Bearer\s+/i, '').trim();
-    const payload = token ? authService.verifyToken(token) : null;
+    const token = authService.extractBearerToken(req);
+    const principal = token
+      ? await authService.authenticateBearerToken(token)
+      : null;
 
-    if (!payload?.accountId) {
+    if (!principal?.account || !principal.authentication) {
       return sendError(res, { statusCode: 401 }, 'Unauthorized');
     }
 
-    const account = await authService.getAccountById(payload.accountId);
-    if (
-      !account ||
-      account.status !== 'active' ||
-      (account.Staff && account.Staff.status !== 'active')
-    ) {
-      return sendError(res, { statusCode: 401 }, 'Unauthorized');
-    }
-
-    req.account = account;
+    req.account = principal.account;
+    req.authentication = principal.authentication;
     next();
   } catch {
     sendError(res, { statusCode: 401 }, 'Unauthorized');

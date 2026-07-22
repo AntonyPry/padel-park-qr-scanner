@@ -1,4 +1,5 @@
 const staffService = require('../services/staff.service');
+const { disconnectStaffSockets } = require('../realtime/session-boundary');
 const { sendError } = require('../utils/api-error');
 
 class StaffController {
@@ -31,6 +32,9 @@ class StaffController {
   async update(req, res) {
     try {
       const staff = await staffService.update(req.params.id, req.body, req.tenant);
+      if (req.body.status && req.body.status !== 'active') {
+        disconnectStaffSockets(req.app.get('io'), staff.id);
+      }
       res.json(staff);
     } catch (error) {
       sendError(res, error, 'Ошибка обновления сотрудника');
@@ -40,6 +44,7 @@ class StaffController {
   async remove(req, res) {
     try {
       const result = await staffService.remove(req.params.id, req.tenant);
+      disconnectStaffSockets(req.app.get('io'), result.id);
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка удаления сотрудника');

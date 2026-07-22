@@ -21,6 +21,7 @@ const GLOBAL_ENDPOINT_IDS = new Set([
   'auth.status',
   'auth.bootstrap',
   'auth.login',
+  'auth.logout',
   'auth.me',
   'auth.memberships',
 ]);
@@ -228,7 +229,7 @@ const ORGANIZATION_CLIENT_ENDPOINT_IDS = new Set([
 ]);
 
 const EXPECTED_ROUTE_SCOPE_DIGEST =
-  '5c82bc1290701c6768bc1d3767306ca8c992dc2311b8bcfab2a360a03edacad1';
+  'dd13bd973e0c092d6cda882733711b14c9c9d9ccb37a9bb9e27fbc439d6c6ffa';
 
 function getEndpointTenantScope(endpointId) {
   if (GLOBAL_ENDPOINT_IDS.has(endpointId)) return TENANT_SCOPES.GLOBAL;

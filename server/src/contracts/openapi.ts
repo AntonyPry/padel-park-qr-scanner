@@ -67,6 +67,7 @@ const rawEndpointContracts: EndpointContract[] = [
   { id: 'auth.status', method: 'get', path: '/auth/status', public: true, summary: 'Setup status', tags: ['Auth'] },
   { ...apiSchemas.auth.bootstrap, id: 'auth.bootstrap', method: 'post', path: '/auth/bootstrap', public: true, rateLimited: true, summary: 'Bootstrap owner account', tags: ['Auth'] },
   { ...apiSchemas.auth.login, id: 'auth.login', method: 'post', path: '/auth/login', public: true, rateLimited: true, summary: 'Login', tags: ['Auth'] },
+  { id: 'auth.logout', method: 'post', path: '/auth/logout', public: true, response: apiSchemas.auth.logoutResponse, summary: 'Revoke the presented normal-user session', tags: ['Auth'] },
   { id: 'auth.me', method: 'get', path: '/auth/me', summary: 'Current account', tags: ['Auth'] },
   { id: 'auth.memberships', method: 'get', path: '/auth/me/memberships', response: apiSchemas.auth.membershipsResponse, summary: 'Current account tenant memberships', tags: ['Auth'] },
   { id: 'installationProvisioning.status', method: 'get', path: '/installation/provisioning/status', public: true, response: apiSchemas.installationProvisioning.statusResponse, summary: 'Installation provisioning status', tags: ['Installation Provisioning'] },
@@ -644,7 +645,7 @@ function getOpenApiDocument() {
       },
       securitySchemes: {
         bearerAuth: {
-          bearerFormat: 'JWT',
+          bearerFormat: 'Opaque',
           scheme: 'bearer',
           type: 'http',
         },

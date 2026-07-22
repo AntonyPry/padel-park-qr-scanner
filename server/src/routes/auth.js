@@ -30,6 +30,7 @@ router.post(
   validate(apiSchemas.auth.login),
   authController.login,
 );
+router.post('/logout', globalEndpoint, authController.logout);
 router.get('/me', globalEndpoint, requireAuth, resolveRequestTenant, authController.me);
 router.get(
   '/me/memberships',

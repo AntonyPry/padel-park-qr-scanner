@@ -7,6 +7,7 @@ export const apiEndpoints = {
   "auth.status": { method: "GET", path: "/auth/status", responseType: "json", tenantScope: "global" },
   "auth.bootstrap": { method: "POST", path: "/auth/bootstrap", responseType: "json", tenantScope: "global" },
   "auth.login": { method: "POST", path: "/auth/login", responseType: "json", tenantScope: "global" },
+  "auth.logout": { method: "POST", path: "/auth/logout", responseType: "json", tenantScope: "global" },
   "auth.me": { method: "GET", path: "/auth/me", responseType: "json", tenantScope: "global" },
   "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
   "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
@@ -361,6 +362,9 @@ export type AuthLoginBody = {
   email: string;
   password: string;
   [key: string]: unknown;
+};
+export type AuthLogoutResponse = {
+  success: true;
 };
 export type AuthMembershipsResponse = {
   memberships: Array<{
@@ -3007,6 +3011,7 @@ export interface ApiEndpointRequestMap {
   "auth.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.bootstrap": ApiEndpointRequest<undefined, undefined, AuthBootstrapBody>;
   "auth.login": ApiEndpointRequest<undefined, undefined, AuthLoginBody>;
+  "auth.logout": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.me": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
@@ -3342,6 +3347,7 @@ export interface ApiEndpointResponseMap {
   "auth.status": unknown;
   "auth.bootstrap": unknown;
   "auth.login": unknown;
+  "auth.logout": AuthLogoutResponse;
   "auth.me": unknown;
   "auth.memberships": AuthMembershipsResponse;
   "installationProvisioning.status": InstallationProvisioningStatusResponse;

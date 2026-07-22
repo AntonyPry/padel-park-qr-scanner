@@ -41,6 +41,21 @@ export function clearAuthToken() {
   clearStoredActiveOnboardingQuest();
 }
 
+export async function revokeCurrentAuthSession() {
+  const token = getAuthToken();
+  if (!token) return;
+  try {
+    await fetch(`${API_URL}/api/auth/logout`, {
+      headers: { Authorization: `Bearer ${token}` },
+      keepalive: true,
+      method: 'POST',
+    });
+  } catch {
+    // Local logout remains available during network failure. The opaque session
+    // still expires server-side and can be revoked by the security lifecycle.
+  }
+}
+
 export function getStoredTrainingMode() {
   try {
     const rawValue = localStorage.getItem(TRAINING_MODE_KEY);

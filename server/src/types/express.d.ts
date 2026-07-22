@@ -12,6 +12,12 @@ declare global {
         } | null;
         [key: string]: unknown;
       };
+      authentication?: {
+        accountId: number;
+        expiresAt: number;
+        kind: 'legacy' | 'opaque';
+        sessionId?: string;
+      };
       identityAccount?: Request['account'];
       tenant?: {
         accountId: number;

@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../../models');
+const normalUserSessions = require('./normal-user-session.service');
 const {
   countAuthUsableOwners,
   isAuthUsableOwnerMembership,
@@ -310,6 +311,31 @@ async function updateAccount(accountId, payload, options = {}) {
       { role: finalRole, status: finalStatus },
       transaction,
     );
+
+    const passwordChanged =
+      Object.prototype.hasOwnProperty.call(payload, 'passwordHash') &&
+      payload.passwordHash !== graph.account.passwordHash;
+    const securityContextChanged =
+      (Object.prototype.hasOwnProperty.call(payload, 'role') &&
+        finalRole !== graph.account.role) ||
+      (Object.prototype.hasOwnProperty.call(payload, 'status') &&
+        finalStatus !== graph.account.status) ||
+      (Object.prototype.hasOwnProperty.call(payload, 'staffId') &&
+        finalStaffId !== graph.account.staffId);
+    const revocationReason = finalStatus !== 'active'
+      ? normalUserSessions.REVOCATION_REASONS.ACCOUNT_DISABLED
+      : passwordChanged
+        ? normalUserSessions.REVOCATION_REASONS.PASSWORD_CHANGED
+        : securityContextChanged
+          ? normalUserSessions.REVOCATION_REASONS.SECURITY_CONTEXT_CHANGED
+          : null;
+    if (revocationReason) {
+      await normalUserSessions.revokeAllForAccount(
+        graph.account.id,
+        revocationReason,
+        { transaction },
+      );
+    }
 
     await graph.account.update(payload, { transaction });
     if (options.failAfter === 'account') {

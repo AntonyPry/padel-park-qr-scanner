@@ -38,6 +38,7 @@ const {
   validateRolloutMaintenanceConfiguration,
 } = require('./tenant-rollout/contract');
 const {
+  validateAuthSessionConfiguration,
   validatePasswordHashingConfiguration,
 } = require('./services/auth.service');
 const {
@@ -59,6 +60,7 @@ function createApp({
   assertTenantCapabilityDependencies();
   validateRolloutMaintenanceConfiguration();
   validateBeelineCapabilityCutoverConfiguration();
+  validateAuthSessionConfiguration();
   validatePasswordHashingConfiguration();
   validateAuthRateLimitConfiguration();
   const originPolicy = browserOriginPolicy || createBrowserOriginPolicy();

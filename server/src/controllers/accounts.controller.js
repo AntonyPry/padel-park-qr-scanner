@@ -1,4 +1,5 @@
 const accountsService = require('../services/accounts.service');
+const { disconnectAccountSockets } = require('../realtime/session-boundary');
 const { sendError } = require('../utils/api-error');
 
 class AccountsController {
@@ -28,6 +29,14 @@ class AccountsController {
         req.body,
         req.tenant,
       );
+      if (
+        req.body.password ||
+        req.body.role ||
+        Object.prototype.hasOwnProperty.call(req.body, 'staffId') ||
+        (req.body.status && req.body.status !== 'active')
+      ) {
+        disconnectAccountSockets(req.app.get('io'), account.id);
+      }
       res.json(account);
     } catch (error) {
       sendError(res, error, 'Ошибка обновления пользователя');
@@ -41,6 +50,7 @@ class AccountsController {
         req.params.id,
         req.tenant,
       );
+      disconnectAccountSockets(req.app.get('io'), result.id);
       res.json(result);
     } catch (error) {
       sendError(res, error, 'Ошибка удаления пользователя');

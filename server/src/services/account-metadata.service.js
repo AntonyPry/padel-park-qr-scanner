@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../../models');
+const normalUserSessions = require('./normal-user-session.service');
 const { assertTenantFoundationInitialized } = require('./tenant-foundation.service');
 
 const ACCOUNT_METADATA_FIELDS = Object.freeze([
@@ -41,6 +42,16 @@ async function updateAccountMetadata(accountId, payload, options = {}) {
     if (!locked) {
       throw metadataError('Пользователь не найден', 404, 'ACCOUNT_NOT_FOUND');
     }
+    if (
+      Object.prototype.hasOwnProperty.call(payload, 'passwordHash') &&
+      payload.passwordHash !== locked.passwordHash
+    ) {
+      await normalUserSessions.revokeAllForAccount(
+        locked.id,
+        normalUserSessions.REVOCATION_REASONS.PASSWORD_CHANGED,
+        { transaction: options.transaction },
+      );
+    }
     await locked.update(payload, { transaction: options.transaction });
     return locked;
   }
@@ -52,6 +63,16 @@ async function updateAccountMetadata(accountId, payload, options = {}) {
     });
     if (!locked) {
       throw metadataError('Пользователь не найден', 404, 'ACCOUNT_NOT_FOUND');
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(payload, 'passwordHash') &&
+      payload.passwordHash !== locked.passwordHash
+    ) {
+      await normalUserSessions.revokeAllForAccount(
+        locked.id,
+        normalUserSessions.REVOCATION_REASONS.PASSWORD_CHANGED,
+        { transaction },
+      );
     }
     await locked.update(payload, { transaction });
     if (options.failAfter === 'account') {

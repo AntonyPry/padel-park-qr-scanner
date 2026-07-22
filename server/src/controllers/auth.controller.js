@@ -1,5 +1,6 @@
 const authService = require('../services/auth.service');
 const tenantContextService = require('../services/tenant-context.service');
+const { disconnectSessionSockets } = require('../realtime/session-boundary');
 const { sendError } = require('../utils/api-error');
 
 class AuthController {
@@ -49,6 +50,24 @@ class AuthController {
       res.json(session);
     } catch (error) {
       sendError(res, error, 'Ошибка входа');
+    }
+  }
+
+  async logout(req, res) {
+    try {
+      const revoked = await authService.revokeCurrentSession(
+        authService.extractBearerToken(req),
+      );
+      if (revoked?.sessionId) {
+        disconnectSessionSockets(req.app.get('io'), revoked.sessionId);
+      }
+      res.json({ success: true });
+    } catch (_error) {
+      sendError(
+        res,
+        { statusCode: 503 },
+        'Не удалось завершить сессию',
+      );
     }
   }
 

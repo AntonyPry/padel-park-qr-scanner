@@ -35,6 +35,10 @@ module.exports = (sequelize, DataTypes) => {
   Account.associate = (models) => {
     Account.belongsTo(models.Staff, { foreignKey: 'staffId' });
     Account.hasMany(models.Membership, { foreignKey: 'accountId' });
+    Account.hasMany(models.NormalUserSession, {
+      as: 'normalUserSessions',
+      foreignKey: 'accountId',
+    });
     Account.hasMany(models.Shift, {
       as: 'approvedShifts',
       foreignKey: 'approvedByAccountId',

@@ -61,6 +61,14 @@ function installLoginPersistence(t, account, { cas } = {}) {
   t.mock.method(db.Account, 'findByPk', async () => account);
   t.mock.method(accountMetadata, 'updateAccountMetadata', async () => account);
   t.mock.method(
+    authService._private.normalUserSessions,
+    'issue',
+    async () => ({
+      account,
+      token: `setly_s1_${'A'.repeat(43)}`,
+    }),
+  );
+  t.mock.method(
     accountMetadata,
     'compareAndSwapPasswordHash',
     cas || (async () => true),

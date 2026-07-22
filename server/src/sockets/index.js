@@ -59,6 +59,7 @@ function createSocketServer(
   {
     assertFoundationInitialized = assertTenantFoundationInitialized,
     browserOriginPolicy,
+    sessionRevalidateMs,
   } = {},
 ) {
   assertTenantCapabilityDependencies();
@@ -82,20 +83,24 @@ function createSocketServer(
       return next(handshakeError);
     }
 
+    const token = String(socket.handshake.auth?.token || '').trim();
+    let principal;
     try {
-      const token = String(socket.handshake.auth?.token || '').trim();
-      const payload = token ? authService.verifyToken(token) : null;
-      if (!payload?.accountId) return next(new Error('Unauthorized'));
+      principal = token
+        ? await authService.authenticateBearerToken(token)
+        : null;
+    } catch {
+      principal = null;
+    }
+    if (!principal?.account || !principal.authentication) {
+      const unauthorized = new Error('Unauthorized');
+      unauthorized.data = { code: 'UNAUTHORIZED', status: 401 };
+      return next(unauthorized);
+    }
+    socket.data.account = principal.account;
+    socket.data.authentication = principal.authentication;
 
-      const account = await authService.getAccountById(payload.accountId);
-      if (
-        !account ||
-        account.status !== 'active' ||
-        (account.Staff && account.Staff.status !== 'active')
-      ) {
-        return next(new Error('Unauthorized'));
-      }
-      socket.data.account = account;
+    try {
       if (isTenantCacheRealtimeEnabled()) {
         const organizationId = Number(socket.handshake.auth?.organizationId);
         const clubId = Number(socket.handshake.auth?.clubId);
@@ -110,7 +115,7 @@ function createSocketServer(
           return next(contextError);
         }
         socket.data.tenant = await tenantContextService.resolveTenantContext({
-          accountId: account.id,
+          accountId: principal.account.id,
           clubId,
           organizationId,
           scope: 'club',
@@ -133,25 +138,29 @@ function createSocketServer(
     if (isTenantCacheRealtimeEnabled()) {
       socket.join(GLOBAL_SYSTEM_ROOM);
       getTenantRoomsForContext(socket.data.tenant).forEach((room) => socket.join(room));
-      const configuredInterval = Number(
-        process.env.TENANT_SOCKET_REVALIDATE_MS || 30000,
-      );
-      const intervalMs = Number.isFinite(configuredInterval)
-        ? Math.max(1000, configuredInterval)
-        : 30000;
-      const revalidationTimer = setInterval(async () => {
-        if (await revalidateSocket(socket)) return;
-        socket.disconnect(true);
-      }, intervalMs);
-      revalidationTimer.unref?.();
-      socket.once('disconnect', () => clearInterval(revalidationTimer));
-      return;
+    } else {
+      const role = socket.data.account?.role;
+      if (ACCESS_MATRIX.accessOperate.includes(role)) {
+        socket.join(ACCESS_SOCKET_ROOM);
+      }
+      getRealtimeRoomsForRole(role).forEach((room) => socket.join(room));
     }
-    const role = socket.data.account?.role;
-    if (ACCESS_MATRIX.accessOperate.includes(role)) {
-      socket.join(ACCESS_SOCKET_ROOM);
-    }
-    getRealtimeRoomsForRole(role).forEach((room) => socket.join(room));
+
+    const configuredInterval = Number(
+      sessionRevalidateMs ??
+        process.env.AUTH_SOCKET_REVALIDATE_MS ??
+        process.env.TENANT_SOCKET_REVALIDATE_MS ??
+        30000,
+    );
+    const intervalMs = Number.isFinite(configuredInterval)
+      ? Math.max(sessionRevalidateMs == null ? 1000 : 10, configuredInterval)
+      : 30000;
+    const revalidationTimer = setInterval(async () => {
+      if (await revalidateSocket(socket)) return;
+      socket.disconnect(true);
+    }, intervalMs);
+    revalidationTimer.unref?.();
+    socket.once('disconnect', () => clearInterval(revalidationTimer));
   });
 
   return io;

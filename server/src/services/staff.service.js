@@ -1,6 +1,7 @@
 'use strict';
 
 const db = require('../../models');
+const normalUserSessions = require('./normal-user-session.service');
 const {
   countAuthUsableOwners,
   isAuthUsableOwnerMembership,
@@ -164,6 +165,19 @@ async function mutateStatus(id, status, tenant) {
     });
     if (status !== 'active' && locked.status === 'active') {
       await assertStaffOwnerCanBecomeInactive(locked, transaction);
+      const linkedAccount = await db.Account.findOne({
+        attributes: ['id'],
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: { staffId: locked.id },
+      });
+      if (linkedAccount) {
+        await normalUserSessions.revokeAllForAccount(
+          linkedAccount.id,
+          normalUserSessions.REVOCATION_REASONS.STAFF_DISABLED,
+          { transaction },
+        );
+      }
     }
     await locked.update({ status }, { transaction });
     return locked;
@@ -185,6 +199,19 @@ async function update(id, data, tenant = null) {
     const payload = normalizePayload(data);
     if (payload.status !== 'active' && locked.status === 'active') {
       await assertStaffOwnerCanBecomeInactive(locked, transaction);
+      const linkedAccount = await db.Account.findOne({
+        attributes: ['id'],
+        lock: transaction.LOCK.UPDATE,
+        transaction,
+        where: { staffId: locked.id },
+      });
+      if (linkedAccount) {
+        await normalUserSessions.revokeAllForAccount(
+          linkedAccount.id,
+          normalUserSessions.REVOCATION_REASONS.STAFF_DISABLED,
+          { transaction },
+        );
+      }
     }
     await locked.update(payload, { transaction });
     return locked;

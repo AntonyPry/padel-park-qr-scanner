@@ -13,6 +13,7 @@ const {
   stateError,
 } = require('./tenant-foundation.service');
 const accountLifecycle = require('./account-lifecycle.service');
+const normalUserSessions = require('./normal-user-session.service');
 const {
   DEFAULT_CLUB_SLUG,
   DEFAULT_ORGANIZATION_SLUG,
@@ -371,6 +372,20 @@ async function seedDemoAccounts(accounts, options = {}) {
           organization.id,
           transaction,
         );
+        const revocationReason = definition.status !== 'active'
+          ? normalUserSessions.REVOCATION_REASONS.ACCOUNT_DISABLED
+          : definition.passwordHash !== graph.account.passwordHash
+            ? normalUserSessions.REVOCATION_REASONS.PASSWORD_CHANGED
+            : definition.role !== graph.account.role || staff.id !== graph.account.staffId
+              ? normalUserSessions.REVOCATION_REASONS.SECURITY_CONTEXT_CHANGED
+              : null;
+        if (revocationReason) {
+          await normalUserSessions.revokeAllForAccount(
+            graph.account.id,
+            revocationReason,
+            { transaction },
+          );
+        }
         await graph.account.update(payload, { transaction });
         await graph.membership.update(
           {

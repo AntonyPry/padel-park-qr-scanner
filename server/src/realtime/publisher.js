@@ -79,21 +79,19 @@ function createRealtimeEvent(payload, account, tenant = null) {
 }
 
 async function revalidateSocket(socket) {
-  const tenant = socket.data?.tenant;
-  const accountId = socket.data?.account?.id;
-  if (!tenant || !accountId) return false;
+  const authentication = socket.data?.authentication;
+  if (!authentication?.accountId) return false;
 
   try {
-    const account = await authService.getAccountById(accountId);
-    if (
-      !account ||
-      account.status !== 'active' ||
-      (account.Staff && account.Staff.status !== 'active')
-    ) {
-      return false;
-    }
+    const principal = await authService.revalidateAuthentication(authentication);
+    if (!principal?.account) return false;
+    socket.data.account = principal.account;
+    if (!isTenantCacheRealtimeEnabled()) return true;
+
+    const tenant = socket.data?.tenant;
+    if (!tenant) return false;
     const current = await tenantContextService.resolveTenantContext({
-      accountId,
+      accountId: principal.account.id,
       clubId: tenant.clubId,
       organizationId: tenant.organizationId,
       scope: 'club',
@@ -109,7 +107,7 @@ async function revalidateSocket(socket) {
 }
 
 async function revalidateRoomSockets(io, room) {
-  if (!io?.in || !isTenantCacheRealtimeEnabled()) return;
+  if (!io?.in) return;
   const sockets = await io.in(room).fetchSockets();
   await Promise.all(
     sockets.map(async (socket) => {

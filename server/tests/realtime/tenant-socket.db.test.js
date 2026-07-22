@@ -208,7 +208,7 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
     httpServer = http.createServer();
     io = createSocketServer(httpServer, {
       // The isolated two-tenant fixture intentionally bypasses only the production
-      // single-default classifier. Runtime JWT/membership/club resolution stays real.
+      // single-default classifier. Runtime session/membership/club resolution stays real.
       assertFoundationInitialized: async () => undefined,
     });
     await listen(httpServer);
@@ -313,6 +313,16 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
       await db.Account.update(
         { status: 'active' },
         { where: { id: ownerSession.account.id } },
+      );
+      const refreshedOwnerSession = await authService._private.normalUserSessions.issue(
+        ownerSession.account.id,
+      );
+      ownerSession.token = refreshedOwnerSession.token;
+      ownerSession.account = refreshedOwnerSession.account;
+      sockets[0].disconnect();
+      sockets[0] = await connectSocket(
+        url,
+        auth(ownerSession.token, organizationA.id, clubA.id),
       );
     });
 
@@ -451,7 +461,7 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
     assert.equal(ownerMembershipB.organizationId, organizationB.id);
   } finally {
     sockets.forEach((socket) => socket.disconnect?.());
-    if (io) await io.close();
+    if (io) await new Promise((resolve) => io.close(resolve));
     await closeServer(httpServer);
     if (db?.sequelize) await db.sequelize.close();
     if (schema) await schema.close();
