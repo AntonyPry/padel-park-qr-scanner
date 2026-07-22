@@ -15,6 +15,9 @@ const {
   seedTwoTenantFixture,
 } = require('../helpers/final-tenant-rc-fixture');
 const {
+  selectDatabaseCliTlsArgs,
+} = require('../helpers/database-cli-options');
+const {
   assertFeature10_4IntegrationConnectionSchema,
 } = require('../helpers/feature-10-4-schema');
 const {
@@ -25,11 +28,11 @@ const {
   compareInstallationIdentitySnapshots,
 } = require('../../src/tenant-rollout/preservation-evidence');
 
-function mysqlArgs(database) {
+function mysqlArgs(database, tlsArgs) {
   const args = [
     '-h', process.env.DB_HOST || '127.0.0.1',
     '-u', process.env.DB_USER,
-    '--skip-ssl',
+    ...tlsArgs,
   ];
   if (process.env.DB_PORT) args.push('-P', String(process.env.DB_PORT));
   if (database) args.push(database);
@@ -46,10 +49,12 @@ function databaseToolEnv() {
 function runDump(database, output) {
   const descriptor = fs.openSync(output, 'wx', 0o600);
   try {
+    const binary = process.env.MYSQLDUMP_BIN || 'mysqldump';
+    const { tlsArgs } = selectDatabaseCliTlsArgs(binary);
     const result = spawnSync(
-      process.env.MYSQLDUMP_BIN || 'mysqldump',
+      binary,
       [
-        ...mysqlArgs(null),
+        ...mysqlArgs(null, tlsArgs),
         '--single-transaction',
         '--routines',
         '--triggers',
@@ -76,9 +81,11 @@ function runDump(database, output) {
 function runRestore(database, input) {
   const descriptor = fs.openSync(input, 'r');
   try {
+    const binary = process.env.MYSQL_BIN || 'mysql';
+    const { tlsArgs } = selectDatabaseCliTlsArgs(binary);
     const result = spawnSync(
-      process.env.MYSQL_BIN || 'mysql',
-      mysqlArgs(database),
+      binary,
+      mysqlArgs(database, tlsArgs),
       {
         encoding: 'utf8',
         env: databaseToolEnv(),
@@ -201,6 +208,7 @@ test('Feature 9 installation-wide backup/restore rehearsal', async () => {
 
     const dump = path.join(tempRoot, 'installation.sql');
     runDump(sourceDatabase, dump);
+    assert.equal(fs.statSync(dump).mode & 0o777, 0o600);
     assert.ok(fs.statSync(dump).size > 1000);
 
     rootDb = require('../../models');
