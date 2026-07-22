@@ -21,10 +21,14 @@ Setly использует один штаб, одного тимлида инт
 
 ## Старт чата
 
-Название implementation-чата начинается с `Feature`:
+Название временного implementation-чата сразу задается в формате:
 
-- `Feature N — Короткое название` для среза эпика;
-- `Feature — Короткое название` для самостоятельной capability.
+- `Feature <Короткое имя эпика> — <Конкретная capability>`.
+
+Безликие `Feature 1`, `Исправления` или одно только имя эпика не используются.
+Если временная вспомогательная QA-задача действительно нужна, ее имя также
+содержит epic и capability; постоянная paired QA остается единственной точкой
+verdict.
 
 Перед работой Feature-чат читает:
 
@@ -47,6 +51,11 @@ Setly использует один штаб, одного тимлида инт
 Тимлид передает диспетчеру эпик с целью, product boundaries и зависимостями.
 Диспетчер создает Feature-чаты не под отдельные файлы или кнопки, а под
 законченные capabilities.
+
+При назначении Team Lead сразу переименовывает постоянную пару в `Диспетчер N —
+<Короткое имя эпика>` / `QA N — <Короткое имя эпика>`. После финального epic
+handoff и освобождения capacity он возвращает базовые имена `Диспетчер N` / `QA
+N`, без суффикса и статусного слова.
 
 Хороший Feature scope содержит:
 
@@ -188,6 +197,17 @@ QA возвращает verdict своему диспетчеру. Routine callb
 - после завершения всех capabilities передает тимлиду один epic candidate.
 
 Диспетчер не повторяет Feature QA и не принимает решение о `main`/production.
+Он не передает тимлиду каждую Feature-задачу, feature SHA, targeted tests, polish,
+routine finding, fix/re-QA или промежуточный handoff/log. Тимлид получает только
+согласованный epic contract, критичную escalation, при длительной работе
+компактный epic-level status и финальный candidate с exact epic SHA, итоговым QA
+verdict, migrations/data/rollback, onboarding impact, unresolved risks and
+dependencies.
+
+Критичная escalation означает межэпиковый конфликт, изменение согласованного
+общего API/schema/authority/security contract, product/scope ambiguity,
+блокирующую cross-stream/infrastructure dependency, P0/P1 с широким blast radius
+либо необходимость изменить release/rollback policy.
 
 ## Release integration
 

@@ -65,7 +65,7 @@
 
 ## New chat bootstrap
 
-- Название каждого чата, в котором реализуется продуктовая фича, должно начинаться со слова `Feature`. Для срезов эпика используй формат `Feature N — Короткое название`; для самостоятельной фичи — `Feature — Короткое название`.
+- Название каждого временного implementation-чата задается сразу в формате `Feature <Короткое имя эпика> — <Конкретная capability>`. Не используй безликие `Feature 1`, `Исправления` или одно только имя эпика.
 - В начале нового feature-чата пользователь должен дать ссылку на этот файл, `docs/CODEX_ORGANIZATION.md` и `docs/CODEX_WORKFLOW.md`; если такой ссылки нет, сначала самостоятельно прочитай эти файлы, если они доступны.
 - Feature-чат всегда должен проверить `git status --short --branch`, текущую ветку и `docs/SPRINT_STATUS.md` перед реализацией.
 - Feature-чат работает в `worktrees/crm-features` на `codex/crm-features`, если пользователь явно не указал другой worktree.
@@ -213,12 +213,15 @@ Onboarding подключается пакетно и только при реа
 Тимлид:
 
 - назначает эпики трем универсальным диспетчерам;
+- при назначении сразу переименовывает постоянную пару в `Диспетчер N — <Короткое имя эпика>` / `QA N — <Короткое имя эпика>`, а после финального epic handoff и освобождения capacity возвращает базовые `Диспетчер N` / `QA N` без суффикса и статусного слова;
 - управляет межэпиковыми dependencies и shared foundation;
 - принимает только accepted epic candidates;
 - собирает release candidate, принимает решение о `main`, rollout и rollback;
 - обращается в штаб только за продуктовым или архитектурным смысловым выбором.
 
-Каждый диспетчер ведет полный цикл своего эпика: `Feature -> User Preview -> QA -> fix/re-QA -> epic integration`. Callback target QA всегда его диспетчер. Routine статусы и однозначные findings не уходят в штаб. Пользователь не переносит handoff вручную, кроме прямых визуальных замечаний в исходном Feature-чате.
+Тимлид управляет portfolio эпиков, а не отдельными Feature-задачами. По умолчанию ему не передаются старт/завершение каждой фичи, каждый feature SHA, targeted tests, polish, routine findings, fix/re-QA и промежуточные handoff/logs. Он получает согласованный epic contract, редкие критичные escalation, при длительной работе компактный epic-level status и один финальный epic candidate с exact epic SHA, итоговым QA verdict, migrations/data/rollback, onboarding impact, unresolved risks and dependencies.
+
+Каждый диспетчер ведет полный цикл своего эпика: `Feature -> User Preview -> QA -> fix/re-QA -> epic integration`. Callback target QA всегда его диспетчер. Диспетчер сразу именует временную задачу `Feature <Короткое имя эпика> — <Конкретная capability>`. Routine статусы и однозначные findings не уходят тимлиду или в штаб. Пользователь не переносит handoff вручную, кроме прямых визуальных замечаний в исходном Feature-чате.
 
 Подробные роли и границы описаны в `docs/CODEX_ORGANIZATION.md`.
 
