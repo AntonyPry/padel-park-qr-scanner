@@ -5,6 +5,7 @@ import {
   apiRequest,
   ApiRequestError,
   clearAuthToken,
+  initializeAuthStorage,
   setAuthToken,
   setStoredTrainingMode,
 } from './api';
@@ -58,6 +59,13 @@ describe('apiRequest', () => {
     localStorage.setItem('padel_park_auth_token', 'legacy-token');
     setAuthToken('in-memory-compatibility-token');
 
+    initializeAuthStorage();
+
+    expect(localStorage.getItem('padel_park_auth_token')).toBeNull();
+  });
+
+  it('clears a legacy browser token during logout cleanup', () => {
+    localStorage.setItem('padel_park_auth_token', 'legacy-token');
     clearAuthToken();
 
     expect(localStorage.getItem('padel_park_auth_token')).toBeNull();

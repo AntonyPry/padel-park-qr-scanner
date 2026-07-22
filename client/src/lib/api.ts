@@ -23,6 +23,21 @@ const CSRF_HEADER_NAME = 'X-CSRF-Token';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 let inMemoryAuthToken: string | null = null;
 
+function removeLegacyAuthToken() {
+  try {
+    localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  } catch {
+    // Storage may be unavailable in a restricted browser context; cookie auth
+    // remains the only normal-user credential path.
+  }
+}
+
+export function initializeAuthStorage() {
+  removeLegacyAuthToken();
+}
+
+initializeAuthStorage();
+
 interface StoredTrainingMode {
   isEnabled: boolean;
   role?: string | null;
@@ -40,7 +55,7 @@ export function clearAuthToken() {
   inMemoryAuthToken = null;
   // One-time migration cleanup only: the browser auth path never reads or
   // writes this legacy JS-readable token again.
-  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
+  removeLegacyAuthToken();
   clearStoredTrainingMode();
   cancelTenantSensitiveRequests();
   clearActiveTenantContext();
