@@ -223,6 +223,24 @@ Onboarding подключается пакетно и только при реа
 
 Каждый диспетчер ведет полный цикл своего эпика: `Feature -> User Preview -> QA -> fix/re-QA -> epic integration`. Callback target QA всегда его диспетчер. Диспетчер сразу именует временную задачу `Feature <Короткое имя эпика> — <Конкретная capability>`. Routine статусы и однозначные findings не уходят тимлиду или в штаб. Пользователь не переносит handoff вручную, кроме прямых визуальных замечаний в исходном Feature-чате.
 
+### Operational source and queue
+
+- Канонические технические источники доступны всем ролям: `AGENTS.md`, organization/workflow docs, релевантные vault/domain/epic files и exact code/diff/SHA. Feature и QA обязаны читать их самостоятельно.
+- Epic operational source of truth получает только назначенный Dispatcher: current brief, priority/scope, acceptance boundaries, dependencies, Team Lead decisions, queue/status changes и cross-epic constraints. Team Lead не рассылает эти обновления напрямую Feature/QA и не управляет ими в обход Dispatcher.
+- Перед новым handoff/follow-up в Feature или QA Dispatcher проверяет task state. Для `idle/completed` он перечитывает последний результат, удаляет устаревшие пункты и отправляет один цельный handoff. Для `active` он сохраняет pending update в своей очереди и ждёт idle/completion.
+- Не дроби одно задание на серию сообщений вслед работающему чату. Routine уточнения консолидируются в следующий handoff.
+- Одна Feature-задача выполняет одну capability/fix-итерацию; permanent QA проверяет один exact candidate за раз. Candidate B ждёт, пока QA закончит candidate A.
+- QA получает candidate только после завершённой Feature, применимого User Preview и готового exact-SHA handoff.
+- Active task можно срочно прервать только при wrong repo/worktree/branch, риске потери/утечки данных или секрета, unauthorized production mutation, destructive migration/force push, blocking P0/P1 либо явном stop/task-change пользователя. Scope polish, дополнительная идея, новый handoff, status question и некритичная dependency не являются причиной прерывания.
+
+### Waiting for user marker
+
+- Если задача реально остановлена до конкретного ответа или действия пользователя, она сама добавляет к текущему динамическому названию один ведущий `!!!`, например `!!!Feature Security — MFA`.
+- Маркер ставится только для User Preview acceptance/правок, product choice, credentials/access/manual user action, explicit production/security decision или ambiguity без безопасного внутреннего решения.
+- Не ставь `!!!` для idle/unassigned, ожидания другой роли, команды/долгого теста, безопасно продолжаемой работы или обычного status update без вопроса. Не добавляй второй `!!!`.
+- Сразу после ответа пользователя удали только ведущий `!!!`, восстанови актуальное role/epic/capability name и продолжи работу.
+- Каждая задача владеет своим marker. Dispatcher не дублирует пользовательский вопрос дочерней задачи и не снимает marker за неё. Feature сохраняет прямой User Preview dialogue с пользователем.
+
 Подробные роли и границы описаны в `docs/CODEX_ORGANIZATION.md`.
 
 Подробная инструкция по использованию Codex в проекте: `docs/CODEX_WORKFLOW.md`.

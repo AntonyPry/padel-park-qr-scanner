@@ -30,6 +30,14 @@ Setly использует один штаб, одного тимлида инт
 содержит epic и capability; постоянная paired QA остается единственной точкой
 verdict.
 
+Если задача реально остановлена до конкретного ответа/действия пользователя, она
+сама добавляет к актуальному названию один ведущий `!!!`: например,
+`!!!Feature Security — MFA`. Marker не используется для idle/unassigned,
+internal wait, команды/долгого теста, безопасно продолжаемой работы или status без
+вопроса. После ответа задача сразу удаляет только ведущий `!!!` и продолжает под
+актуальным dynamic name. Dispatcher не дублирует вопрос и не снимает marker за
+дочернюю задачу; Feature сохраняет прямой User Preview dialogue.
+
 Перед работой Feature-чат читает:
 
 ```text
@@ -70,6 +78,36 @@ N`, без суффикса и статусного слова.
 У одного диспетчера обычно не больше трех активных Feature-чатов. Два изменения
 одного auth/schema/tenant/money foundation не выполняются параллельно без
 явного integration plan.
+
+## Operational source and pending queue
+
+Технические sources of truth доступны всем ролям: `AGENTS.md`, organization and
+workflow docs, relevant vault/domain/epic files и exact code/diff/SHA. Feature и
+QA читают их самостоятельно.
+
+Epic operational truth Team Lead передает только назначенному Dispatcher: brief,
+priority/scope, acceptance boundaries, dependencies, decisions, queue/status
+changes и cross-epic constraints. Team Lead не пишет эти обновления Feature/QA
+напрямую. Dispatcher сам синхронизирует дочерние задачи.
+
+Перед новым handoff/follow-up Dispatcher проверяет target state:
+
+- `idle/completed`: перечитывает последний результат, удаляет stale пункты и
+  отправляет один консолидированный handoff;
+- `active`: сохраняет pending update в собственной очереди и ждёт завершения,
+  не дробя уточнение на сообщения вслед работающему чату.
+
+Одна Feature-задача выполняет одну capability/fix-итерацию, а permanent QA
+проверяет один exact candidate за раз. Candidate B ждёт завершения QA candidate A.
+QA handoff допустим только после завершённой Feature, применимого User Preview и
+готового exact-SHA candidate. Независимые capabilities могут иметь параллельные
+Feature-задачи, но routine follow-up всё равно не перебивает active step.
+
+Срочное прерывание active task допустимо только при wrong repo/worktree/branch,
+риске потери/утечки данных или секрета, unauthorized production mutation,
+destructive migration/force push, blocking P0/P1 либо явном stop/task-change
+пользователя. Scope polish, дополнительная идея, новый handoff, status question и
+некритичная dependency консолидируются в очередь.
 
 ## Feature-цикл
 
