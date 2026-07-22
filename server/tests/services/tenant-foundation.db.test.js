@@ -220,13 +220,23 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         ['POST', '/auth/login'],
         ['GET', '/clients'],
         ['POST', '/webhooks/evotor'],
-        ['POST', '/integrations/beeline/events'],
+        ['POST', '/integrations/beeline/events/ic_00000000000000000000000000000000'],
         ['GET', '/telephony/transcription-jobs/worker-queue'],
       ]) {
         const response = await fetch(apiUrl(server, route), { method });
         assert.equal(response.status, 503, `${method} ${route}`);
         assert.equal((await response.json()).code, 'BOOTSTRAP_REQUIRED');
       }
+
+      const rawEventsBeforeLegacyReject = await db.TelephonyRawEvent.count();
+      const legacyBeeline = await fetch(apiUrl(server, '/integrations/beeline/events'), {
+        body: 'not-json-and-must-never-reach-the-parser',
+        headers: { 'content-type': 'application/json' },
+        method: 'POST',
+      });
+      assert.equal(legacyBeeline.status, 404);
+      assert.equal(await legacyBeeline.text(), 'Rejected');
+      assert.equal(await db.TelephonyRawEvent.count(), rawEventsBeforeLegacyReject);
     });
 
     await t.test('bootstrap-pending rejects Socket.IO before authentication', async () => {
