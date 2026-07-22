@@ -195,6 +195,32 @@ test('canonicalization, sharded keys and local overflow keep attacker cardinalit
   assert.equal(store.getStats().keys, 0);
 });
 
+test('the v1 contract extends the five accepted surfaces with exactly twelve ingress surfaces', () => {
+  const newSurfaces = new Set([
+    SURFACES.PROVIDER_BEELINE_CAPABILITY,
+    SURFACES.PROVIDER_BEELINE_CONNECTION,
+    SURFACES.PROVIDER_BEELINE_LEGACY,
+    SURFACES.PROVIDER_EVOTOR_CONNECTION,
+    SURFACES.PROVIDER_EVOTOR_LEGACY,
+    SURFACES.WORKER_AUDIO_REFERENCE,
+    SURFACES.WORKER_CLAIM,
+    SURFACES.WORKER_FAIL,
+    SURFACES.WORKER_PROGRESS,
+    SURFACES.WORKER_QUEUE,
+    SURFACES.WORKER_RESULT,
+    SURFACES.WORKER_RETRY,
+  ]);
+  assert.equal(newSurfaces.size, 12);
+  assert.equal(Object.keys(_private.DEFAULT_POLICIES).length, 17);
+  for (const surface of newSurfaces) {
+    assert.deepEqual(
+      Object.keys(_private.DEFAULT_POLICIES[surface]).sort(),
+      Object.keys(_private.SURFACE_INPUTS[surface]).sort(),
+      surface,
+    );
+  }
+});
+
 test('oversized raw subjects are rejected before normalization or UTF-8 byte scans', (t) => {
   const originalNormalize = String.prototype.normalize;
   const originalByteLength = Buffer.byteLength;
@@ -210,7 +236,15 @@ test('oversized raw subjects are rejected before normalization or UTF-8 byte sca
   });
 
   const asciiSixMb = 'A'.repeat(6_000_000);
-  for (const kind of ['email', 'username', 'token', 'peer']) {
+  for (const kind of [
+    'callback_token',
+    'connection_public_id',
+    'credential',
+    'email',
+    'username',
+    'token',
+    'peer',
+  ]) {
     assert.equal(
       _private.boundedCanonical(asciiSixMb, { kind }),
       `${kind}:invalid`,
@@ -219,6 +253,18 @@ test('oversized raw subjects are rejected before normalization or UTF-8 byte sca
   assert.equal(
     _private.boundedCanonical('Ａ'.repeat(2_000_000), { kind: 'email' }),
     'email:invalid',
+  );
+  assert.equal(
+    _private.canonicalSubject(['worker_credential'], {
+      headers: { authorization: asciiSixMb },
+    }),
+    'credential:invalid',
+  );
+  assert.equal(
+    _private.canonicalSubject(['connection_public_id'], {
+      params: { connectionPublicId: asciiSixMb },
+    }),
+    'connection_public_id:invalid',
   );
   assert.equal(normalizeCalls, 0);
   assert.equal(byteLengthCalls, 0);
@@ -262,6 +308,152 @@ test('raw pre-bounds preserve adjacent valid and invalid canonical cases', () =>
     _private.boundedCanonical('not-a-peer', { kind: 'peer' }),
     'peer:invalid',
   );
+  assert.equal(
+    _private.boundedCanonical(`ic_${'a'.repeat(32)}`, { kind: 'connection_public_id' }),
+    `connection_public_id:valid:ic_${'a'.repeat(32)}`,
+  );
+  assert.equal(
+    _private.boundedCanonical('b'.repeat(64), { kind: 'callback_token' }),
+    `callback_token:valid:${'b'.repeat(64)}`,
+  );
+  assert.equal(
+    _private.boundedCanonical(' shared-worker-token ', { kind: 'credential' }),
+    'credential:valid:shared-worker-token',
+  );
+});
+
+test('provider and worker subjects use bounded headers and params without raw event material', async () => {
+  const raw = {
+    callback: 'a'.repeat(64),
+    connection: `ic_${'b'.repeat(32)}`,
+    forwarded: '203.0.113.90',
+    token: 'private-worker-token',
+  };
+  const requestValue = {
+    body: { claimToken: 'private-claim-token', workerId: 'private-body-instance' },
+    cookies: { session: 'private-session-id' },
+    headers: {
+      authorization: `Bearer ${raw.token}`,
+      'x-forwarded-for': raw.forwarded,
+      'x-real-ip': raw.forwarded,
+      'x-worker-instance-id': 'attacker-controlled-instance',
+    },
+    params: {
+      callbackToken: raw.callback,
+      connectionPublicId: raw.connection,
+      id: 'private-job-id',
+    },
+    query: { claimToken: 'private-query-token' },
+    socket: { remoteAddress: '127.0.0.1' },
+  };
+  assert.equal(
+    _private.canonicalSubject(['worker_credential'], requestValue),
+    `credential:valid:${raw.token}`,
+  );
+  assert.equal(
+    _private.canonicalSubject(['evotor_credential'], {
+      headers: { authorization: 'Bearer evotor-secret', 'x-evotor-token': '' },
+    }),
+    'credential:valid:evotor-secret',
+  );
+  assert.equal(
+    _private.canonicalSubject(['beeline_credential'], {
+      headers: {
+        'x-beeline-webhook-secret': '',
+        'x-webhook-secret': 'beeline-secret',
+      },
+    }),
+    'credential:valid:beeline-secret',
+  );
+  assert.equal(
+    _private.canonicalSubject(['connection_public_id'], requestValue),
+    `connection_public_id:valid:${raw.connection}`,
+  );
+  assert.equal(
+    _private.canonicalSubject(['callback_token'], requestValue),
+    `callback_token:valid:${raw.callback}`,
+  );
+
+  const events = [];
+  const limiter = createAuthRateLimiter({
+    env: activeEnv({
+      AUTH_RATE_LIMIT_POLICY_JSON: JSON.stringify({
+        [SURFACES.WORKER_QUEUE]: {
+          credential: { limit: 100, windowSeconds: 60 },
+          credential_class: { limit: 1, windowSeconds: 60 },
+          peer: { limit: 100, windowSeconds: 60 },
+          route: { limit: 100, windowSeconds: 60 },
+        },
+      }),
+    }),
+    logger: (event) => events.push(event),
+  });
+  const first = await limiter.consumeRequest(SURFACES.WORKER_QUEUE, requestValue);
+  const rotated = {
+    ...requestValue,
+    headers: {
+      ...requestValue.headers,
+      authorization: 'Bearer rotated-private-worker-token',
+      'x-forwarded-for': '198.51.100.10',
+      'x-real-ip': '198.51.100.11',
+      'x-worker-instance-id': 'rotated-instance',
+    },
+  };
+  const second = await limiter.consumeRequest(SURFACES.WORKER_QUEUE, rotated);
+  assert.equal(first.blocked, false);
+  assert.equal(second.blocked, true);
+  assert.equal(events.every((event) => event.event === 'security.auth_rate_limit.decision'), true);
+  assert.equal(events.every((event) => event.surface === SURFACES.WORKER_QUEUE), true);
+  const evidence = JSON.stringify(events);
+  for (const forbidden of [
+    raw.callback,
+    raw.connection,
+    raw.forwarded,
+    raw.token,
+    'rotated-private-worker-token',
+    'attacker-controlled-instance',
+    'rotated-instance',
+    'private-job-id',
+    'private-claim-token',
+    'private-body-instance',
+    'private-session-id',
+    'private-query-token',
+  ]) {
+    assert.equal(evidence.includes(forbidden), false, forbidden);
+  }
+});
+
+test('rotating provider public IDs and capability tokens cannot evade fixed guards', async () => {
+  const limiter = createAuthRateLimiter({
+    env: activeEnv({
+      AUTH_RATE_LIMIT_POLICY_JSON: JSON.stringify({
+        [SURFACES.PROVIDER_BEELINE_CAPABILITY]: {
+          connection: { limit: 100, windowSeconds: 60 },
+          credential: { limit: 100, windowSeconds: 60 },
+          credential_class: { limit: 1, windowSeconds: 60 },
+          peer: { limit: 100, windowSeconds: 60 },
+          route: { limit: 100, windowSeconds: 60 },
+        },
+      }),
+    }),
+    logger: () => {},
+  });
+  const providerRequest = (character, forwarded) => ({
+    headers: { 'x-forwarded-for': forwarded, 'x-real-ip': forwarded },
+    params: {
+      callbackToken: character.repeat(64),
+      connectionPublicId: `ic_${character.repeat(32)}`,
+    },
+    socket: { remoteAddress: '127.0.0.1' },
+  });
+  assert.equal((await limiter.consumeRequest(
+    SURFACES.PROVIDER_BEELINE_CAPABILITY,
+    providerRequest('a', '203.0.113.1'),
+  )).blocked, false);
+  assert.equal((await limiter.consumeRequest(
+    SURFACES.PROVIDER_BEELINE_CAPABILITY,
+    providerRequest('b', '198.51.100.2'),
+  )).blocked, true);
 });
 
 test('Redis outage degrades to bounded local enforcement instead of unlimited access', async () => {

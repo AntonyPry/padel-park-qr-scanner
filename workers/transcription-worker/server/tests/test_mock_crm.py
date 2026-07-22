@@ -3,7 +3,7 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from server.crm import CrmClient
+from server.crm import CrmApiError, CrmClient, parse_retry_after_seconds
 
 
 REQUESTS = []
@@ -14,11 +14,13 @@ class MockCrmHandler(BaseHTTPRequestHandler):
     def log_message(self, _fmt, *_args):
         return
 
-    def _json(self, payload, status=200):
+    def _json(self, payload, status=200, headers=None):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -35,6 +37,17 @@ class MockCrmHandler(BaseHTTPRequestHandler):
             return
         if self.path == "/api/telephony/transcription-jobs/worker-queue?pageSize=80":
             self._json({"items": [], "totals": {"queued": 0, "processing": 0, "completedToday": 0, "failed": 0}})
+            return
+        if self.path == "/api/rate-limited":
+            self._json(
+                {
+                    "code": "WORKER_RATE_LIMITED",
+                    "error": "worker-secret Authorization body must not be logged",
+                    "status": 429,
+                },
+                status=429,
+                headers={"Retry-After": "999"},
+            )
             return
         self._json({"error": "not found"}, status=404)
 
@@ -131,6 +144,20 @@ class MockCrmTest(unittest.TestCase):
             self.assertEqual(protocol, "2")
             self.assertEqual(body["claimId"], "160dca15-56e8-41df-885f-b91793733f5c")
             self.assertEqual(body["claimToken"], "lease-secret")
+
+    def test_retry_after_is_strictly_parsed_capped_and_not_logged_with_headers(self):
+        self.assertEqual(parse_retry_after_seconds("1"), 1)
+        self.assertEqual(parse_retry_after_seconds("299"), 299)
+        self.assertEqual(parse_retry_after_seconds("999"), 300)
+        for invalid in (None, "", "0", "01", "-1", "1.5", " 10 ", "Wed, 21 Oct 2015 07:28:00 GMT"):
+            self.assertIsNone(parse_retry_after_seconds(invalid), repr(invalid))
+
+        with self.assertRaises(CrmApiError) as caught:
+            self.client._request("/rate-limited")
+        self.assertEqual(caught.exception.status, 429)
+        self.assertEqual(caught.exception.retry_after_seconds, 300)
+        self.assertNotIn("worker-secret", str(caught.exception))
+        self.assertNotIn("Authorization", str(caught.exception))
 
 
 if __name__ == "__main__":

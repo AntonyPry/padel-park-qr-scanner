@@ -15,7 +15,7 @@ interface EndpointContract {
   path: string;
   public?: boolean;
   query?: unknown;
-  rateLimited?: boolean;
+  rateLimited?: boolean | 'provider' | 'worker';
   response?: unknown;
   responseType?: 'binary' | 'json' | 'xlsx';
   successStatus?: number;
@@ -46,6 +46,11 @@ const apiError = z.object({
 const rateLimitError = z.object({
   code: z.literal('AUTH_RATE_LIMITED'),
   error: z.literal('Слишком много попыток. Повторите позже'),
+  status: z.literal(429),
+});
+const workerRateLimitError = z.object({
+  code: z.literal('WORKER_RATE_LIMITED'),
+  error: z.literal('Worker request rate limited'),
   status: z.literal(429),
 });
 const integrationConnectionParams = z.object({
@@ -92,8 +97,8 @@ const rawEndpointContracts: EndpointContract[] = [
   { ...apiSchemas.installationProvisioning.reissue, id: 'installationProvisioning.reissue', method: 'post', path: '/installation/provisioning/organizations/{organizationId}/activation/reissue', summary: 'Reissue first owner activation link', tags: ['Installation Provisioning'] },
   { ...apiSchemas.installationProvisioning.activationStatus, id: 'installationProvisioning.activationStatus', method: 'post', path: '/installation/provisioning/activation/status', public: true, rateLimited: true, summary: 'Inspect first owner activation link', tags: ['Installation Provisioning'] },
   { ...apiSchemas.installationProvisioning.activate, id: 'installationProvisioning.activate', method: 'post', path: '/installation/provisioning/activation/consume', public: true, rateLimited: true, summary: 'Activate first owner account', tags: ['Installation Provisioning'] },
-  { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
-  { id: 'webhooks.evotorConnection', method: 'post', params: integrationConnectionParams, path: '/webhooks/evotor/{connectionPublicId}', public: true, summary: 'Receive Evotor webhook through an integration connection', tags: ['Integrations'] },
+  { id: 'webhooks.evotor', method: 'post', path: '/webhooks/evotor', public: true, rateLimited: 'provider', summary: 'Receive Evotor webhook event', tags: ['Integrations'] },
+  { id: 'webhooks.evotorConnection', method: 'post', params: integrationConnectionParams, path: '/webhooks/evotor/{connectionPublicId}', public: true, rateLimited: 'provider', summary: 'Receive Evotor webhook through an integration connection', tags: ['Integrations'] },
 
   { id: 'access.search', method: 'get', path: '/search', query: apiSchemas.access.searchQuery, summary: 'Search clients for access monitor', tags: ['Access'] },
   { ...apiSchemas.access.manualVisit, id: 'access.manualVisit', method: 'post', path: '/manual-visit', summary: 'Create manual visit', tags: ['Access'] },
@@ -258,13 +263,13 @@ const rawEndpointContracts: EndpointContract[] = [
   { id: 'telephony.transcriptionJobs', method: 'get', path: '/telephony/transcription-jobs', query: apiSchemas.telephony.transcriptionJobsQuery, summary: 'List transcription jobs', tags: ['Telephony'] },
   { id: 'telephony.transcriptionJobStats', method: 'get', path: '/telephony/transcription-jobs/stats', summary: 'Get transcription job stats', tags: ['Telephony'] },
   { id: 'telephony.getTranscriptionJob', method: 'get', path: '/telephony/transcription-jobs/{id}', params: apiSchemas.telephony.withId.params, summary: 'Get transcription job', tags: ['Telephony'] },
-  { id: 'telephony.workerTranscriptionQueue', method: 'get', path: '/telephony/transcription-jobs/worker-queue', query: apiSchemas.telephony.transcriptionJobsQuery, public: true, summary: 'Get worker transcription queue snapshot', tags: ['Telephony'] },
-  { id: 'telephony.claimTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/claim', body: apiSchemas.telephony.transcriptionClaimBody, public: true, summary: 'Claim queued transcription job', tags: ['Telephony'] },
-  { id: 'telephony.transcriptionAudioReference', method: 'post', path: '/telephony/transcription-jobs/{id}/audio-reference', body: apiSchemas.telephony.transcriptionAudioReference.body, params: apiSchemas.telephony.transcriptionAudioReference.params, public: true, summary: 'Get transcription audio reference', tags: ['Telephony'] },
-  { id: 'telephony.updateTranscriptionProgress', method: 'post', path: '/telephony/transcription-jobs/{id}/progress', body: apiSchemas.telephony.transcriptionProgress.body, params: apiSchemas.telephony.transcriptionProgress.params, public: true, summary: 'Update transcription progress heartbeat', tags: ['Telephony'] },
-  { id: 'telephony.completeTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/result', body: apiSchemas.telephony.transcriptionResult.body, params: apiSchemas.telephony.transcriptionResult.params, public: true, summary: 'Submit transcription result', tags: ['Telephony'] },
-  { id: 'telephony.failTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/fail', body: apiSchemas.telephony.transcriptionFail.body, params: apiSchemas.telephony.transcriptionFail.params, public: true, summary: 'Fail transcription job', tags: ['Telephony'] },
-  { id: 'telephony.workerRetryTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/worker-retry', params: apiSchemas.telephony.withId.params, public: true, summary: 'Retry failed transcription job from worker dashboard', tags: ['Telephony'] },
+  { id: 'telephony.workerTranscriptionQueue', method: 'get', path: '/telephony/transcription-jobs/worker-queue', query: apiSchemas.telephony.transcriptionJobsQuery, public: true, rateLimited: 'worker', summary: 'Get worker transcription queue snapshot', tags: ['Telephony'] },
+  { id: 'telephony.claimTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/claim', body: apiSchemas.telephony.transcriptionClaimBody, public: true, rateLimited: 'worker', summary: 'Claim queued transcription job', tags: ['Telephony'] },
+  { id: 'telephony.transcriptionAudioReference', method: 'post', path: '/telephony/transcription-jobs/{id}/audio-reference', body: apiSchemas.telephony.transcriptionAudioReference.body, params: apiSchemas.telephony.transcriptionAudioReference.params, public: true, rateLimited: 'worker', summary: 'Get transcription audio reference', tags: ['Telephony'] },
+  { id: 'telephony.updateTranscriptionProgress', method: 'post', path: '/telephony/transcription-jobs/{id}/progress', body: apiSchemas.telephony.transcriptionProgress.body, params: apiSchemas.telephony.transcriptionProgress.params, public: true, rateLimited: 'worker', summary: 'Update transcription progress heartbeat', tags: ['Telephony'] },
+  { id: 'telephony.completeTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/result', body: apiSchemas.telephony.transcriptionResult.body, params: apiSchemas.telephony.transcriptionResult.params, public: true, rateLimited: 'worker', summary: 'Submit transcription result', tags: ['Telephony'] },
+  { id: 'telephony.failTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/fail', body: apiSchemas.telephony.transcriptionFail.body, params: apiSchemas.telephony.transcriptionFail.params, public: true, rateLimited: 'worker', summary: 'Fail transcription job', tags: ['Telephony'] },
+  { id: 'telephony.workerRetryTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/worker-retry', params: apiSchemas.telephony.withId.params, public: true, rateLimited: 'worker', summary: 'Retry failed transcription job from worker dashboard', tags: ['Telephony'] },
   { id: 'telephony.retryTranscriptionJob', method: 'post', path: '/telephony/transcription-jobs/{id}/retry', params: apiSchemas.telephony.withId.params, summary: 'Retry failed transcription job', tags: ['Telephony'] },
   { id: 'telephony.syncStatistics', method: 'post', path: '/telephony/beeline/sync', body: apiSchemas.telephony.syncBody, summary: 'Sync Beeline statistics', tags: ['Telephony'] },
   { id: 'telephony.syncRecordings', method: 'post', path: '/telephony/beeline/records/sync', body: apiSchemas.telephony.recordsSyncBody, summary: 'Sync Beeline recordings', tags: ['Telephony'] },
@@ -272,9 +277,9 @@ const rawEndpointContracts: EndpointContract[] = [
   { id: 'telephony.checkSubscription', method: 'post', path: '/telephony/beeline/subscription/check', summary: 'Check Beeline XSI subscription', tags: ['Telephony'] },
   { id: 'telephony.rawEvents', method: 'get', path: '/telephony/raw-events', query: apiSchemas.telephony.rawEventsQuery, summary: 'List raw Beeline events', tags: ['Telephony'] },
   { id: 'telephony.reprocessRawEvent', method: 'post', path: '/telephony/raw-events/{id}/reprocess', params: apiSchemas.telephony.withId.params, summary: 'Reprocess raw Beeline event', tags: ['Telephony'] },
-  { id: 'telephony.beelineWebhook', method: 'post', path: '/integrations/beeline/events', public: true, summary: 'Reject legacy Beeline webhook route', tags: ['Telephony'] },
-  { id: 'telephony.beelineConnectionWebhook', method: 'post', params: integrationConnectionParams, path: '/integrations/beeline/events/{connectionPublicId}', public: true, summary: 'Receive Beeline webhook through an integration connection', tags: ['Telephony'] },
-  { id: 'telephony.beelineCapabilityWebhook', method: 'post', params: beelineCapabilityParams, path: '/integrations/beeline/events/{connectionPublicId}/{callbackToken}', public: true, summary: 'Receive Beeline webhook through an encrypted callback capability', tags: ['Telephony'] },
+  { id: 'telephony.beelineWebhook', method: 'post', path: '/integrations/beeline/events', public: true, rateLimited: 'provider', summary: 'Reject legacy Beeline webhook route', tags: ['Telephony'] },
+  { id: 'telephony.beelineConnectionWebhook', method: 'post', params: integrationConnectionParams, path: '/integrations/beeline/events/{connectionPublicId}', public: true, rateLimited: 'provider', summary: 'Receive Beeline webhook through an integration connection', tags: ['Telephony'] },
+  { id: 'telephony.beelineCapabilityWebhook', method: 'post', params: beelineCapabilityParams, path: '/integrations/beeline/events/{connectionPublicId}/{callbackToken}', public: true, rateLimited: 'provider', summary: 'Receive Beeline webhook through an encrypted callback capability', tags: ['Telephony'] },
 
   { id: 'clients.list', method: 'get', path: '/clients', query: apiSchemas.clients.listQuery, summary: 'List clients', tags: ['Clients'] },
   { id: 'clients.search', method: 'get', path: '/clients/search', query: apiSchemas.clients.listQuery, summary: 'Search clients for operational workflows', tags: ['Clients'] },
@@ -541,13 +546,21 @@ function buildOperation(endpoint: EndpointContract) {
     },
   };
   if (endpoint.rateLimited) {
+    const providerRateLimited = endpoint.rateLimited === 'provider';
+    const workerRateLimited = endpoint.rateLimited === 'worker';
     responses[429] = {
       content: {
-        'application/json': {
-          schema: schemaToJsonSchema(rateLimitError),
+        [providerRateLimited ? 'text/plain' : 'application/json']: {
+          schema: providerRateLimited
+            ? { const: 'Too Many Requests', type: 'string' }
+            : schemaToJsonSchema(workerRateLimited ? workerRateLimitError : rateLimitError),
         },
       },
-      description: 'Temporary credential-entry rate limit exceeded',
+      description: providerRateLimited
+        ? 'Temporary provider ingress rate limit exceeded'
+        : workerRateLimited
+          ? 'Temporary worker ingress rate limit exceeded'
+          : 'Temporary credential-entry rate limit exceeded',
       headers: {
         'Retry-After': {
           description: 'Positive integer seconds until the fixed window expires.',

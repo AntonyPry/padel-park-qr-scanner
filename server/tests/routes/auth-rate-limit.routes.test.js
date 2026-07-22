@@ -131,29 +131,54 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
   }
 });
 
-test('OpenAPI declares the real 429 and Retry-After drift only on the five covered surfaces', () => {
+test('OpenAPI declares 429 and Retry-After on the exact five auth plus twelve ingress operations', () => {
   const document = getOpenApiDocument();
-  const covered = new Set([
-    '/auth/bootstrap',
-    '/auth/login',
-    '/installation/provisioning/session',
-    '/installation/provisioning/activation/status',
-    '/installation/provisioning/activation/consume',
+  const authCovered = new Set([
+    'POST /auth/bootstrap',
+    'POST /auth/login',
+    'POST /installation/provisioning/session',
+    'POST /installation/provisioning/activation/status',
+    'POST /installation/provisioning/activation/consume',
+  ]);
+  const providerCovered = new Set([
+    'POST /webhooks/evotor',
+    'POST /webhooks/evotor/{connectionPublicId}',
+    'POST /integrations/beeline/events',
+    'POST /integrations/beeline/events/{connectionPublicId}',
+    'POST /integrations/beeline/events/{connectionPublicId}/{callbackToken}',
+  ]);
+  const workerCovered = new Set([
+    'GET /telephony/transcription-jobs/worker-queue',
+    'POST /telephony/transcription-jobs/claim',
+    'POST /telephony/transcription-jobs/{id}/audio-reference',
+    'POST /telephony/transcription-jobs/{id}/progress',
+    'POST /telephony/transcription-jobs/{id}/result',
+    'POST /telephony/transcription-jobs/{id}/fail',
+    'POST /telephony/transcription-jobs/{id}/worker-retry',
   ]);
   const declared = [];
   for (const [path, pathItem] of Object.entries(document.paths)) {
-    for (const operation of Object.values(pathItem)) {
+    for (const [method, operation] of Object.entries(pathItem)) {
       if (!operation.responses?.[429]) continue;
-      declared.push(path);
+      const operationKey = `${method.toUpperCase()} ${path}`;
+      declared.push(operationKey);
       const response = operation.responses[429];
-      assert.deepEqual(response.content['application/json'].schema.required.sort(), [
-        'code',
-        'error',
-        'status',
-      ]);
       assert.equal(response.headers['Retry-After'].required, true);
       assert.equal(response.headers['Retry-After'].schema.minimum, 1);
+      if (providerCovered.has(operationKey)) {
+        assert.equal(response.content['text/plain'].schema.const, 'Too Many Requests');
+      } else {
+        const schema = response.content['application/json'].schema;
+        assert.deepEqual(schema.required.sort(), ['code', 'error', 'status']);
+        assert.equal(
+          schema.properties.code.const,
+          workerCovered.has(operationKey) ? 'WORKER_RATE_LIMITED' : 'AUTH_RATE_LIMITED',
+        );
+      }
     }
   }
-  assert.deepEqual(new Set(declared), covered);
+  assert.deepEqual(
+    new Set(declared),
+    new Set([...authCovered, ...providerCovered, ...workerCovered]),
+  );
 });

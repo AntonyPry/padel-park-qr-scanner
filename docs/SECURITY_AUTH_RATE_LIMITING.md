@@ -1,9 +1,10 @@
-# Setly credential-entry abuse throttling
+# Setly application ingress abuse throttling
 
-SEC-A4a adds a staged application containment layer to the five credential-entry
-surfaces that exist today. The candidate is default-off and does not claim that
-production enforcement, the I4 proxy contract, or production Argon2 capacity is
-ready.
+SEC-A4a and SEC-A4b share one staged application containment layer. It covers
+the five credential-entry surfaces plus five provider ingress and seven
+transcription-worker operations. The candidate is default-off and does not
+claim that production enforcement, the I4 proxy contract, provider retry/burst
+behavior or exact-release worker/Redis capacity is ready.
 
 ## Covered surfaces and v1 budgets
 
@@ -20,6 +21,33 @@ race and does not create an account-existence oracle.
 | `POST /api/installation/provisioning/session` | canonical operator username | `6 / 600s` | `30 / 600s` | `60 / 600s` |
 | `POST /api/installation/provisioning/activation/status` | canonical activation token | `12 / 300s` | `120 / 300s` | `300 / 300s` |
 | `POST /api/installation/provisioning/activation/consume` | canonical activation token | `5 / 600s` | `30 / 600s` | `60 / 600s` |
+
+Provider budgets reserve fixed route/provider-class and socket-peer dimensions.
+Connection-first routes also reserve pseudonymous connection and credential
+dimensions. The rejected legacy Beeline route has no credential input. The
+legacy bare Evotor route remains optional-secret when its existing feature
+state permits that behavior; throttling contains abuse but does not make that
+path authenticated or close the separate A9 finding.
+
+| Provider surface | Connection | Credential | Provider class | Socket peer | Route |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `POST /api/webhooks/evotor` | — | `300 / 60s` | `600 / 60s` | `600 / 60s` | `600 / 60s` |
+| `POST /api/webhooks/evotor/:connectionPublicId` | `600 / 60s` | `600 / 60s` | `1800 / 60s` | `1200 / 60s` | `1800 / 60s` |
+| `POST /api/integrations/beeline/events` | — | — | `120 / 60s` | `120 / 60s` | `120 / 60s` |
+| `POST /api/integrations/beeline/events/:connectionPublicId` | `1200 / 60s` | `1200 / 60s` | `3600 / 60s` | `2400 / 60s` | `3600 / 60s` |
+| `POST /api/integrations/beeline/events/:connectionPublicId/:callbackToken` | `1200 / 60s` | `1200 / 60s` | `3600 / 60s` | `2400 / 60s` | `3600 / 60s` |
+
+Worker budgets reserve the supplied shared credential plus fixed worker-class,
+socket-peer and exact-route dimensions. Worker instance labels, job IDs and
+claim tokens are never authority or limiter subjects. These defaults allow 60
+Node polls/claims per ten-minute interval and concurrent dashboard polling while
+bounding a stolen shared credential and rotating invalid tokens.
+
+| Worker operations | Credential | Worker class | Socket peer | Route |
+| --- | ---: | ---: | ---: | ---: |
+| queue, claim, audio-reference | `600 / 60s` | `1200 / 60s` | `600 / 60s` | `1200 / 60s` |
+| progress | `3000 / 60s` | `6000 / 60s` | `3000 / 60s` | `6000 / 60s` |
+| result, fail, worker-retry | `300 / 60s` | `600 / 60s` | `300 / 60s` | `600 / 60s` |
 
 The limit is inclusive: for `8 / 300s`, attempts 1–8 reach the existing handler
 and attempt 9 is denied. A fixed window starts on its first reservation, is never
@@ -41,6 +69,34 @@ Existing success, validation and credential-error responses are unchanged when
 the request is within budget. Invalid identifiers use one fixed invalid class;
 they cannot manufacture a new key per arbitrary invalid string.
 
+Provider denial is attached after route classification and before connection
+resolution, secret/capability comparison, provider body parser and controller.
+It returns plain-text `429 Too Many Requests` with a positive `Retry-After` and
+does not expose provider or connection details. Existing delivery, success and
+non-throttled rejection semantics are unchanged below the limit.
+
+Worker denial is attached after worker route classification and before worker
+token/protocol validation, controller, database and lease mutation. The global
+`express.json({ limit: '6mb' })` is intentionally unchanged and runs before the
+worker router, so SEC-A4b does **not** claim worker pre-parser protection.
+Enforced worker denial is stable and generic:
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: <positive integer seconds>
+Content-Type: application/json
+
+{"error":"Worker request rate limited","status":429,"code":"WORKER_RATE_LIMITED"}
+```
+
+Node and Python workers accept only a positive decimal-seconds `Retry-After`,
+cap it at 300 seconds and otherwise keep the configured poll interval. Poll,
+claim, dashboard queue and manual retry scheduling honor the resulting cooldown.
+There is no recursive HTTP retry. A 429 from audio-reference, progress, result,
+fail or worker-retry does not trigger an automatic replay; specifically, a
+rate-limited claimed operation is left for the existing lease lifecycle rather
+than generating a new `fail` mutation.
+
 ## Configuration contract
 
 `AUTH_RATE_LIMIT_MODE` accepts exactly `off`, `report` or `enforce` and defaults
@@ -61,7 +117,7 @@ values are valid:
   `AUTH_RATE_LIMIT_LOCAL_MAX_KEYS=4096` (`16..100000`), Redis timeout
   `500ms` (`25..10000`) and retry backoff `30000ms` (`100..300000`);
 - optional `AUTH_RATE_LIMIT_POLICY_JSON`, a strict partial override containing
-  only the five known surfaces, their existing dimensions, and integer
+  only the 17 known surfaces, their existing dimensions, and integer
   `limit=1..1000000`, `windowSeconds=1..86400`.
 
 The secret and its value never enter keys, events, error payloads or source
@@ -78,10 +134,14 @@ Staff, operator-session or activation data to recover from a limiter problem.
 
 ## Pseudonymization, peer input and cardinality
 
-The limiter immediately bounds and canonicalizes only the required email,
-username or activation token. Passwords, authorization values, cookies and
-session IDs are never inputs. HMAC-SHA-256 with the external limiter secret maps
-the canonical value to one of a fixed number of numeric shards. Storage keys
+The limiter immediately applies an O(1) UTF-16 length guard before trim, NFKC,
+regex, UTF-8 scan or HMAC. It canonicalizes only the required email, username,
+activation token, provider connection/capability/credential or supplied worker
+credential. Passwords, cookies, session IDs, job/claim tokens, worker instance
+labels, body/query data and PII are never ingress inputs. Raw provider/worker
+tokens and `Authorization` values never enter keys, events or errors.
+HMAC-SHA-256 with the external limiter secret maps the canonical value to one
+of a fixed number of numeric shards. Storage keys
 contain only the fixed namespace, contract/secret ID, surface, dimension and
 numeric shard. Decision events contain only the same keyed shard pseudonym,
 counts, limits, outcome and store state; they do not enter `AuditLog` and do not
@@ -96,7 +156,7 @@ direct-backend closure, overwrite semantics, spoof tests, distinct-client
 evidence, IPv4/IPv6/NAT behavior and a missing-signal fallback. Default-off and
 report evidence do not satisfy that dependency.
 
-With the default 1024 shards, the Redis namespace has at most 15,360 live
+With the default 1024 shards, the Redis namespace has at most 66,560 live
 surface/dimension shard keys, plus old secret-ID namespaces waiting for their
 bounded TTL after an authorized rotation. The local store hard-caps live keys;
 after reserving its final slot, unseen shards share one temporary overflow
@@ -131,23 +191,26 @@ containment, not a claim of cluster-wide exactness.
 
 ## Rollout, tuning and evidence
 
-1. Deploy with `off`; confirm current A2/A3 login, bootstrap, operator-session
-   and activation regression evidence on the exact release.
+1. Deploy with `off`; confirm current A2/A3 credential, provider delivery/reject
+   and worker token/protocol/claim/lease regressions on the exact release.
 2. Configure one stable secret/ID and the intended store, then use `report`.
    Capture the versioned safe decision stream by surface/dimension/store and
    verify Redis/local cardinality, TTL expiry, latency and degraded behavior.
 3. Tune only from report evidence. Required metrics: allowed/would-deny counts,
    retry windows, store errors/degraded duration, live keys/overflow use,
-   login/operator/activation success and validation/401/410/429/5xx rates,
-   Argon hash/verify concurrency, CPU, RSS, event-loop delay and process restarts.
+   login/operator/activation and provider/worker success/reject/429/5xx rates,
+   provider-specific event bursts and retry cadence, worker fleet size/poll
+   interval/progress concurrency, Argon hash/verify concurrency, CPU, RSS,
+   event-loop delay and process restarts.
 4. Stop and return to `report` or `off` on unexpected legitimate would-deny/429,
    overflow use, persistent degraded mode, Redis latency/errors, CPU/memory or
    event-loop threshold breach, 5xx increase, operator recovery-path failure,
    or missing I4/source and exact-release capacity evidence.
-5. Enable `enforce` only on an exact release candidate after Team Lead accepts
-   production-like Redis/restart/multi-process, proxy-source (where peer limits
-   are active), capacity, recovery and rollback evidence. Start with a small
-   canary and keep the kill switch immediately available.
+5. Enable provider/worker `enforce` only on an exact release candidate after
+   Team Lead accepts I4/source evidence, provider burst/retry soak and
+   production-like Redis/restart/multi-process plus CPU/RSS/concurrency/recovery
+   and rollback evidence. Start with a small canary and keep the kill switch
+   immediately available.
 
 This default-off candidate is an application prerequisite, not production
 readiness. A2 ordinary-user Argon writes/rehash and A3 operator Argon verification
@@ -168,16 +231,17 @@ generic denial, automatic expiry, Redis atomicity/local degraded behavior and
 focused enumeration/concurrency/outage/no-mutation tests. Adding a route without
 that declared attachment is an A12/A7 merge blocker.
 
-Provider webhook and transcription-worker ingress are the next A4 perimeter
-slice. CORS/CSP/headers (A8), structured security audit events (A10), dependency
-findings (A13), session/JWT/cookie/Socket.IO changes, MFA/recovery and production
-infrastructure mutation remain outside SEC-A4a.
+CORS/CSP/headers (A8), structured security audit events (A10), dependency
+findings (A13), provider fail-closed work (A9), session/JWT/cookie/Socket.IO
+changes, MFA/recovery and production infrastructure mutation remain outside
+SEC-A4.
 
 ## Data and API impact
 
 - API: existing success contracts and generated request/response types are
-  unchanged. OpenAPI now declares the real generic 429/`Retry-After` drift only
-  on the five covered operations; only active enforce mode can produce it.
+  unchanged. OpenAPI declares the real generic 429/`Retry-After` drift only on
+  the five credential-entry, five provider and seven worker operations; only
+  active enforce mode can produce it.
 - Data model/migrations/grants: none.
 - Persisted lock fields: none.
 - Tenant scope: installation/global route classification is unchanged; limiter

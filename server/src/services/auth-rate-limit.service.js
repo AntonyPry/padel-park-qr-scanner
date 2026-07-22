@@ -22,6 +22,18 @@ const SURFACES = Object.freeze({
   AUTH_BOOTSTRAP: 'auth_bootstrap',
   AUTH_LOGIN: 'auth_login',
   INSTALLATION_OPERATOR_SESSION: 'installation_operator_session',
+  PROVIDER_BEELINE_CAPABILITY: 'provider_beeline_capability',
+  PROVIDER_BEELINE_CONNECTION: 'provider_beeline_connection',
+  PROVIDER_BEELINE_LEGACY: 'provider_beeline_legacy',
+  PROVIDER_EVOTOR_CONNECTION: 'provider_evotor_connection',
+  PROVIDER_EVOTOR_LEGACY: 'provider_evotor_legacy',
+  WORKER_AUDIO_REFERENCE: 'worker_transcription_audio_reference',
+  WORKER_CLAIM: 'worker_transcription_claim',
+  WORKER_FAIL: 'worker_transcription_fail',
+  WORKER_PROGRESS: 'worker_transcription_progress',
+  WORKER_QUEUE: 'worker_transcription_queue',
+  WORKER_RESULT: 'worker_transcription_result',
+  WORKER_RETRY: 'worker_transcription_retry',
 });
 
 const DEFAULT_POLICIES = Object.freeze({
@@ -49,6 +61,80 @@ const DEFAULT_POLICIES = Object.freeze({
     credential_class: Object.freeze({ limit: 60, windowSeconds: 600 }),
     peer: Object.freeze({ limit: 30, windowSeconds: 600 }),
     token: Object.freeze({ limit: 5, windowSeconds: 600 }),
+  }),
+  [SURFACES.PROVIDER_EVOTOR_LEGACY]: Object.freeze({
+    credential: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 600, windowSeconds: 60 }),
+  }),
+  [SURFACES.PROVIDER_EVOTOR_CONNECTION]: Object.freeze({
+    connection: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    credential: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 1_800, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 1_800, windowSeconds: 60 }),
+  }),
+  [SURFACES.PROVIDER_BEELINE_LEGACY]: Object.freeze({
+    credential_class: Object.freeze({ limit: 120, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 120, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 120, windowSeconds: 60 }),
+  }),
+  [SURFACES.PROVIDER_BEELINE_CONNECTION]: Object.freeze({
+    connection: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    credential: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 3_600, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 2_400, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 3_600, windowSeconds: 60 }),
+  }),
+  [SURFACES.PROVIDER_BEELINE_CAPABILITY]: Object.freeze({
+    connection: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    credential: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 3_600, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 2_400, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 3_600, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_QUEUE]: Object.freeze({
+    credential: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_CLAIM]: Object.freeze({
+    credential: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_AUDIO_REFERENCE]: Object.freeze({
+    credential: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 1_200, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_PROGRESS]: Object.freeze({
+    credential: Object.freeze({ limit: 3_000, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 6_000, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 3_000, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 6_000, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_RESULT]: Object.freeze({
+    credential: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 600, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_FAIL]: Object.freeze({
+    credential: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 600, windowSeconds: 60 }),
+  }),
+  [SURFACES.WORKER_RETRY]: Object.freeze({
+    credential: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    credential_class: Object.freeze({ limit: 600, windowSeconds: 60 }),
+    peer: Object.freeze({ limit: 300, windowSeconds: 60 }),
+    route: Object.freeze({ limit: 600, windowSeconds: 60 }),
   }),
 });
 
@@ -78,12 +164,89 @@ const SURFACE_INPUTS = Object.freeze({
     peer: ['peer'],
     token: ['token'],
   }),
+  [SURFACES.PROVIDER_EVOTOR_LEGACY]: Object.freeze({
+    credential: ['evotor_credential'],
+    credential_class: ['fixed', 'provider_evotor'],
+    peer: ['peer'],
+    route: ['fixed', 'provider_evotor_legacy'],
+  }),
+  [SURFACES.PROVIDER_EVOTOR_CONNECTION]: Object.freeze({
+    connection: ['connection_public_id'],
+    credential: ['evotor_credential'],
+    credential_class: ['fixed', 'provider_evotor'],
+    peer: ['peer'],
+    route: ['fixed', 'provider_evotor_connection'],
+  }),
+  [SURFACES.PROVIDER_BEELINE_LEGACY]: Object.freeze({
+    credential_class: ['fixed', 'provider_beeline'],
+    peer: ['peer'],
+    route: ['fixed', 'provider_beeline_legacy'],
+  }),
+  [SURFACES.PROVIDER_BEELINE_CONNECTION]: Object.freeze({
+    connection: ['connection_public_id'],
+    credential: ['beeline_credential'],
+    credential_class: ['fixed', 'provider_beeline'],
+    peer: ['peer'],
+    route: ['fixed', 'provider_beeline_connection'],
+  }),
+  [SURFACES.PROVIDER_BEELINE_CAPABILITY]: Object.freeze({
+    connection: ['connection_public_id'],
+    credential: ['callback_token'],
+    credential_class: ['fixed', 'provider_beeline'],
+    peer: ['peer'],
+    route: ['fixed', 'provider_beeline_capability'],
+  }),
+  [SURFACES.WORKER_QUEUE]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_queue'],
+  }),
+  [SURFACES.WORKER_CLAIM]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_claim'],
+  }),
+  [SURFACES.WORKER_AUDIO_REFERENCE]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_audio_reference'],
+  }),
+  [SURFACES.WORKER_PROGRESS]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_progress'],
+  }),
+  [SURFACES.WORKER_RESULT]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_result'],
+  }),
+  [SURFACES.WORKER_FAIL]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_fail'],
+  }),
+  [SURFACES.WORKER_RETRY]: Object.freeze({
+    credential: ['worker_credential'],
+    credential_class: ['fixed', 'transcription_worker'],
+    peer: ['peer'],
+    route: ['fixed', 'worker_transcription_retry'],
+  }),
 });
 
 // A valid canonical value cannot have more UTF-16 code units than its existing
 // UTF-8 byte/format bound. These roughly 2x raw caps preserve bounded trimming
 // whitespace while value.length rejects attacker-scale input without scanning it.
 const RAW_CANONICAL_CODE_UNIT_LIMITS = Object.freeze({
+  callback_token: 128,
+  connection_public_id: 128,
+  credential: 2048,
   email: 512,
   peer: 256,
   token: 128,
@@ -420,6 +583,16 @@ function boundedCanonical(value, { kind }) {
     if (Buffer.byteLength(canonical, 'utf8') > 128) return 'username:invalid';
   } else if (kind === 'token') {
     if (!/^[A-Za-z0-9_-]{43}$/u.test(canonical)) return 'token:invalid';
+  } else if (kind === 'callback_token') {
+    canonical = canonical.toLowerCase();
+    if (!/^[a-f0-9]{64}$/u.test(canonical)) return 'callback_token:invalid';
+  } else if (kind === 'connection_public_id') {
+    canonical = canonical.toLowerCase();
+    if (!/^ic_[a-f0-9]{32}$/u.test(canonical)) {
+      return 'connection_public_id:invalid';
+    }
+  } else if (kind === 'credential') {
+    if (Buffer.byteLength(canonical, 'utf8') > 1024) return 'credential:invalid';
   } else if (kind === 'peer') {
     canonical = canonical.toLowerCase();
     if (
@@ -432,11 +605,69 @@ function boundedCanonical(value, { kind }) {
   return `${kind}:valid:${canonical}`;
 }
 
+function rawSingletonHeader(request, name) {
+  const value = request?.headers?.[name];
+  return typeof value === 'string' ? value : null;
+}
+
+function bearerCredential(value) {
+  if (
+    typeof value !== 'string' ||
+    value.length > RAW_CANONICAL_CODE_UNIT_LIMITS.credential
+  ) {
+    return null;
+  }
+  return value.replace(/^Bearer\s+/iu, '');
+}
+
+function evotorCredential(request) {
+  const direct = rawSingletonHeader(request, 'x-evotor-token');
+  return direct
+    ? direct
+    : bearerCredential(rawSingletonHeader(request, 'authorization'));
+}
+
+function beelineCredential(request) {
+  for (const name of [
+    'x-beeline-webhook-secret',
+    'x-webhook-secret',
+    'x-integration-secret',
+  ]) {
+    const value = rawSingletonHeader(request, name);
+    if (value) return value;
+  }
+  return null;
+}
+
+function workerCredential(request) {
+  const authorization = rawSingletonHeader(request, 'authorization');
+  if (authorization !== null) {
+    const bearer = bearerCredential(authorization);
+    if (bearer !== null && bearer.trim()) return bearer;
+  }
+  return rawSingletonHeader(request, 'x-worker-token');
+}
+
 function canonicalSubject(input, request) {
   const [kind, fixed] = input;
   if (kind === 'fixed') return `class:valid:${fixed}`;
   if (kind === 'peer') {
     return boundedCanonical(request?.socket?.remoteAddress, { kind: 'peer' });
+  }
+  if (kind === 'callback_token') {
+    return boundedCanonical(request?.params?.callbackToken, { kind });
+  }
+  if (kind === 'connection_public_id') {
+    return boundedCanonical(request?.params?.connectionPublicId, { kind });
+  }
+  if (kind === 'evotor_credential') {
+    return boundedCanonical(evotorCredential(request), { kind: 'credential' });
+  }
+  if (kind === 'beeline_credential') {
+    return boundedCanonical(beelineCredential(request), { kind: 'credential' });
+  }
+  if (kind === 'worker_credential') {
+    return boundedCanonical(workerCredential(request), { kind: 'credential' });
   }
   return boundedCanonical(request?.body?.[kind], { kind });
 }
@@ -609,8 +840,10 @@ module.exports = {
     RAW_CANONICAL_CODE_UNIT_LIMITS,
     REDIS_SCRIPT,
     RedisFixedWindowStore,
+    SURFACE_INPUTS,
     authRateLimitConfiguration,
     boundedCanonical,
+    canonicalSubject,
     storageKey,
     subjectBucket,
   },

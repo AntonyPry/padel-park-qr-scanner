@@ -5,11 +5,38 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+MAX_RETRY_AFTER_SECONDS = 300
+
+
+def parse_retry_after_seconds(
+    value: str | None,
+    maximum: int = MAX_RETRY_AFTER_SECONDS,
+) -> int | None:
+    if (
+        not isinstance(value, str)
+        or len(value) > 10
+        or not value.isascii()
+        or not value.isdigit()
+    ):
+        return None
+    if value.startswith("0"):
+        return None
+    seconds = int(value)
+    if seconds < 1:
+        return None
+    return min(seconds, maximum)
+
 
 class CrmApiError(RuntimeError):
-    def __init__(self, message: str, status: int | None = None):
+    def __init__(
+        self,
+        message: str,
+        status: int | None = None,
+        retry_after_seconds: int | None = None,
+    ):
         super().__init__(message)
         self.status = status
+        self.retry_after_seconds = retry_after_seconds
 
 
 class CrmClient:
@@ -49,6 +76,14 @@ class CrmClient:
                     return None
                 return json.loads(payload)
         except urllib.error.HTTPError as error:
+            if error.code == 429:
+                raise CrmApiError(
+                    "CRM request rate limited",
+                    status=429,
+                    retry_after_seconds=parse_retry_after_seconds(
+                        error.headers.get("Retry-After") if error.headers else None
+                    ),
+                ) from error
             payload = error.read().decode("utf-8", errors="replace")
             message = payload
             try:
@@ -56,7 +91,10 @@ class CrmClient:
                 message = parsed.get("error") or parsed.get("message") or payload
             except json.JSONDecodeError:
                 pass
-            raise CrmApiError(f"CRM HTTP {error.code}: {message}", status=error.code) from error
+            raise CrmApiError(
+                f"CRM HTTP {error.code}: {message}",
+                status=error.code,
+            ) from error
         except urllib.error.URLError as error:
             raise CrmApiError(f"CRM connection failed: {error.reason}") from error
         except TimeoutError as error:

@@ -95,6 +95,7 @@ class WorkerController:
             },
         }
         self._crm_queue_loaded_at = 0.0
+        self._crm_rate_limit_until = 0.0
         self._active_jobs: dict[int, dict[str, Any]] = {}
         self.set_polling_running(not config.start_paused)
 
@@ -144,12 +145,15 @@ class WorkerController:
         if not self.config.crm_worker_token:
             return self._crm_queue_snapshot
         now = time.monotonic()
+        if now < self._crm_rate_limit_until:
+            return self._crm_queue_snapshot
         if not force and now - self._crm_queue_loaded_at < 8:
             return self._crm_queue_snapshot
         try:
             self._crm_queue_snapshot = self.crm.queue()
             self._crm_queue_loaded_at = now
         except Exception as error:
+            self._record_crm_rate_limit(error)
             self._set_crm_connection("error", str(error))
         return self._crm_queue_snapshot
 
@@ -160,6 +164,7 @@ class WorkerController:
         return job
 
     def claim_one_async(self, source: str = "manual") -> dict[str, Any]:
+        self._require_crm_rate_limit_elapsed()
         with self._busy_lock:
             if self._busy:
                 raise DashboardError("Worker is already processing a job", status=409)
@@ -175,6 +180,7 @@ class WorkerController:
             raise DashboardError("Retry is only available for failed jobs", status=409)
         if not job.get("crmJobId"):
             raise DashboardError("Job has no CRM job id", status=409)
+        self._require_crm_rate_limit_elapsed()
         with self._busy_lock:
             if self._busy:
                 raise DashboardError("Worker is already processing a job", status=409)
@@ -194,7 +200,27 @@ class WorkerController:
                     self.claim_one_async(source="poll")
                 except DashboardError:
                     pass
-            self._stop.wait(self.config.poll_interval_seconds)
+            rate_limit_delay = max(0.0, self._crm_rate_limit_until - time.monotonic())
+            self._stop.wait(max(self.config.poll_interval_seconds, rate_limit_delay))
+
+    def _record_crm_rate_limit(self, error: Exception) -> bool:
+        if not isinstance(error, CrmApiError) or error.status != 429:
+            return False
+        retry_after_seconds = error.retry_after_seconds
+        if retry_after_seconds:
+            self._crm_rate_limit_until = max(
+                self._crm_rate_limit_until,
+                time.monotonic() + retry_after_seconds,
+            )
+        return True
+
+    def _require_crm_rate_limit_elapsed(self) -> None:
+        remaining = self._crm_rate_limit_until - time.monotonic()
+        if remaining > 0:
+            raise DashboardError(
+                f"CRM rate limit backoff is active for {max(1, int(remaining + 0.999))} seconds",
+                status=429,
+            )
 
     def _set_crm_connection(self, status: str, error: str | None = None) -> None:
         self._crm_connection_status = status
@@ -259,6 +285,7 @@ class WorkerController:
                 try:
                     self.crm.progress_job(job, stage, CRM_PROGRESS[stage], message)
                 except (CrmApiError, RuntimeError) as error:
+                    self._record_crm_rate_limit(error)
                     safe_details["crmProgressError"] = str(error)
         payload = self.store.add_event(
             stage=stage,
@@ -276,6 +303,7 @@ class WorkerController:
             self._set_crm_connection("connected")
             self._global_event("crm_connected", "CRM connection is healthy")
         except Exception as error:
+            self._record_crm_rate_limit(error)
             self._set_crm_connection("error", str(error))
             raise
 
@@ -308,10 +336,11 @@ class WorkerController:
             )
             self._process_claimed_job(local_job_id, job)
         except Exception as error:
+            rate_limited = self._record_crm_rate_limit(error)
             if local_job_id is None:
                 self._global_event("failed", "Claim failed", {"error": str(error)})
             else:
-                self._fail_local_job(local_job_id, error)
+                self._fail_local_job(local_job_id, error, notify_crm=not rate_limited)
         finally:
             if local_job_id is not None:
                 self._active_jobs.pop(local_job_id, None)
@@ -352,10 +381,11 @@ class WorkerController:
             )
             self._process_claimed_job(local_job_id, job)
         except Exception as error:
+            rate_limited = self._record_crm_rate_limit(error)
             if local_job_id is None:
                 self._global_event("failed", "Retry failed", {"error": str(error)})
             else:
-                self._fail_local_job(local_job_id, error)
+                self._fail_local_job(local_job_id, error, notify_crm=not rate_limited)
         finally:
             if local_job_id is not None:
                 self._active_jobs.pop(local_job_id, None)
@@ -377,7 +407,12 @@ class WorkerController:
         self._job_event(local_job_id, "uploading_result", "Transcript submitted to CRM")
         self._job_event(local_job_id, "completed", "Job completed")
 
-    def _fail_local_job(self, local_job_id: int, error: Exception) -> None:
+    def _fail_local_job(
+        self,
+        local_job_id: int,
+        error: Exception,
+        notify_crm: bool = True,
+    ) -> None:
         stack = redact_text(traceback.format_exc(), [self.config.crm_worker_token or ""])
         summary = redact_text(str(error), [self.config.crm_worker_token or ""])
         self.store.update_job(
@@ -388,10 +423,11 @@ class WorkerController:
         )
         self._job_event(local_job_id, "failed", "Job failed", {"error": summary})
         job = self._active_jobs.get(local_job_id)
-        if job and job.get("id"):
+        if notify_crm and job and job.get("id"):
             try:
                 self.crm.fail_job(job, summary[:4000])
             except (CrmApiError, RuntimeError) as fail_error:
+                self._record_crm_rate_limit(fail_error)
                 self._job_event(
                     local_job_id,
                     "failed",

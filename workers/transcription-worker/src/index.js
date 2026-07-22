@@ -5,7 +5,7 @@ const { createSpeechChunks, downloadAudio, prepareAudio, probeAudio } = require(
 const { transcribeHttpAsr } = require('./asr-http');
 const { runCommand } = require('./commands');
 const { readConfig } = require('./config');
-const { attachClaimContext, CrmClient } = require('./crm-client');
+const { attachClaimContext, CrmApiError, CrmClient } = require('./crm-client');
 const { buildInitialPrompt, loadDomainGlossary } = require('./glossary');
 const { createLogger } = require('./logger');
 const { postprocessTranscriptWithLlm } = require('./llm-postprocess');
@@ -14,6 +14,14 @@ const { ensureWhisperModel, runWhisper } = require('./whisper');
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pollingDelayMs(error, defaultDelayMs) {
+  if (!(error instanceof CrmApiError) || error.status !== 429) return defaultDelayMs;
+  const retryDelayMs = Number(error.retryAfterSeconds) * 1000;
+  return Number.isSafeInteger(retryDelayMs) && retryDelayMs > 0
+    ? Math.max(defaultDelayMs, retryDelayMs)
+    : defaultDelayMs;
 }
 
 function getCallId(job) {
@@ -332,7 +340,8 @@ async function transcribePreparedChannel(channel, probe, tempDir, config, logger
   };
 }
 
-async function claimAndProcessOne(crmClient, config, logger) {
+async function claimAndProcessOne(crmClient, config, logger, dependencies = {}) {
+  const processJobFn = dependencies.processJob || processJob;
   const claimed = await crmClient.claimJob(config.workerId);
   const job = attachClaimContext(claimed?.job || null, claimed);
 
@@ -350,9 +359,15 @@ async function claimAndProcessOne(crmClient, config, logger) {
   });
 
   try {
-    await processJob(crmClient, job, config, logger);
+    await processJobFn(crmClient, job, config, logger);
     return 'completed';
   } catch (error) {
+    if (error instanceof CrmApiError && error.status === 429) {
+      logger.warn('CRM rate limited the claimed job; leaving the lease to expire', {
+        retryAfterSeconds: error.retryAfterSeconds,
+      });
+      throw error;
+    }
     logger.error('Transcription job failed', {
       error: error.message,
       jobId: job.id,
@@ -448,12 +463,14 @@ async function main() {
   }
 
   while (true) {
+    let loopError = null;
     try {
       await claimAndProcessOne(crmClient, config, logger);
     } catch (error) {
+      loopError = error;
       logger.error('Worker loop error', { error: error.message });
     }
-    await sleep(config.pollIntervalMs);
+    await sleep(pollingDelayMs(loopError, config.pollIntervalMs));
   }
 }
 
@@ -468,6 +485,7 @@ module.exports = {
   claimAndProcessOne,
   createTempDir,
   processJob,
+  pollingDelayMs,
   progressStageForChannel,
   reportProgress,
   runSample,

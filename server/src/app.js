@@ -41,8 +41,10 @@ const {
 } = require('./services/auth.service');
 const {
   createAuthRateLimiter,
+  SURFACES,
   validateAuthRateLimitConfiguration,
 } = require('./services/auth-rate-limit.service');
+const { limitProviderIngress } = require('./middleware/auth-rate-limit');
 
 function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
@@ -70,6 +72,7 @@ function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {})
   app.post(
     '/api/integrations/beeline/events/:connectionPublicId/:callbackToken',
     ...providerIngress,
+    limitProviderIngress(SURFACES.PROVIDER_BEELINE_CAPABILITY),
     beelineCapabilityIngress,
     beelineCapabilityCutoverGate,
     express.text({ limit: '64kb', type: '*/*' }),
@@ -78,6 +81,7 @@ function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {})
   app.post(
     '/api/integrations/beeline/events',
     ...providerIngress,
+    limitProviderIngress(SURFACES.PROVIDER_BEELINE_LEGACY),
     rejectLegacyBeelineIngress,
   );
   app.use('/api', rolloutMaintenanceGate);
@@ -85,6 +89,7 @@ function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {})
   app.post(
     '/api/webhooks/evotor/:connectionPublicId',
     ...providerIngress,
+    limitProviderIngress(SURFACES.PROVIDER_EVOTOR_CONNECTION),
     evotorConnectionFirstIngress,
     express.raw({ limit: '6mb', type: '*/*' }),
     webhookController.handleEvotor,
@@ -92,6 +97,7 @@ function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {})
   app.post(
     '/api/webhooks/evotor',
     ...providerIngress,
+    limitProviderIngress(SURFACES.PROVIDER_EVOTOR_LEGACY),
     evotorConnectionFirstIngress,
     express.raw({ limit: '6mb', type: '*/*' }),
     webhookController.handleEvotor,
@@ -99,6 +105,7 @@ function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {})
   app.post(
     '/api/integrations/beeline/events/:connectionPublicId',
     ...providerIngress,
+    limitProviderIngress(SURFACES.PROVIDER_BEELINE_CONNECTION),
     beelineConnectionFirstIngress,
     express.text({ limit: '64kb', type: '*/*' }),
     telephonyController.receiveBeelineEvent,

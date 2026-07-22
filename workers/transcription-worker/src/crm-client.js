@@ -4,9 +4,21 @@ class CrmApiError extends Error {
     this.name = 'CrmApiError';
     this.method = details.method;
     this.payload = details.payload;
+    this.retryAfterSeconds = details.retryAfterSeconds || null;
     this.status = details.status;
     this.url = details.url;
   }
+}
+
+const MAX_RETRY_AFTER_SECONDS = 300;
+
+function parseRetryAfterSeconds(value, maximum = MAX_RETRY_AFTER_SECONDS) {
+  if (typeof value !== 'string' || value.length > 10 || !/^[1-9]\d*$/u.test(value)) {
+    return null;
+  }
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds < 1) return null;
+  return Math.min(seconds, maximum);
 }
 
 function joinUrl(baseUrl, path) {
@@ -52,6 +64,14 @@ class CrmClient {
       throw new CrmApiError(`CRM request failed: ${error.message}`, {
         method,
         url,
+      });
+    }
+
+    if (response.status === 429) {
+      throw new CrmApiError('CRM request rate limited', {
+        method,
+        retryAfterSeconds: parseRetryAfterSeconds(response.headers.get('retry-after')),
+        status: response.status,
       });
     }
 
@@ -142,6 +162,8 @@ function attachClaimContext(job, claimed) {
 module.exports = {
   CrmApiError,
   CrmClient,
+  MAX_RETRY_AFTER_SECONDS,
   attachClaimContext,
   leaseBody,
+  parseRetryAfterSeconds,
 };

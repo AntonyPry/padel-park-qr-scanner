@@ -10053,6 +10053,27 @@
             },
             "description": "Unauthorized"
           },
+          "429": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "const": "Too Many Requests",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Temporary provider ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "500": {
             "content": {
               "application/json": {
@@ -10180,6 +10201,27 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "const": "Too Many Requests",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Temporary provider ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {
@@ -47249,6 +47291,45 @@
             },
             "description": "Unauthorized"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "500": {
             "content": {
               "application/json": {
@@ -47472,6 +47553,45 @@
             },
             "description": "Unauthorized"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "500": {
             "content": {
               "application/json": {
@@ -47626,6 +47746,45 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {
@@ -47797,6 +47956,45 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {
@@ -47994,6 +48192,45 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {
@@ -48693,6 +48930,45 @@
             },
             "description": "Unauthorized"
           },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "500": {
             "content": {
               "application/json": {
@@ -48891,6 +49167,45 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "WORKER_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Worker request rate limited"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary worker ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {
@@ -50502,6 +50817,27 @@
             },
             "description": "Unauthorized"
           },
+          "429": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "const": "Too Many Requests",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Temporary provider ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
           "500": {
             "content": {
               "application/json": {
@@ -50629,6 +50965,27 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "const": "Too Many Requests",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Temporary provider ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {
@@ -50768,6 +51125,27 @@
               }
             },
             "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "const": "Too Many Requests",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Temporary provider ingress rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
           },
           "500": {
             "content": {

@@ -178,6 +178,12 @@ Dashboard пишет lifecycle events:
 - `CRM_WORKER_TOKEN` не показывается в UI и редактируется из technical details/log strings.
 - Recording URLs, temp paths, phones and transcript bodies не сохраняются в lifecycle events.
 - Dashboard показывает opaque tenant routing, `jobId/attempt/claimId`; телефоны, имена и claim token не выводятся.
+- При CRM `429` Node worker и Python dashboard принимают только положительный
+  integer `Retry-After`, ограничивают паузу 300 секундами и не выводят заголовки
+  или body в лог. Poll/claim/ручной retry ждут cooldown; progress/result/fail и
+  worker-retry не повторяются рекурсивно. Если 429 получен после claim, worker не
+  отправляет автоматический `fail`, а оставляет восстановление существующему
+  lease/retry lifecycle.
 
 ## Dev sample
 
