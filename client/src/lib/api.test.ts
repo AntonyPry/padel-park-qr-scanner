@@ -54,6 +54,15 @@ describe('apiRequest', () => {
     expect(localStorage.getItem('padel_park_auth_token')).toBeNull();
   });
 
+  it('clears a legacy browser token without restoring runtime persistence', () => {
+    localStorage.setItem('padel_park_auth_token', 'legacy-token');
+    setAuthToken('in-memory-compatibility-token');
+
+    clearAuthToken();
+
+    expect(localStorage.getItem('padel_park_auth_token')).toBeNull();
+  });
+
   it('sends the browser CSRF double-submit header for unsafe requests', async () => {
     const fetchMock = vi.fn(async () => Response.json({ ok: true }));
     vi.stubGlobal('fetch', fetchMock);

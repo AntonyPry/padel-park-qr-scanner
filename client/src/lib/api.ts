@@ -17,6 +17,7 @@ import {
 } from '@/lib/onboarding-quest';
 
 const TRAINING_MODE_KEY = 'padel_park_training_mode';
+const LEGACY_AUTH_TOKEN_KEY = 'padel_park_auth_token';
 const CSRF_COOKIE_NAME = 'setly_csrf';
 const CSRF_HEADER_NAME = 'X-CSRF-Token';
 const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
@@ -37,6 +38,9 @@ export function setAuthToken(token: string) {
 
 export function clearAuthToken() {
   inMemoryAuthToken = null;
+  // One-time migration cleanup only: the browser auth path never reads or
+  // writes this legacy JS-readable token again.
+  localStorage.removeItem(LEGACY_AUTH_TOKEN_KEY);
   clearStoredTrainingMode();
   cancelTenantSensitiveRequests();
   clearActiveTenantContext();
