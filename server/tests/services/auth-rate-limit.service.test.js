@@ -195,6 +195,75 @@ test('canonicalization, sharded keys and local overflow keep attacker cardinalit
   assert.equal(store.getStats().keys, 0);
 });
 
+test('oversized raw subjects are rejected before normalization or UTF-8 byte scans', (t) => {
+  const originalNormalize = String.prototype.normalize;
+  const originalByteLength = Buffer.byteLength;
+  let normalizeCalls = 0;
+  let byteLengthCalls = 0;
+  t.mock.method(String.prototype, 'normalize', function normalize(...args) {
+    normalizeCalls += 1;
+    return originalNormalize.call(this, ...args);
+  });
+  t.mock.method(Buffer, 'byteLength', (...args) => {
+    byteLengthCalls += 1;
+    return originalByteLength(...args);
+  });
+
+  const asciiSixMb = 'A'.repeat(6_000_000);
+  for (const kind of ['email', 'username', 'token', 'peer']) {
+    assert.equal(
+      _private.boundedCanonical(asciiSixMb, { kind }),
+      `${kind}:invalid`,
+    );
+  }
+  assert.equal(
+    _private.boundedCanonical('Ａ'.repeat(2_000_000), { kind: 'email' }),
+    'email:invalid',
+  );
+  assert.equal(normalizeCalls, 0);
+  assert.equal(byteLengthCalls, 0);
+});
+
+test('raw pre-bounds preserve adjacent valid and invalid canonical cases', () => {
+  const token = 'A'.repeat(43);
+  assert.equal(
+    _private.boundedCanonical(' Ａ@example.test ', { kind: 'email' }),
+    'email:valid:a@example.test',
+  );
+  assert.equal(
+    _private.boundedCanonical(' Ｏperator ', { kind: 'username' }),
+    'username:valid:Operator',
+  );
+  assert.equal(
+    _private.boundedCanonical(`${' '.repeat(85)}${token}`, { kind: 'token' }),
+    `token:valid:${token}`,
+  );
+  assert.equal(
+    _private.boundedCanonical(`${' '.repeat(86)}${token}`, { kind: 'token' }),
+    'token:invalid',
+  );
+  assert.equal(
+    _private.boundedCanonical(' ::FFFF:127.0.0.1 ', { kind: 'peer' }),
+    'peer:valid:::ffff:127.0.0.1',
+  );
+  assert.equal(
+    _private.boundedCanonical('not-an-email', { kind: 'email' }),
+    'email:invalid',
+  );
+  assert.equal(
+    _private.boundedCanonical('operator\u0000name', { kind: 'username' }),
+    'username:invalid',
+  );
+  assert.equal(
+    _private.boundedCanonical(token.slice(1), { kind: 'token' }),
+    'token:invalid',
+  );
+  assert.equal(
+    _private.boundedCanonical('not-a-peer', { kind: 'peer' }),
+    'peer:invalid',
+  );
+});
+
 test('Redis outage degrades to bounded local enforcement instead of unlimited access', async () => {
   const events = [];
   const clients = [];

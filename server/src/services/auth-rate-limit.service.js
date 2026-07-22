@@ -80,6 +80,16 @@ const SURFACE_INPUTS = Object.freeze({
   }),
 });
 
+// A valid canonical value cannot have more UTF-16 code units than its existing
+// UTF-8 byte/format bound. These roughly 2x raw caps preserve bounded trimming
+// whitespace while value.length rejects attacker-scale input without scanning it.
+const RAW_CANONICAL_CODE_UNIT_LIMITS = Object.freeze({
+  email: 512,
+  peer: 256,
+  token: 128,
+  username: 256,
+});
+
 function configurationError(field) {
   const error = new Error(`Invalid authentication rate-limit configuration: ${field}`);
   error.code = 'AUTH_RATE_LIMIT_CONFIGURATION_INVALID';
@@ -385,6 +395,10 @@ class RedisFixedWindowStore {
 
 function boundedCanonical(value, { kind }) {
   if (typeof value !== 'string') return `${kind}:invalid`;
+  const rawCodeUnitLimit = RAW_CANONICAL_CODE_UNIT_LIMITS[kind];
+  if (!rawCodeUnitLimit || value.length > rawCodeUnitLimit) {
+    return `${kind}:invalid`;
+  }
   let canonical;
   try {
     canonical = value.trim().normalize('NFKC');
@@ -592,6 +606,7 @@ module.exports = {
     CONTRACT_VERSION,
     DEFAULT_POLICIES,
     LocalFixedWindowStore,
+    RAW_CANONICAL_CODE_UNIT_LIMITS,
     REDIS_SCRIPT,
     RedisFixedWindowStore,
     authRateLimitConfiguration,
