@@ -66,7 +66,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const pendingKeys = pendingKeysRef.current;
-    if (REALTIME_DISABLED || !account || !getAuthToken() || !tenantReady) {
+    if (REALTIME_DISABLED || !account || !tenantReady) {
       if (connectTimerRef.current) {
         window.clearTimeout(connectTimerRef.current);
         connectTimerRef.current = null;
@@ -80,7 +80,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
     const socket = io(API_URL, {
       autoConnect: false,
       auth: {
-        token: getAuthToken(),
+        ...(getAuthToken() ? { token: getAuthToken() } : {}),
         ...(tenantCacheRealtimeEnabled && tenantContext
           ? {
               clubId: tenantContext.clubId,
@@ -93,6 +93,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
       reconnectionDelay: 500,
       reconnectionDelayMax: 5000,
       transports: ['websocket'],
+      withCredentials: true,
     });
 
     socketRef.current = socket;

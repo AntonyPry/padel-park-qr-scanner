@@ -146,7 +146,7 @@ function createSecurityHeadersMiddleware(
 
 function createBrowserCorsMiddleware(originPolicy) {
   const allowedCors = cors({
-    credentials: false,
+    credentials: true,
     exposedHeaders: [
       ONBOARDING_COMPLETED_TASKS_HEADER,
       ONBOARDING_PROGRESSED_TASKS_HEADER,

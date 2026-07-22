@@ -21,6 +21,10 @@ const {
   hashArgon2idPassword,
   passwordHashingConfiguration,
 } = passwordHashing._private;
+const {
+  AUTH_COOKIE_NAME,
+  getCookie,
+} = require('../security/browser-session');
 
 const LEGACY_TOKEN_MAX_ACCEPT_SECONDS = 12 * 60 * 60;
 const LEGACY_TOKEN_MODES = new Set(['accept', 'off']);
@@ -160,6 +164,10 @@ function extractBearerToken(input) {
     : input?.headers?.authorization || '';
   const match = /^Bearer\s+(\S+)\s*$/iu.exec(String(header));
   return match && match[1].length <= 4096 ? match[1] : '';
+}
+
+function extractSessionToken(input) {
+  return extractBearerToken(input) || getCookie(input, AUTH_COOKIE_NAME);
 }
 
 function sanitizeAccount(account) {
@@ -325,6 +333,7 @@ module.exports = {
   authenticateBearerToken,
   bootstrapOwner,
   extractBearerToken,
+  extractSessionToken,
   getSetupStatus,
   getAccountById,
   hashPassword,

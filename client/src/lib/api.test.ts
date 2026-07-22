@@ -22,6 +22,7 @@ import {
 
 afterEach(() => {
   clearAuthToken();
+  document.cookie = 'setly_csrf=; Max-Age=0';
   clearStoredActiveOnboardingQuest();
   window.history.replaceState(null, '', '/');
   vi.unstubAllGlobals();
@@ -49,6 +50,20 @@ describe('apiRequest', () => {
     const [, init] = fetchMock.mock.calls[0] || [];
     const headers = new Headers(init?.headers);
     expect(headers.get('Authorization')).toBe('Bearer test-token');
+    expect(init?.credentials).toBe('include');
+    expect(localStorage.getItem('padel_park_auth_token')).toBeNull();
+  });
+
+  it('sends the browser CSRF double-submit header for unsafe requests', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    document.cookie = 'setly_csrf=csrf-test-token';
+
+    await apiFetch('/api/example', { method: 'POST', body: '{}' });
+
+    const [, init] = fetchMock.mock.calls[0] || [];
+    expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('csrf-test-token');
+    expect(init?.credentials).toBe('include');
   });
 
   it('throws typed error with server message when request fails', async () => {

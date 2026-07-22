@@ -24,9 +24,11 @@ const {
 const {
   createBrowserOriginPolicy,
 } = require('../security/browser-origin-policy');
+const { getCookie, AUTH_COOKIE_NAME } = require('../security/browser-session');
 
 function createSocketCorsOptions(originPolicy) {
   return {
+    credentials: true,
     methods: ['GET', 'POST'],
     origin(origin, callback) {
       if (origin == null || originPolicy.isAllowed(origin)) {
@@ -81,7 +83,11 @@ function createSocketServer(
       return next(handshakeError);
     }
 
-    const token = String(socket.handshake.auth?.token || '').trim();
+    const token = String(
+      socket.handshake.auth?.token ||
+        getCookie({ headers: { cookie: socket.handshake.headers?.cookie } }, AUTH_COOKIE_NAME) ||
+        '',
+    ).trim();
     let principal;
     try {
       principal = token

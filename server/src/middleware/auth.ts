@@ -7,7 +7,7 @@ const authService = require('../services/auth.service') as {
     account: Request['account'];
     authentication: Request['authentication'];
   } | null>;
-  extractBearerToken: (request: Request) => string;
+  extractSessionToken: (request: Request) => string;
 };
 const { isTenantContextEnabled } = require('./tenant-context') as {
   isTenantContextEnabled: () => boolean;
@@ -18,7 +18,7 @@ const { sendError } = require('../utils/api-error') as {
 
 async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
-    const token = authService.extractBearerToken(req);
+    const token = authService.extractSessionToken(req);
     const principal = token
       ? await authService.authenticateBearerToken(token)
       : null;

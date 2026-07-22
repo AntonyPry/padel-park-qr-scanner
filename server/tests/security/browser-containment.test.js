@@ -225,7 +225,7 @@ test('Express CORS and baseline headers cover API, static, denial, 404 and error
       });
       assert.equal(response.status, 503);
       assert.equal(response.headers.get('access-control-allow-origin'), origin);
-      assert.equal(response.headers.get('access-control-allow-credentials'), null);
+      assert.equal(response.headers.get('access-control-allow-credentials'), 'true');
       const exposed = new Set(
         (response.headers.get('access-control-expose-headers') || '')
           .split(',')
@@ -239,7 +239,7 @@ test('Express CORS and baseline headers cover API, static, denial, 404 and error
     const preflight = await fetch(serverUrl(server, '/api/auth/login'), {
       headers: {
         'Access-Control-Request-Headers':
-          'Authorization,Content-Type,X-Organization-Id,X-Onboarding-Quest-Task-Key',
+          'Authorization,Content-Type,X-CSRF-Token,X-Organization-Id,X-Onboarding-Quest-Task-Key',
         'Access-Control-Request-Method': 'POST',
         Origin: 'https://setly.tech',
       },
@@ -256,9 +256,9 @@ test('Express CORS and baseline headers cover API, static, denial, 404 and error
     );
     assert.equal(
       preflight.headers.get('access-control-allow-headers'),
-      'Authorization,Content-Type,X-Organization-Id,X-Onboarding-Quest-Task-Key',
+      'Authorization,Content-Type,X-CSRF-Token,X-Organization-Id,X-Onboarding-Quest-Task-Key',
     );
-    assert.equal(preflight.headers.get('access-control-allow-credentials'), null);
+    assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
     assertSecurityHeaders(preflight);
 
     for (const deniedOrigin of ['https://attacker.test', 'null', '*']) {
@@ -484,6 +484,7 @@ test('HSTS requires explicit production and verified-TLS gates', async () => {
 
 test('Socket.IO uses the same exact product-origin decision independently', async () => {
   const options = createSocketCorsOptions(PRODUCT_POLICY);
+  assert.equal(options.credentials, true);
   const decide = (origin) => new Promise((resolve) => {
     options.origin(origin, (error, allowed) => resolve({ allowed, error }));
   });

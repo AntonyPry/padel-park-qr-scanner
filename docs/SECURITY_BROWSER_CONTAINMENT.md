@@ -1,7 +1,8 @@
 # Setly browser and HTTP containment
 
-Status: SEC-A8 application contract. Production Nginx, certificates, firewall,
-DNS and rollout remain outside this capability.
+Status: SEC-A8 application contract extended by SEC-A6 normal-user browser
+sessions. Production Nginx, certificates, firewall, DNS and rollout remain
+outside this capability.
 
 ## Exact product-origin policy
 
@@ -31,7 +32,7 @@ configuration. Production never uses this fallback.
 Requests without `Origin` remain available to same-origin/non-browser callers
 and receive no CORS headers. An exact configured product origin receives its
 matching `Access-Control-Allow-Origin`, never `*`, and no
-`Access-Control-Allow-Credentials`. Current methods remain
+`Access-Control-Allow-Credentials: true`. Current methods remain
 `GET, HEAD, PUT, PATCH, POST, DELETE`; preflight continues to echo the browser's
 requested header set. Both onboarding response headers remain exposed:
 
@@ -42,8 +43,8 @@ An untrusted, `null` or star origin receives one generic `403
 CORS_ORIGIN_DENIED` before request timing, body parsing, provider/auth/tenant
 logic or application diagnostics. The response contains no submitted origin,
 route, query, body, token or identity. This is browser containment, not the A6
-cookie/CSRF contract: missing-origin, Referer and anti-CSRF enforcement are not
-added here.
+Cookie-authenticated unsafe requests are additionally checked by the A6
+browser-session middleware below.
 
 The operator API stays same-origin behind the exact `ops.setly.tech` Host. A
 request whose canonical Origin host equals the preserved HTTP Host passes
@@ -52,9 +53,31 @@ putting `ops.setly.tech` in the product allowlist. The ops vhost does not proxy
 Socket.IO.
 
 Socket.IO uses the same exact product-origin decision, keeps `GET`/`POST`, and
-allows an absent Origin for non-browser clients. Untrusted, operator and star
-origins fail the Engine.IO CORS handshake before Socket authentication or tenant
-middleware; token, account, tenant and room behavior are unchanged.
+allows an absent Origin for non-browser clients. It returns
+`Access-Control-Allow-Credentials: true` for exact product origins so the
+HttpOnly normal-user session cookie can authenticate both polling and WebSocket
+handshakes. Untrusted, operator and star origins fail the Engine.IO CORS
+handshake before Socket authentication or tenant middleware; token, account,
+tenant and room behavior are unchanged.
+
+## Normal-user browser session and CSRF contract (SEC-A6)
+
+Normal-user login and bootstrap issue the existing A5 opaque session as the
+HttpOnly `setly_session` cookie. It uses `Path=/`, `SameSite=Lax`, a twelve-hour
+bounded lifetime and `Secure` in production. The raw opaque value is not put in
+browser JSON, Web Storage, logs or errors. Non-browser callers without browser
+fetch metadata retain the bounded A5 bearer response for existing API/CLI
+compatibility; browser requests authenticate through the cookie.
+
+The browser also receives a random, non-HttpOnly `setly_csrf` cookie. For every
+unsafe cookie-authenticated method (`POST`, `PUT`, `PATCH`, `DELETE`), the
+client sends the same value in `X-CSRF-Token`. The application compares the
+double-submit values in constant time and requires a present exact configured
+product `Origin`, or a canonical same-origin `Host` request for the dedicated
+operator boundary. Missing, foreign and malformed origins, missing CSRF values
+and mismatches receive one generic `403 BROWSER_SESSION_PROTECTION_DENIED`.
+Safe reads remain available without a CSRF header. Logout revokes the current
+A5 session, disconnects its sockets and expires both browser cookies.
 
 ## Application response headers
 
@@ -149,9 +172,9 @@ value, operator token or personal data belongs in rollout evidence or logs.
 
 ## Scope and rollback
 
-This slice changes no cookie, session, CSRF, Origin-validation, auth, tenant,
-provider/worker, schema, OpenAPI, generated-client, dependency or onboarding
-contract. The bounded discard receiver is not an OpenAPI/product endpoint.
+SEC-A8 remains the source of the origin/header/CSP contract; SEC-A6 extends its
+credentials-enabled browser transport with the normal-user cookie and CSRF
+contract above. The bounded discard receiver is not an OpenAPI/product endpoint.
 Rollback returns CSP to the last safe report-only policy or disables the
 explicit HSTS gate; it must preserve the exact product-origin allowlist and
 framing/referrer/nosniff controls.

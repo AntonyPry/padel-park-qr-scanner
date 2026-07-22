@@ -2,6 +2,21 @@ const authService = require('../services/auth.service');
 const tenantContextService = require('../services/tenant-context.service');
 const { disconnectSessionSockets } = require('../realtime/session-boundary');
 const { sendError } = require('../utils/api-error');
+const {
+  clearBrowserSessionCookies,
+  setBrowserSessionCookies,
+  shouldExposeBearerResponse,
+} = require('../security/browser-session');
+
+function sendSession(res, req, session) {
+  setBrowserSessionCookies(res, session.token);
+  const response = {
+    account: session.account,
+    capabilities: session.capabilities,
+  };
+  if (shouldExposeBearerResponse(req)) response.token = session.token;
+  return res.json(response);
+}
 
 class AuthController {
   async status(req, res) {
@@ -33,7 +48,7 @@ class AuthController {
       if (typeof onTenantInitialized === 'function') {
         await onTenantInitialized();
       }
-      res.json(session);
+      sendSession(res, req, session);
     } catch (error) {
       sendError(res, error, 'Ошибка настройки аккаунта');
     }
@@ -47,7 +62,7 @@ class AuthController {
       }
 
       const session = await authService.login({ email, password });
-      res.json(session);
+      sendSession(res, req, session);
     } catch (error) {
       sendError(res, error, 'Ошибка входа');
     }
@@ -56,11 +71,12 @@ class AuthController {
   async logout(req, res) {
     try {
       const revoked = await authService.revokeCurrentSession(
-        authService.extractBearerToken(req),
+        authService.extractSessionToken(req),
       );
       if (revoked?.sessionId) {
         disconnectSessionSockets(req.app.get('io'), revoked.sessionId);
       }
+      clearBrowserSessionCookies(res);
       res.json({ success: true });
     } catch (_error) {
       sendError(

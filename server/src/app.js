@@ -30,6 +30,9 @@ const {
   discardCspReport,
 } = require('./middleware/browser-security');
 const {
+  createBrowserSessionProtection,
+} = require('./middleware/browser-session-protection');
+const {
   beelineCapabilityCutoverGate,
   rolloutMaintenanceGate,
 } = require('./middleware/rollout-maintenance');
@@ -73,6 +76,7 @@ function createApp({
   app.set('browserOriginPolicy', originPolicy);
   app.use(createSecurityHeadersMiddleware(originPolicy));
   app.use(createBrowserCorsMiddleware(originPolicy));
+  app.use(createBrowserSessionProtection(originPolicy));
   app.post(CSP_REPORT_PATH, rolloutMaintenanceGate, discardCspReport);
   app.use(requestTiming);
   const providerIngress = [

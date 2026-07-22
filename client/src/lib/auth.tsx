@@ -9,7 +9,6 @@ import {
 import {
   apiFetch,
   clearAuthToken,
-  getAuthToken,
   revokeCurrentAuthSession,
   setAuthToken,
 } from '@/lib/api';
@@ -209,21 +208,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      if (!getAuthToken()) {
-        cancelTenantSensitiveRequests();
-        clearActiveTenantContext();
-        await clearTenantClientState(queryClient);
-        setTenantContextCapability(contextEnabled);
-        setTenantCacheRealtimeCapability(cacheRealtimeEnabled);
-        setTenantContextEnabled(contextEnabled);
-        setTenantCacheRealtimeEnabled(cacheRealtimeEnabled);
-        setAccount(null);
-        setTenantDiscovery(null);
-        setTenantError(null);
-        setTenantReady(true);
-        return;
-      }
-
       const meRes = await apiFetch('/api/auth/me');
       if (!meRes.ok) {
         clearAuthToken();
@@ -286,12 +270,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const data = (await response.json()) as {
-      token: string;
+      token?: string;
       account: Account;
       capabilities?: ServerCapabilities;
     };
 
-    setAuthToken(data.token);
+    if (data.token) setAuthToken(data.token);
     try {
       setAccount(await initializeTenantContext(data.account, data.capabilities));
     } catch (error) {
@@ -319,12 +303,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const session = (await response.json()) as {
-      token: string;
+      token?: string;
       account: Account;
       capabilities?: ServerCapabilities;
     };
 
-    setAuthToken(session.token);
+    if (session.token) setAuthToken(session.token);
     try {
       setAccount(await initializeTenantContext(session.account, session.capabilities));
     } catch (error) {

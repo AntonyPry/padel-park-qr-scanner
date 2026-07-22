@@ -16,8 +16,11 @@ import {
   ONBOARDING_QUEST_TASK_HEADER,
 } from '@/lib/onboarding-quest';
 
-const AUTH_TOKEN_KEY = 'padel_park_auth_token';
 const TRAINING_MODE_KEY = 'padel_park_training_mode';
+const CSRF_COOKIE_NAME = 'setly_csrf';
+const CSRF_HEADER_NAME = 'X-CSRF-Token';
+const UNSAFE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+let inMemoryAuthToken: string | null = null;
 
 interface StoredTrainingMode {
   isEnabled: boolean;
@@ -25,15 +28,15 @@ interface StoredTrainingMode {
 }
 
 export function getAuthToken() {
-  return localStorage.getItem(AUTH_TOKEN_KEY);
+  return inMemoryAuthToken;
 }
 
 export function setAuthToken(token: string) {
-  localStorage.setItem(AUTH_TOKEN_KEY, token);
+  inMemoryAuthToken = token;
 }
 
 export function clearAuthToken() {
-  localStorage.removeItem(AUTH_TOKEN_KEY);
+  inMemoryAuthToken = null;
   clearStoredTrainingMode();
   cancelTenantSensitiveRequests();
   clearActiveTenantContext();
@@ -42,17 +45,25 @@ export function clearAuthToken() {
 }
 
 export async function revokeCurrentAuthSession() {
-  const token = getAuthToken();
-  if (!token) return;
   try {
-    await fetch(`${API_URL}/api/auth/logout`, {
-      headers: { Authorization: `Bearer ${token}` },
-      keepalive: true,
-      method: 'POST',
-    });
+    await apiFetch('/api/auth/logout', { keepalive: true, method: 'POST' });
   } catch {
     // Local logout remains available during network failure. The opaque session
     // still expires server-side and can be revoked by the security lifecycle.
+  }
+}
+
+function getCsrfToken() {
+  if (typeof document === 'undefined') return '';
+  const entry = document.cookie
+    .split(';')
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(`${CSRF_COOKIE_NAME}=`));
+  if (!entry) return '';
+  try {
+    return decodeURIComponent(entry.slice(CSRF_COOKIE_NAME.length + 1));
+  } catch {
+    return '';
   }
 }
 
@@ -98,6 +109,7 @@ export function applyOnboardingProgressResponse(response: Response) {
 export async function apiFetch(input: string, init: RequestInit = {}) {
   const headers = new Headers(init.headers);
   const token = getAuthToken();
+  const method = String(init.method || 'GET').toUpperCase();
   const isFormData = init.body instanceof FormData;
   const trainingMode = getStoredTrainingMode();
   const activeQuest =
@@ -107,6 +119,11 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
 
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  if (UNSAFE_METHODS.has(method)) {
+    const csrfToken = getCsrfToken();
+    if (csrfToken) headers.set(CSRF_HEADER_NAME, csrfToken);
   }
 
   applyTenantHeaders(input, init, headers);
@@ -132,6 +149,7 @@ export async function apiFetch(input: string, init: RequestInit = {}) {
   const url = input.startsWith('http') ? input : `${API_URL}${input}`;
   const response = await fetch(url, {
     ...init,
+    credentials: init.credentials || 'include',
     headers,
     signal: getTenantRequestSignal(input, init),
   });
