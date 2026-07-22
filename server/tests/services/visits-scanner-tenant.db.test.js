@@ -15,6 +15,8 @@ const XLSX = require('xlsx');
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE = '20260716180000-add-tenant-visits-scanner.js';
+const BIRTH_DATE_MIGRATION_FILE =
+  '20260721100000-add-client-birth-date.js';
 const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
@@ -52,6 +54,21 @@ async function createSchema(database) {
     await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
   }
   return sequelize;
+}
+
+async function applyTrackedMigration(queryInterface, file) {
+  const [applied] = await queryInterface.sequelize.query(
+    'SELECT name FROM SequelizeMeta WHERE name=:name LIMIT 1',
+    {
+      replacements: { name: file },
+      type: SequelizePackage.QueryTypes.SELECT,
+    },
+  );
+  if (applied) return;
+
+  const migration = require(path.join(SERVER_ROOT, 'migrations', file));
+  await migration.up(queryInterface, SequelizePackage);
+  await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
 }
 
 function tenantFor(account, membership, organizationId, clubId) {
@@ -289,6 +306,15 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
   let db;
   try {
     schema = await createSchema(database);
+    const queryInterface = schema.getQueryInterface();
+    const birthDateMigration = require(
+      `../../migrations/${BIRTH_DATE_MIGRATION_FILE}`,
+    );
+    await birthDateMigration.up(queryInterface, SequelizePackage);
+    assert.ok(
+      (await queryInterface.describeTable('Users')).birthDate,
+      'production-like schema must include Users.birthDate before current models load',
+    );
     db = require('../../models');
     const accessService = require('../../src/services/access.service');
     const authService = require('../../src/services/auth.service');
@@ -298,7 +324,6 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     const analyticsController = require('../../src/controllers/visits-analytics.controller');
     const onboardingService = require('../../src/services/onboarding.service');
     const migration = require(`../../migrations/${FEATURE_MIGRATION_FILE}`);
-    const queryInterface = schema.getQueryInterface();
 
     await t.test('pre-existing partial schema rejects before any schema or data mutation', async () => {
       const partialCases = [
@@ -496,6 +521,11 @@ test('Feature 5.3 Visits/scanner DB isolation, migrations and compatibility', as
     await applyAcceptedTenantMigrations(queryInterface, {
       afterFile: FEATURE_MIGRATION_FILE,
     });
+    await applyTrackedMigration(queryInterface, BIRTH_DATE_MIGRATION_FILE);
+    assert.ok(
+      (await queryInterface.describeTable('Users')).birthDate,
+      'production-like schema must track Users.birthDate after historical migration checks',
+    );
     const tenantContextService = require('../../src/services/tenant-context.service');
     defaultContext = await tenantContextService.resolveTenantContext({
       accountId: owner.id,
