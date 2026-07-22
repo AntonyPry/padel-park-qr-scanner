@@ -16,6 +16,10 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
   let account;
   let expenseId;
   let financeId;
+  let managerAccount;
+  let managerMembership;
+  let managerMembershipAccess;
+  let managerStaff;
   let membership;
   let membershipAccess;
   let shift;
@@ -61,6 +65,32 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     membershipAccess = await db.MembershipClubAccess.create({
       clubId: club.id,
       membershipId: membership.id,
+      organizationId: organization.id,
+      status: 'active',
+    });
+    managerStaff = await db.Staff.create({
+      name: `Shift cash lifecycle manager ${suffix}`,
+      organizationId: organization.id,
+      role: 'Менеджер',
+      status: 'active',
+    });
+    managerAccount = await db.Account.create({
+      email: `shift-cash-lifecycle-manager-${suffix}@example.test`,
+      passwordHash: 'not-used-in-test',
+      role: 'manager',
+      staffId: managerStaff.id,
+      status: 'active',
+    });
+    managerMembership = await db.Membership.create({
+      accountId: managerAccount.id,
+      organizationId: organization.id,
+      role: 'manager',
+      staffId: managerStaff.id,
+      status: 'active',
+    });
+    managerMembershipAccess = await db.MembershipClubAccess.create({
+      clubId: club.id,
+      membershipId: managerMembership.id,
       organizationId: organization.id,
       status: 'active',
     });
@@ -112,9 +142,21 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       },
       account,
     );
-    assert.equal(openingSummary.cashSales, 1000);
-    assert.equal(openingSummary.expectedClosingCash, 4200);
+    assert.equal(openingSummary.cashSales, null);
+    assert.equal(openingSummary.expectedClosingCash, null);
+    assert.equal(openingSummary.manualAdjustments, null);
     assert.equal(openingSummary.session.openingTotal, 3200);
+    assert.equal(openingSummary.session.cashSalesSnapshot, null);
+    assert.equal(openingSummary.session.expensesSnapshot, null);
+    assert.equal(openingSummary.session.expectedClosingCash, null);
+    assert.equal(openingSummary.session.manualAdjustmentsSnapshot, null);
+    assert.equal(openingSummary.session.variance, null);
+
+    const managerOpeningSummary = await shiftCashService.getActiveCash(managerAccount);
+    assert.equal(managerOpeningSummary.cashSales, 1000);
+    assert.equal(managerOpeningSummary.expectedClosingCash, 4200);
+    assert.equal(managerOpeningSummary.manualAdjustments, 0);
+    assert.equal(managerOpeningSummary.session.manualAdjustmentsSnapshot, 0);
 
     const expenseSummary = await shiftCashService.createExpense(
       {
@@ -129,7 +171,19 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     financeId = expense.financeId;
 
     assert.equal(expenseSummary.activeExpensesTotal, 900);
-    assert.equal(expenseSummary.expectedClosingCash, 3300);
+    assert.equal(expenseSummary.cashSales, null);
+    assert.equal(expenseSummary.expectedClosingCash, null);
+    assert.equal(expenseSummary.manualAdjustments, null);
+    assert.equal(expenseSummary.session.cashSalesSnapshot, null);
+    assert.equal(expenseSummary.session.expensesSnapshot, null);
+    assert.equal(expenseSummary.session.expectedClosingCash, null);
+    assert.equal(expenseSummary.session.manualAdjustmentsSnapshot, null);
+    assert.equal(expenseSummary.session.variance, null);
+    const managerExpenseSummary = await shiftCashService.getActiveCash(managerAccount);
+    assert.equal(managerExpenseSummary.activeExpensesTotal, 900);
+    assert.equal(managerExpenseSummary.cashSales, 1000);
+    assert.equal(managerExpenseSummary.expectedClosingCash, 3300);
+    assert.equal(managerExpenseSummary.manualAdjustments, 0);
     assert.ok(financeId);
     assert.equal(
       onboardingEvents.filter((event) => event.eventKey === 'shift_cash.attachment_uploaded').length,
@@ -187,14 +241,37 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     );
     const canceledExpense = await db.ShiftCashExpense.findByPk(expenseId);
     assert.equal(canceledSummary.activeExpensesTotal, 0);
-    assert.equal(canceledSummary.expectedClosingCash, 4200);
+    assert.equal(canceledSummary.cashSales, null);
+    assert.equal(canceledSummary.expectedClosingCash, null);
+    assert.equal(canceledSummary.manualAdjustments, null);
+    assert.equal(canceledSummary.session.cashSalesSnapshot, null);
+    assert.equal(canceledSummary.session.expensesSnapshot, null);
+    assert.equal(canceledSummary.session.expectedClosingCash, null);
+    assert.equal(canceledSummary.session.manualAdjustmentsSnapshot, null);
+    assert.equal(canceledSummary.session.variance, null);
     assert.equal(canceledExpense.status, 'canceled');
     assert.equal(canceledExpense.cancelReason, 'DB-backed soft cancel');
     assert.equal(canceledExpense.financeId, null);
     assert.equal(await db.Finance.findByPk(financeId), null);
 
+    const administratorActiveSummary = await shiftCashService.getActiveCash(account);
+    assert.equal(administratorActiveSummary.cashSales, null);
+    assert.equal(administratorActiveSummary.expectedClosingCash, null);
+    assert.equal(administratorActiveSummary.manualAdjustments, null);
+    assert.equal(administratorActiveSummary.session.cashSalesSnapshot, null);
+    assert.equal(administratorActiveSummary.session.expensesSnapshot, null);
+    assert.equal(administratorActiveSummary.session.expectedClosingCash, null);
+    assert.equal(administratorActiveSummary.session.manualAdjustmentsSnapshot, null);
+    assert.equal(administratorActiveSummary.session.variance, null);
+
+    const managerCanceledSummary = await shiftCashService.getActiveCash(managerAccount);
+    assert.equal(managerCanceledSummary.activeExpensesTotal, 0);
+    assert.equal(managerCanceledSummary.cashSales, 1000);
+    assert.equal(managerCanceledSummary.expectedClosingCash, 4200);
+    assert.equal(managerCanceledSummary.manualAdjustments, 0);
+
     await assert.rejects(
-      () => shiftsService.endActive(account, {
+      () => shiftsService.endActive(managerAccount, {
         cash: { banknotes: 4000, coins: 0, comment: null },
       }),
       /При расхождении укажите комментарий/,
@@ -211,7 +288,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(sessionAfterRejectedClose.expectedClosingCash, null);
     assert.equal(sessionAfterRejectedClose.variance, null);
 
-    const closed = await shiftsService.endActive(account, {
+    const closed = await shiftsService.endActive(managerAccount, {
       cash: { banknotes: 4000, coins: 200, comment: null },
     });
     assert.equal(closed.shift.id, shift.id);
@@ -220,6 +297,7 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.equal(closed.cash.status, 'closed');
     assert.equal(closed.cash.cashSalesSnapshot, 1000);
     assert.equal(closed.cash.expensesSnapshot, 0);
+    assert.equal(closed.cash.manualAdjustmentsSnapshot, 0);
     assert.equal(closed.cash.expectedClosingCash, 4200);
     assert.equal(closed.cash.closingTotal, 4200);
     assert.equal(closed.cash.variance, 0);
@@ -234,7 +312,14 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
     assert.ok(persistedShift.endedAt);
     assert.equal(persistedSession.status, 'closed');
     assert.ok(persistedSession.closingRecordedAt);
+    assert.equal(Number(persistedSession.cashSalesSnapshot), 1000);
+    assert.equal(Number(persistedSession.expensesSnapshot), 0);
+    assert.equal(Number(persistedSession.manualAdjustmentsSnapshot), 0);
     assert.equal(Number(persistedSession.expectedClosingCash), 4200);
+    assert.equal(
+      Number(persistedSession.closingBanknotes) + Number(persistedSession.closingCoins),
+      4200,
+    );
     assert.equal(Number(persistedSession.variance), 0);
   } finally {
     restoreSingleton();
@@ -259,10 +344,21 @@ test('DB-backed shift cash lifecycle closes cash and shift atomically after roll
       await db.FinanceChangeLog.destroy({ where: { accountId: account.id } });
       await db.Finance.destroy({ where: { createdByAccountId: account.id } });
     }
+    if (managerAccount?.id) {
+      await db.OnboardingProgress.destroy({ where: { accountId: managerAccount.id } });
+      await db.FinanceChangeLog.destroy({ where: { accountId: managerAccount.id } });
+      await db.Finance.destroy({ where: { createdByAccountId: managerAccount.id } });
+    }
     if (receiptIds.length > 0) {
       await db.Receipt.destroy({ where: { id: receiptIds } });
     }
     if (shift?.id) await db.Shift.destroy({ where: { id: shift.id } });
+    if (managerMembershipAccess) await managerMembershipAccess.destroy();
+    if (managerMembership) await managerMembership.destroy();
+    if (managerAccount?.id) {
+      await db.Account.destroy({ force: true, where: { id: managerAccount.id } });
+    }
+    if (managerStaff?.id) await db.Staff.destroy({ where: { id: managerStaff.id } });
     if (membershipAccess) await membershipAccess.destroy();
     if (membership) await membership.destroy();
     if (account?.id) await db.Account.destroy({ force: true, where: { id: account.id } });

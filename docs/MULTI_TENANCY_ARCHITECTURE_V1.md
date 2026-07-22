@@ -194,7 +194,7 @@ Feature 2 foundation имеет ровно два допустимых operation
 
 | State | DB condition | Startup behavior |
 | --- | --- | --- |
-| `bootstrap-pending` | Exact active default Organization/Club `padel-park`/`padel-park` уже существуют; `Accounts.count = Memberships.count = MembershipClubAccesses.count = 0`. Active owner пока не требуется. | Разрешены только `GET /api/health`, `GET /api/auth/status` и `POST /api/auth/bootstrap`. Health/status явно возвращают `bootstrapPending: true`. |
+| `bootstrap-pending` | Exact active default Organization/Club `padel-park`/`padel-park` уже существуют; `Accounts.count = Memberships.count = MembershipClubAccesses.count = 0`. Active owner пока не требуется. | Операционно разрешены только `GET /api/health`, `GET /api/auth/status` и `POST /api/auth/bootstrap`. Health/status явно возвращают `bootstrapPending: true`. Bare legacy `POST /api/integrations/beeline/events` не является allowlisted traffic: он безусловно отклоняется opaque `404` раньше parser и bootstrap gate. |
 | `initialized` | Exact default tenant существует; Account/Membership/access parity выполнена; минимум один active owner Membership. | Включается strict startup assertion, обычный API и разрешенные background components. До Feature 3 auth/read source остается Account. |
 | `invalid` | Любая частично пустая тройка, orphan, parity mismatch, второй tenant или неполный initial owner. | Fail-closed: business traffic, bootstrap repair, bots, webhooks, workers и runners запрещены; startup/release сообщает диагностическую ошибку и требует operator recovery. |
 
@@ -202,7 +202,7 @@ Feature 2 migration всегда создает exact default Organization/Club.
 
 Текущий `auth.service.isSetupRequired()` больше не может проверять только `Account.count`. Он использует общий state classifier: возвращает `true` исключительно для exact bootstrap-pending, `false` для initialized и бросает fail-closed diagnostic для invalid/partial state.
 
-Bootstrap gate стоит раньше `/openapi.json`, webhooks, transcription-worker routes, `requireAuth` и любых business routers. В `bootstrap-pending` login и любой маршрут кроме трех allowlisted возвращает `503 BOOTSTRAP_REQUIRED`. `server/bot.js`, Telegram/VK bots, recurring call-task runner и Beeline subscription runner не стартуют; worker claim/webhook ingress также закрыты. Каждый API/bot/runner process использует один state assertion и повторно проверяет его перед переходом в initialized mode.
+Bootstrap gate стоит раньше `/openapi.json`, current connection-first webhooks, transcription-worker routes, `requireAuth` и любых business routers. В `bootstrap-pending` login и любой запрос, дошедший до gate, кроме трех allowlisted возвращает `503 BOOTSTRAP_REQUIRED`; current provider ingress также остается fail-closed. Единственное более раннее исключение — bare legacy `POST /api/integrations/beeline/events`: route ordering сохраняет его provider-ingress classification, но безусловно возвращает opaque `404` до body parser, записи события и bootstrap gate. `server/bot.js`, Telegram/VK bots, recurring call-task runner и Beeline subscription runner не стартуют; worker claim/webhook ingress также закрыты. Каждый API/bot/runner process использует один state assertion и повторно проверяет его перед переходом в initialized mode.
 
 `POST /api/auth/bootstrap` выполняет одну DB transaction:
 
