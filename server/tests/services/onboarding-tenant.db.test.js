@@ -13,6 +13,8 @@ const {
 
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE = '20260719220000-add-tenant-onboarding.js';
+const BIRTH_DATE_MIGRATION_FILE =
+  '20260721100000-add-client-birth-date.js';
 const CAPABILITY_ENV = [
   'TENANT_CONTEXT_ENABLED',
   'TENANT_CACHE_REALTIME_ENABLED',
@@ -74,6 +76,19 @@ async function selectOne(sequelize, sql, replacements = {}) {
     type: SequelizePackage.QueryTypes.SELECT,
   });
   return rows[0] || null;
+}
+
+async function applyTrackedMigration(queryInterface, file) {
+  const applied = await selectOne(
+    queryInterface.sequelize,
+    'SELECT name FROM SequelizeMeta WHERE name=:name LIMIT 1',
+    { name: file },
+  );
+  if (applied) return;
+
+  const migration = require(path.join(SERVER_ROOT, 'migrations', file));
+  await migration.up(queryInterface, SequelizePackage);
+  await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
 }
 
 async function insertAccountAndMembership(
@@ -489,6 +504,12 @@ test('Feature 8.3 real MySQL migration and two-tenant onboarding/cleanup/fixture
     assert.equal(Number((await selectOne(schema, 'SELECT COUNT(*) count FROM OnboardingProgresses')).count), 1);
     await migration.up(queryInterface, SequelizePackage);
     assert.equal(await migration._private.classify(queryInterface), 'ready');
+
+    await applyTrackedMigration(queryInterface, BIRTH_DATE_MIGRATION_FILE);
+    assert.ok(
+      (await queryInterface.describeTable('Users')).birthDate,
+      'production-like schema must include Users.birthDate before current models load',
+    );
 
     db = require('../../models');
     accountSeederAdapter = require('../../src/services/account-seeder-adapter');

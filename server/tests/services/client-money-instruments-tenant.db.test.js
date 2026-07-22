@@ -19,6 +19,8 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260719120000-add-tenant-finance-prepayments-wave.js';
+const BIRTH_DATE_MIGRATION_FILE =
+  '20260721100000-add-client-birth-date.js';
 const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
@@ -64,6 +66,19 @@ async function selectOne(sequelize, sql, replacements = {}) {
     type: SequelizePackage.QueryTypes.SELECT,
   });
   return rows[0] || null;
+}
+
+async function applyTrackedMigration(queryInterface, file) {
+  const applied = await selectOne(
+    queryInterface.sequelize,
+    'SELECT name FROM SequelizeMeta WHERE name=:name LIMIT 1',
+    { name: file },
+  );
+  if (applied) return;
+
+  const migration = require(path.join(SERVER_ROOT, 'migrations', file));
+  await migration.up(queryInterface, SequelizePackage);
+  await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
 }
 
 async function captureCleanupPlan(queryInterface, migration, removedLegacyUnique) {
@@ -526,6 +541,11 @@ test('Feature 7.1 migration and client-money two-Organization/two-Club isolation
     await applyAcceptedTenantMigrations(queryInterface, {
       afterFile: FEATURE_MIGRATION_FILE,
     });
+    await applyTrackedMigration(queryInterface, BIRTH_DATE_MIGRATION_FILE);
+    assert.ok(
+      (await queryInterface.describeTable('Users')).birthDate,
+      'production-like schema must include Users.birthDate before current models load',
+    );
 
     db = require('../../models');
     const tenantContextService = require('../../src/services/tenant-context.service');

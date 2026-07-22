@@ -18,6 +18,8 @@ const {
 const SERVER_ROOT = path.resolve(__dirname, '../..');
 const FEATURE_MIGRATION_FILE =
   '20260718120000-add-tenant-bookings-courts.js';
+const BIRTH_DATE_MIGRATION_FILE =
+  '20260721100000-add-client-birth-date.js';
 const CAPABILITY_ENV = ACCEPTED_TENANT_CAPABILITY_ENV;
 
 function databaseName() {
@@ -63,6 +65,19 @@ async function selectOne(sequelize, sql, replacements = {}) {
     type: SequelizePackage.QueryTypes.SELECT,
   });
   return rows[0] || null;
+}
+
+async function applyTrackedMigration(queryInterface, file) {
+  const applied = await selectOne(
+    queryInterface.sequelize,
+    'SELECT name FROM SequelizeMeta WHERE name=:name LIMIT 1',
+    { name: file },
+  );
+  if (applied) return;
+
+  const migration = require(path.join(SERVER_ROOT, 'migrations', file));
+  await migration.up(queryInterface, SequelizePackage);
+  await queryInterface.bulkInsert('SequelizeMeta', [{ name: file }]);
 }
 
 async function touchedRowsSnapshot(sequelize) {
@@ -377,6 +392,11 @@ test('Feature 5.5 migration, tenant isolation, races and idempotency', async () 
     await applyAcceptedTenantMigrations(queryInterface, {
       afterFile: FEATURE_MIGRATION_FILE,
     });
+    await applyTrackedMigration(queryInterface, BIRTH_DATE_MIGRATION_FILE);
+    assert.ok(
+      (await queryInterface.describeTable('Users')).birthDate,
+      'production-like schema must include Users.birthDate before current models load',
+    );
 
     db = require('../../models');
     await db.sequelize.authenticate();
