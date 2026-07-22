@@ -3,7 +3,6 @@ const authService = require('../services/auth.service');
 const {
   assertTenantFoundationInitialized,
 } = require('../services/tenant-foundation.service');
-const { ACCESS_MATRIX } = require('../constants/access-matrix');
 const tenantContextService = require('../services/tenant-context.service');
 const {
   assertTenantCapabilityDependencies,
@@ -13,8 +12,9 @@ const {
   requireExactSingletonDefault,
 } = require('../tenant-enforcement/legacy-singleton');
 const {
+  ACCESS_SOCKET_ROOM,
   GLOBAL_SYSTEM_ROOM,
-  getRealtimeRoomsForRole,
+  getLegacyRealtimeRoomsForRole,
   getTenantRoomsForContext,
   revalidateSocket,
 } = require('../realtime');
@@ -24,8 +24,6 @@ const {
 const {
   createBrowserOriginPolicy,
 } = require('../security/browser-origin-policy');
-
-const ACCESS_SOCKET_ROOM = 'access';
 
 function createSocketCorsOptions(originPolicy) {
   return {
@@ -140,10 +138,7 @@ function createSocketServer(
       getTenantRoomsForContext(socket.data.tenant).forEach((room) => socket.join(room));
     } else {
       const role = socket.data.account?.role;
-      if (ACCESS_MATRIX.accessOperate.includes(role)) {
-        socket.join(ACCESS_SOCKET_ROOM);
-      }
-      getRealtimeRoomsForRole(role).forEach((room) => socket.join(room));
+      getLegacyRealtimeRoomsForRole(role).forEach((room) => socket.join(room));
     }
 
     const configuredInterval = Number(

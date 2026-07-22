@@ -1,6 +1,7 @@
 const { ACCESS_MATRIX } = require('../constants/access-matrix');
 const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 
+const ACCESS_SOCKET_ROOM = 'access';
 const REALTIME_DOMAIN_ROOM_PREFIX = 'crm:domain:';
 const TENANT_ROOM_PREFIXES = Object.freeze({
   club: 'club',
@@ -69,6 +70,13 @@ function getRealtimeRoomsForRole(role) {
     .map(getRealtimeDomainRoom);
 }
 
+function getLegacyRealtimeRoomsForRole(role) {
+  return uniq([
+    ...(ACCESS_MATRIX.accessOperate.includes(role) ? [ACCESS_SOCKET_ROOM] : []),
+    ...getRealtimeRoomsForRole(role),
+  ]);
+}
+
 function positiveTenantId(value, label) {
   const normalized = Number(value);
   if (!Number.isSafeInteger(normalized) || normalized <= 0) {
@@ -129,11 +137,13 @@ function getTenantRoomsForContext(tenant) {
 }
 
 module.exports = {
+  ACCESS_SOCKET_ROOM,
   DOMAIN_ACCESS_KEYS,
   REALTIME_DOMAIN_ROOM_PREFIX,
   TENANT_ROOM_PREFIXES,
   canReceiveDomain,
   getRealtimeDomainRoom,
+  getLegacyRealtimeRoomsForRole,
   getRealtimeRoomsForRole,
   getRolesForDomain,
   getTenantBaseRoom,

@@ -1,4 +1,5 @@
 const crypto = require('crypto');
+const { ACCOUNT_ROLE_VALUES } = require('../constants/account-roles');
 const authService = require('../services/auth.service');
 const tenantContextService = require('../services/tenant-context.service');
 const {
@@ -8,6 +9,7 @@ const {
   requireExactSingletonDefault,
 } = require('../tenant-enforcement/legacy-singleton');
 const {
+  getLegacyRealtimeRoomsForRole,
   getRealtimeDomainRoom,
   getTenantDomainRoom,
 } = require('./permissions');
@@ -26,6 +28,9 @@ const VALID_ACTIONS = new Set([
   'imported',
   'synced',
 ]);
+const LEGACY_ROLE_DERIVED_ROOMS = new Set(
+  ACCOUNT_ROLE_VALUES.flatMap(getLegacyRealtimeRoomsForRole),
+);
 
 function normalizeAction(action) {
   return VALID_ACTIONS.has(action) ? action : 'updated';
@@ -78,6 +83,16 @@ function createRealtimeEvent(payload, account, tenant = null) {
   };
 }
 
+async function reconcileLegacyRoleRooms(socket, role) {
+  const authorizedRooms = new Set(getLegacyRealtimeRoomsForRole(role));
+  for (const room of LEGACY_ROLE_DERIVED_ROOMS) {
+    if (!authorizedRooms.has(room)) await socket.leave(room);
+  }
+  for (const room of authorizedRooms) {
+    await socket.join(room);
+  }
+}
+
 async function revalidateSocket(socket) {
   const authentication = socket.data?.authentication;
   if (!authentication?.accountId) return false;
@@ -85,8 +100,12 @@ async function revalidateSocket(socket) {
   try {
     const principal = await authService.revalidateAuthentication(authentication);
     if (!principal?.account) return false;
+    if (!isTenantCacheRealtimeEnabled()) {
+      await reconcileLegacyRoleRooms(socket, principal.account.role);
+      socket.data.account = principal.account;
+      return true;
+    }
     socket.data.account = principal.account;
-    if (!isTenantCacheRealtimeEnabled()) return true;
 
     const tenant = socket.data?.tenant;
     if (!tenant) return false;

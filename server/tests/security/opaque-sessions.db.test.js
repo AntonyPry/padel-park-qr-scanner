@@ -127,6 +127,15 @@ function disconnected(socket, timeoutMs = 2500) {
   });
 }
 
+async function waitUntil(label, predicate, timeoutMs = 2500) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await delay(20);
+  }
+  throw new Error(`${label} timed out`);
+}
+
 function restoreEnvironment(previous) {
   for (const [name, value] of Object.entries(previous)) {
     if (value === undefined) delete process.env[name];
@@ -208,6 +217,13 @@ test('SEC-A5 opaque HTTP sessions, lifecycle revocation and Socket.IO boundary',
     const staffService = require('../../src/services/staff.service');
     const createApp = require('../../src/app');
     const { createSocketServer } = require('../../src/sockets');
+    const {
+      ACCESS_SOCKET_ROOM,
+      CRM_CHANGED_EVENT,
+      getRealtimeDomainRoom,
+      getRealtimeRoomsForRole,
+      publishRealtimeChange,
+    } = require('../../src/realtime');
     const normalUserSessions = authService._private.normalUserSessions;
 
     runtime = await startRuntime(createApp, createSocketServer, false);
@@ -435,6 +451,81 @@ test('SEC-A5 opaque HTTP sessions, lifecycle revocation and Socket.IO boundary',
       });
       assert.equal(staffLifecycleRow.revokedReason, 'staff_disabled');
       await staffService.restore(staff.id);
+    });
+
+    await t.test('legacy flag-off role downgrade reconciles rooms before later delivery', async () => {
+      await accountLifecycle.updateAccount(
+        manager.id,
+        { role: 'admin' },
+        { organizationId: organization.id },
+      );
+      process.env.AUTH_LEGACY_TOKEN_MODE = 'accept';
+      process.env.AUTH_LEGACY_TOKEN_ACCEPT_UNTIL = new Date(
+        Date.now() + 60_000,
+      ).toISOString();
+      const socket = await connectSocket(
+        runtime,
+        {
+          token: authService._private.signLegacyToken({
+            accountId: manager.id,
+            role: 'owner',
+            staffId: 999999,
+          }),
+        },
+        'websocket',
+      );
+
+      try {
+        const serverSocket = runtime.io.sockets.sockets.get(socket.id);
+        assert.ok(serverSocket);
+        assert.equal(serverSocket.rooms.has(ACCESS_SOCKET_ROOM), true);
+        assert.equal(serverSocket.rooms.has(getRealtimeDomainRoom('access')), true);
+
+        await accountLifecycle.updateAccount(
+          manager.id,
+          { role: 'viewer' },
+          { organizationId: organization.id },
+        );
+        const viewerRooms = new Set(getRealtimeRoomsForRole('viewer'));
+        const removedAdminRooms = getRealtimeRoomsForRole('admin')
+          .filter((room) => !viewerRooms.has(room));
+        await waitUntil('legacy socket room reconciliation', () => (
+          serverSocket.data.account.role === 'viewer' &&
+          !serverSocket.rooms.has(ACCESS_SOCKET_ROOM) &&
+          removedAdminRooms.every((room) => !serverSocket.rooms.has(room)) &&
+          [...viewerRooms].every((room) => serverSocket.rooms.has(room))
+        ));
+
+        const deliveredDomains = [];
+        let deliveredScanResults = 0;
+        socket.on(CRM_CHANGED_EVENT, (event) => deliveredDomains.push(event.domain));
+        socket.on('scan_result', () => {
+          deliveredScanResults += 1;
+        });
+        await publishRealtimeChange(
+          runtime.io,
+          { action: 'updated', domain: 'access', entity: 'visit', entityId: 42 },
+          bootstrap.payload.account,
+        );
+        runtime.io.to(ACCESS_SOCKET_ROOM).emit('scan_result', { success: true });
+        await delay(100);
+        assert.equal(deliveredDomains.includes('access'), false);
+        assert.equal(deliveredScanResults, 0);
+
+        await publishRealtimeChange(
+          runtime.io,
+          { action: 'updated', domain: 'onboarding', entity: 'progress', entityId: manager.id },
+          bootstrap.payload.account,
+        );
+        await waitUntil(
+          'current viewer room delivery',
+          () => deliveredDomains.includes('onboarding'),
+        );
+      } finally {
+        socket.disconnect();
+        process.env.AUTH_LEGACY_TOKEN_MODE = 'off';
+        delete process.env.AUTH_LEGACY_TOKEN_ACCEPT_UNTIL;
+      }
     });
 
     async function exerciseSocketMode(tenantEnabled) {
