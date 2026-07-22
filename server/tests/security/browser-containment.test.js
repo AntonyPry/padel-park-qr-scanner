@@ -441,6 +441,11 @@ test('HSTS requires explicit production and verified-TLS gates', async () => {
     SECURITY_HSTS_ENABLED: 'false',
     SECURITY_HSTS_TLS_READY: 'false',
   }), false);
+  assert.equal(resolveHstsEnabled(PRODUCT_POLICY, {
+    NODE_ENV: 'production',
+    SECURITY_HSTS_ENABLED: 'false',
+    SECURITY_HSTS_TLS_READY: 'true',
+  }), false);
   assert.throws(
     () => resolveHstsEnabled(PRODUCT_POLICY, {
       NODE_ENV: 'production',

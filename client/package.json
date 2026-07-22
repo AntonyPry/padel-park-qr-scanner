@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "smoke:ui": "node scripts/ui-smoke.js",
     "test": "vitest run",
+    "test:csp-static": "npm run build && node scripts/csp-static-regression.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

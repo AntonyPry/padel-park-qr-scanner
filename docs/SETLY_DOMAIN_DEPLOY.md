@@ -154,6 +154,11 @@ PUBLIC_APP_URL=https://setly.tech
 INSTALLATION_ACTIVATION_BASE_URL=https://setly.tech
 ```
 
+Boolean HSTS values accept only exact `true`/`false`. Enabling HSTS outside
+production or while `SECURITY_HSTS_TLS_READY=false` fails startup. For a safe
+application rollback, `SECURITY_HSTS_ENABLED=false` suppresses HSTS even when
+the verified-TLS marker intentionally remains `true`.
+
 Production startup fails closed if both origin variables are unset/empty, if
 they differ, or if an entry is wildcard, duplicate, non-canonical, non-HTTPS or
 contains a path/query/fragment. When both variables are present, order may

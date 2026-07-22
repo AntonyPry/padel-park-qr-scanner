@@ -72,8 +72,10 @@ static, parser-error and 404 responses:
 
 The report-only CSP allows current browser requirements:
 
-- scripts, styles, fonts and normal assets from self; inline styles remain
-  report-only-compatible with current React component styling;
+- scripts, styles, fonts and normal assets from self; the pre-render theme
+  bootstrap is a synchronous same-origin `/assets/theme-bootstrap.js` file, so
+  the built SPA has no expected app-owned inline script violation; inline
+  styles remain report-only-compatible with current React component styling;
 - self/data/blob images, self/data fonts, self/blob media and workers;
 - product API plus `ws:`/`wss:` equivalents of the exact allowed origins for
   Socket.IO; production API and `/socket.io/` remain same-origin;
@@ -108,11 +110,14 @@ are true at startup:
 3. `SECURITY_HSTS_TLS_READY=true`;
 4. every configured product origin is HTTPS.
 
-Ambiguous boolean values or a partial gate fail startup. The first application
-policy intentionally omits `includeSubDomains` and `preload`: the separate ops
-certificate/vhost and wildcard DNS must be verified before either can be
-considered. Roll back by setting `SECURITY_HSTS_ENABLED=false`; do not remove
-TLS or return CORS to wildcard.
+Ambiguous boolean values fail startup. When `SECURITY_HSTS_ENABLED=true`, a
+non-production environment or `SECURITY_HSTS_TLS_READY=false` also fails
+startup. `SECURITY_HSTS_ENABLED=false` intentionally emits no HSTS regardless
+of a retained `SECURITY_HSTS_TLS_READY=true` marker, which provides the safe
+application rollback. The first application policy intentionally omits
+`includeSubDomains` and `preload`: the separate ops certificate/vhost and
+wildcard DNS must be verified before either can be considered. Do not remove
+TLS or return CORS to wildcard during rollback.
 
 ## Application-to-infrastructure contract
 
