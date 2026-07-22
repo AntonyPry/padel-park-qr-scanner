@@ -327,7 +327,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     await t.test('rollback initialized and backfill existing Accounts preserves parity', async () => {
       await downFoundationWithStaffIdentity();
       assert.equal(await db.Account.count(), 1);
-      const passwordHash = authService.hashPassword('Compat123!');
+      const passwordHash = await authService.hashPassword('Compat123!');
       await db.Account.bulkCreate([
         {
           email: 'manager-existing@setly.test',
@@ -379,7 +379,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         for (const status of ['active', 'inactive', 'archived']) {
           const account = await accountLifecycle.createAccount({
             email: `${role}-${status}@lifecycle.test`,
-            passwordHash: authService.hashPassword('Lifecycle123!'),
+            passwordHash: await authService.hashPassword('Lifecycle123!'),
             role,
             status,
           });
@@ -401,7 +401,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         accountLifecycle.createAccount(
           {
             email: 'forced-create@lifecycle.test',
-            passwordHash: authService.hashPassword('Lifecycle123!'),
+            passwordHash: await authService.hashPassword('Lifecycle123!'),
             role: 'admin',
             status: 'active',
           },
@@ -458,10 +458,11 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
         return mutationResult;
       };
 
+      const snapshotPasswordHash = await authService.hashPassword('Snapshot123!');
       const racedAccount = await runAcrossCommit('create', () =>
         accountLifecycle.createAccount({
           email: 'snapshot-race@lifecycle.test',
-          passwordHash: authService.hashPassword('Snapshot123!'),
+          passwordHash: snapshotPasswordHash,
           role: 'viewer',
           status: 'active',
         }),
@@ -552,7 +553,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
       });
       await accountMetadata.updateAccountMetadata(created['manager-archived'].id, {
         email: 'metadata-allowlist@lifecycle.test',
-        passwordHash: authService.hashPassword('Metadata123!'),
+        passwordHash: await authService.hashPassword('Metadata123!'),
       });
       const organization = await db.Organization.findOne();
       const lockTransaction = await db.sequelize.transaction();
@@ -615,7 +616,7 @@ test('Feature 2 tenant foundation DB-backed lifecycle and rollback gate', async 
     await t.test('permanent delete preserves dependency checks and rolls back partial order', async () => {
       const account = await accountLifecycle.createAccount({
         email: 'delete-me@lifecycle.test',
-        passwordHash: authService.hashPassword('Delete123!'),
+        passwordHash: await authService.hashPassword('Delete123!'),
         role: 'viewer',
         status: 'archived',
       });

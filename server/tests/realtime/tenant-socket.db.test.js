@@ -153,7 +153,7 @@ test('Feature 4.1 tenant Socket.IO DB-backed isolation', async (t) => {
     });
     const manager = await accountLifecycle.createAccount({
       email: 'manager@tenant-realtime.test',
-      passwordHash: authService.hashPassword('RealtimeManager123!'),
+      passwordHash: await authService.hashPassword('RealtimeManager123!'),
       role: 'manager',
       status: 'active',
     });

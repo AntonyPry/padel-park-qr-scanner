@@ -216,7 +216,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       const account = await accountLifecycle.createAccount(
         {
           email: 'linked@staff-access.test',
-          passwordHash: authService.hashPassword('Linked123!'),
+          passwordHash: await authService.hashPassword('Linked123!'),
           role: 'admin',
           staffId: linkedStaff.id,
           status: 'active',
@@ -256,7 +256,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
         accountLifecycle.createAccount(
           {
             email: 'forced@staff-access.test',
-            passwordHash: authService.hashPassword('Forced123!'),
+            passwordHash: await authService.hashPassword('Forced123!'),
             role: 'admin',
             staffId: forcedStaff.id,
             status: 'active',
@@ -288,7 +288,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
           await accountLifecycle.createAccount(
             {
               email: `nullable-${index}@staff-access.test`,
-              passwordHash: authService.hashPassword('Nullable123!'),
+              passwordHash: await authService.hashPassword('Nullable123!'),
               role: 'viewer',
               staffId: null,
               status: 'active',
@@ -308,12 +308,15 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       );
 
       const contestedStaff = await createStaff('04');
+      const concurrentPasswordHash = await authService.hashPassword(
+        'Concurrent123!',
+      );
       const settled = await Promise.allSettled(
         [1, 2].map((index) =>
           accountLifecycle.createAccount(
             {
               email: `concurrent-${index}@staff-access.test`,
-              passwordHash: authService.hashPassword('Concurrent123!'),
+              passwordHash: concurrentPasswordHash,
               role: 'admin',
               staffId: contestedStaff.id,
               status: 'active',
@@ -338,7 +341,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       const secondOwner = await accountLifecycle.createAccount(
         {
           email: 'staff-owner-b@staff-access.test',
-          passwordHash: authService.hashPassword(secondOwnerPassword),
+          passwordHash: await authService.hashPassword(secondOwnerPassword),
           role: 'owner',
           staffId: secondOwnerStaff.id,
           status: 'active',
@@ -498,7 +501,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       const nullableOwner = await accountLifecycle.createAccount(
         {
           email: 'nullable-owner@staff-access.test',
-          passwordHash: authService.hashPassword(nullableOwnerPassword),
+          passwordHash: await authService.hashPassword(nullableOwnerPassword),
           role: 'owner',
           staffId: null,
           status: 'active',
@@ -555,7 +558,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       const secondOwner = await accountLifecycle.createAccount(
         {
           email: 'second-owner@staff-access.test',
-          passwordHash: authService.hashPassword('SecondOwner123!'),
+          passwordHash: await authService.hashPassword('SecondOwner123!'),
           role: 'owner',
           staffId: null,
           status: 'active',
@@ -571,7 +574,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       const deletable = await accountLifecycle.createAccount(
         {
           email: 'delete@staff-access.test',
-          passwordHash: authService.hashPassword('Delete123!'),
+          passwordHash: await authService.hashPassword('Delete123!'),
           role: 'viewer',
           staffId: null,
           status: 'archived',
@@ -738,7 +741,7 @@ test('Feature 5.1 Staff/access identity DB security and lifecycle', async (t) =>
       process.env.TENANT_STAFF_ACCESS_ENABLED = 'true';
       const foreignOnlyAccount = await db.Account.create({
         email: 'foreign-only@staff-access.test',
-        passwordHash: authService.hashPassword('ForeignOnly123!'),
+        passwordHash: await authService.hashPassword('ForeignOnly123!'),
         role: 'admin',
         staffId: foreignStaff.id,
         status: 'active',

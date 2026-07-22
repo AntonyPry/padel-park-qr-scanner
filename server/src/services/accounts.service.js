@@ -202,7 +202,7 @@ async function create(actor, data, tenant = null) {
     const account = await accountLifecycle.createAccount(
       {
         email,
-        passwordHash: authService.hashPassword(password),
+        passwordHash: await authService.hashPassword(password),
         role,
         status,
         staffId,
@@ -268,7 +268,7 @@ async function update(actor, id, data, tenant = null) {
     if (String(data.password).length < 6) {
       throw appError('Пароль должен быть не короче 6 символов');
     }
-    payload.passwordHash = authService.hashPassword(data.password);
+    payload.passwordHash = await authService.hashPassword(data.password);
   }
 
   try {

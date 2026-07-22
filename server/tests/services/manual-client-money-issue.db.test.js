@@ -127,7 +127,7 @@ test('manual subscription and certificate issue routes enforce money, role and t
     for (const role of ['manager', 'admin', 'accountant', 'trainer', 'viewer']) {
       const account = await accountLifecycle.createAccount({
         email: `${role}@manual-money.test`,
-        passwordHash: authService.hashPassword(password),
+        passwordHash: await authService.hashPassword(password),
         role,
         status: 'active',
       });
@@ -150,7 +150,7 @@ test('manual subscription and certificate issue routes enforce money, role and t
     });
     const ownerB = await db.Account.create({
       email: 'owner-b@manual-money.test',
-      passwordHash: authService.hashPassword(password),
+      passwordHash: await authService.hashPassword(password),
       role: 'owner',
       status: 'active',
     });

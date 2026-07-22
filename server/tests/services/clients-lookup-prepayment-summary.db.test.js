@@ -138,7 +138,7 @@ test('organization client lookup aggregates only authorized Club instruments', a
     const password = 'LookupTenant123!';
     const ownerA = await db.Account.create({
       email: 'lookup-owner-a@example.test',
-      passwordHash: authService.hashPassword(password),
+      passwordHash: await authService.hashPassword(password),
       role: 'owner',
       staffId: null,
       status: 'active',
@@ -152,7 +152,7 @@ test('organization client lookup aggregates only authorized Club instruments', a
     });
     const ownerB = await db.Account.create({
       email: 'lookup-owner-b@example.test',
-      passwordHash: authService.hashPassword(password),
+      passwordHash: await authService.hashPassword(password),
       role: 'owner',
       staffId: null,
       status: 'active',
@@ -172,7 +172,7 @@ test('organization client lookup aggregates only authorized Club instruments', a
     });
     const manager = await db.Account.create({
       email: 'lookup-manager@example.test',
-      passwordHash: authService.hashPassword(password),
+      passwordHash: await authService.hashPassword(password),
       role: 'manager',
       staffId: managerStaff.id,
       status: 'active',

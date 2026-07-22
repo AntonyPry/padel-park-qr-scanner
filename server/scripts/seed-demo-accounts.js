@@ -65,7 +65,7 @@ function assertSafeEnvironment() {
 
 async function runDemoAccountSeed() {
   assertSafeEnvironment();
-  const passwordHash = authService.hashPassword(PASSWORD);
+  const passwordHash = await authService.hashPassword(PASSWORD);
   const results = await seedDemoAccounts(
     DEMO_ACCOUNTS.map((account) => ({
       ...account,

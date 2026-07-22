@@ -36,11 +36,15 @@ const {
   validateBeelineCapabilityCutoverConfiguration,
   validateRolloutMaintenanceConfiguration,
 } = require('./tenant-rollout/contract');
+const {
+  validatePasswordHashingConfiguration,
+} = require('./services/auth.service');
 
 function createApp({ onIntegrationConnectionChanged, onTenantInitialized } = {}) {
   assertTenantCapabilityDependencies();
   validateRolloutMaintenanceConfiguration();
   validateBeelineCapabilityCutoverConfiguration();
+  validatePasswordHashingConfiguration();
   const app = express();
 
   app.set('onTenantInitialized', onTenantInitialized);

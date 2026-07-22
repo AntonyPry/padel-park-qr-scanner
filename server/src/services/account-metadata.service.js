@@ -64,8 +64,39 @@ async function updateAccountMetadata(accountId, payload, options = {}) {
   return account;
 }
 
+async function compareAndSwapPasswordHash(accountId, previousHash, nextHash) {
+  const normalizedAccountId = Number(accountId);
+  if (
+    !Number.isInteger(normalizedAccountId) ||
+    normalizedAccountId <= 0 ||
+    typeof previousHash !== 'string' ||
+    previousHash.length === 0 ||
+    previousHash.length > 255 ||
+    typeof nextHash !== 'string' ||
+    nextHash.length === 0 ||
+    nextHash.length > 255
+  ) {
+    throw metadataError(
+      'Password hash compare-and-swap arguments are invalid',
+      400,
+      'ACCOUNT_PASSWORD_HASH_CAS_INVALID',
+    );
+  }
+  const [updatedRows] = await db.Account.update(
+    { passwordHash: nextHash },
+    {
+      where: {
+        id: normalizedAccountId,
+        passwordHash: previousHash,
+      },
+    },
+  );
+  return updatedRows === 1;
+}
+
 module.exports = {
   ACCOUNT_METADATA_FIELDS,
   assertMetadataPayload,
+  compareAndSwapPasswordHash,
   updateAccountMetadata,
 };

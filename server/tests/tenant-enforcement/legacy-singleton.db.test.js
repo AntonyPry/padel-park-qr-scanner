@@ -71,7 +71,7 @@ test('Feature 9 exact singleton snapshot and mixed-provider legacy bridge matrix
       {
         email: 'singleton-manager@setly.test',
         name: 'Singleton Manager',
-        passwordHash: authService.hashPassword('Singleton123!'),
+        passwordHash: await authService.hashPassword('Singleton123!'),
         phone: '+79990000002',
         role: 'manager',
         staffRole: 'Управляющий',

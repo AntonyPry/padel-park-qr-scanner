@@ -111,7 +111,7 @@ test('Feature 3 tenant context DB-backed API and authorization gate', async (t) 
     });
     const manager = await accountLifecycle.createAccount({
       email: 'manager@tenant-context.test',
-      passwordHash: hashPassword('TenantManager123!'),
+      passwordHash: await hashPassword('TenantManager123!'),
       role: 'manager',
       status: 'active',
     });

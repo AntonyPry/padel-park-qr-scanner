@@ -371,7 +371,9 @@ async function provisionOrganization(input, operator, options = {}) {
           email: normalized.owner.email,
           name: normalized.owner.name,
           organizationId: organization.id,
-          passwordHash: authService.hashPassword(crypto.randomBytes(48).toString('base64url')),
+          passwordHash: await authService.hashPassword(
+            crypto.randomBytes(48).toString('base64url'),
+          ),
           phone: normalized.owner.phone,
         },
         { transaction },
@@ -748,7 +750,7 @@ async function activateOwner(rawToken, password) {
     await lockOwnerAuthorityGraph(token.organizationId, token.accountId, transaction);
     const account = await accountMetadata.updateAccountMetadata(
       token.accountId,
-      { passwordHash: authService.hashPassword(password) },
+      { passwordHash: await authService.hashPassword(password) },
       { transaction },
     );
     await token.update({ consumedAt: new Date() }, { transaction });

@@ -481,7 +481,7 @@ test('Feature 8.2 migration and real two-Organization/two-Club AuditLog isolatio
       const account = await db.Account.create({
         email: `feature-8-2-${suffix}-${Date.now()}@example.test`,
         passwordHash: password
-          ? authService.hashPassword(password)
+          ? await authService.hashPassword(password)
           : 'test-only',
         role,
         status: 'active',

@@ -1,18 +1,9 @@
 'use strict';
 
-const crypto = require('crypto');
+const authService = require('../src/services/auth.service');
 const {
   runInitializedSeederBatch,
 } = require('../src/services/account-seeder-adapter');
-
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('base64url');
-  const hash = crypto
-    .pbkdf2Sync(password, salt, 120000, 32, 'sha256')
-    .toString('base64url');
-
-  return `pbkdf2$120000$${salt}$${hash}`;
-}
 
 function dateAt(day, hour, minute = 0) {
   return new Date(`2026-05-${String(day).padStart(2, '0')}T${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:00+03:00`);
@@ -528,7 +519,7 @@ module.exports = {
       queryInterface,
       async (queryInterface, accountBatch, foundation) => {
         const now = new Date();
-        const passwordHash = hashPassword('Demo1234!');
+        const passwordHash = await authService.hashPassword('Demo1234!');
         const userTenantScope = await resolveUserTenantSeederScope(
           queryInterface,
           foundation,

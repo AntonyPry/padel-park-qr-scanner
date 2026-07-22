@@ -501,6 +501,13 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       assert.equal(membership.role, 'owner');
       const ownerStaff = await db.Staff.findByPk(membership.staffId);
       assert.equal(ownerStaff.phone, '+79991112233');
+      const temporaryOwner = await db.Account.findByPk(created.owner.accountId);
+      assert.match(
+        temporaryOwner.passwordHash,
+        process.env.AUTH_ARGON2_ENABLED === 'true'
+          ? /^\$argon2id\$v=19\$/u
+          : /^pbkdf2\$120000\$/u,
+      );
       assert.equal(await db.MembershipClubAccess.count({ where: { membershipId: membership.id } }), 0);
       const audit = await db.AuditLog.findByPk(created.audit.id);
       assert.equal(audit.action, 'installation.provisioning.create');
@@ -632,7 +639,7 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
           email: 'owner-authority-only@provisioning.test',
           name: 'Владелец authority-only',
           organizationId: organization.id,
-          passwordHash: auth.hashPassword('AuthorityFixture1234!'),
+          passwordHash: await auth.hashPassword('AuthorityFixture1234!'),
           phone: '+79991110000',
         }, { transaction });
         const activation = await db.OwnerActivationToken.create({
@@ -844,6 +851,12 @@ test('Feature 10.2 atomic provisioning and secure owner activation', async (t) =
       assert.equal(status.state, 'pending');
       assert.equal(status.owner.email, created.owner.email);
       await provisioning.activateOwner(rawToken, 'OwnerSecure123!');
+      assert.match(
+        (await db.Account.findByPk(created.owner.accountId)).passwordHash,
+        process.env.AUTH_ARGON2_ENABLED === 'true'
+          ? /^\$argon2id\$v=19\$/u
+          : /^pbkdf2\$120000\$/u,
+      );
       assert.deepEqual(await provisioning.inspectActivation(rawToken), { state: 'consumed' });
       const snapshot = await provisioning.getInstallationSnapshot(operator);
       assert.equal(
