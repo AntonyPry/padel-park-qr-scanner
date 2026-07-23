@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   ChevronsUpDown,
   ChevronRight,
+  ChevronDown,
   CircleCheckBig,
   Clipboard,
   ExternalLink,
@@ -655,7 +656,7 @@ function ConnectionForm({
               <div className="space-y-2"><Label htmlFor="beeline-statistics">Путь к статистике</Label><Input required value={settings.statisticsPath} onChange={(event) => setSettings({ ...settings, statisticsPath: event.target.value })} id="beeline-statistics" /></div>
               <div className="space-y-2"><Label htmlFor="beeline-subscription">Путь к подписке</Label><Input required value={settings.subscriptionPath} onChange={(event) => setSettings({ ...settings, subscriptionPath: event.target.value })} id="beeline-subscription" /></div>
               <div className="space-y-2"><Label htmlFor="beeline-pattern">Шаблон событий</Label><Input value={settings.subscriptionPattern || ''} onChange={(event) => setSettings({ ...settings, subscriptionPattern: event.target.value || null })} id="beeline-pattern" /></div>
-              <div className="space-y-2"><Label htmlFor="beeline-type">Тип подписки</Label><select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" id="beeline-type" value={settings.subscriptionType} onChange={(event) => setSettings({ ...settings, subscriptionType: event.target.value as BeelineFormSettings['subscriptionType'] })}><option value="BASIC_CALL">BASIC_CALL</option><option value="ADVANCED_CALL">ADVANCED_CALL</option></select></div>
+              <div className="space-y-2"><Label htmlFor="beeline-type">Тип подписки</Label><div className="relative"><select className="flex h-10 w-full appearance-none rounded-md border border-input bg-background px-3 py-2 pr-10 text-sm" id="beeline-type" value={settings.subscriptionType} onChange={(event) => setSettings({ ...settings, subscriptionType: event.target.value as BeelineFormSettings['subscriptionType'] })}><option value="BASIC_CALL">BASIC_CALL</option><option value="ADVANCED_CALL">ADVANCED_CALL</option></select><ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /></div></div>
               <div className="space-y-2"><Label htmlFor="beeline-timeout">Таймаут API, мс</Label><Input required value={settings.apiTimeoutMs} onChange={(event) => setSettings({ ...settings, apiTimeoutMs: Number(event.target.value) })} id="beeline-timeout" inputMode="numeric" type="number" /></div>
               <div className="space-y-2"><Label htmlFor="beeline-expiry">Срок подписки, сек.</Label><Input required value={settings.subscriptionExpiresSeconds} onChange={(event) => setSettings({ ...settings, subscriptionExpiresSeconds: Number(event.target.value) })} id="beeline-expiry" inputMode="numeric" type="number" /></div>
               <div className="space-y-2"><Label htmlFor="beeline-renew-before">Продлевать заранее, сек.</Label><Input required value={settings.subscriptionRenewBeforeSeconds} onChange={(event) => setSettings({ ...settings, subscriptionRenewBeforeSeconds: Number(event.target.value) })} id="beeline-renew-before" inputMode="numeric" type="number" /></div>
@@ -1322,7 +1323,7 @@ export default function InstallationProvisioningPage() {
                       const status = integrationStatus(integration);
                       const copy = providerCopy[integration.provider];
                       return (
-                        <Card className="rounded-2xl" key={integration.provider}>
+                        <Card aria-label={`Открыть интеграцию ${copy.label}`} className="cursor-pointer rounded-2xl transition hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" key={integration.provider} onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${integration.provider}`)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); navigate(`/installation/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${integration.provider}`); } }} role="link" tabIndex={0}>
                           <CardHeader className="space-y-4">
                             <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between"><div className="flex min-w-0 items-center gap-3"><span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-foreground"><ProviderIcon provider={integration.provider} /></span><div className="min-w-0"><CardTitle className="text-lg">{copy.label}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{copy.description}</p></div></div><span className={cn('shrink-0 rounded-full px-2.5 py-1 text-xs font-medium', status.tone)}>{status.label}</span></div>
                           </CardHeader>
@@ -1331,7 +1332,6 @@ export default function InstallationProvisioningPage() {
                             {integration.safeIdentity ? <div className="rounded-xl border bg-muted/20 p-3"><p className="text-xs text-muted-foreground">Подключено</p><p className="mt-1 text-sm font-medium">{integration.safeIdentity}</p></div> : null}
                             {integration.lastActivityAt ? <p className="text-xs text-muted-foreground">Последнее успешное событие {formatDate(integration.lastActivityAt)}</p> : null}
                             {integration.secretUpdatedAt ? <p className="text-xs text-muted-foreground">Данные обновлены {formatDate(integration.secretUpdatedAt)}</p> : null}
-                            <Button className="w-full sm:w-auto" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/clubs/${selectedClub.id}/integrations/${integration.provider}`)} type="button" variant="outline">Открыть<ArrowRight className="ml-2 size-4" /></Button>
                           </CardContent>
                         </Card>
                       );
@@ -1343,7 +1343,7 @@ export default function InstallationProvisioningPage() {
                   <Button className="-ml-3" onClick={() => navigate('/installation')} type="button" variant="ghost"><ArrowLeft className="mr-2 size-4" />К организациям</Button>
                   <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                     <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><p className="text-sm text-muted-foreground">Организация</p><TenantStatusBadge status={organizationDetail.status} /></div><h1 className="mt-1 max-w-4xl break-words text-2xl font-semibold tracking-tight sm:text-3xl">{organizationDetail.name}</h1></div>
-                    <Button className="shrink-0" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/settings`)} type="button" variant="outline"><Settings2 className="mr-2 size-4" />Настройки организации</Button>
+                    <div className="flex flex-wrap gap-2"><Button className="shrink-0" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/settings`)} type="button" variant="outline"><Settings2 className="mr-2 size-4" />Настройки организации</Button>{organizationDetail.clubs[0] ? <Button className="shrink-0" onClick={() => navigate(`/installation/organizations/${organizationDetail.id}/clubs/${organizationDetail.clubs[0].id}/recovery`)} type="button" variant="outline">Восстановление доступа</Button> : null}</div>
                   </div>
                   {pageError ? <div className="mt-5 rounded-xl border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{pageError}</div> : null}
                   <div className="mt-7 grid gap-4 lg:grid-cols-2">

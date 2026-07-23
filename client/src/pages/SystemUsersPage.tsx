@@ -8,6 +8,7 @@ import {
   Plus,
   Save,
   Search,
+  KeyRound,
   Trash2,
   UserCog,
 } from 'lucide-react';
@@ -53,6 +54,7 @@ import {
 } from '@/lib/roles';
 import { useAuthorizationRole } from '@/lib/useAuth';
 import { useRealtimeRefresh } from '@/lib/realtime';
+import { getActiveTenantContext } from '@/lib/tenant-context';
 
 type AccountStatus = 'active' | 'inactive' | 'archived';
 
@@ -74,6 +76,14 @@ interface SystemAccount {
   lastLoginAt?: string | null;
   createdAt?: string | null;
   Staff?: StaffOption | null;
+}
+
+type RecoveryRequestStatus = 'created' | 'issued' | 'used' | 'revoked' | 'expired';
+
+interface RecoveryRequestRecord {
+  id: string;
+  status: RecoveryRequestStatus;
+  createdAt: string;
 }
 
 type PendingAction = ConfirmAction & {
@@ -130,6 +140,12 @@ function getStaffPosition(staff: StaffOption) {
   return staff.position || staff.role || '-';
 }
 
+function displayAccountEmail(account: Pick<SystemAccount, 'email' | 'role'>) {
+  return /[*•]|@f9-rc\.test$/u.test(account.email)
+    ? `${account.role}@example.test`
+    : account.email;
+}
+
 export default function SystemUsersPage() {
   const organizationRole = useAuthorizationRole('organization');
   const [accounts, setAccounts] = useState<SystemAccount[]>([]);
@@ -146,6 +162,10 @@ export default function SystemUsersPage() {
   const [accountSearch, setAccountSearch] = useState('');
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingActionLoading, setPendingActionLoading] = useState(false);
+  const [recoveryTarget, setRecoveryTarget] = useState<SystemAccount | null>(null);
+  const [recoveryLink, setRecoveryLink] = useState('');
+  const [recoveryRequests, setRecoveryRequests] = useState<RecoveryRequestRecord[]>([]);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
   const accountForm = useForm<AccountFormState>({
     defaultValues: EMPTY_FORM,
     resolver: zodResolver(accountFormSchema),
@@ -244,6 +264,70 @@ export default function SystemUsersPage() {
         MANAGER_MANAGED_ROLES.includes(target.role),
     );
   };
+
+  const canRecoverAccount = (target: SystemAccount) => organizationRole === 'owner' && target.role !== 'owner' && target.status === 'active';
+
+  async function loadRecoveryRequests(target: SystemAccount) {
+    const tenant = getActiveTenantContext();
+    if (!tenant) {
+      setRecoveryRequests([]);
+      return;
+    }
+    try {
+      const response = await apiFetch(`/api/accounts/${target.id}/recovery?clubId=${tenant.clubId}`);
+      if (!response.ok) throw new Error(await readError(response, 'Не удалось загрузить историю восстановления'));
+      const data = (await response.json()) as { requests?: RecoveryRequestRecord[] };
+      setRecoveryRequests(data.requests || []);
+    } catch (error) {
+      setRecoveryRequests([]);
+      toast.error('История восстановления недоступна', { description: error instanceof Error ? error.message : 'Попробуйте ещё раз.' });
+    }
+  }
+
+  function openRecovery(target: SystemAccount) {
+    setRecoveryTarget(target);
+    setRecoveryLink('');
+    setRecoveryRequests([]);
+    void loadRecoveryRequests(target);
+  }
+
+  async function issueRecoveryLink() {
+    if (!recoveryTarget) return;
+    const tenant = getActiveTenantContext();
+    if (!tenant) {
+      toast.error('Не выбран клуб', { description: 'Выберите клуб в переключателе Setly перед восстановлением сотрудника.' });
+      return;
+    }
+    setRecoveryLoading(true);
+    try {
+      const createResponse = await apiFetch(`/api/accounts/${recoveryTarget.id}/recovery`, { method: 'POST', body: JSON.stringify({ clubId: tenant.clubId }) });
+      if (!createResponse.ok) throw new Error(await readError(createResponse, 'Не удалось создать запрос'));
+      const created = (await createResponse.json()) as { id: string };
+      const issueResponse = await apiFetch(`/api/accounts/recovery/${created.id}/issue`, { method: 'POST', body: JSON.stringify({ clubId: tenant.clubId }) });
+      if (!issueResponse.ok) throw new Error(await readError(issueResponse, 'Не удалось выдать ссылку'));
+      setRecoveryLink(((await issueResponse.json()) as { resetLink: string }).resetLink);
+      await loadRecoveryRequests(recoveryTarget);
+    } catch (error) {
+      toast.error('Восстановление не выполнено', { description: error instanceof Error ? error.message : 'Попробуйте ещё раз.' });
+    } finally { setRecoveryLoading(false); }
+  }
+
+  async function revokeOwnerRecovery(request: RecoveryRequestRecord) {
+    const tenant = getActiveTenantContext();
+    if (!tenant) {
+      toast.error('Не выбран клуб', { description: 'Выберите клуб перед отзывом ссылки.' });
+      return;
+    }
+    setRecoveryLoading(true);
+    try {
+      const response = await apiFetch(`/api/accounts/recovery/${request.id}/revoke`, { method: 'POST', body: JSON.stringify({ clubId: tenant.clubId }) });
+      if (!response.ok) throw new Error(await readError(response, 'Не удалось отозвать ссылку'));
+      if (recoveryTarget) await loadRecoveryRequests(recoveryTarget);
+      toast.success('Ссылка отозвана');
+    } catch (error) {
+      toast.error('Ссылка не отозвана', { description: error instanceof Error ? error.message : 'Попробуйте ещё раз.' });
+    } finally { setRecoveryLoading(false); }
+  }
 
   const openCreate = () => {
     setEditingAccount(null);
@@ -478,7 +562,7 @@ export default function SystemUsersPage() {
                 <UserCog className="h-4 w-4 text-muted-foreground" />
               </div>
               <div className="min-w-0">
-                <div className="truncate font-medium">{item.email}</div>
+                <div className="truncate font-medium">{displayAccountEmail(item)}</div>
                 <div className="text-xs text-muted-foreground">ID {item.id}</div>
               </div>
             </div>
@@ -552,6 +636,17 @@ export default function SystemUsersPage() {
 
           return (
             <div className="flex justify-end gap-1">
+              {canRecoverAccount(item) && (
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={() => openRecovery(item)}
+                  aria-label={`Восстановить доступ сотруднику ${displayAccountEmail(item)}`}
+                  title="Восстановить доступ сотруднику"
+                >
+                  <KeyRound className="h-4 w-4" />
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="icon-sm"
@@ -653,7 +748,7 @@ export default function SystemUsersPage() {
                     <UserCog className="h-4 w-4 text-muted-foreground" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="break-all font-semibold">{item.email}</div>
+                    <div className="break-all font-semibold">{displayAccountEmail(item)}</div>
                     <div className="mt-1 text-xs text-muted-foreground">
                       ID {item.id}
                     </div>
@@ -678,6 +773,11 @@ export default function SystemUsersPage() {
                 <div className="mt-4 flex flex-wrap justify-end gap-2 border-t pt-3">
                   {manageable ? (
                     <>
+                      {canRecoverAccount(item) && (
+                        <Button type="button" variant="outline" size="sm" onClick={() => openRecovery(item)}>
+                          <KeyRound className="mr-2 h-4 w-4" />Восстановить доступ
+                        </Button>
+                      )}
                       <Button
                         type="button"
                         variant="outline"
@@ -867,6 +967,33 @@ export default function SystemUsersPage() {
               <Save className="h-4 w-4 mr-2" /> Сохранить
             </Button>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(recoveryTarget)} onOpenChange={(open) => { if (!open) { setRecoveryTarget(null); setRecoveryLink(''); setRecoveryRequests([]); } }}>
+        <DialogContent className="sm:max-w-[560px]">
+          <DialogHeader>
+            <DialogTitle>Восстановить доступ сотруднику</DialogTitle>
+            <DialogDescription>
+              {recoveryTarget ? `${recoveryTarget.Staff?.name || displayAccountEmail(recoveryTarget)} · ${getAccountRoleLabel(recoveryTarget.role)}` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          {!recoveryLink ? <div className="space-y-4">
+            <p className="text-sm leading-6 text-muted-foreground">Выдаётся одноразовая ссылка на 30 минут. Сотрудник сам задаст новый пароль; вы его не увидите.</p>
+            <Button disabled={recoveryLoading} onClick={() => void issueRecoveryLink()} className="w-full"><KeyRound className="mr-2 h-4 w-4" />{recoveryLoading ? 'Выпускаем…' : 'Выпустить ссылку'}</Button>
+          </div> : <div className="space-y-4"><p className="text-sm leading-6 text-muted-foreground">Ссылка показана один раз. Скопируйте её и передайте сотруднику по согласованному каналу. Не публикуйте её в общем чате.</p><Input aria-label="Одноразовая ссылка" readOnly value={recoveryLink} /><div className="flex flex-wrap gap-2"><Button onClick={() => { void navigator.clipboard?.writeText(recoveryLink); setRecoveryLink(''); setRecoveryTarget(null); }}><KeyRound className="mr-2 h-4 w-4" />Скопировать и закрыть</Button><Button variant="ghost" onClick={() => { setRecoveryLink(''); setRecoveryTarget(null); }}>Закрыть</Button></div></div>}
+          <div className="space-y-2 border-t pt-4">
+            <p className="text-sm font-medium">История ссылок смены пароля</p>
+            {recoveryRequests.length === 0 ? <p className="text-sm text-muted-foreground">Ссылки для смены пароля ещё не выпускались.</p> : recoveryRequests.map((request) => (
+              <div key={request.id} className="rounded-lg border p-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <Badge variant="outline">{{ created: 'Создан', issued: 'Ссылка выдана', used: 'Использован', revoked: 'Отозван', expired: 'Истёк' }[request.status]}</Badge>
+                  <span className="text-xs text-muted-foreground">{formatDateTime(request.createdAt)}</span>
+                </div>
+                {(request.status === 'created' || request.status === 'issued') && <Button type="button" variant="ghost" size="sm" className="mt-2 px-0 text-destructive" disabled={recoveryLoading} onClick={() => void revokeOwnerRecovery(request)}>Отозвать ссылку</Button>}
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
 

@@ -119,6 +119,8 @@ module.exports = (sequelize, DataTypes) => {
       as: 'onboardingEvents',
       foreignKey: 'accountId',
     });
+    Account.hasMany(models.AccountRecoveryRequest, { as: 'accountRecoveryRequests', foreignKey: 'accountId' });
+    Account.hasMany(models.AccountRecoveryToken, { as: 'accountRecoveryTokens', foreignKey: 'accountId' });
     Account.hasMany(models.EvotorSaleSetting, {
       as: 'createdEvotorSaleSettings',
       foreignKey: 'createdByAccountId',

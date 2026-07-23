@@ -21,6 +21,8 @@ const SURFACES = Object.freeze({
   ACTIVATION_STATUS: 'installation_activation_status',
   AUTH_BOOTSTRAP: 'auth_bootstrap',
   AUTH_LOGIN: 'auth_login',
+  AUTH_RECOVERY_ISSUE: 'auth_recovery_issue',
+  AUTH_RECOVERY_USE: 'auth_recovery_use',
   INSTALLATION_OPERATOR_SESSION: 'installation_operator_session',
   PROVIDER_BEELINE_CAPABILITY: 'provider_beeline_capability',
   PROVIDER_BEELINE_CONNECTION: 'provider_beeline_connection',
@@ -46,6 +48,15 @@ const DEFAULT_POLICIES = Object.freeze({
     account: Object.freeze({ limit: 3, windowSeconds: 900 }),
     credential_class: Object.freeze({ limit: 30, windowSeconds: 900 }),
     peer: Object.freeze({ limit: 12, windowSeconds: 900 }),
+  }),
+  [SURFACES.AUTH_RECOVERY_ISSUE]: Object.freeze({
+    credential_class: Object.freeze({ limit: 20, windowSeconds: 300 }),
+    peer: Object.freeze({ limit: 60, windowSeconds: 300 }),
+  }),
+  [SURFACES.AUTH_RECOVERY_USE]: Object.freeze({
+    credential_class: Object.freeze({ limit: 30, windowSeconds: 300 }),
+    peer: Object.freeze({ limit: 60, windowSeconds: 300 }),
+    token: Object.freeze({ limit: 8, windowSeconds: 600 }),
   }),
   [SURFACES.INSTALLATION_OPERATOR_SESSION]: Object.freeze({
     account: Object.freeze({ limit: 6, windowSeconds: 600 }),
@@ -148,6 +159,15 @@ const SURFACE_INPUTS = Object.freeze({
     account: ['email'],
     credential_class: ['fixed', 'owner_bootstrap'],
     peer: ['peer'],
+  }),
+  [SURFACES.AUTH_RECOVERY_ISSUE]: Object.freeze({
+    credential_class: ['fixed', 'account_recovery_issue'],
+    peer: ['peer'],
+  }),
+  [SURFACES.AUTH_RECOVERY_USE]: Object.freeze({
+    credential_class: ['fixed', 'account_recovery_use'],
+    peer: ['peer'],
+    token: ['token'],
   }),
   [SURFACES.INSTALLATION_OPERATOR_SESSION]: Object.freeze({
     account: ['username'],

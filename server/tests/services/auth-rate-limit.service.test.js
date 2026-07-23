@@ -195,7 +195,7 @@ test('canonicalization, sharded keys and local overflow keep attacker cardinalit
   assert.equal(store.getStats().keys, 0);
 });
 
-test('the v1 contract extends the five accepted surfaces with exactly twelve ingress surfaces', () => {
+test('the v1 contract includes ingress and recovery surfaces with matching policies and inputs', () => {
   const newSurfaces = new Set([
     SURFACES.PROVIDER_BEELINE_CAPABILITY,
     SURFACES.PROVIDER_BEELINE_CONNECTION,
@@ -210,9 +210,14 @@ test('the v1 contract extends the five accepted surfaces with exactly twelve ing
     SURFACES.WORKER_RESULT,
     SURFACES.WORKER_RETRY,
   ]);
+  const recoverySurfaces = new Set([
+    SURFACES.AUTH_RECOVERY_ISSUE,
+    SURFACES.AUTH_RECOVERY_USE,
+  ]);
   assert.equal(newSurfaces.size, 12);
-  assert.equal(Object.keys(_private.DEFAULT_POLICIES).length, 17);
-  for (const surface of newSurfaces) {
+  assert.equal(recoverySurfaces.size, 2);
+  assert.equal(Object.keys(_private.DEFAULT_POLICIES).length, 19);
+  for (const surface of new Set([...newSurfaces, ...recoverySurfaces])) {
     assert.deepEqual(
       Object.keys(_private.DEFAULT_POLICIES[surface]).sort(),
       Object.keys(_private.SURFACE_INPUTS[surface]).sort(),

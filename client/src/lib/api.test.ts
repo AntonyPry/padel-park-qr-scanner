@@ -50,7 +50,7 @@ describe('apiRequest', () => {
       ok: true,
     });
 
-    const [, init] = fetchMock.mock.calls[0] || [];
+    const init = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(init?.headers);
     expect(headers.get('Authorization')).toBe('Bearer test-token');
     expect(init?.credentials).toBe('include');
@@ -80,7 +80,7 @@ describe('apiRequest', () => {
 
     await apiFetch('/api/example', { method: 'POST', body: '{}' });
 
-    const [, init] = fetchMock.mock.calls[0] || [];
+    const init = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
     expect(new Headers(init?.headers).get('X-CSRF-Token')).toBe('csrf-test-token');
     expect(init?.credentials).toBe('include');
   });
@@ -130,7 +130,7 @@ describe('apiRequest', () => {
 
     await apiRequest('/api/example');
 
-    const [, init] = fetchMock.mock.calls[0] || [];
+    const init = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(init?.headers);
     expect(headers.get('X-Training-Mode')).toBe('true');
     expect(headers.get('X-Training-Role')).toBe('admin');
@@ -184,7 +184,7 @@ describe('apiRequest', () => {
 
     await apiRequest('/api/clients', { method: 'POST', body: '{}' });
 
-    const [, init] = fetchMock.mock.calls[0] || [];
+    const init = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(init?.headers);
     expect(headers.get('X-Onboarding-Quest-Task-Key')).toBe(
       'admin.client.create',
@@ -223,7 +223,7 @@ describe('apiRequest', () => {
     await apiFetch('/api/clients');
     applyOnboardingProgressResponse(response);
 
-    const [, init] = fetchMock.mock.calls[0] || [];
+    const init = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(init?.headers);
     expect(headers.has('X-Onboarding-Quest-Task-Key')).toBe(false);
     expect(getStoredActiveOnboardingQuest()).not.toBeNull();
@@ -254,7 +254,7 @@ describe('apiRequest', () => {
 
     await apiRequest('/api/clients', { method: 'POST', body: '{}' });
 
-    const [, init] = fetchMock.mock.calls[0] || [];
+    const init = (fetchMock.mock.calls as unknown[][])[0]?.[1] as RequestInit | undefined;
     const headers = new Headers(init?.headers);
     expect(headers.has('X-Onboarding-Quest-Task-Key')).toBe(false);
     expect(headers.has('X-Onboarding-Quest-Role')).toBe(false);

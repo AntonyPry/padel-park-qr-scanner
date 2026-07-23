@@ -51,6 +51,9 @@ const InstallationProvisioningPage = lazy(
   () => import('./pages/InstallationProvisioningPage'),
 );
 const OwnerActivationPage = lazy(() => import('./pages/OwnerActivationPage'));
+const PasswordResetPage = lazy(() => import('./pages/PasswordResetPage'));
+const InstallationRecoveryPage = lazy(() => import('./pages/InstallationRecoveryPage'));
+const InstallationRecoveryAccountPage = lazy(() => import('./pages/InstallationRecoveryAccountPage'));
 
 function PageLoader() {
   return (
@@ -62,6 +65,18 @@ function PageLoader() {
 
 function ApplicationContent() {
   const location = useLocation();
+
+  if (
+    /^\/installation\/organizations\/[^/]+\/clubs\/[^/]+\/recovery\/accounts\/[^/]+$/u.test(location.pathname)
+  ) {
+    return <Suspense fallback={<PageLoader />}><InstallationRecoveryAccountPage /></Suspense>;
+  }
+
+  if (
+    /^\/installation\/organizations\/[^/]+\/clubs\/[^/]+\/recovery$/u.test(location.pathname)
+  ) {
+    return <Suspense fallback={<PageLoader />}><InstallationRecoveryPage /></Suspense>;
+  }
 
   if (
     location.pathname === '/installation' ||
@@ -81,6 +96,10 @@ function ApplicationContent() {
         <OwnerActivationPage />
       </Suspense>
     );
+  }
+
+  if (location.pathname === '/reset-password') {
+    return <Suspense fallback={<PageLoader />}><PasswordResetPage /></Suspense>;
   }
 
   return (

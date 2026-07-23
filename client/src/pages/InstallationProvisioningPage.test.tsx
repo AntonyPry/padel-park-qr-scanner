@@ -131,11 +131,11 @@ describe('InstallationProvisioningPage integration management', () => {
     renderPage('/installation/organizations/1/clubs/1/integrations');
 
     await screen.findByRole('heading', { name: 'Интеграции · Padel Park' });
-    expect(screen.getAllByRole('button', { name: 'Открыть' })).toHaveLength(4);
+    expect(screen.getAllByRole('link', { name: /Открыть интеграцию/ })).toHaveLength(4);
     expect(screen.queryByRole('button', { name: 'Отключить' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Проверить подписку' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Открыть' })[0]);
+    fireEvent.click(screen.getAllByRole('link', { name: /Открыть интеграцию/ })[0]);
     await screen.findByRole('heading', { name: 'Билайн' });
     expect(screen.getByRole('button', { name: 'Изменить настройки' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Проверить подписку' })).toBeInTheDocument();

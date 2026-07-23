@@ -131,14 +131,27 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
   }
 });
 
-test('OpenAPI declares 429 and Retry-After on the exact five auth plus twelve ingress operations', () => {
+test('OpenAPI declares 429 and Retry-After on every credential-entry, ingress and worker operation', () => {
   const document = getOpenApiDocument();
   const authCovered = new Set([
     'POST /auth/bootstrap',
     'POST /auth/login',
+    'POST /auth/recovery/status',
+    'POST /auth/recovery/reset',
     'POST /installation/provisioning/session',
     'POST /installation/provisioning/activation/status',
     'POST /installation/provisioning/activation/consume',
+    'GET /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts',
+    'GET /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}',
+    'PUT /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}',
+    'GET /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests',
+    'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests',
+    'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/issue',
+    'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/revoke',
+    'POST /accounts/{id}/recovery',
+    'GET /accounts/{id}/recovery',
+    'POST /accounts/recovery/{requestId}/issue',
+    'POST /accounts/recovery/{requestId}/revoke',
   ]);
   const providerCovered = new Set([
     'POST /webhooks/evotor',

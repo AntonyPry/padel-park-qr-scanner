@@ -1240,6 +1240,13 @@ const apiSchemas = {
       .object({ q: optionalString, status: statusFilter.optional() })
       .passthrough(),
     params: idParams,
+    recoveryRequest: z.object({ clubId: id }).strict(),
+    recoveryAction: z.object({ clubId: id }).strict(),
+    recoveryRequestParams: z.object({ requestId: z.string().uuid() }).strict(),
+    recoveryQuery: z.object({ clubId: id }).strict(),
+    recoveryRequestResponse: z.object({ id: z.string().uuid(), status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']) }).strict(),
+    recoveryIssueResponse: z.object({ requestId: z.string().uuid(), expiresAt: z.string().datetime(), resetLink: z.string().url() }).strict(),
+    recoveryRevokeResponse: z.object({ success: z.literal(true), status: z.literal('revoked') }).strict(),
   },
   onboarding: {
     completeBody: z
@@ -1336,8 +1343,34 @@ const apiSchemas = {
         })
         .nullable(),
     }),
+    recoveryStatus: {
+      body: z.object({ token: z.string().trim().regex(/^setly_r1_[A-Za-z0-9_-]{43}$/u) }).strict(),
+      response: z.object({ available: z.boolean() }).strict(),
+    },
+    recoveryReset: {
+      body: z.object({ token: z.string().trim().regex(/^setly_r1_[A-Za-z0-9_-]{43}$/u), password: z.string().min(6).max(200) }).strict(),
+      response: z.object({ success: z.literal(true) }).strict(),
+    },
   },
   installationProvisioning: {
+    recoveryRequest: {
+      body: z.object({ accountId: id, clubId: id.optional() }).strict(),
+      response: z.object({ id: z.string().uuid(), status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']) }).passthrough(),
+    },
+    recoveryProfile: {
+      body: z.object({ email: z.string().trim().email(), displayName: z.string().trim().max(160), phone: z.string().trim().max(40).optional() }).strict(),
+    },
+    recoveryAction: {
+      body: z.object({}).strict(),
+    },
+    recoveryIssue: {
+      body: z.object({}).strict(),
+      response: z.object({ requestId: z.string().uuid(), expiresAt: z.string().datetime(), resetLink: z.string().url() }).strict(),
+    },
+    recoveryRevoke: {
+      body: z.object({}).strict(),
+      response: z.object({ success: z.literal(true), status: z.literal('revoked') }).strict(),
+    },
     activate: {
       body: z
         .object({

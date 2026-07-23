@@ -63,6 +63,7 @@ module.exports = (sequelize, DataTypes) => {
     Club.hasMany(models.MembershipClubAccess, { foreignKey: 'clubId' });
     Club.hasMany(models.Visit, { foreignKey: 'clubId' });
     Club.hasMany(models.ScannerEvent, { foreignKey: 'clubId' });
+    Club.hasMany(models.AccountRecoveryRequest, { foreignKey: 'clubId' });
   };
 
   return Club;

@@ -10,6 +10,8 @@ export const apiEndpoints = {
   "auth.logout": { method: "POST", path: "/auth/logout", responseType: "json", tenantScope: "global" },
   "auth.me": { method: "GET", path: "/auth/me", responseType: "json", tenantScope: "global" },
   "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
+  "auth.recoveryStatus": { method: "POST", path: "/auth/recovery/status", responseType: "json", tenantScope: "global" },
+  "auth.recoveryReset": { method: "POST", path: "/auth/recovery/reset", responseType: "json", tenantScope: "global" },
   "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.session": { method: "POST", path: "/installation/provisioning/session", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.sessionRevoke": { method: "POST", path: "/installation/provisioning/session/revoke", responseType: "json", tenantScope: "installation" },
@@ -54,6 +56,17 @@ export const apiEndpoints = {
   "installationProvisioning.reissue": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/activation/reissue", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.activationStatus": { method: "POST", path: "/installation/provisioning/activation/status", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.activate": { method: "POST", path: "/installation/provisioning/activation/consume", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryAccounts": { method: "GET", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryAccount": { method: "GET", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryProfile": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryRequests": { method: "GET", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryRequestCreate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryIssue": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/issue", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.recoveryRevoke": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/revoke", responseType: "json", tenantScope: "installation" },
+  "accounts.recoveryCreate": { method: "POST", path: "/accounts/{id}/recovery", responseType: "json", tenantScope: "organization" },
+  "accounts.recoveryList": { method: "GET", path: "/accounts/{id}/recovery", responseType: "json", tenantScope: "organization" },
+  "accounts.recoveryIssue": { method: "POST", path: "/accounts/recovery/{requestId}/issue", responseType: "json", tenantScope: "organization" },
+  "accounts.recoveryRevoke": { method: "POST", path: "/accounts/recovery/{requestId}/revoke", responseType: "json", tenantScope: "organization" },
   "webhooks.evotor": { method: "POST", path: "/webhooks/evotor", responseType: "json", tenantScope: "provider_ingress" },
   "webhooks.evotorConnection": { method: "POST", path: "/webhooks/evotor/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "access.search": { method: "GET", path: "/search", responseType: "json", tenantScope: "club" },
@@ -389,6 +402,19 @@ export type AuthMembershipsResponse = {
     membershipId: number;
     organizationId: number;
   } | null;
+};
+export type AuthRecoveryStatusBody = {
+  token: string;
+};
+export type AuthRecoveryStatusResponse = {
+  available: boolean;
+};
+export type AuthRecoveryResetBody = {
+  token: string;
+  password: string;
+};
+export type AuthRecoveryResetResponse = {
+  success: true;
 };
 export type InstallationProvisioningStatusResponse = {
   enabled: boolean;
@@ -824,6 +850,68 @@ export type InstallationProvisioningActivateResponse = {
   auditLogId: number;
   email: string;
   success: true;
+};
+export type InstallationProvisioningRecoveryProfileBody = {
+  email: string;
+  displayName: string;
+  phone?: string;
+};
+export type InstallationProvisioningRecoveryRequestCreateBody = {
+  accountId: number | string;
+  clubId?: number | string;
+};
+export type InstallationProvisioningRecoveryRequestCreateResponse = {
+  id: string;
+  status: "created" | "issued" | "used" | "revoked" | "expired";
+  [key: string]: unknown;
+};
+export type InstallationProvisioningRecoveryIssueBody = Record<string, unknown>;
+export type InstallationProvisioningRecoveryIssueResponse = {
+  requestId: string;
+  expiresAt: string;
+  resetLink: string;
+};
+export type InstallationProvisioningRecoveryRevokeBody = Record<string, unknown>;
+export type InstallationProvisioningRecoveryRevokeResponse = {
+  success: true;
+  status: "revoked";
+};
+export type AccountsRecoveryCreateParams = {
+  id: number | string;
+};
+export type AccountsRecoveryCreateBody = {
+  clubId: number | string;
+};
+export type AccountsRecoveryCreateResponse = {
+  id: string;
+  status: "created" | "issued" | "used" | "revoked" | "expired";
+};
+export type AccountsRecoveryListParams = {
+  id: number | string;
+};
+export type AccountsRecoveryListQuery = {
+  clubId: number | string;
+};
+export type AccountsRecoveryIssueParams = {
+  requestId: string;
+};
+export type AccountsRecoveryIssueBody = {
+  clubId: number | string;
+};
+export type AccountsRecoveryIssueResponse = {
+  requestId: string;
+  expiresAt: string;
+  resetLink: string;
+};
+export type AccountsRecoveryRevokeParams = {
+  requestId: string;
+};
+export type AccountsRecoveryRevokeBody = {
+  clubId: number | string;
+};
+export type AccountsRecoveryRevokeResponse = {
+  success: true;
+  status: "revoked";
 };
 export type WebhooksEvotorConnectionParams = {
   connectionPublicId: string;
@@ -3014,6 +3102,8 @@ export interface ApiEndpointRequestMap {
   "auth.logout": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.me": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
+  "auth.recoveryStatus": ApiEndpointRequest<undefined, undefined, AuthRecoveryStatusBody>;
+  "auth.recoveryReset": ApiEndpointRequest<undefined, undefined, AuthRecoveryResetBody>;
   "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.session": ApiEndpointRequest<undefined, undefined, InstallationProvisioningSessionBody>;
   "installationProvisioning.sessionRevoke": ApiEndpointRequest<undefined, undefined, undefined>;
@@ -3058,6 +3148,17 @@ export interface ApiEndpointRequestMap {
   "installationProvisioning.reissue": ApiEndpointRequest<InstallationProvisioningReissueParams, undefined, undefined>;
   "installationProvisioning.activationStatus": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivationStatusBody>;
   "installationProvisioning.activate": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivateBody>;
+  "installationProvisioning.recoveryAccounts": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.recoveryAccount": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.recoveryProfile": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryProfileBody>;
+  "installationProvisioning.recoveryRequests": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.recoveryRequestCreate": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryRequestCreateBody>;
+  "installationProvisioning.recoveryIssue": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryIssueBody>;
+  "installationProvisioning.recoveryRevoke": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryRevokeBody>;
+  "accounts.recoveryCreate": ApiEndpointRequest<AccountsRecoveryCreateParams, undefined, AccountsRecoveryCreateBody>;
+  "accounts.recoveryList": ApiEndpointRequest<AccountsRecoveryListParams, AccountsRecoveryListQuery, undefined>;
+  "accounts.recoveryIssue": ApiEndpointRequest<AccountsRecoveryIssueParams, undefined, AccountsRecoveryIssueBody>;
+  "accounts.recoveryRevoke": ApiEndpointRequest<AccountsRecoveryRevokeParams, undefined, AccountsRecoveryRevokeBody>;
   "webhooks.evotor": ApiEndpointRequest<undefined, undefined, undefined>;
   "webhooks.evotorConnection": ApiEndpointRequest<WebhooksEvotorConnectionParams, undefined, undefined>;
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
@@ -3350,6 +3451,8 @@ export interface ApiEndpointResponseMap {
   "auth.logout": AuthLogoutResponse;
   "auth.me": unknown;
   "auth.memberships": AuthMembershipsResponse;
+  "auth.recoveryStatus": AuthRecoveryStatusResponse;
+  "auth.recoveryReset": AuthRecoveryResetResponse;
   "installationProvisioning.status": InstallationProvisioningStatusResponse;
   "installationProvisioning.session": InstallationProvisioningSessionResponse;
   "installationProvisioning.sessionRevoke": InstallationProvisioningSessionRevokeResponse;
@@ -3394,6 +3497,17 @@ export interface ApiEndpointResponseMap {
   "installationProvisioning.reissue": InstallationProvisioningReissueResponse;
   "installationProvisioning.activationStatus": InstallationProvisioningActivationStatusResponse;
   "installationProvisioning.activate": InstallationProvisioningActivateResponse;
+  "installationProvisioning.recoveryAccounts": unknown;
+  "installationProvisioning.recoveryAccount": unknown;
+  "installationProvisioning.recoveryProfile": unknown;
+  "installationProvisioning.recoveryRequests": unknown;
+  "installationProvisioning.recoveryRequestCreate": InstallationProvisioningRecoveryRequestCreateResponse;
+  "installationProvisioning.recoveryIssue": InstallationProvisioningRecoveryIssueResponse;
+  "installationProvisioning.recoveryRevoke": InstallationProvisioningRecoveryRevokeResponse;
+  "accounts.recoveryCreate": AccountsRecoveryCreateResponse;
+  "accounts.recoveryList": unknown;
+  "accounts.recoveryIssue": AccountsRecoveryIssueResponse;
+  "accounts.recoveryRevoke": AccountsRecoveryRevokeResponse;
   "webhooks.evotor": unknown;
   "webhooks.evotorConnection": unknown;
   "access.search": unknown;

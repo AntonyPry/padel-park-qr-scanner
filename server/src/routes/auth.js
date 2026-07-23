@@ -1,5 +1,6 @@
 const express = require('express');
 const authController = require('../controllers/auth.controller');
+const recoveryController = require('../controllers/account-recovery.controller');
 const { requireAuth } = require('../middleware/auth');
 const { validate } = require('../middleware/validate');
 const { limitCredentialEntry } = require('../middleware/auth-rate-limit');
@@ -31,6 +32,8 @@ router.post(
   authController.login,
 );
 router.post('/logout', globalEndpoint, authController.logout);
+router.post('/recovery/status', globalEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_USE), validate(apiSchemas.auth.recoveryStatus), recoveryController.status);
+router.post('/recovery/reset', globalEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_USE), validate(apiSchemas.auth.recoveryReset), recoveryController.reset);
 router.get('/me', globalEndpoint, requireAuth, resolveRequestTenant, authController.me);
 router.get(
   '/me/memberships',

@@ -2,6 +2,7 @@
 
 const express = require('express');
 const controller = require('../controllers/installation-provisioning.controller');
+const recoveryController = require('../controllers/account-recovery.controller');
 const {
   requireInstallationManagement,
   requireInstallationOperator,
@@ -90,6 +91,15 @@ router.post(
   validate(apiSchemas.installationProvisioning.clubLifecycle),
   controller.reactivateClub.bind(controller),
 );
+
+const recoveryPath = '/organizations/:organizationId/clubs/:clubId/recovery';
+router.get(`${recoveryPath}/accounts`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, recoveryController.accounts);
+router.get(`${recoveryPath}/accounts/:accountId`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, recoveryController.account);
+router.put(`${recoveryPath}/accounts/:accountId`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate(apiSchemas.installationProvisioning.recoveryProfile), recoveryController.updateAccount);
+router.get(`${recoveryPath}/requests`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, recoveryController.requests);
+router.post(`${recoveryPath}/requests`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate(apiSchemas.installationProvisioning.recoveryRequest), recoveryController.createRequest);
+router.post(`${recoveryPath}/requests/:requestId/issue`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate(apiSchemas.installationProvisioning.recoveryIssue), recoveryController.issue);
+router.post(`${recoveryPath}/requests/:requestId/revoke`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate(apiSchemas.installationProvisioning.recoveryRevoke), recoveryController.revoke);
 
 const providerSchemas = Object.freeze({
   beeline: apiSchemas.installationProvisioning.integrationConfigureBeeline,

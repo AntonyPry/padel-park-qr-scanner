@@ -36,6 +36,7 @@ module.exports = (sequelize, DataTypes) => {
     Organization.hasMany(models.ScannerEvent, { foreignKey: 'organizationId' });
     Organization.hasMany(models.TrainingSkill, { foreignKey: 'organizationId' });
     Organization.hasMany(models.TrainingExercise, { foreignKey: 'organizationId' });
+    Organization.hasMany(models.AccountRecoveryRequest, { foreignKey: 'organizationId' });
   };
 
   return Organization;

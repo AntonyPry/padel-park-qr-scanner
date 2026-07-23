@@ -23,6 +23,9 @@
       "name": "Auth"
     },
     {
+      "name": "Auth Recovery"
+    },
+    {
       "name": "Bookings"
     },
     {
@@ -51,6 +54,9 @@
     },
     {
       "name": "Installation Provisioning"
+    },
+    {
+      "name": "Installation Recovery"
     },
     {
       "name": "Integrations"
@@ -1467,6 +1473,401 @@
           "Auth"
         ],
         "x-tenant-scope": "global"
+      }
+    },
+    "/auth/recovery/status": {
+      "post": {
+        "operationId": "auth.recoveryStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "available": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "available"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Check recovery link availability without revealing identity",
+        "tags": [
+          "Auth Recovery"
+        ],
+        "x-tenant-scope": "global",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "pattern": "^setly_r1_[A-Za-z0-9_-]{43}$"
+                  }
+                },
+                "required": [
+                  "token"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/auth/recovery/reset": {
+      "post": {
+        "operationId": "auth.recoveryReset",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "success"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [],
+        "summary": "Set a password with a one-time recovery link",
+        "tags": [
+          "Auth Recovery"
+        ],
+        "x-tenant-scope": "global",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "pattern": "^setly_r1_[A-Za-z0-9_-]{43}$"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 200
+                  }
+                },
+                "required": [
+                  "token",
+                  "password"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
       }
     },
     "/installation/provisioning/status": {
@@ -10086,6 +10487,2562 @@
                 "required": [
                   "password",
                   "token"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts": {
+      "get": {
+        "operationId": "installationProvisioning.recoveryAccounts",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List active club accounts eligible for recovery",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}": {
+      "get": {
+        "operationId": "installationProvisioning.recoveryAccount",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read one account for recovery",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "operationId": "installationProvisioning.recoveryProfile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update allowed account profile fields",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "accountId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "maxLength": 160
+                  },
+                  "phone": {
+                    "type": "string",
+                    "maxLength": 40
+                  }
+                },
+                "required": [
+                  "email",
+                  "displayName"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests": {
+      "get": {
+        "operationId": "installationProvisioning.recoveryRequests",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List recovery requests",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "post": {
+        "operationId": "installationProvisioning.recoveryRequestCreate",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "created",
+                        "issued",
+                        "used",
+                        "revoked",
+                        "expired"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a password reset request",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "accountId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[1-9]\\d*$"
+                      }
+                    ]
+                  },
+                  "clubId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[1-9]\\d*$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "accountId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/issue": {
+      "post": {
+        "operationId": "installationProvisioning.recoveryIssue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    "resetLink": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "expiresAt",
+                    "resetLink"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Issue a one-time password reset link",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/revoke": {
+      "post": {
+        "operationId": "installationProvisioning.recoveryRevoke",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "revoked"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "VALIDATION_ERROR"
+                    },
+                    "details": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "type": "string"
+                          },
+                          "message": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "message",
+                          "path"
+                        ]
+                      }
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 400
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "details",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Validation error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Revoke a password reset request",
+        "tags": [
+          "Installation Recovery"
+        ],
+        "x-tenant-scope": "installation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "organizationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/accounts/{id}/recovery": {
+      "post": {
+        "operationId": "accounts.recoveryCreate",
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "created",
+                        "issued",
+                        "used",
+                        "revoked",
+                        "expired"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "VALIDATION_ERROR"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "path": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message",
+                              "path"
+                            ]
+                          }
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "number",
+                          "const": 400
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "details",
+                        "error",
+                        "status"
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Validation or tenant context error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Forbidden tenant context"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Tenant or resource not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create an owner-scoped employee recovery request",
+        "tags": [
+          "Accounts",
+          "Auth Recovery"
+        ],
+        "x-tenant-scope": "organization",
+        "parameters": [
+          {
+            "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
+            "in": "header",
+            "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "clubId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[1-9]\\d*$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "clubId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      },
+      "get": {
+        "operationId": "accounts.recoveryList",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "VALIDATION_ERROR"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "path": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message",
+                              "path"
+                            ]
+                          }
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "number",
+                          "const": 400
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "details",
+                        "error",
+                        "status"
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Validation or tenant context error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Forbidden tenant context"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Tenant or resource not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List owner-scoped recovery requests for one employee",
+        "tags": [
+          "Accounts",
+          "Auth Recovery"
+        ],
+        "x-tenant-scope": "organization",
+        "parameters": [
+          {
+            "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
+            "in": "header",
+            "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          },
+          {
+            "in": "query",
+            "name": "clubId",
+            "required": true,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/accounts/recovery/{requestId}/issue": {
+      "post": {
+        "operationId": "accounts.recoveryIssue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                    },
+                    "resetLink": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  },
+                  "required": [
+                    "requestId",
+                    "expiresAt",
+                    "resetLink"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "VALIDATION_ERROR"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "path": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message",
+                              "path"
+                            ]
+                          }
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "number",
+                          "const": 400
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "details",
+                        "error",
+                        "status"
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Validation or tenant context error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Forbidden tenant context"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Tenant or resource not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Issue an owner-scoped one-time reset link",
+        "tags": [
+          "Accounts",
+          "Auth Recovery"
+        ],
+        "x-tenant-scope": "organization",
+        "parameters": [
+          {
+            "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
+            "in": "header",
+            "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "clubId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[1-9]\\d*$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "clubId"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": true
+        }
+      }
+    },
+    "/accounts/recovery/{requestId}/revoke": {
+      "post": {
+        "operationId": "accounts.recoveryRevoke",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "const": "revoked"
+                    }
+                  },
+                  "required": [
+                    "success",
+                    "status"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "description": "Success"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "type": "string",
+                          "const": "VALIDATION_ERROR"
+                        },
+                        "details": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "code": {
+                                "type": "string"
+                              },
+                              "message": {
+                                "type": "string"
+                              },
+                              "path": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "code",
+                              "message",
+                              "path"
+                            ]
+                          }
+                        },
+                        "error": {
+                          "type": "string"
+                        },
+                        "status": {
+                          "type": "number",
+                          "const": 400
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "details",
+                        "error",
+                        "status"
+                      ]
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiError"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Validation or tenant context error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Forbidden tenant context"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Tenant or resource not found"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "const": "AUTH_RATE_LIMITED"
+                    },
+                    "error": {
+                      "type": "string",
+                      "const": "Слишком много попыток. Повторите позже"
+                    },
+                    "status": {
+                      "type": "number",
+                      "const": 429
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Temporary credential-entry rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "description": "Positive integer seconds until the fixed window expires.",
+                "required": true,
+                "schema": {
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "details": {},
+                    "error": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "error",
+                    "status"
+                  ]
+                }
+              }
+            },
+            "description": "Server error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Revoke an owner-scoped reset request",
+        "tags": [
+          "Accounts",
+          "Auth Recovery"
+        ],
+        "x-tenant-scope": "organization",
+        "parameters": [
+          {
+            "description": "Verified organization context. Body, query and JWT tenant IDs are not authoritative.",
+            "in": "header",
+            "name": "X-Organization-Id",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "path",
+            "name": "requestId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "clubId": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^[1-9]\\d*$"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "clubId"
                 ],
                 "additionalProperties": false
               }

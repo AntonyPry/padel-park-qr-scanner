@@ -221,15 +221,15 @@ dimension.
 
 ## Future attachment and non-goals
 
-No recovery or MFA route/model exists, so this slice adds none. When A12 recovery
-or A7 MFA introduces a real credential/factor entry endpoint, it must attach
-`limitCredentialEntry(surface)` after route classification and before validation,
-lookup, delivery, password/factor verification or mutation. The new surface must
-declare a v1-or-later endpoint policy with a bounded canonical account/token/factor
-class, exact peer only under the accepted I4 contract, HMAC-sharded storage,
-generic denial, automatic expiry, Redis atomicity/local degraded behavior and
-focused enumeration/concurrency/outage/no-mutation tests. Adding a route without
-that declared attachment is an A12/A7 merge blocker.
+The A12 recovery foundation now attaches `limitCredentialEntry(surface)` after
+route classification and before validation, lookup, password verification or
+mutation. It declares bounded `AUTH_RECOVERY_ISSUE` and `AUTH_RECOVERY_USE`
+policies with fixed credential classes, a bounded token class and the exact peer
+dimension, HMAC-sharded storage, generic denial, expiry and Redis/local-degraded
+semantics. Recovery is an explicit operator/club-owner action; no email/SMS,
+callback, approval, or notification provider is implied. Any future external
+delivery or factor route must add its own declared surface and focused
+enumeration/concurrency/outage/no-mutation tests before rollout.
 
 CORS/CSP/headers (A8), structured security audit events (A10), dependency
 findings (A13), provider fail-closed work (A9), session/JWT/cookie/Socket.IO
@@ -238,15 +238,17 @@ SEC-A4.
 
 ## Data and API impact
 
-- API: existing success contracts and generated request/response types are
-  unchanged. OpenAPI declares the real generic 429/`Retry-After` drift only on
-  the five credential-entry, five provider and seven worker operations; only
-  active enforce mode can produce it.
-- Data model/migrations/grants: none.
+- API: A12 adds generic recovery status/reset and installation recovery contracts;
+  every recovery operation carries the same generic `429`/`Retry-After` contract
+  when enforcement is enabled.
+- Data model/migrations/grants: A12 adds tenant/account-scoped recovery requests
+  and digest-only one-time tokens. Rollback refuses non-empty history; no
+  production grant change is implied by the application branch.
 - Persisted lock fields: none.
 - Tenant scope: installation/global route classification is unchanged; limiter
   counters are installation-wide security metadata derived only from fixed
   route surfaces and ephemeral request subjects.
-- User Preview: N/A; no UI or default-visible workflow changes.
+- User Preview: required for the operator account cabinet and owner employee
+  recovery action before QA or release promotion.
 - Onboarding: none; roles, routes, visible actions, checkpoint events, training
   data and instructions remain unchanged in default-off mode.
