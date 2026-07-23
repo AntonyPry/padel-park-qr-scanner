@@ -233,13 +233,15 @@ Onboarding подключается пакетно и только при реа
 - QA получает candidate только после завершённой Feature, применимого User Preview и готового exact-SHA handoff.
 - Active task можно срочно прервать только при wrong repo/worktree/branch, риске потери/утечки данных или секрета, unauthorized production mutation, destructive migration/force push, blocking P0/P1 либо явном stop/task-change пользователя. Scope polish, дополнительная идея, новый handoff, status question и некритичная dependency не являются причиной прерывания.
 
-### Waiting for user marker
+### Task state markers
 
-- Если задача реально остановлена до конкретного ответа или действия пользователя, она сама добавляет к текущему динамическому названию один ведущий `!!!`, например `!!!Feature Security 2 - Argon2id и миграция старых хешей`.
-- Маркер ставится только для User Preview acceptance/правок, product choice, credentials/access/manual user action, explicit production/security decision или ambiguity без безопасного внутреннего решения.
-- Не ставь `!!!` для idle/unassigned, ожидания другой роли, команды/долгого теста, безопасно продолжаемой работы или обычного status update без вопроса. Не добавляй второй `!!!`.
-- Сразу после ответа пользователя удали только ведущий `!!!`, восстанови актуальное role/epic/capability name и продолжи работу.
-- Каждая задача владеет своим marker. Dispatcher не дублирует пользовательский вопрос дочерней задачи и не снимает marker за неё. Feature сохраняет прямой User Preview dialogue с пользователем.
+- `🟢 <базовое название>`: задача прямо сейчас выполняет полезную работу, включая long-running command/test/monitoring.
+- `❗️ <базовое название>`: задача реально остановлена до конкретного ответа/решения/действия пользователя, доступа или User Preview acceptance.
+- `🔄 <базовое название>`: задача реально остановлена до результата другого чата/роли и не имеет полезной независимой работы.
+- Без marker: idle/unassigned, completed или paused без активного ожидания.
+- Markers взаимоисключающие и не накапливаются. При переходе задача сама заменяет/снимает только ведущий marker, сохраняя актуальное role/epic/capability name.
+- Неблокирующий вопрос не снимает `🟢`; параллельная dependency не требует `🔄`, пока можно продолжать; второй status marker не добавляется.
+- Каждая задача владеет своим marker. Dispatcher не меняет marker дочерней задачи за неё; Feature сохраняет прямой User Preview dialogue с пользователем.
 
 Подробные роли и границы описаны в `docs/CODEX_ORGANIZATION.md`.
 
