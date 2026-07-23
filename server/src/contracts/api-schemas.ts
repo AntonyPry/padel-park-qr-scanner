@@ -1372,11 +1372,11 @@ const apiSchemas = {
         .nullable(),
     }),
     recoveryStatus: {
-      body: z.object({ token: z.string().trim().regex(/^setly_r1_[A-Za-z0-9_-]{43}$/u) }).strict(),
+      body: z.object({ token: z.string().regex(/^setly_r1_[A-Za-z0-9_-]{43}$/u) }).strict(),
       response: z.object({ available: z.boolean() }).strict(),
     },
     recoveryReset: {
-      body: z.object({ token: z.string().trim().regex(/^setly_r1_[A-Za-z0-9_-]{43}$/u), password: z.string().min(6).max(200) }).strict(),
+      body: z.object({ token: z.string().regex(/^setly_r1_[A-Za-z0-9_-]{43}$/u), password: z.string().min(6).max(200) }).strict(),
       response: z.object({ success: z.literal(true) }).strict(),
     },
   },
@@ -1386,6 +1386,7 @@ const apiSchemas = {
     recoveryRequestParams,
     recoveryAccountsResponse: z.object({ accounts: z.array(recoveryAccountSummary) }).strict(),
     recoveryAccountResponse: recoveryAccountDetail,
+    recoveryRequestsQuery: z.object({ accountId: id.optional() }).strict(),
     recoveryRequestsResponse: z.object({ requests: z.array(recoveryRequestRecord) }).strict(),
     recoveryRequest: {
       body: z.object({ accountId: id, clubId: id.optional() }).strict(),

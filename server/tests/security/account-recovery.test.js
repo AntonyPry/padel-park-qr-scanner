@@ -2,6 +2,8 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const fs = require('node:fs');
+const path = require('node:path');
 const recovery = require('../../src/services/account-recovery.service');
 const migration = require('../../migrations/20260722110000-create-account-recovery');
 const { apiSchemas } = require('../../src/contracts/api-schemas');
@@ -46,6 +48,10 @@ test('public reset accepts only token and new password', async () => {
 test('recovery API contracts reject user-entered reasons', () => {
   const token = 'setly_r1_' + 'A'.repeat(43);
   assert.equal(apiSchemas.auth.recoveryReset.body.safeParse({ token, password: 'password' }).success, true);
+  assert.equal(apiSchemas.auth.recoveryStatus.body.safeParse({ token: ` ${token}` }).success, false);
+  assert.equal(apiSchemas.auth.recoveryStatus.body.safeParse({ token: `${token} ` }).success, false);
+  assert.equal(apiSchemas.auth.recoveryReset.body.safeParse({ token: ` ${token}`, password: 'password' }).success, false);
+  assert.equal(apiSchemas.auth.recoveryReset.body.safeParse({ token: `${token} `, password: 'password' }).success, false);
   assert.equal(apiSchemas.auth.recoveryReset.body.safeParse({ token, password: 'password', reason: 'legacy' }).success, false);
   assert.equal(apiSchemas.installationProvisioning.recoveryProfile.body.safeParse({ email: 'user@example.test', displayName: 'User' }).success, true);
   assert.equal(apiSchemas.installationProvisioning.recoveryProfile.body.safeParse({ email: 'user@example.test', displayName: 'User', reason: 'legacy' }).success, false);
@@ -89,4 +95,15 @@ test('installation recovery OpenAPI contract has exact path params and safe resp
   assert.ok(accountList.properties.accounts.items.properties.staffId);
   const requestList = document.paths[Object.keys(expected)[2]].get.responses['200'].content['application/json'].schema;
   assert.ok(requestList.properties.requests.items.properties.status);
+  const requestListOperation = document.paths[Object.keys(expected)[2]].get;
+  assert.deepEqual(requestListOperation.parameters.filter((parameter) => parameter.in === 'query').map((parameter) => parameter.name), ['accountId']);
+  assert.equal(apiSchemas.installationProvisioning.recoveryRequestsQuery.safeParse({}).success, true);
+  assert.equal(apiSchemas.installationProvisioning.recoveryRequestsQuery.safeParse({ accountId: 42 }).success, true);
+  assert.equal(apiSchemas.installationProvisioning.recoveryRequestsQuery.safeParse({ accountId: 'invalid' }).success, false);
+  const generated = fs.readFileSync(
+    path.join(__dirname, '../../../client/src/api/generated.ts'),
+    'utf8',
+  );
+  assert.match(generated, /export type InstallationProvisioningRecoveryRequestsQuery = \{\n  accountId\?: number \| string;\n\}/u);
+  assert.match(generated, /"installationProvisioning\.recoveryRequests": ApiEndpointRequest<InstallationProvisioningRecoveryRequestsParams, InstallationProvisioningRecoveryRequestsQuery, undefined>/u);
 });

@@ -897,6 +897,9 @@ export type InstallationProvisioningRecoveryRequestsParams = {
   organizationId: number | string;
   clubId: number | string;
 };
+export type InstallationProvisioningRecoveryRequestsQuery = {
+  accountId?: number | string;
+};
 export type InstallationProvisioningRecoveryRequestsResponse = {
   requests: Array<{
     id: string;
@@ -3217,7 +3220,7 @@ export interface ApiEndpointRequestMap {
   "installationProvisioning.recoveryAccounts": ApiEndpointRequest<InstallationProvisioningRecoveryAccountsParams, undefined, undefined>;
   "installationProvisioning.recoveryAccount": ApiEndpointRequest<InstallationProvisioningRecoveryAccountParams, undefined, undefined>;
   "installationProvisioning.recoveryProfile": ApiEndpointRequest<InstallationProvisioningRecoveryProfileParams, undefined, InstallationProvisioningRecoveryProfileBody>;
-  "installationProvisioning.recoveryRequests": ApiEndpointRequest<InstallationProvisioningRecoveryRequestsParams, undefined, undefined>;
+  "installationProvisioning.recoveryRequests": ApiEndpointRequest<InstallationProvisioningRecoveryRequestsParams, InstallationProvisioningRecoveryRequestsQuery, undefined>;
   "installationProvisioning.recoveryRequestCreate": ApiEndpointRequest<InstallationProvisioningRecoveryRequestCreateParams, undefined, InstallationProvisioningRecoveryRequestCreateBody>;
   "installationProvisioning.recoveryIssue": ApiEndpointRequest<InstallationProvisioningRecoveryIssueParams, undefined, InstallationProvisioningRecoveryIssueBody>;
   "installationProvisioning.recoveryRevoke": ApiEndpointRequest<InstallationProvisioningRecoveryRevokeParams, undefined, InstallationProvisioningRecoveryRevokeBody>;

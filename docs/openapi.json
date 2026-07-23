@@ -11616,6 +11616,24 @@
                 }
               ]
             }
+          },
+          {
+            "in": "query",
+            "name": "accountId",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                {
+                  "type": "string",
+                  "pattern": "^[1-9]\\d*$"
+                }
+              ]
+            }
           }
         ]
       },

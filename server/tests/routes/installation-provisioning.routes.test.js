@@ -92,6 +92,15 @@ test('installation provisioning routes remain isolated behind operator authority
     const operatorToken = (await session.json()).token;
     assert.match(operatorToken, /^[^.]+\.[^.]+\.[^.]+$/u);
 
+    const invalidRecoveryQuery = await api(
+      '/installation/provisioning/organizations/1/clubs/1/recovery/requests?accountId=not-an-id',
+      { headers: { Authorization: `Bearer ${operatorToken}` }, method: 'GET' },
+    );
+    assert.equal(invalidRecoveryQuery.status, 400);
+    const invalidRecoveryBody = await invalidRecoveryQuery.json();
+    assert.equal(invalidRecoveryBody.code, 'VALIDATION_ERROR');
+    assert.ok(invalidRecoveryBody.details.some((detail) => detail.path === 'accountId'));
+
     process.env.INSTALLATION_PROVISIONING_ENABLED = 'false';
     const managementOnlyStatus = await api('/installation/provisioning/status');
     assert.deepEqual(await managementOnlyStatus.json(), {

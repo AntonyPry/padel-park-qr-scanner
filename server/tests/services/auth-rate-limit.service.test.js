@@ -332,7 +332,9 @@ test('recovery token limits use the exact opaque token identity without leaking 
   const tokenB = `setly_r1_${'B'.repeat(43)}`;
   const oversized = `${tokenA}x`;
   const malformed = `setly_r1_${'!'.repeat(43)}`;
+  const whitespaceToken = ` ${tokenA}`;
   assert.match(_private.recoveryTokenCanonical(tokenA), /^recovery_token:valid:[a-f0-9]{64}$/u);
+  assert.equal(_private.recoveryTokenCanonical(whitespaceToken), 'recovery_token:invalid');
   assert.equal(_private.recoveryTokenCanonical(oversized), 'recovery_token:invalid');
   assert.equal(_private.recoveryTokenCanonical(malformed), 'recovery_token:invalid');
 
@@ -356,13 +358,16 @@ test('recovery token limits use the exact opaque token identity without leaking 
   assert.equal(attemptsA.filter((item) => !item.blocked).length, 8);
   assert.equal(attemptsA.at(-1).blocked, true);
   assert.equal((await limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(tokenB))).blocked, false);
-  assert.equal((await limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(oversized))).blocked, false);
+  const invalidForms = [oversized, whitespaceToken, malformed];
   const invalidAttempts = await Promise.all(
-    Array.from({ length: 9 }, () => limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(malformed))),
+    Array.from({ length: 9 }, (_, index) => limiter.consumeRequest(
+      SURFACES.AUTH_RECOVERY_USE,
+      requestFor(invalidForms[index % invalidForms.length]),
+    )),
   );
   assert.equal(invalidAttempts.at(-1).blocked, true);
   const evidence = JSON.stringify(events);
-  for (const raw of [tokenA, tokenB, oversized, malformed]) assert.equal(evidence.includes(raw), false, raw);
+  for (const raw of [tokenA, tokenB, oversized, whitespaceToken, malformed]) assert.equal(evidence.includes(raw), false, raw);
 });
 
 test('provider and worker subjects use bounded headers and params without raw event material', async () => {
