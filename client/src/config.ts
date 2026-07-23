@@ -3,4 +3,5 @@ const defaultApiUrl = import.meta.env.PROD ? window.location.origin : 'http://lo
 export const API_URL = import.meta.env.VITE_API_URL || defaultApiUrl;
 
 export const INSTALLATION_OPERATOR_URL =
-  import.meta.env.VITE_INSTALLATION_OPERATOR_URL || 'https://ops.setly.tech';
+  import.meta.env.VITE_INSTALLATION_OPERATOR_URL ||
+  'https://ops.setly.tech/installation';
