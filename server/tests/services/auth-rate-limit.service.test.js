@@ -327,6 +327,44 @@ test('raw pre-bounds preserve adjacent valid and invalid canonical cases', () =>
   );
 });
 
+test('recovery token limits use the exact opaque token identity without leaking raw values', async () => {
+  const tokenA = `setly_r1_${'A'.repeat(43)}`;
+  const tokenB = `setly_r1_${'B'.repeat(43)}`;
+  const oversized = `${tokenA}x`;
+  const malformed = `setly_r1_${'!'.repeat(43)}`;
+  assert.match(_private.recoveryTokenCanonical(tokenA), /^recovery_token:valid:[a-f0-9]{64}$/u);
+  assert.equal(_private.recoveryTokenCanonical(oversized), 'recovery_token:invalid');
+  assert.equal(_private.recoveryTokenCanonical(malformed), 'recovery_token:invalid');
+
+  const events = [];
+  const limiter = createAuthRateLimiter({
+    env: activeEnv({
+      AUTH_RATE_LIMIT_POLICY_JSON: JSON.stringify({
+        [SURFACES.AUTH_RECOVERY_USE]: {
+          credential_class: { limit: 100, windowSeconds: 600 },
+          peer: { limit: 100, windowSeconds: 600 },
+          token: { limit: 8, windowSeconds: 600 },
+        },
+      }),
+    }),
+    logger: (event) => events.push(event),
+  });
+  const requestFor = (token) => request({ token });
+  const attemptsA = await Promise.all(
+    Array.from({ length: 9 }, () => limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(tokenA))),
+  );
+  assert.equal(attemptsA.filter((item) => !item.blocked).length, 8);
+  assert.equal(attemptsA.at(-1).blocked, true);
+  assert.equal((await limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(tokenB))).blocked, false);
+  assert.equal((await limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(oversized))).blocked, false);
+  const invalidAttempts = await Promise.all(
+    Array.from({ length: 9 }, () => limiter.consumeRequest(SURFACES.AUTH_RECOVERY_USE, requestFor(malformed))),
+  );
+  assert.equal(invalidAttempts.at(-1).blocked, true);
+  const evidence = JSON.stringify(events);
+  for (const raw of [tokenA, tokenB, oversized, malformed]) assert.equal(evidence.includes(raw), false, raw);
+});
+
 test('provider and worker subjects use bounded headers and params without raw event material', async () => {
   const raw = {
     callback: 'a'.repeat(64),

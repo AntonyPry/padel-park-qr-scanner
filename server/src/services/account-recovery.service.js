@@ -152,12 +152,31 @@ async function createRequest(organizationId, clubId, input, actor) {
 async function issueToken(requestId, actor, organizationId, clubId) {
   const transaction = await db.sequelize.transaction();
   try {
-    const request = await db.AccountRecoveryRequest.findByPk(requestId, { transaction, lock: transaction.LOCK.UPDATE });
-    if (!request || Number(request.organizationId) !== Number(organizationId) || Number(request.clubId) !== Number(clubId)) throw recoveryError('Запрос восстановления не найден', 404, 'ACCOUNT_RECOVERY_REQUEST_NOT_FOUND');
+    const requested = await db.AccountRecoveryRequest.findByPk(requestId, { transaction });
+    if (!requested || Number(requested.organizationId) !== Number(organizationId) || Number(requested.clubId) !== Number(clubId)) throw recoveryError('Запрос восстановления не найден', 404, 'ACCOUNT_RECOVERY_REQUEST_NOT_FOUND');
+    // Lock every active request for this account in a stable order before mutating
+    // tokens. This serializes concurrent issuance and makes supersession atomic.
+    const activeRequests = await db.AccountRecoveryRequest.findAll({
+      where: {
+        accountId: requested.accountId,
+        clubId: requested.clubId,
+        organizationId: requested.organizationId,
+        status: ['created', 'issued'],
+      },
+      order: [['createdAt', 'ASC'], ['id', 'ASC']],
+      transaction,
+      lock: transaction.LOCK.UPDATE,
+    });
+    const request = activeRequests.find((item) => String(item.id) === String(requestId));
+    if (!request) throw recoveryError('Запрос больше нельзя выдать', 409, 'ACCOUNT_RECOVERY_NOT_READY');
     if (!['created', 'issued'].includes(request.status)) throw recoveryError('Запрос больше нельзя выдать', 409, 'ACCOUNT_RECOVERY_NOT_READY');
     const target = await findScopedAccount(request.accountId, request.organizationId, request.clubId, transaction, true);
     if (!target) throw recoveryError('Аккаунт больше недоступен', 409, 'ACCOUNT_RECOVERY_ACCOUNT_NOT_FOUND');
     await assertActor(actor, target, request.organizationId, request.clubId, transaction);
+    const priorRequests = activeRequests.filter((item) => String(item.id) !== String(request.id));
+    for (const priorRequest of priorRequests) {
+      await priorRequest.update({ status: 'revoked' }, { transaction });
+    }
     await db.AccountRecoveryToken.update({ revokedAt: new Date(), revokeReason: 'superseded' }, { where: { accountId: request.accountId, consumedAt: null, revokedAt: null }, transaction });
     const rawToken = issueRawToken();
     const issuedAt = new Date();

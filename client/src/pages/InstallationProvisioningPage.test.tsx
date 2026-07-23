@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { ThemeProvider } from '@/lib/theme';
 import InstallationProvisioningPage from './InstallationProvisioningPage';
 
@@ -69,10 +69,15 @@ function json(value: unknown, status = 200) {
 }
 
 function renderPage(path: string) {
+  function LocationProbe() {
+    const location = useLocation();
+    return <output data-testid="location">{location.pathname}</output>;
+  }
   return render(
     <ThemeProvider>
       <MemoryRouter initialEntries={[path]}>
         <InstallationProvisioningPage />
+        <LocationProbe />
       </MemoryRouter>
     </ThemeProvider>,
   );
@@ -162,5 +167,32 @@ describe('InstallationProvisioningPage integration management', () => {
       .toBeInTheDocument();
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/credentials')))
       .toBe(false);
+  });
+
+  it('keeps recovery entry points club-specific and keyboard accessible on a multi-club overview', async () => {
+    window.sessionStorage.setItem('setly_installation_operator_token', 'operator-token');
+    const secondClub = {
+      ...organization.clubs[0],
+      id: 2,
+      integrations: organization.clubs[0].integrations.map((item) => ({ ...item })),
+      name: 'Padel Park Север',
+    };
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith('/status')) return json({ enabled: true, managementEnabled: true, provisioningEnabled: false });
+      if (url.endsWith('/snapshot')) return json(snapshot);
+      if (url.endsWith('/organizations/1')) return json({ ...organization, clubs: [...organization.clubs, secondClub] });
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage('/installation/organizations/1');
+
+    expect(await screen.findByRole('heading', { name: 'Padel Park' })).toBeInTheDocument();
+    const entries = screen.getAllByRole('button', { name: 'Восстановление доступа' });
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toHaveAttribute('type', 'button');
+    fireEvent.click(entries[1]);
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/installation/organizations/1/clubs/2/recovery'));
   });
 });

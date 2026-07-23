@@ -186,6 +186,35 @@ const paginationQuery = z
   })
   .passthrough();
 const idParams = z.object({ id });
+const recoveryScopeParams = z.object({ organizationId: id, clubId: id }).strict();
+const recoveryAccountParams = recoveryScopeParams.extend({ accountId: id }).strict();
+const recoveryRequestParams = recoveryScopeParams.extend({ requestId: z.string().uuid() }).strict();
+const recoveryAccountSummary = z.object({
+  id: z.number().int().positive(),
+  email: z.string().email(),
+  role: accountRoleValue,
+  displayName: z.string(),
+  staffId: z.number().int().positive().nullable(),
+}).strict();
+const recoveryAccountDetail = z.object({
+  id: z.number().int().positive(),
+  email: z.string().email(),
+  role: accountRoleValue,
+  displayName: z.string(),
+  phone: z.string().nullable(),
+}).strict();
+const recoveryRequestRecord = z.object({
+  id: z.string().uuid(),
+  account: z.object({
+    id: z.number().int().positive(),
+    email: z.string().email(),
+    role: accountRoleValue,
+    displayName: z.string(),
+  }).strict().nullable(),
+  status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']),
+  initiatedBy: z.string(),
+  createdAt: dateTimeString,
+}).strict();
 const transcriptionWorkerLeaseFields = {
   claimId: z.string().uuid().optional(),
   claimToken: z.string().trim().min(32).max(256).optional(),
@@ -1221,12 +1250,11 @@ const apiSchemas = {
     body: z
       .object({
         email: z.string().trim().email('Некорректный email'),
-        password: z.string().min(6, 'Пароль должен быть не короче 6 символов').optional(),
         role: z.enum(ACCOUNT_ROLE_VALUES).optional(),
         staffId: nullableId,
         status: z.enum(['active', 'inactive', 'archived']).optional(),
       })
-      .passthrough(),
+      .strict(),
     createBody: z
       .object({
         email: z.string().trim().email('Некорректный email'),
@@ -1353,22 +1381,33 @@ const apiSchemas = {
     },
   },
   installationProvisioning: {
+    recoveryScopeParams,
+    recoveryAccountParams,
+    recoveryRequestParams,
+    recoveryAccountsResponse: z.object({ accounts: z.array(recoveryAccountSummary) }).strict(),
+    recoveryAccountResponse: recoveryAccountDetail,
+    recoveryRequestsResponse: z.object({ requests: z.array(recoveryRequestRecord) }).strict(),
     recoveryRequest: {
       body: z.object({ accountId: id, clubId: id.optional() }).strict(),
-      response: z.object({ id: z.string().uuid(), status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']) }).passthrough(),
+      params: recoveryScopeParams,
+      response: z.object({ id: z.string().uuid(), status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']) }).strict(),
     },
     recoveryProfile: {
       body: z.object({ email: z.string().trim().email(), displayName: z.string().trim().max(160), phone: z.string().trim().max(40).optional() }).strict(),
+      params: recoveryAccountParams,
+      response: recoveryAccountDetail,
     },
     recoveryAction: {
       body: z.object({}).strict(),
     },
     recoveryIssue: {
       body: z.object({}).strict(),
+      params: recoveryRequestParams,
       response: z.object({ requestId: z.string().uuid(), expiresAt: z.string().datetime(), resetLink: z.string().url() }).strict(),
     },
     recoveryRevoke: {
       body: z.object({}).strict(),
+      params: recoveryRequestParams,
       response: z.object({ success: z.literal(true), status: z.literal('revoked') }).strict(),
     },
     activate: {

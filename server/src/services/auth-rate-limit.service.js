@@ -272,6 +272,8 @@ const RAW_CANONICAL_CODE_UNIT_LIMITS = Object.freeze({
   token: 128,
   username: 256,
 });
+const RECOVERY_TOKEN_RAW_LENGTH = 'setly_r1_'.length + 43;
+const RECOVERY_TOKEN_PATTERN = /^setly_r1_[A-Za-z0-9_-]{43}$/u;
 
 function configurationError(field) {
   const error = new Error(`Invalid authentication rate-limit configuration: ${field}`);
@@ -625,6 +627,14 @@ function boundedCanonical(value, { kind }) {
   return `${kind}:valid:${canonical}`;
 }
 
+function recoveryTokenCanonical(value) {
+  if (typeof value !== 'string' || value.length !== RECOVERY_TOKEN_RAW_LENGTH) {
+    return 'recovery_token:invalid';
+  }
+  if (!RECOVERY_TOKEN_PATTERN.test(value)) return 'recovery_token:invalid';
+  return `recovery_token:valid:${crypto.createHash('sha256').update(value, 'utf8').digest('hex')}`;
+}
+
 function rawSingletonHeader(request, name) {
   const value = request?.headers?.[name];
   return typeof value === 'string' ? value : null;
@@ -758,7 +768,9 @@ function createAuthRateLimiter({
 
   async function consumeDimension(surface, dimension, request) {
     const policy = config.policies[surface][dimension];
-    const canonical = canonicalSubject(SURFACE_INPUTS[surface][dimension], request);
+    const canonical = surface === SURFACES.AUTH_RECOVERY_USE && dimension === 'token'
+      ? recoveryTokenCanonical(request?.body?.token)
+      : canonicalSubject(SURFACE_INPUTS[surface][dimension], request);
     const bucket = subjectBucket(config, surface, dimension, canonical);
     const key = storageKey(config, surface, dimension, bucket);
     const windowMs = policy.windowSeconds * 1000;
@@ -858,12 +870,15 @@ module.exports = {
     DEFAULT_POLICIES,
     LocalFixedWindowStore,
     RAW_CANONICAL_CODE_UNIT_LIMITS,
+    RECOVERY_TOKEN_PATTERN,
+    RECOVERY_TOKEN_RAW_LENGTH,
     REDIS_SCRIPT,
     RedisFixedWindowStore,
     SURFACE_INPUTS,
     authRateLimitConfiguration,
     boundedCanonical,
     canonicalSubject,
+    recoveryTokenCanonical,
     storageKey,
     subjectBucket,
   },

@@ -30,7 +30,6 @@ class AccountsController {
         req.tenant,
       );
       if (
-        req.body.password ||
         req.body.role ||
         Object.prototype.hasOwnProperty.call(req.body, 'staffId') ||
         (req.body.status && req.body.status !== 'active')

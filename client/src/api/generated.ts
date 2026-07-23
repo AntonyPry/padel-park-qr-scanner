@@ -851,10 +851,69 @@ export type InstallationProvisioningActivateResponse = {
   email: string;
   success: true;
 };
+export type InstallationProvisioningRecoveryAccountsParams = {
+  organizationId: number | string;
+  clubId: number | string;
+};
+export type InstallationProvisioningRecoveryAccountsResponse = {
+  accounts: Array<{
+    id: number;
+    email: string;
+    role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+    displayName: string;
+    staffId: number | null;
+  }>;
+};
+export type InstallationProvisioningRecoveryAccountParams = {
+  organizationId: number | string;
+  clubId: number | string;
+  accountId: number | string;
+};
+export type InstallationProvisioningRecoveryAccountResponse = {
+  id: number;
+  email: string;
+  role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  displayName: string;
+  phone: string | null;
+};
+export type InstallationProvisioningRecoveryProfileParams = {
+  organizationId: number | string;
+  clubId: number | string;
+  accountId: number | string;
+};
 export type InstallationProvisioningRecoveryProfileBody = {
   email: string;
   displayName: string;
   phone?: string;
+};
+export type InstallationProvisioningRecoveryProfileResponse = {
+  id: number;
+  email: string;
+  role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+  displayName: string;
+  phone: string | null;
+};
+export type InstallationProvisioningRecoveryRequestsParams = {
+  organizationId: number | string;
+  clubId: number | string;
+};
+export type InstallationProvisioningRecoveryRequestsResponse = {
+  requests: Array<{
+    id: string;
+    account: {
+      id: number;
+      email: string;
+      role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
+      displayName: string;
+    } | null;
+    status: "created" | "issued" | "used" | "revoked" | "expired";
+    initiatedBy: string;
+    createdAt: string;
+  }>;
+};
+export type InstallationProvisioningRecoveryRequestCreateParams = {
+  organizationId: number | string;
+  clubId: number | string;
 };
 export type InstallationProvisioningRecoveryRequestCreateBody = {
   accountId: number | string;
@@ -863,13 +922,22 @@ export type InstallationProvisioningRecoveryRequestCreateBody = {
 export type InstallationProvisioningRecoveryRequestCreateResponse = {
   id: string;
   status: "created" | "issued" | "used" | "revoked" | "expired";
-  [key: string]: unknown;
+};
+export type InstallationProvisioningRecoveryIssueParams = {
+  organizationId: number | string;
+  clubId: number | string;
+  requestId: string;
 };
 export type InstallationProvisioningRecoveryIssueBody = Record<string, unknown>;
 export type InstallationProvisioningRecoveryIssueResponse = {
   requestId: string;
   expiresAt: string;
   resetLink: string;
+};
+export type InstallationProvisioningRecoveryRevokeParams = {
+  organizationId: number | string;
+  clubId: number | string;
+  requestId: string;
 };
 export type InstallationProvisioningRecoveryRevokeBody = Record<string, unknown>;
 export type InstallationProvisioningRecoveryRevokeResponse = {
@@ -998,11 +1066,9 @@ export type AccountsUpdateParams = {
 };
 export type AccountsUpdateBody = {
   email?: string;
-  password?: string;
   role?: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
   staffId?: number | string | "" | null;
   status?: "active" | "inactive" | "archived";
-  [key: string]: unknown;
 };
 export type AccountsRestoreParams = {
   id: number | string;
@@ -3148,13 +3214,13 @@ export interface ApiEndpointRequestMap {
   "installationProvisioning.reissue": ApiEndpointRequest<InstallationProvisioningReissueParams, undefined, undefined>;
   "installationProvisioning.activationStatus": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivationStatusBody>;
   "installationProvisioning.activate": ApiEndpointRequest<undefined, undefined, InstallationProvisioningActivateBody>;
-  "installationProvisioning.recoveryAccounts": ApiEndpointRequest<undefined, undefined, undefined>;
-  "installationProvisioning.recoveryAccount": ApiEndpointRequest<undefined, undefined, undefined>;
-  "installationProvisioning.recoveryProfile": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryProfileBody>;
-  "installationProvisioning.recoveryRequests": ApiEndpointRequest<undefined, undefined, undefined>;
-  "installationProvisioning.recoveryRequestCreate": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryRequestCreateBody>;
-  "installationProvisioning.recoveryIssue": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryIssueBody>;
-  "installationProvisioning.recoveryRevoke": ApiEndpointRequest<undefined, undefined, InstallationProvisioningRecoveryRevokeBody>;
+  "installationProvisioning.recoveryAccounts": ApiEndpointRequest<InstallationProvisioningRecoveryAccountsParams, undefined, undefined>;
+  "installationProvisioning.recoveryAccount": ApiEndpointRequest<InstallationProvisioningRecoveryAccountParams, undefined, undefined>;
+  "installationProvisioning.recoveryProfile": ApiEndpointRequest<InstallationProvisioningRecoveryProfileParams, undefined, InstallationProvisioningRecoveryProfileBody>;
+  "installationProvisioning.recoveryRequests": ApiEndpointRequest<InstallationProvisioningRecoveryRequestsParams, undefined, undefined>;
+  "installationProvisioning.recoveryRequestCreate": ApiEndpointRequest<InstallationProvisioningRecoveryRequestCreateParams, undefined, InstallationProvisioningRecoveryRequestCreateBody>;
+  "installationProvisioning.recoveryIssue": ApiEndpointRequest<InstallationProvisioningRecoveryIssueParams, undefined, InstallationProvisioningRecoveryIssueBody>;
+  "installationProvisioning.recoveryRevoke": ApiEndpointRequest<InstallationProvisioningRecoveryRevokeParams, undefined, InstallationProvisioningRecoveryRevokeBody>;
   "accounts.recoveryCreate": ApiEndpointRequest<AccountsRecoveryCreateParams, undefined, AccountsRecoveryCreateBody>;
   "accounts.recoveryList": ApiEndpointRequest<AccountsRecoveryListParams, AccountsRecoveryListQuery, undefined>;
   "accounts.recoveryIssue": ApiEndpointRequest<AccountsRecoveryIssueParams, undefined, AccountsRecoveryIssueBody>;
@@ -3497,10 +3563,10 @@ export interface ApiEndpointResponseMap {
   "installationProvisioning.reissue": InstallationProvisioningReissueResponse;
   "installationProvisioning.activationStatus": InstallationProvisioningActivationStatusResponse;
   "installationProvisioning.activate": InstallationProvisioningActivateResponse;
-  "installationProvisioning.recoveryAccounts": unknown;
-  "installationProvisioning.recoveryAccount": unknown;
-  "installationProvisioning.recoveryProfile": unknown;
-  "installationProvisioning.recoveryRequests": unknown;
+  "installationProvisioning.recoveryAccounts": InstallationProvisioningRecoveryAccountsResponse;
+  "installationProvisioning.recoveryAccount": InstallationProvisioningRecoveryAccountResponse;
+  "installationProvisioning.recoveryProfile": InstallationProvisioningRecoveryProfileResponse;
+  "installationProvisioning.recoveryRequests": InstallationProvisioningRecoveryRequestsResponse;
   "installationProvisioning.recoveryRequestCreate": InstallationProvisioningRecoveryRequestCreateResponse;
   "installationProvisioning.recoveryIssue": InstallationProvisioningRecoveryIssueResponse;
   "installationProvisioning.recoveryRevoke": InstallationProvisioningRecoveryRevokeResponse;

@@ -14,7 +14,7 @@ const recoverEmployee = requireRole('owner');
 
 router.get('/accounts', manageAccounts, validate({ query: apiSchemas.accounts.listQuery }), accountsController.getAll);
 router.post('/accounts', manageAccounts, validate({ body: apiSchemas.accounts.createBody }), accountsController.create);
-router.put('/accounts/:id', manageAccounts, validate({ body: apiSchemas.accounts.body.partial().passthrough(), params: apiSchemas.accounts.params }), accountsController.update);
+router.put('/accounts/:id', manageAccounts, validate({ body: apiSchemas.accounts.body.partial(), params: apiSchemas.accounts.params }), accountsController.update);
 router.post('/accounts/:id/restore', manageAccounts, validate({ params: apiSchemas.accounts.params }), accountsController.restore);
 router.delete(
   '/accounts/:id/permanent',

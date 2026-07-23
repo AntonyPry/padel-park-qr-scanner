@@ -264,13 +264,6 @@ async function update(actor, id, data, tenant = null) {
     );
   }
 
-  if (data.password) {
-    if (String(data.password).length < 6) {
-      throw appError('Пароль должен быть не короче 6 символов');
-    }
-    payload.passwordHash = await authService.hashPassword(data.password);
-  }
-
   try {
     if ('role' in payload || 'status' in payload || 'staffId' in payload) {
       await accountLifecycle.updateAccount(account.id, payload, {

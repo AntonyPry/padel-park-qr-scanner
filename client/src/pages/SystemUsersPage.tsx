@@ -371,13 +371,13 @@ export default function SystemUsersPage() {
       return;
     }
 
-    const payload = {
+    const payload: Record<string, unknown> = {
       email: values.email.trim(),
-      password: values.password || undefined,
       role: values.role,
       staffId: values.staffId === 'none' ? null : Number(values.staffId),
       status: values.status,
     };
+    if (!target) payload.password = values.password;
 
     const response = await apiFetch(
       target ? `/api/accounts/${target.id}` : '/api/accounts',
@@ -864,13 +864,10 @@ export default function SystemUsersPage() {
                   </p>
                 )}
               </div>
-              <div>
-                <Label className="mb-1 block text-xs">
-                  {editingAccount ? 'Новый пароль' : 'Пароль'}
-                </Label>
+              {!editingAccount ? <div>
+                <Label className="mb-1 block text-xs">Пароль</Label>
                 <Input
                   type="password"
-                  placeholder={editingAccount ? 'Оставьте пустым' : ''}
                   {...accountForm.register('password')}
                   aria-invalid={Boolean(accountForm.formState.errors.password)}
                 />
@@ -879,7 +876,7 @@ export default function SystemUsersPage() {
                     {accountForm.formState.errors.password.message}
                   </p>
                 )}
-              </div>
+              </div> : null}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
