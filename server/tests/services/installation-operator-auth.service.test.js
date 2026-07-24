@@ -106,6 +106,21 @@ test('hash-only operator login creates the same signed revocable session', async
       assert.equal(verified.username, 'setly-operator');
       assert.match(verified.sessionId, /^[a-f0-9]{32}$/u);
       assert.equal(Object.isFrozen(verified), true);
+
+      const delayed = await auth.issueSession(
+        {
+          authMode: 'legacy',
+          credentialVersion: 1,
+          operatorId: null,
+          username: 'setly-operator',
+        },
+        { now: new Date(Date.now() - 2_100) },
+      );
+      assert.ok(
+        await auth.verifySession(delayed.token),
+        'an injected clock older than the JWT/DB tolerance must still issue a valid session',
+      );
+
       await assert.rejects(
         auth.lockSessionAuthority({ ...verified }, { LOCK: { UPDATE: 'UPDATE' } }),
         (error) => error.code === 'INSTALLATION_OPERATOR_SESSION_INVALID',

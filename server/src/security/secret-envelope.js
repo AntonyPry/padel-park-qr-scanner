@@ -8,6 +8,8 @@ const VERSIONED_ALGORITHM = 'A256GCM';
 const VERSIONED_SCHEMA_VERSION = 1;
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
+const DEFAULT_PAYLOAD_BYTES = 16_384;
+const MAX_LEGACY_PAYLOAD_BYTES = 24 * 1024;
 
 function secretEnvelopeError(code = 'SECRET_ENVELOPE_INVALID') {
   const error = new Error('Secret envelope operation failed');
@@ -67,6 +69,18 @@ function normalizeKey(key) {
   return value;
 }
 
+function normalizePayloadLimit(value, maximum = DEFAULT_PAYLOAD_BYTES) {
+  const limit = value === undefined ? DEFAULT_PAYLOAD_BYTES : value;
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > maximum
+  ) {
+    throw secretEnvelopeError('SECRET_ENVELOPE_PAYLOAD_INVALID');
+  }
+  return limit;
+}
+
 function parseEnvelope(serialized, validateKeyVersion = () => true) {
   try {
     const envelope = JSON.parse(String(serialized || ''));
@@ -104,11 +118,18 @@ function parseEnvelope(serialized, validateKeyVersion = () => true) {
   }
 }
 
-function encryptSecretEnvelope(plaintext, { aad, key, keyVersion }) {
+function encryptSecretEnvelope(
+  plaintext,
+  { aad, key, keyVersion, maxPayloadBytes },
+) {
   const value = Buffer.isBuffer(plaintext)
     ? Buffer.from(plaintext)
     : Buffer.from(String(plaintext || ''), 'utf8');
-  if (value.length < 1 || value.length > 16_384) {
+  const payloadLimit = normalizePayloadLimit(
+    maxPayloadBytes,
+    MAX_LEGACY_PAYLOAD_BYTES,
+  );
+  if (value.length < 1 || value.length > payloadLimit) {
     throw secretEnvelopeError('SECRET_ENVELOPE_PAYLOAD_INVALID');
   }
   const iv = crypto.randomBytes(IV_BYTES);
@@ -195,7 +216,7 @@ function encryptVersionedSecretEnvelope(plaintext, { aad, key, keyVersion }) {
   const value = Buffer.isBuffer(plaintext)
     ? Buffer.from(plaintext)
     : Buffer.from(String(plaintext || ''), 'utf8');
-  if (value.length < 1 || value.length > 16_384) {
+  if (value.length < 1 || value.length > DEFAULT_PAYLOAD_BYTES) {
     throw secretEnvelopeError('SECRET_ENVELOPE_PAYLOAD_INVALID');
   }
   if (!Number.isSafeInteger(keyVersion) || keyVersion <= 0) {
@@ -244,7 +265,9 @@ function versionedEnvelopeKeyVersion(serialized, validateKeyVersion = () => true
 
 module.exports = {
   ALGORITHM,
+  DEFAULT_PAYLOAD_BYTES,
   ENVELOPE_VERSION,
+  MAX_LEGACY_PAYLOAD_BYTES,
   VERSIONED_ALGORITHM,
   VERSIONED_SCHEMA_VERSION,
   decodeBase64Key,

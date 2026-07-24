@@ -128,13 +128,14 @@ function encode(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function signSession(identity, sessionId, secret) {
-  const now = Math.floor(Date.now() / 1000);
+function signSession(identity, sessionId, secret, { expiresAt, issuedAt }) {
+  const issuedAtSeconds = Math.floor(new Date(issuedAt).getTime() / 1000);
+  const expiresAtSeconds = Math.floor(new Date(expiresAt).getTime() / 1000);
   const header = encode({ alg: 'HS256', typ: 'JWT' });
   const body = encode({
-    exp: now + SESSION_TTL_SECONDS,
+    exp: expiresAtSeconds,
     cv: identity.credentialVersion,
-    iat: now,
+    iat: issuedAtSeconds,
     kind: TOKEN_KIND,
     mode: identity.authMode,
     oid: identity.operatorId,
@@ -171,7 +172,11 @@ async function issueSession(identity, options = {}) {
   const configured = sessionSigningConfiguration();
   const sessionId = crypto.randomBytes(16).toString('hex');
   const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
-  const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
+  const issuedAtSeconds = Math.floor(now.getTime() / 1000);
+  const issuedAt = new Date(issuedAtSeconds * 1000);
+  const expiresAt = new Date(
+    (issuedAtSeconds + SESSION_TTL_SECONDS) * 1000,
+  );
   await db.InstallationOperatorSession.create({
     authMode: identity.authMode,
     credentialVersion: identity.credentialVersion,
@@ -183,7 +188,10 @@ async function issueSession(identity, options = {}) {
   }, { transaction: options.transaction });
   return {
     expiresAt,
-    token: signSession(identity, sessionId, configured.secret),
+    token: signSession(identity, sessionId, configured.secret, {
+      expiresAt,
+      issuedAt,
+    }),
   };
 }
 

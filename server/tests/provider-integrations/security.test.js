@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { afterEach, test } = require('node:test');
 const {
   buildProviderIdempotencyKey,
@@ -24,6 +25,7 @@ const {
   normalizeSafeObject,
   serializeConnection,
 } = require('../../src/provider-integrations/connection-service');
+const { apiSchemas } = require('../../src/contracts/api-schemas');
 
 const originalKey = process.env.INTEGRATION_SECRETS_MASTER_KEY;
 
@@ -43,6 +45,28 @@ function context(overrides = {}) {
   };
 }
 
+function encryptWithBaseProviderEnvelope(value, identity) {
+  const key = Buffer.from(process.env.INTEGRATION_SECRETS_MASTER_KEY, 'base64');
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(Buffer.from(
+    `setly:integration-connection:${identity.provider}:${identity.publicId}`,
+    'utf8',
+  ));
+  const ciphertext = Buffer.concat([
+    cipher.update(JSON.stringify(value), 'utf8'),
+    cipher.final(),
+  ]);
+  return JSON.stringify({
+    algorithm: 'aes-256-gcm',
+    ciphertext: ciphertext.toString('base64'),
+    iv: iv.toString('base64'),
+    keyVersion: 'v1',
+    tag: cipher.getAuthTag().toString('base64'),
+    version: 1,
+  });
+}
+
 test('encrypted secret bundle uses authenticated ciphertext and never serializes plaintext', () => {
   process.env.INTEGRATION_SECRETS_MASTER_KEY = Buffer.alloc(32, 7).toString('base64');
   const identity = context();
@@ -59,6 +83,39 @@ test('encrypted secret bundle uses authenticated ciphertext and never serializes
   assert.throws(
     () => decryptSecretBundle(encrypted, context({ publicId: 'ic_fedcba9876543210fedcba9876543210' })),
     (error) => error.code === 'INTEGRATION_SECRET_DECRYPTION_FAILED',
+  );
+});
+
+test('provider envelope preserves the public maximum credential and proxy capacity', () => {
+  process.env.INTEGRATION_SECRETS_MASTER_KEY = Buffer.alloc(32, 11).toString('base64');
+  const identity = context({ provider: 'telegram' });
+  const proxyPrefix = 'https://proxy.example/';
+  const publicPayload = apiSchemas.installationProvisioning
+    .integrationConfigureTelegram.body.parse({
+      credential: 't'.repeat(8192),
+      idempotencyKey: crypto.randomUUID(),
+      proxyUrl: `${proxyPrefix}${'p'.repeat(8192 - proxyPrefix.length)}`,
+    });
+  const secrets = {
+    botToken: publicPayload.credential,
+    proxyUrl: publicPayload.proxyUrl,
+  };
+  assert.equal(secrets.proxyUrl.length, 8192);
+
+  const encrypted = encryptSecretBundle(secrets, identity);
+  assert.equal(encrypted.includes(secrets.botToken), false);
+  assert.equal(encrypted.includes(secrets.proxyUrl), false);
+  assert.deepEqual(decryptSecretBundle(encrypted, identity), secrets);
+
+  const baseEnvelope = encryptWithBaseProviderEnvelope(secrets, identity);
+  assert.deepEqual(decryptSecretBundle(baseEnvelope, identity), secrets);
+
+  assert.throws(
+    () => encryptSecretBundle({
+      ...secrets,
+      webhookSecret: 'w'.repeat(8192),
+    }, identity),
+    (error) => error.code === 'INTEGRATION_SECRET_PAYLOAD_INVALID',
   );
 });
 

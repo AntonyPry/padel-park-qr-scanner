@@ -6,6 +6,7 @@ const test = require('node:test');
 
 const authData = require('../../src/security/auth-data-envelope');
 const providerSecrets = require('../../src/provider-integrations/secrets');
+const secretEnvelope = require('../../src/security/secret-envelope');
 
 function encodedKey(fill) {
   return Buffer.alloc(32, fill).toString('base64url');
@@ -151,4 +152,18 @@ test('provider envelopes retain their accepted AAD and ciphertext contract', () 
     if (previousVersion === undefined) delete process.env.INTEGRATION_SECRETS_KEY_VERSION;
     else process.env.INTEGRATION_SECRETS_KEY_VERSION = previousVersion;
   }
+});
+
+test('auth-data versioned envelopes retain the strict 16 KiB payload limit', () => {
+  assert.throws(
+    () => secretEnvelope.encryptVersionedSecretEnvelope(
+      Buffer.alloc(secretEnvelope.DEFAULT_PAYLOAD_BYTES + 1, 1),
+      {
+        aad: 'setly:test:auth-data-limit',
+        key: Buffer.alloc(32, 1),
+        keyVersion: 1,
+      },
+    ),
+    (error) => error.code === 'SECRET_ENVELOPE_PAYLOAD_INVALID',
+  );
 });

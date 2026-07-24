@@ -281,6 +281,50 @@ test('SEC-A7 two-factor lifecycle is session-bound, replay-safe and actor-scoped
       );
     });
 
+    await t.test('delayed operator factor completion issues one valid session', async () => {
+      const enrollmentNow = new Date(Date.now() - 90_000);
+      const enrollmentSession = await operatorAuth.issueSession(
+        operatorIdentity,
+        { now: enrollmentNow },
+      );
+      const enrollmentOperator = await operatorAuth.verifySession(
+        enrollmentSession.token,
+      );
+      assert.ok(enrollmentOperator);
+      const enrollment = await twoFactor.beginOperatorEnrollment(
+        enrollmentOperator,
+        { now: enrollmentNow },
+      );
+      await twoFactor.confirmOperatorEnrollment(
+        enrollmentOperator,
+        totp.hotp(enrollment.manualKey, totp.counterAt(enrollmentNow)),
+        { now: enrollmentNow },
+      );
+
+      const delayedNow = new Date(Date.now() - 2_100);
+      const challenge = await twoFactor.issueOperatorLoginChallenge(
+        operatorIdentity,
+        { now: delayedNow },
+      );
+      const completed = await twoFactor.completeOperatorLogin(
+        challenge.challengeToken,
+        totp.hotp(enrollment.manualKey, totp.counterAt(delayedNow)),
+        { now: delayedNow },
+      );
+      const verified = await operatorAuth.verifySession(completed.token);
+      assert.equal(verified.operatorId, operatorIdentity.operatorId);
+      assert.equal(verified.sessionId.length, 32);
+
+      await assert.rejects(
+        () => twoFactor.completeOperatorLogin(
+          challenge.challengeToken,
+          totp.hotp(enrollment.manualKey, totp.counterAt(delayedNow)),
+          { now: delayedNow },
+        ),
+        (error) => error.code === 'TWO_FACTOR_VERIFICATION_FAILED',
+      );
+    });
+
     await t.test('owner resets same-club employee; operator resets owners only', async () => {
       const managerEnrollment = await enrollAccount(managerA.accountId);
       const ownerSession = await db.NormalUserSession.findOne({

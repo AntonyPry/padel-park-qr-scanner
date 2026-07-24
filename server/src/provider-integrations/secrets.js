@@ -8,6 +8,8 @@ const {
   encryptSecretEnvelope,
 } = require('../security/secret-envelope');
 
+const PROVIDER_SECRET_PAYLOAD_MAX_BYTES = 24 * 1024;
+
 function integrationSecretError(code = 'INTEGRATION_SECRET_CONFIGURATION_INVALID') {
   const error = new Error('Integration secret configuration is invalid');
   error.code = code;
@@ -74,11 +76,20 @@ function buildAad({ provider, publicId }) {
 
 function encryptSecretBundle(value, identity) {
   const secrets = normalizeSecretBundle(value);
-  return encryptSecretEnvelope(JSON.stringify(secrets), {
-    aad: buildAad(identity),
-    key: getMasterKey(),
-    keyVersion: String(process.env.INTEGRATION_SECRETS_KEY_VERSION || 'v1'),
-  });
+  try {
+    return encryptSecretEnvelope(JSON.stringify(secrets), {
+      aad: buildAad(identity),
+      key: getMasterKey(),
+      keyVersion: String(process.env.INTEGRATION_SECRETS_KEY_VERSION || 'v1'),
+      maxPayloadBytes: PROVIDER_SECRET_PAYLOAD_MAX_BYTES,
+    });
+  } catch (error) {
+    if (error?.code?.startsWith?.('INTEGRATION_SECRET_')) throw error;
+    if (error?.code === 'SECRET_ENVELOPE_PAYLOAD_INVALID') {
+      throw integrationSecretError('INTEGRATION_SECRET_PAYLOAD_INVALID');
+    }
+    throw integrationSecretError();
+  }
 }
 
 function decryptSecretBundle(serialized, identity) {
@@ -101,4 +112,7 @@ module.exports = {
   getIntegrationFingerprintKey,
   integrationSecretError,
   normalizeSecretBundle,
+  _private: {
+    PROVIDER_SECRET_PAYLOAD_MAX_BYTES,
+  },
 };
