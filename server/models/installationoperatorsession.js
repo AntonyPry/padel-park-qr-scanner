@@ -9,6 +9,9 @@ const IMMUTABLE_FIELDS = Object.freeze([
   'id',
   'sessionId',
   'username',
+  'operatorId',
+  'authMode',
+  'credentialVersion',
   'expiresAt',
   'createdAt',
 ]);
@@ -18,8 +21,20 @@ module.exports = (sequelize, DataTypes) => sequelize.define(
   {
     sessionId: { allowNull: false, type: DataTypes.STRING(32), unique: true },
     username: { allowNull: false, type: DataTypes.STRING(120) },
+    operatorId: { allowNull: true, type: DataTypes.STRING(80) },
+    authMode: {
+      allowNull: false,
+      defaultValue: 'legacy',
+      type: DataTypes.ENUM('legacy', 'static-directory'),
+    },
+    credentialVersion: {
+      allowNull: false,
+      defaultValue: 1,
+      type: DataTypes.INTEGER,
+    },
     expiresAt: { allowNull: false, type: DataTypes.DATE },
     revokedAt: { allowNull: true, type: DataTypes.DATE },
+    twoFactorVerifiedAt: { allowNull: true, type: DataTypes.DATE },
   },
   {
     hooks: {

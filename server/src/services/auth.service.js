@@ -4,6 +4,7 @@ const accountLifecycle = require('./account-lifecycle.service');
 const accountMetadata = require('./account-metadata.service');
 const normalUserSessions = require('./normal-user-session.service');
 const passwordHashing = require('./password-hashing.service');
+const twoFactorAuth = require('./two-factor-auth.service');
 const {
   assertTenantFoundationOperational,
 } = require('./tenant-foundation.service');
@@ -233,12 +234,24 @@ async function login({ email, password }) {
     throw error;
   }
 
-  await accountMetadata.updateAccountMetadata(account.id, {
+  await rehashPasswordAfterSuccessfulLogin(account, password);
+  if (await twoFactorAuth.isFactorActive('account', account.id)) {
+    return twoFactorAuth.issueAccountLoginChallenge(account.id);
+  }
+  await accountMetadata.updateAccountMetadata(account.id, { lastLoginAt: new Date() });
+  return createSession(account.id);
+}
+
+async function completeTwoFactorLogin({ challengeToken, code }) {
+  const issued = await twoFactorAuth.completeAccountLogin(challengeToken, code);
+  await accountMetadata.updateAccountMetadata(issued.account.id, {
     lastLoginAt: new Date(),
   });
-  const session = await createSession(account.id);
-  await rehashPasswordAfterSuccessfulLogin(account, password);
-  return session;
+  return {
+    account: sanitizeAccount(issued.account),
+    capabilities: tenantContextCapability(),
+    token: issued.token,
+  };
 }
 
 async function rehashPasswordAfterSuccessfulLogin(account, password) {
@@ -260,8 +273,8 @@ async function rehashPasswordAfterSuccessfulLogin(account, password) {
   }
 }
 
-async function createSession(accountId) {
-  const { account, token } = await normalUserSessions.issue(accountId);
+async function createSession(accountId, options = {}) {
+  const { account, token } = await normalUserSessions.issue(accountId, options);
 
   return {
     token,
@@ -332,6 +345,7 @@ async function revokeCurrentSession(token, options = {}) {
 module.exports = {
   authenticateBearerToken,
   bootstrapOwner,
+  completeTwoFactorLogin,
   extractBearerToken,
   extractSessionToken,
   getSetupStatus,

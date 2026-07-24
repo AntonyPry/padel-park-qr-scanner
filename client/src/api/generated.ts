@@ -7,14 +7,27 @@ export const apiEndpoints = {
   "auth.status": { method: "GET", path: "/auth/status", responseType: "json", tenantScope: "global" },
   "auth.bootstrap": { method: "POST", path: "/auth/bootstrap", responseType: "json", tenantScope: "global" },
   "auth.login": { method: "POST", path: "/auth/login", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorLogin": { method: "POST", path: "/auth/login/two-factor", responseType: "json", tenantScope: "global" },
   "auth.logout": { method: "POST", path: "/auth/logout", responseType: "json", tenantScope: "global" },
   "auth.me": { method: "GET", path: "/auth/me", responseType: "json", tenantScope: "global" },
   "auth.memberships": { method: "GET", path: "/auth/me/memberships", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorStatus": { method: "GET", path: "/auth/me/two-factor", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorEnrollment": { method: "POST", path: "/auth/me/two-factor/enrollment", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorEnrollmentConfirm": { method: "POST", path: "/auth/me/two-factor/enrollment/confirm", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorStepUp": { method: "POST", path: "/auth/me/two-factor/step-up", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorRecoveryCodes": { method: "POST", path: "/auth/me/two-factor/recovery-codes", responseType: "json", tenantScope: "global" },
+  "auth.twoFactorDisable": { method: "POST", path: "/auth/me/two-factor/disable", responseType: "json", tenantScope: "global" },
   "auth.recoveryStatus": { method: "POST", path: "/auth/recovery/status", responseType: "json", tenantScope: "global" },
   "auth.recoveryReset": { method: "POST", path: "/auth/recovery/reset", responseType: "json", tenantScope: "global" },
   "installationProvisioning.status": { method: "GET", path: "/installation/provisioning/status", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.session": { method: "POST", path: "/installation/provisioning/session", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.twoFactorSession": { method: "POST", path: "/installation/provisioning/session/two-factor", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.sessionRevoke": { method: "POST", path: "/installation/provisioning/session/revoke", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.twoFactorStatus": { method: "GET", path: "/installation/provisioning/two-factor", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.twoFactorEnrollment": { method: "POST", path: "/installation/provisioning/two-factor/enrollment", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.twoFactorEnrollmentConfirm": { method: "POST", path: "/installation/provisioning/two-factor/enrollment/confirm", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.twoFactorStepUp": { method: "POST", path: "/installation/provisioning/two-factor/step-up", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.twoFactorRecoveryCodes": { method: "POST", path: "/installation/provisioning/two-factor/recovery-codes", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.snapshot": { method: "GET", path: "/installation/provisioning/snapshot", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.organization": { method: "GET", path: "/installation/provisioning/organizations/{organizationId}", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.organizationUpdate": { method: "PUT", path: "/installation/provisioning/organizations/{organizationId}", responseType: "json", tenantScope: "installation" },
@@ -63,10 +76,12 @@ export const apiEndpoints = {
   "installationProvisioning.recoveryRequestCreate": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.recoveryIssue": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/issue", responseType: "json", tenantScope: "installation" },
   "installationProvisioning.recoveryRevoke": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/revoke", responseType: "json", tenantScope: "installation" },
+  "installationProvisioning.ownerTwoFactorReset": { method: "POST", path: "/installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}/two-factor/reset", responseType: "json", tenantScope: "installation" },
   "accounts.recoveryCreate": { method: "POST", path: "/accounts/{id}/recovery", responseType: "json", tenantScope: "organization" },
   "accounts.recoveryList": { method: "GET", path: "/accounts/{id}/recovery", responseType: "json", tenantScope: "organization" },
   "accounts.recoveryIssue": { method: "POST", path: "/accounts/recovery/{requestId}/issue", responseType: "json", tenantScope: "organization" },
   "accounts.recoveryRevoke": { method: "POST", path: "/accounts/recovery/{requestId}/revoke", responseType: "json", tenantScope: "organization" },
+  "accounts.twoFactorReset": { method: "POST", path: "/accounts/{id}/two-factor/reset", responseType: "json", tenantScope: "organization" },
   "webhooks.evotor": { method: "POST", path: "/webhooks/evotor", responseType: "json", tenantScope: "provider_ingress" },
   "webhooks.evotorConnection": { method: "POST", path: "/webhooks/evotor/{connectionPublicId}", responseType: "json", tenantScope: "provider_ingress" },
   "access.search": { method: "GET", path: "/search", responseType: "json", tenantScope: "club" },
@@ -376,6 +391,30 @@ export type AuthLoginBody = {
   password: string;
   [key: string]: unknown;
 };
+export type AuthLoginResponse = {
+  account: Record<string, unknown>;
+  capabilities: {
+    tenantCacheRealtime: boolean;
+    tenantContext: boolean;
+  };
+  token?: string;
+} | {
+  challengeExpiresAt: string;
+  challengeToken: string;
+  requiresTwoFactor: true;
+};
+export type AuthTwoFactorLoginBody = {
+  challengeToken: string;
+  code: string;
+};
+export type AuthTwoFactorLoginResponse = {
+  account: Record<string, unknown>;
+  capabilities: {
+    tenantCacheRealtime: boolean;
+    tenantContext: boolean;
+  };
+  token?: string;
+};
 export type AuthLogoutResponse = {
   success: true;
 };
@@ -403,6 +442,38 @@ export type AuthMembershipsResponse = {
     organizationId: number;
   } | null;
 };
+export type AuthTwoFactorStatusResponse = {
+  active: boolean;
+  enrolledAt?: string | null;
+  enrollmentPending: boolean;
+  recoveryCodesRemaining: number;
+};
+export type AuthTwoFactorEnrollmentResponse = {
+  expiresAt: string;
+  manualKey: string;
+  otpAuthUri: string;
+};
+export type AuthTwoFactorEnrollmentConfirmBody = {
+  code: string;
+};
+export type AuthTwoFactorEnrollmentConfirmResponse = {
+  recoveryCodes: Array<string>;
+  signedOut: boolean;
+};
+export type AuthTwoFactorStepUpBody = {
+  code: string;
+};
+export type AuthTwoFactorStepUpResponse = {
+  confirmedAt: string;
+};
+export type AuthTwoFactorRecoveryCodesResponse = {
+  recoveryCodes: Array<string>;
+  signedOut: boolean;
+};
+export type AuthTwoFactorDisableResponse = {
+  signedOut: true;
+  success: true;
+};
 export type AuthRecoveryStatusBody = {
   token: string;
 };
@@ -425,9 +496,53 @@ export type InstallationProvisioningSessionBody = {
   password: string;
   username: string;
 };
-export type InstallationProvisioningSessionResponse = Record<string, unknown>;
+export type InstallationProvisioningSessionResponse = {
+  expiresAt: string;
+  token: string;
+} | {
+  challengeExpiresAt: string;
+  challengeToken: string;
+  requiresTwoFactor: true;
+};
+export type InstallationProvisioningTwoFactorSessionBody = {
+  challengeToken: string;
+  code: string;
+};
+export type InstallationProvisioningTwoFactorSessionResponse = {
+  expiresAt: string;
+  token: string;
+};
 export type InstallationProvisioningSessionRevokeResponse = {
   success: true;
+};
+export type InstallationProvisioningTwoFactorStatusResponse = {
+  active: boolean;
+  enrolledAt?: string | null;
+  enrollmentPending: boolean;
+  recoveryCodesRemaining: number;
+  available: boolean;
+};
+export type InstallationProvisioningTwoFactorEnrollmentResponse = {
+  expiresAt: string;
+  manualKey: string;
+  otpAuthUri: string;
+};
+export type InstallationProvisioningTwoFactorEnrollmentConfirmBody = {
+  code: string;
+};
+export type InstallationProvisioningTwoFactorEnrollmentConfirmResponse = {
+  recoveryCodes: Array<string>;
+  signedOut: boolean;
+};
+export type InstallationProvisioningTwoFactorStepUpBody = {
+  code: string;
+};
+export type InstallationProvisioningTwoFactorStepUpResponse = {
+  confirmedAt: string;
+};
+export type InstallationProvisioningTwoFactorRecoveryCodesResponse = {
+  recoveryCodes: Array<string>;
+  signedOut: boolean;
 };
 export type InstallationProvisioningSnapshotResponse = Record<string, unknown>;
 export type InstallationProvisioningOrganizationParams = {
@@ -875,6 +990,7 @@ export type InstallationProvisioningRecoveryAccountResponse = {
   role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
   displayName: string;
   phone: string | null;
+  twoFactorActive: boolean;
 };
 export type InstallationProvisioningRecoveryProfileParams = {
   organizationId: number | string;
@@ -892,6 +1008,7 @@ export type InstallationProvisioningRecoveryProfileResponse = {
   role: "owner" | "manager" | "admin" | "accountant" | "viewer" | "trainer";
   displayName: string;
   phone: string | null;
+  twoFactorActive: boolean;
 };
 export type InstallationProvisioningRecoveryRequestsParams = {
   organizationId: number | string;
@@ -947,6 +1064,15 @@ export type InstallationProvisioningRecoveryRevokeResponse = {
   success: true;
   status: "revoked";
 };
+export type InstallationProvisioningOwnerTwoFactorResetParams = {
+  organizationId: number | string;
+  clubId: number | string;
+  accountId: number | string;
+};
+export type InstallationProvisioningOwnerTwoFactorResetBody = Record<string, unknown>;
+export type InstallationProvisioningOwnerTwoFactorResetResponse = {
+  success: true;
+};
 export type AccountsRecoveryCreateParams = {
   id: number | string;
 };
@@ -983,6 +1109,15 @@ export type AccountsRecoveryRevokeBody = {
 export type AccountsRecoveryRevokeResponse = {
   success: true;
   status: "revoked";
+};
+export type AccountsTwoFactorResetParams = {
+  id: number | string;
+};
+export type AccountsTwoFactorResetBody = {
+  clubId: number | string;
+};
+export type AccountsTwoFactorResetResponse = {
+  success: true;
 };
 export type WebhooksEvotorConnectionParams = {
   connectionPublicId: string;
@@ -3168,14 +3303,27 @@ export interface ApiEndpointRequestMap {
   "auth.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.bootstrap": ApiEndpointRequest<undefined, undefined, AuthBootstrapBody>;
   "auth.login": ApiEndpointRequest<undefined, undefined, AuthLoginBody>;
+  "auth.twoFactorLogin": ApiEndpointRequest<undefined, undefined, AuthTwoFactorLoginBody>;
   "auth.logout": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.me": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.memberships": ApiEndpointRequest<undefined, undefined, undefined>;
+  "auth.twoFactorStatus": ApiEndpointRequest<undefined, undefined, undefined>;
+  "auth.twoFactorEnrollment": ApiEndpointRequest<undefined, undefined, undefined>;
+  "auth.twoFactorEnrollmentConfirm": ApiEndpointRequest<undefined, undefined, AuthTwoFactorEnrollmentConfirmBody>;
+  "auth.twoFactorStepUp": ApiEndpointRequest<undefined, undefined, AuthTwoFactorStepUpBody>;
+  "auth.twoFactorRecoveryCodes": ApiEndpointRequest<undefined, undefined, undefined>;
+  "auth.twoFactorDisable": ApiEndpointRequest<undefined, undefined, undefined>;
   "auth.recoveryStatus": ApiEndpointRequest<undefined, undefined, AuthRecoveryStatusBody>;
   "auth.recoveryReset": ApiEndpointRequest<undefined, undefined, AuthRecoveryResetBody>;
   "installationProvisioning.status": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.session": ApiEndpointRequest<undefined, undefined, InstallationProvisioningSessionBody>;
+  "installationProvisioning.twoFactorSession": ApiEndpointRequest<undefined, undefined, InstallationProvisioningTwoFactorSessionBody>;
   "installationProvisioning.sessionRevoke": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.twoFactorStatus": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.twoFactorEnrollment": ApiEndpointRequest<undefined, undefined, undefined>;
+  "installationProvisioning.twoFactorEnrollmentConfirm": ApiEndpointRequest<undefined, undefined, InstallationProvisioningTwoFactorEnrollmentConfirmBody>;
+  "installationProvisioning.twoFactorStepUp": ApiEndpointRequest<undefined, undefined, InstallationProvisioningTwoFactorStepUpBody>;
+  "installationProvisioning.twoFactorRecoveryCodes": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.snapshot": ApiEndpointRequest<undefined, undefined, undefined>;
   "installationProvisioning.organization": ApiEndpointRequest<InstallationProvisioningOrganizationParams, undefined, undefined>;
   "installationProvisioning.organizationUpdate": ApiEndpointRequest<InstallationProvisioningOrganizationUpdateParams, undefined, InstallationProvisioningOrganizationUpdateBody>;
@@ -3224,10 +3372,12 @@ export interface ApiEndpointRequestMap {
   "installationProvisioning.recoveryRequestCreate": ApiEndpointRequest<InstallationProvisioningRecoveryRequestCreateParams, undefined, InstallationProvisioningRecoveryRequestCreateBody>;
   "installationProvisioning.recoveryIssue": ApiEndpointRequest<InstallationProvisioningRecoveryIssueParams, undefined, InstallationProvisioningRecoveryIssueBody>;
   "installationProvisioning.recoveryRevoke": ApiEndpointRequest<InstallationProvisioningRecoveryRevokeParams, undefined, InstallationProvisioningRecoveryRevokeBody>;
+  "installationProvisioning.ownerTwoFactorReset": ApiEndpointRequest<InstallationProvisioningOwnerTwoFactorResetParams, undefined, InstallationProvisioningOwnerTwoFactorResetBody>;
   "accounts.recoveryCreate": ApiEndpointRequest<AccountsRecoveryCreateParams, undefined, AccountsRecoveryCreateBody>;
   "accounts.recoveryList": ApiEndpointRequest<AccountsRecoveryListParams, AccountsRecoveryListQuery, undefined>;
   "accounts.recoveryIssue": ApiEndpointRequest<AccountsRecoveryIssueParams, undefined, AccountsRecoveryIssueBody>;
   "accounts.recoveryRevoke": ApiEndpointRequest<AccountsRecoveryRevokeParams, undefined, AccountsRecoveryRevokeBody>;
+  "accounts.twoFactorReset": ApiEndpointRequest<AccountsTwoFactorResetParams, undefined, AccountsTwoFactorResetBody>;
   "webhooks.evotor": ApiEndpointRequest<undefined, undefined, undefined>;
   "webhooks.evotorConnection": ApiEndpointRequest<WebhooksEvotorConnectionParams, undefined, undefined>;
   "access.search": ApiEndpointRequest<undefined, AccessSearchQuery, undefined>;
@@ -3516,15 +3666,28 @@ export interface ApiEndpointResponseMap {
   "system.openapi": unknown;
   "auth.status": unknown;
   "auth.bootstrap": unknown;
-  "auth.login": unknown;
+  "auth.login": AuthLoginResponse;
+  "auth.twoFactorLogin": AuthTwoFactorLoginResponse;
   "auth.logout": AuthLogoutResponse;
   "auth.me": unknown;
   "auth.memberships": AuthMembershipsResponse;
+  "auth.twoFactorStatus": AuthTwoFactorStatusResponse;
+  "auth.twoFactorEnrollment": AuthTwoFactorEnrollmentResponse;
+  "auth.twoFactorEnrollmentConfirm": AuthTwoFactorEnrollmentConfirmResponse;
+  "auth.twoFactorStepUp": AuthTwoFactorStepUpResponse;
+  "auth.twoFactorRecoveryCodes": AuthTwoFactorRecoveryCodesResponse;
+  "auth.twoFactorDisable": AuthTwoFactorDisableResponse;
   "auth.recoveryStatus": AuthRecoveryStatusResponse;
   "auth.recoveryReset": AuthRecoveryResetResponse;
   "installationProvisioning.status": InstallationProvisioningStatusResponse;
   "installationProvisioning.session": InstallationProvisioningSessionResponse;
+  "installationProvisioning.twoFactorSession": InstallationProvisioningTwoFactorSessionResponse;
   "installationProvisioning.sessionRevoke": InstallationProvisioningSessionRevokeResponse;
+  "installationProvisioning.twoFactorStatus": InstallationProvisioningTwoFactorStatusResponse;
+  "installationProvisioning.twoFactorEnrollment": InstallationProvisioningTwoFactorEnrollmentResponse;
+  "installationProvisioning.twoFactorEnrollmentConfirm": InstallationProvisioningTwoFactorEnrollmentConfirmResponse;
+  "installationProvisioning.twoFactorStepUp": InstallationProvisioningTwoFactorStepUpResponse;
+  "installationProvisioning.twoFactorRecoveryCodes": InstallationProvisioningTwoFactorRecoveryCodesResponse;
   "installationProvisioning.snapshot": InstallationProvisioningSnapshotResponse;
   "installationProvisioning.organization": InstallationProvisioningOrganizationResponse;
   "installationProvisioning.organizationUpdate": InstallationProvisioningOrganizationUpdateResponse;
@@ -3573,10 +3736,12 @@ export interface ApiEndpointResponseMap {
   "installationProvisioning.recoveryRequestCreate": InstallationProvisioningRecoveryRequestCreateResponse;
   "installationProvisioning.recoveryIssue": InstallationProvisioningRecoveryIssueResponse;
   "installationProvisioning.recoveryRevoke": InstallationProvisioningRecoveryRevokeResponse;
+  "installationProvisioning.ownerTwoFactorReset": InstallationProvisioningOwnerTwoFactorResetResponse;
   "accounts.recoveryCreate": AccountsRecoveryCreateResponse;
   "accounts.recoveryList": unknown;
   "accounts.recoveryIssue": AccountsRecoveryIssueResponse;
   "accounts.recoveryRevoke": AccountsRecoveryRevokeResponse;
+  "accounts.twoFactorReset": AccountsTwoFactorResetResponse;
   "webhooks.evotor": unknown;
   "webhooks.evotorConnection": unknown;
   "access.search": unknown;

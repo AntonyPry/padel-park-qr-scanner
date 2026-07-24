@@ -45,6 +45,10 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: true,
         type: DataTypes.STRING(64),
       },
+      twoFactorVerifiedAt: {
+        allowNull: true,
+        type: DataTypes.DATE,
+      },
     },
     {
       defaultScope: {

@@ -2,11 +2,10 @@
 
 const crypto = require('crypto');
 const db = require('../../models');
-const passwordAuth = require('./password-hashing.service');
+const operatorDirectory = require('./installation-operator-directory.service');
 
 const SESSION_TTL_SECONDS = 60 * 30;
 const TOKEN_KIND = 'installation-operator';
-const LEGACY_PASSWORD_ENV = 'INSTALLATION_OPERATOR_PASSWORD';
 const authorities = new WeakSet();
 
 function authorityError() {
@@ -16,9 +15,19 @@ function authorityError() {
   return error;
 }
 
-function mintAuthority({ expiresAt, sessionId, username }) {
+function mintAuthority({
+  authMode,
+  credentialVersion,
+  expiresAt,
+  operatorId,
+  sessionId,
+  username,
+}) {
   const authority = Object.freeze({
+    authMode,
+    credentialVersion,
     expiresAt: new Date(expiresAt).toISOString(),
+    operatorId,
     sessionId,
     username,
   });
@@ -95,28 +104,18 @@ function sessionSigningConfiguration() {
     throw disabledError();
   }
 
-  const username = String(process.env.INSTALLATION_OPERATOR_USERNAME || '').trim();
   const secret = String(process.env.INSTALLATION_OPERATOR_SECRET || '');
-  if (!username || secret.length < 32) throw configurationError();
-  return { secret, username };
+  if (secret.length < 32) throw configurationError();
+  return { secret };
 }
 
 function loginCredentialConfiguration() {
   const signing = sessionSigningConfiguration();
-  if (Object.prototype.hasOwnProperty.call(process.env, LEGACY_PASSWORD_ENV)) {
-    throw configurationError();
-  }
-  const passwordHash = String(process.env.INSTALLATION_OPERATOR_PASSWORD_HASH || '');
-  let info = null;
   try {
-    info = passwordAuth.passwordHashInfo(passwordHash, {
-      AUTH_ARGON2_ENABLED: 'false',
-    });
+    return { ...signing, directory: operatorDirectory.directoryConfiguration() };
   } catch (_error) {
     throw configurationError();
   }
-  if (info?.scheme !== 'argon2id') throw configurationError();
-  return { ...signing, passwordHash };
 }
 
 function safeEqual(left, right) {
@@ -129,15 +128,18 @@ function encode(value) {
   return Buffer.from(JSON.stringify(value)).toString('base64url');
 }
 
-function signSession(username, sessionId, secret) {
+function signSession(identity, sessionId, secret) {
   const now = Math.floor(Date.now() / 1000);
   const header = encode({ alg: 'HS256', typ: 'JWT' });
   const body = encode({
     exp: now + SESSION_TTL_SECONDS,
+    cv: identity.credentialVersion,
     iat: now,
     kind: TOKEN_KIND,
+    mode: identity.authMode,
+    oid: identity.operatorId,
     sid: sessionId,
-    username,
+    username: identity.username,
   });
   const signature = crypto
     .createHmac('sha256', secret)
@@ -146,33 +148,47 @@ function signSession(username, sessionId, secret) {
   return `${header}.${body}.${signature}`;
 }
 
-async function createSession({ password, username }) {
-  const configured = loginCredentialConfiguration();
-  const usernameMatches = safeEqual(
-    String(username || '').trim(),
-    configured.username,
-  );
-  let passwordMatches = false;
+async function authenticateCredentials({ password, username }) {
   try {
-    passwordMatches = await passwordAuth.verifyPassword(
-      String(password || ''),
-      configured.passwordHash,
-    );
+    loginCredentialConfiguration();
+    const identity = await operatorDirectory.authenticateCredentials({
+      password,
+      username,
+    });
+    if (!identity) throw credentialError();
+    return identity;
   } catch (_error) {
-    passwordMatches = false;
+    if (_error?.code === 'INSTALLATION_PROVISIONING_DISABLED') throw _error;
+    if (_error?.code === 'INSTALLATION_OPERATOR_CREDENTIALS_INVALID') throw _error;
+    if (_error?.code === 'INSTALLATION_OPERATOR_CONFIGURATION_INVALID') {
+      throw configurationError();
+    }
+    throw credentialError();
   }
-  if (!usernameMatches || !passwordMatches) throw credentialError();
+}
+
+async function issueSession(identity, options = {}) {
+  const configured = sessionSigningConfiguration();
   const sessionId = crypto.randomBytes(16).toString('hex');
-  const expiresAt = new Date(Date.now() + SESSION_TTL_SECONDS * 1000);
+  const now = options.now instanceof Date ? options.now : new Date(options.now || Date.now());
+  const expiresAt = new Date(now.getTime() + SESSION_TTL_SECONDS * 1000);
   await db.InstallationOperatorSession.create({
+    authMode: identity.authMode,
+    credentialVersion: identity.credentialVersion,
     expiresAt,
+    operatorId: identity.operatorId,
     sessionId,
-    username: configured.username,
-  });
+    twoFactorVerifiedAt: options.twoFactorVerifiedAt || null,
+    username: identity.username,
+  }, { transaction: options.transaction });
   return {
     expiresAt,
-    token: signSession(configured.username, sessionId, configured.secret),
+    token: signSession(identity, sessionId, configured.secret),
   };
+}
+
+async function createSession(credentials, options = {}) {
+  return issueSession(await authenticateCredentials(credentials), options);
 }
 
 async function verifySession(token) {
@@ -192,7 +208,9 @@ async function verifySession(token) {
       parsedHeader.alg !== 'HS256' ||
       parsedHeader.typ !== 'JWT' ||
       payload.kind !== TOKEN_KIND ||
-      payload.username !== configured.username ||
+      !['legacy', 'static-directory'].includes(payload.mode) ||
+      !Number.isSafeInteger(payload.cv) ||
+      payload.cv <= 0 ||
       !/^[a-f0-9]{32}$/u.test(String(payload.sid || '')) ||
       !Number.isFinite(payload.exp) ||
       payload.exp <= Math.floor(Date.now() / 1000)
@@ -200,20 +218,31 @@ async function verifySession(token) {
       return null;
     }
     const session = await db.InstallationOperatorSession.findOne({
-      where: { sessionId: payload.sid, username: payload.username },
+      where: { sessionId: payload.sid },
+    });
+    const currentIdentity = operatorDirectory.revalidateIdentity({
+      authMode: session?.authMode,
+      credentialVersion: session?.credentialVersion,
+      operatorId: session?.operatorId || null,
+      username: session?.username,
     });
     if (
       !session ||
+      !currentIdentity ||
       session.revokedAt ||
+      payload.mode !== session.authMode ||
+      payload.cv !== session.credentialVersion ||
+      (payload.oid || null) !== (session.operatorId || null) ||
+      payload.username !== session.username ||
       new Date(session.expiresAt).getTime() <= Date.now() ||
       Math.abs(new Date(session.expiresAt).getTime() - payload.exp * 1000) > 1000
     ) {
       return null;
     }
     return mintAuthority({
+      ...currentIdentity,
       expiresAt: session.expiresAt,
       sessionId: payload.sid,
-      username: payload.username,
     });
   } catch {
     return null;
@@ -228,7 +257,6 @@ async function lockSessionAuthority(operator, transaction) {
     transaction,
     where: {
       sessionId: authority.sessionId,
-      username: authority.username,
     },
   });
   if (
@@ -239,7 +267,54 @@ async function lockSessionAuthority(operator, transaction) {
   ) {
     throw authorityError();
   }
-  return authority;
+  const currentIdentity = operatorDirectory.revalidateIdentity({
+    authMode: session.authMode,
+    credentialVersion: session.credentialVersion,
+    operatorId: session.operatorId || null,
+    username: session.username,
+  });
+  if (
+      !currentIdentity ||
+      currentIdentity.authMode !== authority.authMode ||
+      currentIdentity.credentialVersion !== authority.credentialVersion ||
+      currentIdentity.operatorId !== authority.operatorId
+  ) {
+      throw authorityError();
+  }
+  if (currentIdentity.username === authority.username) return authority;
+  return mintAuthority({
+    ...currentIdentity,
+    expiresAt: session.expiresAt,
+    sessionId: session.sessionId,
+  });
+}
+
+async function lockSessionById(sessionId, transaction) {
+  if (!transaction) throw new TypeError('Installation operator lock requires a transaction');
+  const session = await db.InstallationOperatorSession.findOne({
+    lock: transaction.LOCK.UPDATE,
+    transaction,
+    where: { sessionId: String(sessionId || '') },
+  });
+  if (
+    !session ||
+    session.revokedAt ||
+    new Date(session.expiresAt).getTime() <= Date.now()
+  ) {
+    throw authorityError();
+  }
+  const currentIdentity = operatorDirectory.revalidateIdentity({
+    authMode: session.authMode,
+    credentialVersion: session.credentialVersion,
+    operatorId: session.operatorId || null,
+    username: session.username,
+  });
+  if (!currentIdentity) throw authorityError();
+  return mintAuthority({
+    ...currentIdentity,
+    expiresAt: session.expiresAt,
+    sessionId: session.sessionId,
+  });
 }
 
 async function revalidateSessionAuthority(operator) {
@@ -253,7 +328,7 @@ async function revokeSession(operator) {
     const session = await db.InstallationOperatorSession.findOne({
       lock: transaction.LOCK.UPDATE,
       transaction,
-      where: { sessionId: authority.sessionId, username: authority.username },
+      where: { sessionId: authority.sessionId },
     });
     await session.update({ revokedAt: new Date() }, { transaction });
     return true;
@@ -282,11 +357,14 @@ function getPublicStatus() {
 module.exports = {
   assertManagementEnabled,
   assertProvisioningEnabled,
+  authenticateCredentials,
   createSession,
   getPublicStatus,
+  issueSession,
   isEnabled,
   isManagementEnabled,
   isProvisioningEnabled,
+  lockSessionById,
   lockSessionAuthority,
   revalidateSessionAuthority,
   revokeSession,

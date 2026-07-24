@@ -36,6 +36,7 @@ const ShiftWorkspaceLayout = lazy(
   () => import('./components/shift-workspace-layout'),
 );
 const SystemUsersPage = lazy(() => import('./pages/SystemUsersPage'));
+const SecurityPage = lazy(() => import('./pages/SecurityPage'));
 const ClientBasesPage = lazy(() => import('./pages/ClientBasesPage'));
 const CallTasksPage = lazy(() => import('./pages/CallTasksPage'));
 const PrepaymentsPage = lazy(() => import('./pages/PrepaymentsPage'));
@@ -49,6 +50,9 @@ const MethodologyPage = lazy(() => import('./pages/MethodologyPage'));
 const MethodologyAnalyticsPage = lazy(() => import('./pages/MethodologyAnalyticsPage'));
 const InstallationProvisioningPage = lazy(
   () => import('./pages/InstallationProvisioningPage'),
+);
+const InstallationSecurityPage = lazy(
+  () => import('./pages/InstallationSecurityPage'),
 );
 const OwnerActivationPage = lazy(() => import('./pages/OwnerActivationPage'));
 const PasswordResetPage = lazy(() => import('./pages/PasswordResetPage'));
@@ -65,6 +69,10 @@ function PageLoader() {
 
 function ApplicationContent() {
   const location = useLocation();
+
+  if (location.pathname === '/installation/security') {
+    return <Suspense fallback={<PageLoader />}><InstallationSecurityPage /></Suspense>;
+  }
 
   if (
     /^\/installation\/organizations\/[^/]+\/clubs\/[^/]+\/recovery\/accounts\/[^/]+$/u.test(location.pathname)
@@ -256,6 +264,14 @@ function ApplicationContent() {
                       element={
                         <RequireRoles path="/admin/users">
                           <SystemUsersPage />
+                        </RequireRoles>
+                      }
+                    />
+                    <Route
+                      path="/admin/security"
+                      element={
+                        <RequireRoles path="/admin/security">
+                          <SecurityPage />
                         </RequireRoles>
                       }
                     />

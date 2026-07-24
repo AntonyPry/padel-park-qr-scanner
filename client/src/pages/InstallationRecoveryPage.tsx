@@ -1,22 +1,64 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, ChevronRight, KeyRound } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { BrandMark } from '@/components/brand-mark';
+import { ThemeToggle } from '@/components/theme-toggle';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { ThemeToggle } from '@/components/theme-toggle';
-import { BrandMark } from '@/components/brand-mark';
 import { API_URL } from '@/config';
 
 const TOKEN_KEY = 'setly_installation_operator_token';
-type Account = { id: number; email: string; role: string; displayName: string; staffId: number | null };
-const roleLabels: Record<string, string> = { owner: 'Владелец клуба', manager: 'Менеджер', admin: 'Администратор', accountant: 'Бухгалтер', trainer: 'Тренер', viewer: 'Наблюдатель' };
 
-function useScope(pathname: string) { const parts = pathname.split('/'); return { organizationId: parts[3] || '', clubId: parts[5] || '' }; }
-function syntheticEmail(account: Account) { return /[*•]|@f9-rc\.test$/u.test(account.email) ? `${account.role || 'user'}@example.test` : account.email; }
-async function call(path: string) {
-  const operatorToken = window.sessionStorage.getItem(TOKEN_KEY);
-  const response = await fetch(`${API_URL}/api/installation/provisioning${path}`, { headers: { Authorization: `Bearer ${operatorToken || ''}` } });
-  if (!response.ok) throw new Error('Не удалось загрузить аккаунты');
+type RecoveryAccount = {
+  displayName: string;
+  email: string;
+  id: number;
+  role: string;
+};
+
+type OrganizationDetail = {
+  clubs: Array<{ id: number; name: string }>;
+  id: number;
+  name: string;
+};
+
+const roleLabels: Record<string, string> = {
+  accountant: 'Бухгалтер',
+  admin: 'Администратор',
+  manager: 'Менеджер',
+  owner: 'Владелец клуба',
+  trainer: 'Тренер',
+  viewer: 'Наблюдатель',
+};
+
+function useScope(pathname: string) {
+  const parts = pathname.split('/');
+  return {
+    clubId: parts[5] || '',
+    organizationId: parts[3] || '',
+  };
+}
+
+async function call(path: string, init: RequestInit = {}) {
+  const headers = new Headers(init.headers);
+  headers.set(
+    'Authorization',
+    `Bearer ${window.sessionStorage.getItem(TOKEN_KEY) || ''}`,
+  );
+  if (init.body) headers.set('Content-Type', 'application/json');
+  const response = await fetch(
+    `${API_URL}/api/installation/provisioning${path}`,
+    { ...init, headers },
+  );
+  if (!response.ok) {
+    let message = 'Операция восстановления не выполнена';
+    try {
+      message = ((await response.json()) as { error?: string }).error || message;
+    } catch {
+      // Keep the bounded fallback.
+    }
+    throw new Error(message);
+  }
   return response.json();
 }
 
@@ -24,19 +66,115 @@ export default function InstallationRecoveryPage() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const { organizationId, clubId } = useScope(pathname);
-  const base = useMemo(() => `/organizations/${organizationId}/clubs/${clubId}/recovery`, [organizationId, clubId]);
-  const routeBase = `/installation${base}`;
-  const [accounts, setAccounts] = useState<Account[]>([]);
+  const base = useMemo(
+    () => `/organizations/${organizationId}/clubs/${clubId}/recovery`,
+    [clubId, organizationId],
+  );
+  const [accounts, setAccounts] = useState<RecoveryAccount[]>([]);
+  const [organization, setOrganization] = useState<OrganizationDetail | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void (async () => {
-      try { setAccounts((await call(`${base}/accounts`)).accounts || []); }
-      catch (caught) { setError(caught instanceof Error ? caught.message : 'Не удалось загрузить аккаунты'); }
-      finally { setLoading(false); }
-    })();
-  }, [base]);
+    void Promise.all([
+      call(`${base}/accounts`),
+      call(`/organizations/${organizationId}`),
+    ])
+      .then(([accountResult, organizationResult]) => {
+        setAccounts(accountResult.accounts || []);
+        setOrganization(organizationResult);
+      })
+      .catch((caught) => {
+        setError(
+          caught instanceof Error
+            ? caught.message
+            : 'Не удалось загрузить восстановление доступа',
+        );
+      })
+      .finally(() => setLoading(false));
+  }, [base, organizationId]);
 
-  return <main className="min-h-screen bg-muted/35 p-4 sm:p-8"><div className="mx-auto flex max-w-6xl items-center justify-between"><button className="flex items-center gap-3 text-left" onClick={() => navigate(`/installation/organizations/${organizationId}`)} type="button"><BrandMark className="size-10" decorative /><span className="font-semibold text-primary">Setly · Восстановление</span></button><ThemeToggle /></div><div className="mx-auto max-w-6xl space-y-6 py-8"><div><Button variant="ghost" onClick={() => navigate(`/installation/organizations/${organizationId}`)}><ArrowLeft className="mr-2 size-4" />К организации</Button><h1 className="mt-4 text-2xl font-semibold">Восстановление доступа</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">Выберите аккаунт, чтобы открыть отдельную страницу профиля, запросов смены пароля и одноразовых ссылок.</p></div>{error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div> : null}<Card><CardHeader><CardTitle>Аккаунты организации</CardTitle><p className="text-sm text-muted-foreground">Статусы и действия восстановления открываются на странице выбранного аккаунта.</p></CardHeader><CardContent>{loading ? <p className="text-sm text-muted-foreground">Загрузка…</p> : accounts.length === 0 ? <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">В этом клубе нет активных аккаунтов.</p> : <div className="grid gap-2 sm:grid-cols-2">{accounts.map((account) => <button className="flex items-center justify-between rounded-xl border p-4 text-left transition hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" key={account.id} onClick={() => navigate(`${routeBase}/accounts/${account.id}`)} type="button"><span><p className="font-medium">{account.displayName || syntheticEmail(account)}</p><p className="mt-1 text-sm text-muted-foreground">{roleLabels[account.role] || 'Пользователь'} · {syntheticEmail(account)}</p></span><ChevronRight className="size-4 text-muted-foreground" /></button>)}</div>}</CardContent></Card></div></main>;
+  const club = organization?.clubs.find(
+    (candidate) => Number(candidate.id) === Number(clubId),
+  );
+
+  return (
+    <main className="min-h-screen bg-muted/35 p-4 sm:p-8">
+      <div className="mx-auto flex max-w-5xl items-center justify-between">
+        <button
+          className="flex items-center gap-3 text-left"
+          onClick={() => navigate(`/installation/organizations/${organizationId}`)}
+          type="button"
+        >
+          <BrandMark className="size-10" decorative />
+          <span className="font-semibold text-primary">Setly · Восстановление</span>
+        </button>
+        <ThemeToggle />
+      </div>
+
+      <div className="mx-auto max-w-5xl space-y-6 py-8">
+        <Button
+          variant="ghost"
+          onClick={() => navigate(`/installation/organizations/${organizationId}`)}
+        >
+          <ArrowLeft />
+          К организации
+        </Button>
+
+        <div>
+          <h1 className="text-2xl font-semibold">Восстановление доступа</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Организация {organization?.name || organizationId}
+            {' · '}
+            клуб {club?.name || clubId}
+          </p>
+        </div>
+
+        {error ? (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="size-5 text-primary" />
+              Аккаунты клуба
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Загрузка…</p>
+            ) : null}
+            {!loading && accounts.length === 0 ? (
+              <p className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">
+                Аккаунтов в клубе нет.
+              </p>
+            ) : null}
+            {accounts.map((account) => (
+              <button
+                className="flex w-full items-center justify-between gap-4 rounded-xl border p-4 text-left transition-colors hover:bg-muted/50"
+                key={account.id}
+                onClick={() => navigate(
+                  `/installation/organizations/${organizationId}/clubs/${clubId}/recovery/accounts/${account.id}`,
+                )}
+                type="button"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    {account.displayName}
+                  </span>
+                  <span className="mt-1 block truncate text-sm text-muted-foreground">
+                    {roleLabels[account.role] || 'Пользователь'} · {account.email}
+                  </span>
+                </span>
+                <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
+              </button>
+            ))}
+          </CardContent>
+        </Card>
+      </div>
+    </main>
+  );
 }

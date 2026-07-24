@@ -96,6 +96,33 @@ describe('apiRequest', () => {
     expect(getAuthToken()).toBe('in-memory-compatibility-token');
   });
 
+  it('keeps the authenticated session when an in-session code is rejected', async () => {
+    setAuthToken('in-memory-compatibility-token');
+    const expired = vi.fn();
+    window.addEventListener('auth:expired', expired);
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json(
+      {
+        code: 'TWO_FACTOR_VERIFICATION_FAILED',
+        error: 'Не удалось подтвердить вход',
+      },
+      { status: 401 },
+    )));
+
+    const response = await apiFetch(
+      '/api/auth/me/two-factor/enrollment/confirm',
+      {
+        body: JSON.stringify({ code: '000000' }),
+        method: 'POST',
+      },
+      { preserveAuthOnUnauthorized: true },
+    );
+
+    expect(response.status).toBe(401);
+    expect(getAuthToken()).toBe('in-memory-compatibility-token');
+    expect(expired).not.toHaveBeenCalled();
+    window.removeEventListener('auth:expired', expired);
+  });
+
   it('throws typed error with server message when request fails', async () => {
     vi.stubGlobal(
       'fetch',

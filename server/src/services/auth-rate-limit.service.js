@@ -24,6 +24,10 @@ const SURFACES = Object.freeze({
   AUTH_RECOVERY_ISSUE: 'auth_recovery_issue',
   AUTH_RECOVERY_USE: 'auth_recovery_use',
   INSTALLATION_OPERATOR_SESSION: 'installation_operator_session',
+  TWO_FACTOR_ENROLLMENT_CONFIRM: 'two_factor_enrollment_confirm',
+  TWO_FACTOR_LOGIN_CHALLENGE: 'two_factor_login_challenge',
+  TWO_FACTOR_RECOVERY_CODE: 'two_factor_recovery_code',
+  TWO_FACTOR_RECOVERY_RESET: 'two_factor_recovery_reset',
   PROVIDER_BEELINE_CAPABILITY: 'provider_beeline_capability',
   PROVIDER_BEELINE_CONNECTION: 'provider_beeline_connection',
   PROVIDER_BEELINE_LEGACY: 'provider_beeline_legacy',
@@ -62,6 +66,23 @@ const DEFAULT_POLICIES = Object.freeze({
     account: Object.freeze({ limit: 6, windowSeconds: 600 }),
     credential_class: Object.freeze({ limit: 60, windowSeconds: 600 }),
     peer: Object.freeze({ limit: 30, windowSeconds: 600 }),
+  }),
+  [SURFACES.TWO_FACTOR_ENROLLMENT_CONFIRM]: Object.freeze({
+    credential_class: Object.freeze({ limit: 12, windowSeconds: 300 }),
+    peer: Object.freeze({ limit: 60, windowSeconds: 300 }),
+  }),
+  [SURFACES.TWO_FACTOR_LOGIN_CHALLENGE]: Object.freeze({
+    challenge: Object.freeze({ limit: 8, windowSeconds: 300 }),
+    credential_class: Object.freeze({ limit: 300, windowSeconds: 300 }),
+    peer: Object.freeze({ limit: 120, windowSeconds: 300 }),
+  }),
+  [SURFACES.TWO_FACTOR_RECOVERY_CODE]: Object.freeze({
+    credential_class: Object.freeze({ limit: 8, windowSeconds: 600 }),
+    peer: Object.freeze({ limit: 60, windowSeconds: 600 }),
+  }),
+  [SURFACES.TWO_FACTOR_RECOVERY_RESET]: Object.freeze({
+    credential_class: Object.freeze({ limit: 12, windowSeconds: 900 }),
+    peer: Object.freeze({ limit: 30, windowSeconds: 900 }),
   }),
   [SURFACES.ACTIVATION_STATUS]: Object.freeze({
     credential_class: Object.freeze({ limit: 300, windowSeconds: 300 }),
@@ -174,6 +195,23 @@ const SURFACE_INPUTS = Object.freeze({
     credential_class: ['fixed', 'installation_operator'],
     peer: ['peer'],
   }),
+  [SURFACES.TWO_FACTOR_ENROLLMENT_CONFIRM]: Object.freeze({
+    credential_class: ['fixed', 'two_factor_enrollment_confirm'],
+    peer: ['peer'],
+  }),
+  [SURFACES.TWO_FACTOR_LOGIN_CHALLENGE]: Object.freeze({
+    challenge: ['challenge_token'],
+    credential_class: ['fixed', 'two_factor_login_challenge'],
+    peer: ['peer'],
+  }),
+  [SURFACES.TWO_FACTOR_RECOVERY_CODE]: Object.freeze({
+    credential_class: ['fixed', 'two_factor_recovery_code'],
+    peer: ['peer'],
+  }),
+  [SURFACES.TWO_FACTOR_RECOVERY_RESET]: Object.freeze({
+    credential_class: ['fixed', 'two_factor_recovery_reset'],
+    peer: ['peer'],
+  }),
   [SURFACES.ACTIVATION_STATUS]: Object.freeze({
     credential_class: ['fixed', 'owner_activation_status'],
     peer: ['peer'],
@@ -265,6 +303,7 @@ const SURFACE_INPUTS = Object.freeze({
 // whitespace while value.length rejects attacker-scale input without scanning it.
 const RAW_CANONICAL_CODE_UNIT_LIMITS = Object.freeze({
   callback_token: 128,
+  challenge_token: 128,
   connection_public_id: 128,
   credential: 2048,
   email: 512,
@@ -274,6 +313,7 @@ const RAW_CANONICAL_CODE_UNIT_LIMITS = Object.freeze({
 });
 const RECOVERY_TOKEN_RAW_LENGTH = 'setly_r1_'.length + 43;
 const RECOVERY_TOKEN_PATTERN = /^setly_r1_[A-Za-z0-9_-]{43}$/u;
+const CHALLENGE_TOKEN_PATTERN = /^setly_2fc1_[A-Za-z0-9_-]{43}$/u;
 
 function configurationError(field) {
   const error = new Error(`Invalid authentication rate-limit configuration: ${field}`);
@@ -605,6 +645,9 @@ function boundedCanonical(value, { kind }) {
     if (Buffer.byteLength(canonical, 'utf8') > 128) return 'username:invalid';
   } else if (kind === 'token') {
     if (!/^[A-Za-z0-9_-]{43}$/u.test(canonical)) return 'token:invalid';
+  } else if (kind === 'challenge_token') {
+    if (!CHALLENGE_TOKEN_PATTERN.test(canonical)) return 'challenge_token:invalid';
+    canonical = crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
   } else if (kind === 'callback_token') {
     canonical = canonical.toLowerCase();
     if (!/^[a-f0-9]{64}$/u.test(canonical)) return 'callback_token:invalid';

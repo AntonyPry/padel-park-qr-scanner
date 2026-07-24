@@ -39,6 +39,10 @@ module.exports = (sequelize, DataTypes) => {
       as: 'normalUserSessions',
       foreignKey: 'accountId',
     });
+    Account.hasOne(models.AccountTwoFactor, {
+      as: 'twoFactor',
+      foreignKey: 'accountId',
+    });
     Account.hasMany(models.Shift, {
       as: 'approvedShifts',
       foreignKey: 'approvedByAccountId',

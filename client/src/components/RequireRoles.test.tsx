@@ -57,6 +57,7 @@ function renderProtected(
             status: 'active',
           },
           bootstrap: vi.fn(),
+          completeTwoFactorLogin: vi.fn(),
           loading: false,
           login: vi.fn(),
           logout: vi.fn(),

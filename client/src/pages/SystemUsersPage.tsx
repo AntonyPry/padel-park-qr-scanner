@@ -22,9 +22,14 @@ import {
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
 import {
+  OtpCodeInput,
+  OTP_CODE_LENGTH,
+} from '@/components/otp-code-input';
+import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
@@ -166,6 +171,9 @@ export default function SystemUsersPage() {
   const [recoveryLink, setRecoveryLink] = useState('');
   const [recoveryRequests, setRecoveryRequests] = useState<RecoveryRequestRecord[]>([]);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [stepUpTarget, setStepUpTarget] = useState<SystemAccount | null>(null);
+  const [stepUpCode, setStepUpCode] = useState('');
+  const [stepUpLoading, setStepUpLoading] = useState(false);
   const accountForm = useForm<AccountFormState>({
     defaultValues: EMPTY_FORM,
     resolver: zodResolver(accountFormSchema),
@@ -327,6 +335,86 @@ export default function SystemUsersPage() {
     } catch (error) {
       toast.error('Ссылка не отозвана', { description: error instanceof Error ? error.message : 'Попробуйте ещё раз.' });
     } finally { setRecoveryLoading(false); }
+  }
+
+  async function resetEmployeeTwoFactor(target: SystemAccount) {
+    const tenant = getActiveTenantContext();
+    if (!tenant) {
+      toast.error('Не выбран клуб', {
+        description: 'Выберите клуб перед восстановлением сотрудника.',
+      });
+      return;
+    }
+    const response = await apiFetch(
+      `/api/accounts/${target.id}/two-factor/reset`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ clubId: tenant.clubId }),
+      },
+    );
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({})) as {
+        code?: string;
+        error?: string;
+      };
+      if (failure.code === 'TWO_FACTOR_RECENT_CONFIRMATION_REQUIRED') {
+        setStepUpTarget(target);
+        setStepUpCode('');
+        return;
+      }
+      toast.error('Восстановление не выполнено', {
+        description:
+          failure.error ||
+          'Не удалось восстановить двухфакторную аутентификацию',
+      });
+      return;
+    }
+    toast.success('Двухфакторная аутентификация сброшена', {
+      description: 'Все сессии сотрудника завершены.',
+    });
+    setRecoveryTarget(null);
+  }
+
+  async function confirmEmployeeResetStepUp() {
+    if (!stepUpTarget || stepUpCode.length !== OTP_CODE_LENGTH) return;
+    const target = stepUpTarget;
+    setStepUpLoading(true);
+    try {
+      const response = await apiFetch(
+        '/api/auth/me/two-factor/step-up',
+        {
+          body: JSON.stringify({ code: stepUpCode }),
+          method: 'POST',
+        },
+        { preserveAuthOnUnauthorized: true },
+      );
+      if (!response.ok) {
+        throw new Error(await readError(
+          response,
+          'Не удалось подтвердить действие',
+        ));
+      }
+      setStepUpTarget(null);
+      setStepUpCode('');
+      await resetEmployeeTwoFactor(target);
+    } catch (error) {
+      toast.error('Действие не подтверждено', {
+        description: error instanceof Error ? error.message : 'Попробуйте ещё раз.',
+      });
+    } finally {
+      setStepUpLoading(false);
+    }
+  }
+
+  function requestEmployeeTwoFactorReset(target: SystemAccount) {
+    setPendingAction({
+      confirmLabel: 'Сбросить и завершить сессии',
+      description:
+        `У ${displayAccountEmail(target)} будет отключена двухфакторная аутентификация, а все сессии завершатся. Пароль, роль и доступ к клубу не изменятся.`,
+      isDestructive: true,
+      onConfirm: () => resetEmployeeTwoFactor(target),
+      title: 'Сбросить двухфакторную аутентификацию?',
+    });
   }
 
   const openCreate = () => {
@@ -975,7 +1063,8 @@ export default function SystemUsersPage() {
               {recoveryTarget ? `${recoveryTarget.Staff?.name || displayAccountEmail(recoveryTarget)} · ${getAccountRoleLabel(recoveryTarget.role)}` : ''}
             </DialogDescription>
           </DialogHeader>
-          {!recoveryLink ? <div className="space-y-4">
+          {!recoveryLink ? <div className="space-y-4 rounded-xl border p-4">
+            <p className="font-medium">Смена пароля</p>
             <p className="text-sm leading-6 text-muted-foreground">Выдаётся одноразовая ссылка на 30 минут. Сотрудник сам задаст новый пароль; вы его не увидите.</p>
             <Button disabled={recoveryLoading} onClick={() => void issueRecoveryLink()} className="w-full"><KeyRound className="mr-2 h-4 w-4" />{recoveryLoading ? 'Выпускаем…' : 'Выпустить ссылку'}</Button>
           </div> : <div className="space-y-4"><p className="text-sm leading-6 text-muted-foreground">Ссылка показана один раз. Скопируйте её и передайте сотруднику по согласованному каналу. Не публикуйте её в общем чате.</p><Input aria-label="Одноразовая ссылка" readOnly value={recoveryLink} /><div className="flex flex-wrap gap-2"><Button onClick={() => { void navigator.clipboard?.writeText(recoveryLink); setRecoveryLink(''); setRecoveryTarget(null); }}><KeyRound className="mr-2 h-4 w-4" />Скопировать и закрыть</Button><Button variant="ghost" onClick={() => { setRecoveryLink(''); setRecoveryTarget(null); }}>Закрыть</Button></div></div>}
@@ -991,6 +1080,70 @@ export default function SystemUsersPage() {
               </div>
             ))}
           </div>
+          {recoveryTarget ? (
+            <div className="space-y-3 rounded-xl border p-4">
+              <p className="font-medium">Двухфакторная аутентификация</p>
+              <p className="text-sm leading-6 text-muted-foreground">
+                Сброс завершит все сессии сотрудника. Пароль, роль и доступ к
+                клубу не изменятся.
+              </p>
+              <Button
+                type="button"
+                variant="destructive"
+                onClick={() => requestEmployeeTwoFactorReset(recoveryTarget)}
+              >
+                Сбросить двухфакторную аутентификацию
+              </Button>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(stepUpTarget)}
+        onOpenChange={(open) => {
+          if (!open && !stepUpLoading) {
+            setStepUpTarget(null);
+            setStepUpCode('');
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[460px]">
+          <DialogHeader>
+            <DialogTitle>Подтвердите сброс</DialogTitle>
+            <DialogDescription>
+              Введите свежий код из приложения-аутентификатора владельца.
+            </DialogDescription>
+          </DialogHeader>
+          <OtpCodeInput
+            autoFocus
+            disabled={stepUpLoading}
+            idPrefix="employee-reset-step-up-code"
+            onChange={setStepUpCode}
+            value={stepUpCode}
+          />
+          <DialogFooter>
+            <Button
+              disabled={stepUpLoading}
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setStepUpTarget(null);
+                setStepUpCode('');
+              }}
+            >
+              Отмена
+            </Button>
+            <Button
+              disabled={
+                stepUpLoading || stepUpCode.length !== OTP_CODE_LENGTH
+              }
+              type="button"
+              onClick={() => void confirmEmployeeResetStepUp()}
+            >
+              Подтвердить и сбросить
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -36,6 +36,7 @@ export const ROUTE_ACCESS = {
   '/admin/utilization': ['owner', 'manager', 'accountant', 'viewer'],
   '/admin/catalog': ['owner', 'manager', 'accountant'],
   '/admin/references': ['owner', 'manager', 'accountant', 'viewer'],
+  '/admin/security': ['owner', 'manager', 'admin', 'accountant', 'viewer', 'trainer'],
 } as const satisfies Record<string, readonly AccountRole[]>;
 
 export type ClientRoute = keyof typeof ROUTE_ACCESS;
@@ -171,6 +172,7 @@ export const ROUTE_AUTHORIZATION: Record<
     'organization',
     ROUTE_ACCESS['/admin/references'],
   ),
+  '/admin/security': partial('membership', ROUTE_ACCESS['/admin/security']),
 };
 
 export function hasRoleAccess(

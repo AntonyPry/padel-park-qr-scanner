@@ -17,6 +17,7 @@ import {
   type Account,
   type BootstrapData,
   type Credentials,
+  type TwoFactorLoginChallenge,
 } from '@/lib/auth-context';
 import {
   clearActiveTenantContext,
@@ -265,16 +266,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('auth:expired', handleExpired);
   }, []);
 
-  const login = useCallback(async ({ email, password }: Credentials) => {
-    const response = await apiFetch('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-
-    if (!response.ok) {
-      throw new Error(await readError(response, 'Не удалось войти'));
-    }
-
+  const completeSession = useCallback(async (response: Response) => {
     const data = (await response.json()) as {
       token?: string;
       account: Account;
@@ -297,6 +289,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     setSetupRequired(false);
   }, [initializeTenantContext]);
+
+  const login = useCallback(async ({ email, password }: Credentials) => {
+    const response = await apiFetch('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+
+    if (!response.ok) {
+      throw new Error(await readError(response, 'Не удалось войти'));
+    }
+
+    const data = (await response.clone().json()) as {
+      requiresTwoFactor?: boolean;
+      challengeExpiresAt?: string;
+      challengeToken?: string;
+    };
+    if (
+      data.requiresTwoFactor &&
+      data.challengeToken &&
+      data.challengeExpiresAt
+    ) {
+      return {
+        challengeExpiresAt: data.challengeExpiresAt,
+        challengeToken: data.challengeToken,
+      };
+    }
+    await completeSession(response);
+    return null;
+  }, [completeSession]);
+
+  const completeTwoFactorLogin = useCallback(async (
+    challenge: TwoFactorLoginChallenge,
+    code: string,
+  ) => {
+    const response = await apiFetch('/api/auth/login/two-factor', {
+      method: 'POST',
+      body: JSON.stringify({
+        challengeToken: challenge.challengeToken,
+        code,
+      }),
+    });
+    if (!response.ok) {
+      throw new Error(await readError(response, 'Не удалось подтвердить вход'));
+    }
+    await completeSession(response);
+  }, [completeSession]);
 
   const bootstrap = useCallback(async (data: BootstrapData) => {
     const response = await apiFetch('/api/auth/bootstrap', {
@@ -344,6 +382,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       tenantReady,
       tenantSwitching,
       login,
+      completeTwoFactorLogin,
       bootstrap,
       logout,
       switchTenantContext,
@@ -351,6 +390,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [
       account,
       bootstrap,
+      completeTwoFactorLogin,
       loading,
       login,
       logout,

@@ -28,6 +28,11 @@ export interface Credentials {
   password: string;
 }
 
+export interface TwoFactorLoginChallenge {
+  challengeExpiresAt: string;
+  challengeToken: string;
+}
+
 export interface BootstrapData extends Credentials {
   name: string;
   phone?: string;
@@ -44,7 +49,11 @@ export interface AuthContextValue {
   tenantError: string | null;
   tenantReady: boolean;
   tenantSwitching: boolean;
-  login: (credentials: Credentials) => Promise<void>;
+  login: (credentials: Credentials) => Promise<TwoFactorLoginChallenge | null>;
+  completeTwoFactorLogin: (
+    challenge: TwoFactorLoginChallenge,
+    code: string,
+  ) => Promise<void>;
   bootstrap: (data: BootstrapData) => Promise<void>;
   logout: () => Promise<void>;
   switchTenantContext: (organizationId: number, clubId: number) => Promise<void>;

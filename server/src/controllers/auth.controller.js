@@ -62,9 +62,23 @@ class AuthController {
       }
 
       const session = await authService.login({ email, password });
-      sendSession(res, req, session);
+      if (session.requiresTwoFactor) {
+        res.set('Cache-Control', 'no-store');
+        return res.json(session);
+      }
+      return sendSession(res, req, session);
     } catch (error) {
       sendError(res, error, 'Ошибка входа');
+    }
+  }
+
+  async completeTwoFactorLogin(req, res) {
+    try {
+      const session = await authService.completeTwoFactorLogin(req.body);
+      return sendSession(res, req, session);
+    } catch (error) {
+      clearBrowserSessionCookies(res);
+      return sendError(res, error, 'Не удалось подтвердить вход');
     }
   }
 

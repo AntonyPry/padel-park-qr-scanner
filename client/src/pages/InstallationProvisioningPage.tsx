@@ -33,6 +33,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { ThemeToggle } from '@/components/theme-toggle';
 import { BrandMark } from '@/components/brand-mark';
 import {
+  OtpCodeInput,
+  OTP_CODE_LENGTH,
+} from '@/components/otp-code-input';
+import {
   ConfirmActionDialog,
   type ConfirmAction,
 } from '@/components/confirm-action-dialog';
@@ -476,6 +480,12 @@ function TimezoneSelect({ onChange, value }: { onChange: (value: string) => void
 
 function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
   const [credentials, setCredentials] = useState({ password: '', username: '' });
+  const [challenge, setChallenge] = useState<{
+    challengeExpiresAt: string;
+    challengeToken: string;
+  } | null>(null);
+  const [code, setCode] = useState('');
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -484,14 +494,38 @@ function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
     setSubmitting(true);
     setError('');
     try {
-      const response = await installationFetch('/session', {
-        body: JSON.stringify(credentials),
+      const response = await installationFetch(
+        challenge ? '/session/two-factor' : '/session',
+        {
+        body: JSON.stringify(challenge
+          ? { challengeToken: challenge.challengeToken, code }
+          : credentials),
         method: 'POST',
       });
       if (!response.ok) throw new Error((await readError(response, 'Не удалось войти')).message);
+      const result = (await response.json()) as {
+        challengeExpiresAt?: string;
+        challengeToken?: string;
+        requiresTwoFactor?: boolean;
+        token?: string;
+      };
+      if (
+        result.requiresTwoFactor &&
+        result.challengeExpiresAt &&
+        result.challengeToken
+      ) {
+        setChallenge({
+          challengeExpiresAt: result.challengeExpiresAt,
+          challengeToken: result.challengeToken,
+        });
+        setCode('');
+        setUseRecoveryCode(false);
+        return;
+      }
+      if (!result.token) throw new Error('Не удалось завершить вход');
       window.sessionStorage.setItem(
         TOKEN_KEY,
-        ((await response.json()) as { token: string }).token,
+        result.token,
       );
       await onReady();
     } catch (caught) {
@@ -513,13 +547,27 @@ function ProvisioningLogin({ onReady }: { onReady: () => Promise<void> }) {
           <CardHeader className="space-y-4">
             <div className="flex items-center gap-3 lg:hidden"><BrandMark className="size-10" decorative /><span className="font-semibold text-primary">Setly</span></div>
             <div className="flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary"><KeyRound className="size-5" /></div>
-            <CardTitle>Вход оператора</CardTitle>
+            <CardTitle>{challenge ? 'Подтвердите вход' : 'Вход оператора'}</CardTitle>
           </CardHeader>
           <CardContent><form autoComplete="off" className="space-y-4" onSubmit={submit}>
-            <div className="space-y-2"><Label htmlFor="operator-username">Логин</Label><Input id="operator-username" autoComplete="off" name="installationOperatorUsername" value={credentials.username} onChange={(event) => setCredentials({ ...credentials, username: event.target.value })} required /></div>
-            <div className="space-y-2"><Label htmlFor="operator-password">Пароль</Label><Input id="operator-password" type="password" autoComplete="new-password" name="installationOperatorPassword" value={credentials.password} onChange={(event) => setCredentials({ ...credentials, password: event.target.value })} required /></div>
+            {!challenge ? <><div className="space-y-2"><Label htmlFor="operator-username">Логин</Label><Input id="operator-username" autoComplete="off" name="installationOperatorUsername" value={credentials.username} onChange={(event) => setCredentials({ ...credentials, username: event.target.value })} required /></div>
+            <div className="space-y-2"><Label htmlFor="operator-password">Пароль</Label><Input id="operator-password" type="password" autoComplete="new-password" name="installationOperatorPassword" value={credentials.password} onChange={(event) => setCredentials({ ...credentials, password: event.target.value })} required /></div></> : <div className="space-y-3">
+              {useRecoveryCode ? <>
+                <Label htmlFor="operator-two-factor-recovery-code">Резервный код</Label>
+                <Input id="operator-two-factor-recovery-code" autoComplete="one-time-code" value={code} onChange={(event) => setCode(event.target.value)} placeholder="Введите сохранённый резервный код" required autoFocus />
+                <p className="text-sm text-muted-foreground">Каждый резервный код можно использовать только один раз.</p>
+              </> : <>
+                <Label>Код из приложения</Label>
+                <OtpCodeInput autoFocus idPrefix="operator-two-factor-code" onChange={setCode} value={code} />
+                <p className="text-sm text-muted-foreground">Введите свежий шестизначный код из приложения-аутентификатора.</p>
+              </>}
+              <Button className="h-auto px-0" type="button" variant="link" onClick={() => { setCode(''); setError(''); setUseRecoveryCode((current) => !current); }}>
+                {useRecoveryCode ? 'Ввести код из приложения' : 'Использовать резервный код'}
+              </Button>
+            </div>}
             {error ? <div className="rounded-xl border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div> : null}
-            <Button className="w-full" disabled={submitting} type="submit">{submitting ? 'Входим…' : 'Войти'}</Button>
+            <Button className="w-full" disabled={submitting || Boolean(challenge && (useRecoveryCode ? !code.trim() : code.length !== OTP_CODE_LENGTH))} type="submit">{submitting ? 'Входим…' : challenge ? 'Подтвердить и войти' : 'Войти'}</Button>
+            {challenge ? <Button className="w-full" variant="outline" type="button" onClick={() => { setChallenge(null); setCode(''); setError(''); setUseRecoveryCode(false); }}>Вернуться к вводу пароля</Button> : null}
             <Button asChild className="w-full" variant="ghost">
               <a href="https://setly.tech/login">
                 <ArrowLeft className="mr-2 size-4" />
@@ -1199,7 +1247,7 @@ export default function InstallationProvisioningPage() {
             <BrandMark className="size-10" decorative />
             <div className="min-w-0"><span className="font-semibold text-primary">Setly</span><p className="truncate text-xs text-muted-foreground">Для операторов</p></div>
           </button>
-          <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end"><Button variant="ghost" onClick={() => navigate('/installation')}>Организации</Button><div className="flex items-center gap-2"><ThemeToggle /><Button variant="outline" onClick={logout}>Выйти</Button></div></div>
+          <div className="flex w-full flex-wrap items-center justify-between gap-2 sm:w-auto sm:justify-end"><Button variant="ghost" onClick={() => navigate('/installation')}>Организации</Button><Button variant="ghost" onClick={() => navigate('/installation/security')}>Безопасность</Button><div className="flex items-center gap-2"><ThemeToggle /><Button variant="outline" onClick={logout}>Выйти</Button></div></div>
         </header>
 
         {!canShowCreateRoute ? (

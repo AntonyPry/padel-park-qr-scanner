@@ -3,6 +3,7 @@
 const express = require('express');
 const controller = require('../controllers/installation-provisioning.controller');
 const recoveryController = require('../controllers/account-recovery.controller');
+const twoFactorController = require('../controllers/two-factor-auth.controller');
 const {
   requireInstallationManagement,
   requireInstallationOperator,
@@ -31,12 +32,55 @@ router.post(
   controller.session,
 );
 router.post(
+  '/session/two-factor',
+  installationEndpoint,
+  limitCredentialEntry(SURFACES.TWO_FACTOR_LOGIN_CHALLENGE),
+  validate(apiSchemas.installationProvisioning.twoFactorLogin),
+  controller.completeTwoFactorSession,
+);
+router.post(
   '/session/revoke',
   installationEndpoint,
   requireInstallationOperator,
   validate(apiSchemas.installationProvisioning.sessionRevoke),
   controller.revokeSession,
 );
+router.get(
+  '/two-factor',
+  installationEndpoint,
+  requireInstallationOperator,
+  twoFactorController.operatorStatus,
+);
+router.post(
+  '/two-factor/enrollment',
+  installationEndpoint,
+  requireInstallationOperator,
+  twoFactorController.beginOperatorEnrollment,
+);
+router.post(
+  '/two-factor/enrollment/confirm',
+  installationEndpoint,
+  requireInstallationOperator,
+  limitCredentialEntry(SURFACES.TWO_FACTOR_ENROLLMENT_CONFIRM),
+  validate(apiSchemas.installationProvisioning.twoFactorCode),
+  twoFactorController.confirmOperatorEnrollment,
+);
+router.post(
+  '/two-factor/step-up',
+  installationEndpoint,
+  requireInstallationOperator,
+  limitCredentialEntry(SURFACES.TWO_FACTOR_LOGIN_CHALLENGE),
+  validate(apiSchemas.installationProvisioning.twoFactorCode),
+  twoFactorController.stepUpOperator,
+);
+router.post(
+  '/two-factor/recovery-codes',
+  installationEndpoint,
+  requireInstallationOperator,
+  limitCredentialEntry(SURFACES.TWO_FACTOR_RECOVERY_CODE),
+  twoFactorController.regenerateOperatorRecoveryCodes,
+);
+
 router.get(
   '/snapshot',
   installationEndpoint,
@@ -96,6 +140,18 @@ const recoveryPath = '/organizations/:organizationId/clubs/:clubId/recovery';
 router.get(`${recoveryPath}/accounts`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate({ params: apiSchemas.installationProvisioning.recoveryScopeParams }), recoveryController.accounts);
 router.get(`${recoveryPath}/accounts/:accountId`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate({ params: apiSchemas.installationProvisioning.recoveryAccountParams }), recoveryController.account);
 router.put(`${recoveryPath}/accounts/:accountId`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate({ body: apiSchemas.installationProvisioning.recoveryProfile.body, params: apiSchemas.installationProvisioning.recoveryAccountParams }), recoveryController.updateAccount);
+router.post(
+  `${recoveryPath}/accounts/:accountId/two-factor/reset`,
+  installationEndpoint,
+  limitCredentialEntry(SURFACES.TWO_FACTOR_RECOVERY_RESET),
+  requireInstallationOperator,
+  requireInstallationManagement,
+  validate({
+    body: apiSchemas.installationProvisioning.emptyBody,
+    params: apiSchemas.installationProvisioning.recoveryAccountParams,
+  }),
+  recoveryController.operatorResetTwoFactor,
+);
 router.get(`${recoveryPath}/requests`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate({ params: apiSchemas.installationProvisioning.recoveryScopeParams, query: apiSchemas.installationProvisioning.recoveryRequestsQuery }), recoveryController.requests);
 router.post(`${recoveryPath}/requests`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate({ body: apiSchemas.installationProvisioning.recoveryRequest.body, params: apiSchemas.installationProvisioning.recoveryScopeParams }), recoveryController.createRequest);
 router.post(`${recoveryPath}/requests/:requestId/issue`, installationEndpoint, limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), requireInstallationOperator, requireInstallationManagement, validate({ body: apiSchemas.installationProvisioning.recoveryIssue.body, params: apiSchemas.installationProvisioning.recoveryRequestParams }), recoveryController.issue);

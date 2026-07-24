@@ -115,6 +115,47 @@ describe('InstallationProvisioningPage integration management', () => {
       .toHaveAttribute('href', 'https://setly.tech/login');
   });
 
+  it('uses six OTP cells for operator login and separates the recovery-code fallback', async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/status')) {
+        return json({
+          enabled: true,
+          managementEnabled: true,
+          provisioningEnabled: false,
+        });
+      }
+      if (url.endsWith('/session') && init?.method === 'POST') {
+        return json({
+          challengeExpiresAt: '2026-07-24T12:05:00.000Z',
+          challengeToken: 'operator-challenge-token',
+          requiresTwoFactor: true,
+        });
+      }
+      return json({ error: 'Unexpected request' }, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    renderPage('/installation');
+    fireEvent.change(await screen.findByLabelText('Логин'), {
+      target: { value: 'operator.alpha' },
+    });
+    fireEvent.change(screen.getByLabelText('Пароль'), {
+      target: { value: 'PreviewOperator123!' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Войти' }));
+
+    expect(await screen.findByText('Подтвердите вход'))
+      .toBeInTheDocument();
+    expect(screen.getAllByLabelText(/^Цифра \d$/u)).toHaveLength(6);
+    expect(screen.getByRole('button', { name: 'Подтвердить и войти' }))
+      .toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Использовать резервный код' }));
+    expect(screen.queryByLabelText('Цифра 1')).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Резервный код')).toBeInTheDocument();
+  });
+
   it('keeps the overview concise and confirms a provider mutation on its detail page', async () => {
     window.sessionStorage.setItem('setly_installation_operator_token', 'operator-token');
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {

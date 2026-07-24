@@ -6,7 +6,14 @@ const { clearBrowserSessionCookies } = require('../security/browser-session');
 const { disconnectAccountSockets } = require('../realtime/session-boundary');
 
 function ownerActor(req) { return { type: 'owner', accountId: req.account.id }; }
-function operatorActor(req) { return { type: 'operator', username: req.installationOperator?.username }; }
+function operatorActor(req) {
+  return {
+    operator: req.installationOperator,
+    operatorId: req.installationOperator?.operatorId,
+    type: 'operator',
+    username: req.installationOperator?.username,
+  };
+}
 
 class AccountRecoveryController {
   async status(req, res) {
@@ -31,11 +38,52 @@ class AccountRecoveryController {
   async createRequest(req, res) { try { return res.status(201).json(await recovery.createRequest(req.params.organizationId, req.params.clubId, req.body, operatorActor(req))); } catch (error) { return sendError(res, error, 'Не удалось создать запрос восстановления'); } }
   async issue(req, res) { try { res.set('Cache-Control', 'no-store'); res.set('Pragma', 'no-cache'); return res.json(await recovery.issueToken(req.params.requestId, operatorActor(req), req.params.organizationId, req.params.clubId)); } catch (error) { return sendError(res, error, 'Не удалось выдать ссылку смены пароля'); } }
   async revoke(req, res) { try { return res.json(await recovery.revokeRequest(req.params.requestId, operatorActor(req), req.params.organizationId, req.params.clubId)); } catch (error) { return sendError(res, error, 'Не удалось отозвать ссылку'); } }
+  async operatorResetTwoFactor(req, res) {
+    try {
+      const result = await recovery.resetTwoFactor(
+        req.params.accountId,
+        req.params.organizationId,
+        req.params.clubId,
+        operatorActor(req),
+      );
+      disconnectAccountSockets(req.app.get('io'), result.accountId);
+      return res.json({ success: result.success });
+    } catch (error) {
+      return sendError(
+        res,
+        error,
+        'Не удалось восстановить двухфакторную аутентификацию',
+      );
+    }
+  }
 
   async ownerCreate(req, res) { try { const organizationId = req.tenant?.organizationId || await recovery.organizationForOwner(req.account.id); return res.status(201).json(await recovery.createRequest(organizationId, req.body.clubId, req.body, ownerActor(req))); } catch (error) { return sendError(res, error, 'Не удалось создать запрос восстановления'); } }
   async ownerRequests(req, res) { try { const organizationId = req.tenant?.organizationId || await recovery.organizationForOwner(req.account.id); return res.json({ requests: await recovery.listOwnerRequests(organizationId, req.query.clubId, req.params.id, ownerActor(req)) }); } catch (error) { return sendError(res, error, 'Не удалось загрузить запросы восстановления'); } }
   async ownerIssue(req, res) { try { const organizationId = req.tenant?.organizationId || await recovery.organizationForOwner(req.account.id); res.set('Cache-Control', 'no-store'); res.set('Pragma', 'no-cache'); return res.json(await recovery.issueToken(req.params.requestId, ownerActor(req), organizationId, req.body.clubId)); } catch (error) { return sendError(res, error, 'Не удалось выдать ссылку смены пароля'); } }
   async ownerRevoke(req, res) { try { const organizationId = req.tenant?.organizationId || await recovery.organizationForOwner(req.account.id); return res.json(await recovery.revokeRequest(req.params.requestId, ownerActor(req), organizationId, req.body.clubId)); } catch (error) { return sendError(res, error, 'Не удалось отозвать ссылку'); } }
+  async ownerResetTwoFactor(req, res) {
+    try {
+      const organizationId = req.tenant?.organizationId
+        || await recovery.organizationForOwner(req.account.id);
+      const result = await recovery.resetTwoFactor(
+        req.params.id,
+        organizationId,
+        req.body.clubId,
+        ownerActor(req),
+        req.authentication,
+      );
+      disconnectAccountSockets(req.app.get('io'), result.accountId);
+      return res.json({
+        success: result.success,
+      });
+    } catch (error) {
+      return sendError(
+        res,
+        error,
+        'Не удалось восстановить двухфакторную аутентификацию',
+      );
+    }
+  }
 }
 
 module.exports = new AccountRecoveryController();

@@ -202,6 +202,7 @@ const recoveryAccountDetail = z.object({
   role: accountRoleValue,
   displayName: z.string(),
   phone: z.string().nullable(),
+  twoFactorActive: z.boolean(),
 }).strict();
 const recoveryRequestRecord = z.object({
   id: z.string().uuid(),
@@ -214,6 +215,52 @@ const recoveryRequestRecord = z.object({
   status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']),
   initiatedBy: z.string(),
   createdAt: dateTimeString,
+}).strict();
+const twoFactorChallengeResponse = z.object({
+  challengeExpiresAt: z.string().datetime(),
+  challengeToken: z.string().regex(/^setly_2fc1_[A-Za-z0-9_-]{43}$/u),
+  requiresTwoFactor: z.literal(true),
+}).strict();
+const accountSessionResponse = z.object({
+  account: z.record(z.string(), z.unknown()),
+  capabilities: z.object({
+    tenantCacheRealtime: z.boolean(),
+    tenantContext: z.boolean(),
+  }).strict(),
+  token: z.string().regex(/^setly_s1_[A-Za-z0-9_-]{43}$/u).optional(),
+}).strict();
+const operatorSessionResponse = z.object({
+  expiresAt: z.string().datetime(),
+  token: z.string().min(1).max(4096),
+}).strict();
+const twoFactorStatusResponse = z.object({
+  active: z.boolean(),
+  enrolledAt: z.string().datetime().nullable().optional(),
+  enrollmentPending: z.boolean(),
+  recoveryCodesRemaining: z.number().int().nonnegative(),
+}).strict();
+const operatorTwoFactorStatusResponse = twoFactorStatusResponse.extend({
+  available: z.boolean(),
+}).strict();
+const twoFactorEnrollmentResponse = z.object({
+  expiresAt: z.string().datetime(),
+  manualKey: z.string().regex(/^[A-Z2-7]{32}$/u),
+  otpAuthUri: z.string().startsWith('otpauth://totp/'),
+}).strict();
+const recoveryCode = z.string().regex(/^(?:[A-Z2-7]{4}-){6}[A-Z2-7]{2}$/u);
+const twoFactorRecoveryCodesResponse = z.object({
+  recoveryCodes: z.array(recoveryCode).length(10),
+  signedOut: z.boolean(),
+}).strict();
+const twoFactorStepUpResponse = z.object({
+  confirmedAt: z.string().datetime(),
+}).strict();
+const twoFactorDisableResponse = z.object({
+  signedOut: z.literal(true),
+  success: z.literal(true),
+}).strict();
+const twoFactorResetResponse = z.object({
+  success: z.literal(true),
 }).strict();
 const transcriptionWorkerLeaseFields = {
   claimId: z.string().uuid().optional(),
@@ -1272,6 +1319,7 @@ const apiSchemas = {
     recoveryAction: z.object({ clubId: id }).strict(),
     recoveryRequestParams: z.object({ requestId: z.string().uuid() }).strict(),
     recoveryQuery: z.object({ clubId: id }).strict(),
+    twoFactorReset: z.object({ clubId: id }).strict(),
     recoveryRequestResponse: z.object({ id: z.string().uuid(), status: z.enum(['created', 'issued', 'used', 'revoked', 'expired']) }).strict(),
     recoveryIssueResponse: z.object({ requestId: z.string().uuid(), expiresAt: z.string().datetime(), resetLink: z.string().url() }).strict(),
     recoveryRevokeResponse: z.object({ success: z.literal(true), status: z.literal('revoked') }).strict(),
@@ -1337,7 +1385,26 @@ const apiSchemas = {
           password: z.string().min(1, 'Пароль обязателен'),
         })
         .passthrough(),
+      response: z.union([accountSessionResponse, twoFactorChallengeResponse]),
     },
+    twoFactorCode: {
+      body: z.object({
+        code: z.string().regex(/^\d{6}$/u),
+      }).strict(),
+    },
+    twoFactorLogin: {
+      body: z.object({
+        challengeToken: z.string().regex(/^setly_2fc1_[A-Za-z0-9_-]{43}$/u),
+        code: z.string().trim().min(6).max(40),
+      }).strict(),
+      response: accountSessionResponse,
+    },
+    twoFactorDisableResponse,
+    twoFactorEnrollmentResponse,
+    twoFactorRecoveryCodesResponse,
+    twoFactorStatusResponse,
+    twoFactorStepUpResponse,
+    twoFactorResetResponse,
     logoutResponse: z.object({
       success: z.literal(true),
     }),
@@ -1381,6 +1448,26 @@ const apiSchemas = {
     },
   },
   installationProvisioning: {
+    emptyBody: z.object({}).strict(),
+    twoFactorCode: {
+      body: z.object({
+        code: z.string().regex(/^\d{6}$/u),
+      }).strict(),
+    },
+    twoFactorLogin: {
+      body: z.object({
+        challengeToken: z.string().regex(/^setly_2fc1_[A-Za-z0-9_-]{43}$/u),
+        code: z.string().trim().min(6).max(40),
+      }).strict(),
+      response: operatorSessionResponse,
+    },
+    operatorSessionResponse,
+    operatorTwoFactorStatusResponse,
+    twoFactorChallengeResponse,
+    twoFactorEnrollmentResponse,
+    twoFactorRecoveryCodesResponse,
+    twoFactorStepUpResponse,
+    twoFactorResetResponse,
     recoveryScopeParams,
     recoveryAccountParams,
     recoveryRequestParams,
@@ -1629,10 +1716,10 @@ const apiSchemas = {
           username: z.string().trim().min(1, 'Логин обязателен'),
         })
         .strict(),
-      response: z.object({
-        expiresAt: dateTime,
-        token: z.string().min(1),
-      }),
+      response: z.union([
+        operatorSessionResponse,
+        twoFactorChallengeResponse,
+      ]),
     },
     sessionRevoke: {
       response: z.object({ success: z.literal(true) }),

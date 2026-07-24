@@ -30,5 +30,15 @@ router.post('/accounts/:id/recovery', limitCredentialEntry(SURFACES.AUTH_RECOVER
 router.get('/accounts/:id/recovery', limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), recoverEmployee, validate({ query: apiSchemas.accounts.recoveryQuery, params: apiSchemas.accounts.params }), recoveryController.ownerRequests);
 router.post('/accounts/recovery/:requestId/issue', limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), recoverEmployee, validate({ body: apiSchemas.accounts.recoveryAction, params: apiSchemas.accounts.recoveryRequestParams }), recoveryController.ownerIssue);
 router.post('/accounts/recovery/:requestId/revoke', limitCredentialEntry(SURFACES.AUTH_RECOVERY_ISSUE), recoverEmployee, validate({ body: apiSchemas.accounts.recoveryAction, params: apiSchemas.accounts.recoveryRequestParams }), recoveryController.ownerRevoke);
+router.post(
+  '/accounts/:id/two-factor/reset',
+  limitCredentialEntry(SURFACES.TWO_FACTOR_RECOVERY_RESET),
+  recoverEmployee,
+  validate({
+    body: apiSchemas.accounts.twoFactorReset,
+    params: apiSchemas.accounts.params,
+  }),
+  recoveryController.ownerResetTwoFactor,
+);
 
 module.exports = router;

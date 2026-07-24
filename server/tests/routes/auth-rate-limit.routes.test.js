@@ -35,6 +35,11 @@ function limiterEnvironment() {
     [SURFACES.INSTALLATION_OPERATOR_SESSION]: {
       account: { limit: 1, windowSeconds: 7 },
     },
+    [SURFACES.TWO_FACTOR_LOGIN_CHALLENGE]: {
+      challenge: { limit: 1, windowSeconds: 7 },
+      credential_class: { limit: 100, windowSeconds: 7 },
+      peer: { limit: 100, windowSeconds: 7 },
+    },
     [SURFACES.ACTIVATION_STATUS]: { token: { limit: 1, windowSeconds: 7 } },
     [SURFACES.ACTIVATION_CONSUME]: { token: { limit: 1, windowSeconds: 7 } },
   };
@@ -48,7 +53,7 @@ function limiterEnvironment() {
   };
 }
 
-test('all five current credential-entry routes share generic pre-handler 429 behavior', async (t) => {
+test('password and two-factor login routes share generic pre-handler 429 behavior', async (t) => {
   const calls = new Map();
   const respond = (name, payload) => async (_req, res) => {
     calls.set(name, (calls.get(name) || 0) + 1);
@@ -57,9 +62,19 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
   t.mock.method(authController, 'login', respond('login', { route: 'login' }));
   t.mock.method(authController, 'bootstrap', respond('bootstrap', { route: 'bootstrap' }));
   t.mock.method(
+    authController,
+    'completeTwoFactorLogin',
+    respond('account-two-factor', { route: 'account-two-factor' }),
+  );
+  t.mock.method(
     installationController,
     'session',
     respond('operator', { expiresAt: new Date().toISOString(), token: 'test-token' }),
+  );
+  t.mock.method(
+    installationController,
+    'completeTwoFactorSession',
+    respond('operator-two-factor', { expiresAt: new Date().toISOString(), token: 'test-token' }),
   );
   t.mock.method(
     installationController,
@@ -76,18 +91,16 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
   delete require.cache[require.resolve('../../src/routes/installation-provisioning')];
   const authRoutes = require('../../src/routes/auth');
   const installationRoutes = require('../../src/routes/installation-provisioning');
-  const limiter = createAuthRateLimiter({
-    env: limiterEnvironment(),
-    logger: () => {},
-  });
+  let limiter;
   const app = express();
-  app.set('authRateLimiter', limiter);
   app.use(express.json());
   app.use('/api/auth', authRoutes);
   app.use('/api/installation/provisioning', installationRoutes);
   const server = await listen(app);
   const base = `http://127.0.0.1:${server.address().port}/api`;
   const token = 'A'.repeat(43);
+  const accountChallenge = `setly_2fc1_${'A'.repeat(43)}`;
+  const operatorChallenge = `setly_2fc1_${'B'.repeat(43)}`;
   const cases = [
     ['login', '/auth/login', { email: 'route-login@example.test', password: 'secret' }],
     ['bootstrap', '/auth/bootstrap', {
@@ -99,6 +112,14 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
       password: 'operator-secret',
       username: 'route-operator',
     }],
+    ['account-two-factor', '/auth/login/two-factor', {
+      challengeToken: accountChallenge,
+      code: '123456',
+    }],
+    ['operator-two-factor', '/installation/provisioning/session/two-factor', {
+      challengeToken: operatorChallenge,
+      code: '123456',
+    }],
     ['activation-status', '/installation/provisioning/activation/status', { token }],
     ['activation-consume', '/installation/provisioning/activation/consume', {
       password: 'activation-secret',
@@ -108,6 +129,12 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
 
   try {
     for (const [name, path, body] of cases) {
+      if (limiter) await limiter.close();
+      limiter = createAuthRateLimiter({
+        env: limiterEnvironment(),
+        logger: () => {},
+      });
+      app.set('authRateLimiter', limiter);
       const options = {
         body: JSON.stringify(body),
         headers: { 'Content-Type': 'application/json' },
@@ -126,7 +153,7 @@ test('all five current credential-entry routes share generic pre-handler 429 beh
       assert.equal(calls.get(name), 1, `${name} handler must not run when throttled`);
     }
   } finally {
-    await limiter.close();
+    if (limiter) await limiter.close();
     await close(server);
   }
 });
@@ -136,9 +163,18 @@ test('OpenAPI declares 429 and Retry-After on every credential-entry, ingress an
   const authCovered = new Set([
     'POST /auth/bootstrap',
     'POST /auth/login',
+    'POST /auth/login/two-factor',
+    'POST /auth/me/two-factor/enrollment/confirm',
+    'POST /auth/me/two-factor/step-up',
+    'POST /auth/me/two-factor/recovery-codes',
+    'POST /auth/me/two-factor/disable',
     'POST /auth/recovery/status',
     'POST /auth/recovery/reset',
     'POST /installation/provisioning/session',
+    'POST /installation/provisioning/session/two-factor',
+    'POST /installation/provisioning/two-factor/enrollment/confirm',
+    'POST /installation/provisioning/two-factor/step-up',
+    'POST /installation/provisioning/two-factor/recovery-codes',
     'POST /installation/provisioning/activation/status',
     'POST /installation/provisioning/activation/consume',
     'GET /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts',
@@ -148,10 +184,12 @@ test('OpenAPI declares 429 and Retry-After on every credential-entry, ingress an
     'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests',
     'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/issue',
     'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/requests/{requestId}/revoke',
+    'POST /installation/provisioning/organizations/{organizationId}/clubs/{clubId}/recovery/accounts/{accountId}/two-factor/reset',
     'POST /accounts/{id}/recovery',
     'GET /accounts/{id}/recovery',
     'POST /accounts/recovery/{requestId}/issue',
     'POST /accounts/recovery/{requestId}/revoke',
+    'POST /accounts/{id}/two-factor/reset',
   ]);
   const providerCovered = new Set([
     'POST /webhooks/evotor',

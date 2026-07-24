@@ -1,10 +1,15 @@
 import { useState } from 'react';
+import {
+  OtpCodeInput,
+  OTP_CODE_LENGTH,
+} from '@/components/otp-code-input';
 import { OperatorLogoShortcut } from '@/components/operator-logo-shortcut';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/lib/useAuth';
+import type { TwoFactorLoginChallenge } from '@/lib/auth-context';
 import { BrandMark } from '@/components/brand-mark';
 
 interface LoginPageProps {
@@ -12,7 +17,7 @@ interface LoginPageProps {
 }
 
 export default function LoginPage({ mode }: LoginPageProps) {
-  const { login, bootstrap } = useAuth();
+  const { login, bootstrap, completeTwoFactorLogin } = useAuth();
   const [form, setForm] = useState({
     name: '',
     phone: '',
@@ -21,6 +26,9 @@ export default function LoginPage({ mode }: LoginPageProps) {
   });
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [challenge, setChallenge] = useState<TwoFactorLoginChallenge | null>(null);
+  const [code, setCode] = useState('');
+  const [useRecoveryCode, setUseRecoveryCode] = useState(false);
   const isSetup = mode === 'setup';
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -31,8 +39,18 @@ export default function LoginPage({ mode }: LoginPageProps) {
     try {
       if (isSetup) {
         await bootstrap(form);
+      } else if (challenge) {
+        await completeTwoFactorLogin(challenge, code);
       } else {
-        await login({ email: form.email, password: form.password });
+        const nextChallenge = await login({
+          email: form.email,
+          password: form.password,
+        });
+        if (nextChallenge) {
+          setChallenge(nextChallenge);
+          setCode('');
+          setUseRecoveryCode(false);
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Ошибка входа');
@@ -52,17 +70,23 @@ export default function LoginPage({ mode }: LoginPageProps) {
             </div>
           ) : <OperatorLogoShortcut />}
           <CardTitle>
-            {isSetup ? 'Первичная настройка' : 'Вход в панель'}
+            {isSetup
+              ? 'Первичная настройка'
+              : challenge
+                ? 'Подтвердите вход'
+                : 'Вход в панель'}
           </CardTitle>
           <p className="text-sm text-muted-foreground">
             {isSetup
               ? 'Создайте первый аккаунт владельца клуба.'
-              : 'Введите данные аккаунта сотрудника.'}
+              : challenge
+                ? 'Вход завершится только после проверки двухфакторной аутентификации.'
+                : 'Введите данные аккаунта сотрудника.'}
           </p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
-            {isSetup && (
+            {isSetup && !challenge && (
               <>
                 <div className="space-y-2">
                   <Label htmlFor="owner-name">Имя</Label>
@@ -87,7 +111,7 @@ export default function LoginPage({ mode }: LoginPageProps) {
                 </div>
               </>
             )}
-            <div className="space-y-2">
+            {!challenge ? <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
@@ -99,8 +123,8 @@ export default function LoginPage({ mode }: LoginPageProps) {
                 }
                 required
               />
-            </div>
-            <div className="space-y-2">
+            </div> : null}
+            {!challenge ? <div className="space-y-2">
               <Label htmlFor="password">Пароль</Label>
               <Input
                 id="password"
@@ -113,7 +137,54 @@ export default function LoginPage({ mode }: LoginPageProps) {
                 minLength={6}
                 required
               />
-            </div>
+            </div> : (
+              <div className="space-y-3">
+                {useRecoveryCode ? (
+                  <>
+                    <Label htmlFor="two-factor-recovery-code">Резервный код</Label>
+                    <Input
+                      id="two-factor-recovery-code"
+                      autoComplete="one-time-code"
+                      value={code}
+                      onChange={(event) => setCode(event.target.value)}
+                      placeholder="Введите сохранённый резервный код"
+                      required
+                      autoFocus
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Каждый резервный код можно использовать только один раз.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <Label>Код из приложения</Label>
+                    <OtpCodeInput
+                      autoFocus
+                      idPrefix="login-two-factor-code"
+                      onChange={setCode}
+                      value={code}
+                    />
+                    <p className="text-sm text-muted-foreground">
+                      Введите свежий шестизначный код из приложения-аутентификатора.
+                    </p>
+                  </>
+                )}
+                <Button
+                  className="h-auto px-0"
+                  type="button"
+                  variant="link"
+                  onClick={() => {
+                    setCode('');
+                    setError('');
+                    setUseRecoveryCode((current) => !current);
+                  }}
+                >
+                  {useRecoveryCode
+                    ? 'Ввести код из приложения'
+                    : 'Использовать резервный код'}
+                </Button>
+              </div>
+            )}
 
             {error && (
               <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -121,13 +192,42 @@ export default function LoginPage({ mode }: LoginPageProps) {
               </div>
             )}
 
-            <Button type="submit" className="w-full" disabled={submitting}>
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={
+                submitting ||
+                Boolean(
+                  challenge &&
+                  (useRecoveryCode
+                    ? !code.trim()
+                    : code.length !== OTP_CODE_LENGTH),
+                )
+              }
+            >
               {submitting
                 ? 'Подождите...'
                 : isSetup
                   ? 'Создать аккаунт'
+                  : challenge
+                    ? 'Подтвердить и войти'
                   : 'Войти'}
             </Button>
+            {challenge ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="w-full"
+                onClick={() => {
+                  setChallenge(null);
+                  setCode('');
+                  setError('');
+                  setUseRecoveryCode(false);
+                }}
+              >
+                Вернуться к вводу пароля
+              </Button>
+            ) : null}
           </form>
         </CardContent>
       </Card>

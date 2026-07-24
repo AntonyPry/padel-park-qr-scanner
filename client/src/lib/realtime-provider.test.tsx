@@ -53,6 +53,7 @@ function authValue(clubId = 12, account = true): AuthContextValue {
       ? { email: 'manager@test', id: 7, role: 'manager', status: 'active' }
       : null,
     bootstrap: vi.fn(),
+    completeTwoFactorLogin: vi.fn(),
     loading: false,
     login: vi.fn(),
     logout: vi.fn(),

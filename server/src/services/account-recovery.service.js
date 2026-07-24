@@ -4,6 +4,8 @@ const crypto = require('node:crypto');
 const db = require('../../models');
 const normalSessions = require('./normal-user-session.service');
 const auditService = require('./audit.service');
+const installationOperatorAuth = require('./installation-operator-auth.service');
+const twoFactorAuth = require('./two-factor-auth.service');
 
 const TOKEN_PREFIX = 'setly_r1_';
 const TOKEN_BYTES = 32;
@@ -82,7 +84,11 @@ async function assertActor(actor, target, organizationId, clubId, transaction) {
   if (!owner || owner.role !== 'owner') throw recoveryError('Недостаточно прав для восстановления этого аккаунта', 403, 'ACCOUNT_RECOVERY_OWNER_REQUIRED');
 }
 
-function actorLabel(actor) { return actor?.type === 'operator' ? `operator:${actor.username || 'operator'}` : `account:${actor?.accountId}`; }
+function actorLabel(actor) {
+  return actor?.type === 'operator'
+    ? `operator:${actor.operatorId || actor.username || 'operator'}`
+    : `account:${actor?.accountId}`;
+}
 
 async function listAccounts(organizationId, clubId) {
   await assertScope(organizationId, clubId);
@@ -99,7 +105,17 @@ async function organizationForOwner(accountId) {
 async function getAccount(accountId, organizationId, clubId) {
   const scoped = await findScopedAccount(accountId, organizationId, clubId);
   if (!scoped) throw recoveryError('Аккаунт не найден', 404, 'ACCOUNT_RECOVERY_ACCOUNT_NOT_FOUND');
-  return { id: scoped.account.id, email: safeEmail(scoped.account), role: scoped.role, displayName: scoped.account.Staff?.name || safeEmail(scoped.account), phone: scoped.account.Staff?.phone || null };
+  return {
+    id: scoped.account.id,
+    email: safeEmail(scoped.account),
+    role: scoped.role,
+    displayName: scoped.account.Staff?.name || safeEmail(scoped.account),
+    phone: scoped.account.Staff?.phone || null,
+    twoFactorActive: await twoFactorAuth.isFactorActive(
+      'account',
+      scoped.account.id,
+    ),
+  };
 }
 
 async function updateAccountProfile(accountId, organizationId, clubId, input, operator) {
@@ -231,4 +247,74 @@ async function resetPassword(rawToken, newPassword) {
   } catch (error) { if (!transaction.finished) await transaction.rollback(); throw error; }
 }
 
-module.exports = { TOKEN_PREFIX, TOKEN_BYTES, TOKEN_TTL_MS, TOKEN_PATTERN, digestToken, listAccounts, organizationForOwner, getAccount, updateAccountProfile, listRequests, listOwnerRequests, createRequest, issueToken, revokeRequest, inspectToken, resetPassword, _private: { issueRawToken, safeEmail } };
+async function resetTwoFactor(
+  accountId,
+  organizationId,
+  clubId,
+  actor,
+  authentication,
+) {
+  const transaction = await db.sequelize.transaction();
+  try {
+    await assertScope(organizationId, clubId, transaction);
+    const target = await findScopedAccount(
+      accountId,
+      organizationId,
+      clubId,
+      transaction,
+      true,
+    );
+    if (!target) {
+      throw recoveryError(
+        'Не удалось выполнить восстановление',
+        404,
+        'TWO_FACTOR_RECOVERY_NOT_AVAILABLE',
+      );
+    }
+    if (actor?.type === 'operator') {
+      if (target.role !== 'owner' && target.account.role !== 'owner') {
+        throw recoveryError(
+          'Двухфакторную аутентификацию сотрудника восстанавливает владелец клуба',
+          403,
+          'TWO_FACTOR_RECOVERY_OPERATOR_OWNER_ONLY',
+        );
+      }
+      await installationOperatorAuth.lockSessionAuthority(
+        actor.operator,
+        transaction,
+      );
+    } else {
+      await assertActor(actor, target, organizationId, clubId, transaction);
+      await twoFactorAuth.assertRecentAccountConfirmation(authentication, {
+        transaction,
+      });
+    }
+    await twoFactorAuth.resetAccountFactor(accountId, { transaction });
+    await auditRecovery(
+      {
+        action: actor?.type === 'operator'
+          ? 'two_factor.owner_reset_by_operator'
+          : 'two_factor.employee_reset_by_owner',
+        actor: actorLabel(actor),
+        accountId: Number(accountId),
+        clubId,
+        entityId: String(accountId),
+        organizationId,
+        summary: actor?.type === 'operator'
+          ? 'Owner two-factor authentication reset by installation operator'
+          : 'Employee two-factor authentication reset by club owner',
+      },
+      transaction,
+    );
+    await transaction.commit();
+    return {
+      accountId: Number(accountId),
+      success: true,
+    };
+  } catch (error) {
+    if (!transaction.finished) await transaction.rollback();
+    throw error;
+  }
+}
+
+module.exports = { TOKEN_PREFIX, TOKEN_BYTES, TOKEN_TTL_MS, TOKEN_PATTERN, digestToken, listAccounts, organizationForOwner, getAccount, updateAccountProfile, listRequests, listOwnerRequests, createRequest, issueToken, revokeRequest, inspectToken, resetPassword, resetTwoFactor, _private: { issueRawToken, safeEmail } };

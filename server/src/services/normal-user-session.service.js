@@ -75,6 +75,7 @@ async function issue(accountId, options = {}) {
           {
             accountId: account.id,
             expiresAt: new Date(now.getTime() + ttlSeconds * 1000),
+            twoFactorVerifiedAt: options.twoFactorVerifiedAt || null,
             tokenDigest: digestToken(token),
           },
           { transaction },
@@ -107,6 +108,9 @@ async function authenticate(token, options = {}) {
       expiresAt: new Date(session.expiresAt).getTime(),
       kind: 'opaque',
       sessionId: session.id,
+      twoFactorVerifiedAt: session.twoFactorVerifiedAt
+        ? new Date(session.twoFactorVerifiedAt).getTime()
+        : null,
     }),
   };
 }
@@ -125,6 +129,31 @@ async function revalidate(authentication, options = {}) {
     return null;
   }
   return { account: session.Account, authentication };
+}
+
+async function confirmTwoFactor(sessionId, options = {}) {
+  const now = normalizeNow(options.now);
+  const where = { id: sessionId, revokedAt: null };
+  if (options.accountId) where.accountId = Number(options.accountId);
+  const [updated] = await db.NormalUserSession.update(
+    { twoFactorVerifiedAt: now },
+    {
+      transaction: options.transaction,
+      where,
+    },
+  );
+  if (updated === 1) return now;
+  const unchanged = await db.NormalUserSession.findOne({
+    transaction: options.transaction,
+    where,
+  });
+  const existing = unchanged?.twoFactorVerifiedAt
+    ? new Date(unchanged.twoFactorVerifiedAt)
+    : null;
+  return existing &&
+    Math.abs(existing.getTime() - now.getTime()) <= 1_000
+    ? existing
+    : null;
 }
 
 async function revokeByToken(token, reason = REVOCATION_REASONS.LOGOUT, options = {}) {
@@ -149,11 +178,15 @@ async function revokeAllForAccount(accountId, reason, options = {}) {
   if (!Number.isSafeInteger(normalizedAccountId) || normalizedAccountId <= 0) {
     throw new Error('Normal user session Account is invalid');
   }
+  const where = { accountId: normalizedAccountId, revokedAt: null };
+  if (options.preserveSessionId) {
+    where.id = { [db.Sequelize.Op.ne]: String(options.preserveSessionId) };
+  }
   const [revoked] = await db.NormalUserSession.update(
     { revokedAt: normalizeNow(options.now), revokedReason: reason },
     {
       transaction: options.transaction,
-      where: { accountId: normalizedAccountId, revokedAt: null },
+      where,
     },
   );
   return revoked;
@@ -162,6 +195,7 @@ async function revokeAllForAccount(accountId, reason, options = {}) {
 module.exports = {
   REVOCATION_REASONS,
   authenticate,
+  confirmTwoFactor,
   issue,
   isAccountActive,
   isOpaqueToken,

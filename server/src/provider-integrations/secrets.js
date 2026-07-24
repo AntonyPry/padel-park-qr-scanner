@@ -2,9 +2,11 @@
 
 const crypto = require('node:crypto');
 const { isProviderCredentialKey } = require('./credential-keys');
-
-const ALGORITHM = 'aes-256-gcm';
-const ENVELOPE_VERSION = 1;
+const {
+  decodeBase64Key,
+  decryptSecretEnvelope,
+  encryptSecretEnvelope,
+} = require('../security/secret-envelope');
 
 function integrationSecretError(code = 'INTEGRATION_SECRET_CONFIGURATION_INVALID') {
   const error = new Error('Integration secret configuration is invalid');
@@ -16,17 +18,11 @@ function integrationSecretError(code = 'INTEGRATION_SECRET_CONFIGURATION_INVALID
 function getMasterKey() {
   const encoded = String(process.env.INTEGRATION_SECRETS_MASTER_KEY || '').trim();
   if (!encoded) throw integrationSecretError();
-
-  let key;
   try {
-    key = Buffer.from(encoded, 'base64');
+    return decodeBase64Key(encoded, 'INTEGRATION_SECRET_CONFIGURATION_INVALID');
   } catch {
     throw integrationSecretError();
   }
-  if (key.length !== 32 || key.toString('base64').replace(/=+$/u, '') !== encoded.replace(/=+$/u, '')) {
-    throw integrationSecretError();
-  }
-  return key;
 }
 
 function getIntegrationFingerprintKey() {
@@ -78,47 +74,19 @@ function buildAad({ provider, publicId }) {
 
 function encryptSecretBundle(value, identity) {
   const secrets = normalizeSecretBundle(value);
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv(ALGORITHM, getMasterKey(), iv);
-  cipher.setAAD(buildAad(identity));
-  const ciphertext = Buffer.concat([
-    cipher.update(JSON.stringify(secrets), 'utf8'),
-    cipher.final(),
-  ]);
-  const envelope = {
-    algorithm: ALGORITHM,
-    ciphertext: ciphertext.toString('base64'),
-    iv: iv.toString('base64'),
+  return encryptSecretEnvelope(JSON.stringify(secrets), {
+    aad: buildAad(identity),
+    key: getMasterKey(),
     keyVersion: String(process.env.INTEGRATION_SECRETS_KEY_VERSION || 'v1'),
-    tag: cipher.getAuthTag().toString('base64'),
-    version: ENVELOPE_VERSION,
-  };
-  return JSON.stringify(envelope);
+  });
 }
 
 function decryptSecretBundle(serialized, identity) {
   try {
-    const envelope = JSON.parse(String(serialized || ''));
-    if (
-      envelope.version !== ENVELOPE_VERSION ||
-      envelope.algorithm !== ALGORITHM ||
-      typeof envelope.ciphertext !== 'string' ||
-      typeof envelope.iv !== 'string' ||
-      typeof envelope.tag !== 'string'
-    ) {
-      throw new Error('invalid envelope');
-    }
-    const decipher = crypto.createDecipheriv(
-      ALGORITHM,
-      getMasterKey(),
-      Buffer.from(envelope.iv, 'base64'),
-    );
-    decipher.setAAD(buildAad(identity));
-    decipher.setAuthTag(Buffer.from(envelope.tag, 'base64'));
-    const plaintext = Buffer.concat([
-      decipher.update(Buffer.from(envelope.ciphertext, 'base64')),
-      decipher.final(),
-    ]).toString('utf8');
+    const plaintext = decryptSecretEnvelope(serialized, {
+      aad: buildAad(identity),
+      resolveKey: () => getMasterKey(),
+    }).toString('utf8');
     return Object.freeze(normalizeSecretBundle(JSON.parse(plaintext)));
   } catch (error) {
     if (error?.code?.startsWith?.('INTEGRATION_SECRET_')) throw error;

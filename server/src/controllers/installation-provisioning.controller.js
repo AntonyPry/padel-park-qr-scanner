@@ -3,6 +3,7 @@
 const installationOperatorAuth = require('../services/installation-operator-auth.service');
 const installationProvisioning = require('../services/installation-provisioning.service');
 const installationManagement = require('../services/installation-management.service');
+const twoFactorAuth = require('../services/two-factor-auth.service');
 const { sendError } = require('../utils/api-error');
 
 class InstallationProvisioningController {
@@ -12,9 +13,32 @@ class InstallationProvisioningController {
 
   async session(req, res) {
     try {
-      res.json(await installationOperatorAuth.createSession(req.body));
+      const identity = await installationOperatorAuth.authenticateCredentials(req.body);
+      if (
+        identity.operatorId &&
+        await twoFactorAuth.isFactorActive(
+          'installation_operator',
+          identity.operatorId,
+        )
+      ) {
+        res.set('Cache-Control', 'no-store');
+        return res.json(await twoFactorAuth.issueOperatorLoginChallenge(identity));
+      }
+      return res.json(await installationOperatorAuth.issueSession(identity));
     } catch (error) {
       sendError(res, error, 'Не удалось войти как оператор');
+    }
+  }
+
+  async completeTwoFactorSession(req, res) {
+    try {
+      res.set('Cache-Control', 'no-store');
+      return res.json(await twoFactorAuth.completeOperatorLogin(
+        req.body.challengeToken,
+        req.body.code,
+      ));
+    } catch (error) {
+      return sendError(res, error, 'Не удалось подтвердить вход');
     }
   }
 

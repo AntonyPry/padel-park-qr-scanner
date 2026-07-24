@@ -26,6 +26,7 @@ import {
   WalletCards,
   SlidersHorizontal,
   MapPin,
+  ShieldCheck,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
@@ -218,6 +219,11 @@ const navigationSections: NavSection[] = [
         title: 'Пользователи',
         url: '/admin/users',
         icon: UserCog,
+      },
+      {
+        title: 'Безопасность аккаунта',
+        url: '/admin/security',
+        icon: ShieldCheck,
       },
       {
         title: 'Справочник товаров',

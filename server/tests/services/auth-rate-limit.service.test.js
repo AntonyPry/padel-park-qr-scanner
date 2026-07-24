@@ -213,10 +213,14 @@ test('the v1 contract includes ingress and recovery surfaces with matching polic
   const recoverySurfaces = new Set([
     SURFACES.AUTH_RECOVERY_ISSUE,
     SURFACES.AUTH_RECOVERY_USE,
+    SURFACES.TWO_FACTOR_ENROLLMENT_CONFIRM,
+    SURFACES.TWO_FACTOR_LOGIN_CHALLENGE,
+    SURFACES.TWO_FACTOR_RECOVERY_CODE,
+    SURFACES.TWO_FACTOR_RECOVERY_RESET,
   ]);
   assert.equal(newSurfaces.size, 12);
-  assert.equal(recoverySurfaces.size, 2);
-  assert.equal(Object.keys(_private.DEFAULT_POLICIES).length, 19);
+  assert.equal(recoverySurfaces.size, 6);
+  assert.equal(Object.keys(_private.DEFAULT_POLICIES).length, 23);
   for (const surface of new Set([...newSurfaces, ...recoverySurfaces])) {
     assert.deepEqual(
       Object.keys(_private.DEFAULT_POLICIES[surface]).sort(),

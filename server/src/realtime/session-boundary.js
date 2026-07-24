@@ -18,6 +18,15 @@ function disconnectAccountSockets(io, accountId) {
   );
 }
 
+function disconnectAccountSocketsExceptSession(io, accountId, sessionId) {
+  return disconnectMatchingSockets(
+    io,
+    (data) =>
+      Number(data.account?.id) === Number(accountId) &&
+      data.authentication?.sessionId !== sessionId,
+  );
+}
+
 function disconnectSessionSockets(io, sessionId) {
   if (!sessionId) return 0;
   return disconnectMatchingSockets(
@@ -35,6 +44,7 @@ function disconnectStaffSockets(io, staffId) {
 
 module.exports = {
   disconnectAccountSockets,
+  disconnectAccountSocketsExceptSession,
   disconnectSessionSockets,
   disconnectStaffSockets,
   _private: { disconnectMatchingSockets },
